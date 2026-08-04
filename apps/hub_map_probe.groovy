@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Hub Map Probe'
-@Field static final String APP_VERSION = '0.3.0'
+@Field static final String APP_VERSION = '0.4.0'
 
 definition(
     name: APP_NAME,
@@ -59,26 +59,32 @@ Map main() {
 }
 
 String buildProbeReport() {
-    // Round 3: hunting for REAL Rule Machine rule structure (trigger vs
-    // condition vs action), which /device/fullJson cannot provide - it only
-    // says which apps touch a device, not how. The App Status page is the
-    // best lead: it is an older server-rendered page (not the SPA shell that
-    // /installedapp/configure returned) and lists Event Subscriptions, which
-    // is how Rule Machine registers its trigger devices specifically.
-    //
-    // HTML bodies are searched for keywords rather than dumped from the top,
-    // because round 1 showed the first several KB of any hub page is just
-    // boilerplate <head> shell.
+    // Round 4: round 3 confirmed /installedapp/statusJson/<id> (140KB) and
+    // /installedapp/settings/<id> (69KB) both return real data, but the head
+    // of each is just empty UI slots (chkBox/button/trackSwitch settings with
+    // null values). Round 3 only dumped the head of JSON responses, so the
+    // interesting part was never seen. This round applies the same keyword
+    // -window extraction to JSON, with multiple matches per keyword, hunting
+    // for where Rule Machine actually stores its trigger / required-expression
+    // / action device references.
     List<String> paths = [
-        "/installedapp/status/${sampleRuleId}",
         "/installedapp/statusJson/${sampleRuleId}",
         "/installedapp/settings/${sampleRuleId}",
-        "/installedapp/subscriptions/${sampleRuleId}",
-        "/installedapp/eventSubscriptions/${sampleRuleId}",
-        "/hub/rules/${sampleRuleId}",
     ]
 
-    List<String> keywords = ['subscription', 'Presence Manager', 'trigger', 'Guest Mode', 'setting']
+    // 'Presence Manager' is this rule's real trigger device, so wherever it
+    // appears is where trigger references live. 'deviceList":[{' finds the
+    // settings that actually resolve to devices, vs the null placeholders.
+    List<String> keywords = [
+        'Presence Manager',
+        'deviceList":[{',
+        '"state":',
+        'reqExpr',
+        'trigger',
+        '"actions"',
+        'capability.presence',
+        'ruleDesc',
+    ]
 
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
@@ -92,17 +98,10 @@ String probeOne(String path, List<String> keywords) {
     out << "<div style='margin-top:1em; padding:.5em; border:1px solid #ccc'>"
     out << "<b>${path}</b><br>"
     try {
-        httpGet([uri: "http://127.0.0.1:8080${path}", textParser: true, timeout: 10, ignoreSSLIssues: true]) { resp ->
+        httpGet([uri: "http://127.0.0.1:8080${path}", textParser: true, timeout: 15, ignoreSSLIssues: true]) { resp ->
             String body = resp?.data?.text ?: ''
-            String contentType = "${resp.headers?.'Content-Type'}"
-            out << "Status: ${resp.status}, Content-Type: ${contentType}, Full length: ${body.length()}<br>"
-
-            String extract
-            if (contentType.contains('json')) {
-                extract = body.length() > 6000 ? body.substring(0, 6000) + '... [truncated]' : body
-            } else {
-                extract = extractKeywordWindows(body, keywords, 700)
-            }
+            out << "Status: ${resp.status}, Content-Type: ${resp.headers?.'Content-Type'}, Full length: ${body.length()}<br>"
+            String extract = extractKeywordWindows(body, keywords, 600, 2)
             String escaped = extract.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
             out << "<pre style='white-space:pre-wrap; word-break:break-all'>${escaped}</pre>"
         }
@@ -113,20 +112,26 @@ String probeOne(String path, List<String> keywords) {
     return out.toString()
 }
 
-String extractKeywordWindows(String body, List<String> keywords, int window) {
+String extractKeywordWindows(String body, List<String> keywords, int window, int maxMatches) {
     String lowerBody = body.toLowerCase()
     StringBuilder found = new StringBuilder()
     keywords.each { String kw ->
-        int idx = lowerBody.indexOf(kw.toLowerCase())
+        String lowerKw = kw.toLowerCase()
+        int idx = lowerBody.indexOf(lowerKw)
         if (idx < 0) {
             found << "\n=== no match for '${kw}' ===\n"
             return
         }
-        int start = (idx - window) < 0 ? 0 : (idx - window)
-        int end = (idx + window) > body.length() ? body.length() : (idx + window)
-        found << "\n=== match '${kw}' at offset ${idx} ===\n"
-        found << body.substring(start, end)
-        found << '\n'
+        int count = 0
+        while (idx >= 0 && count < maxMatches) {
+            int start = (idx - window) < 0 ? 0 : (idx - window)
+            int end = (idx + window) > body.length() ? body.length() : (idx + window)
+            found << "\n=== match ${count + 1} of '${kw}' at offset ${idx} ===\n"
+            found << body.substring(start, end)
+            found << '\n'
+            count++
+            idx = lowerBody.indexOf(lowerKw, idx + 1)
+        }
     }
     return found.toString()
 }
