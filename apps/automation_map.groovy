@@ -46,7 +46,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.1.0'
+@Field static final String APP_VERSION = '1.2.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -435,7 +435,8 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
   <div class="legend-row"><span class="line" style="border-color:#7fae42"></span>Action - app commands this device</div>
   <div class="legend-row"><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
-  <div class="note">Focus one app to colour its devices by role.</div>
+  <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
+  <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
 </div>
 <div id="controls">
   <label>Focus app<select id="appFilter"><option value="__all__">All apps</option></select></label>
@@ -455,13 +456,30 @@ const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', action: '#7fae42', owns: '#8090a0' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
 
+// Most-significant role first. Used to colour a device that holds more than one
+// role in the same app - e.g. a motion sensor that is both a rule's trigger and
+// part of that rule's Wait-for-Expression condition.
+const ROLE_ORDER = ['trigger', 'constraint', 'action', 'owns'];
+
 const ALL_NODES = GRAPH.nodes;
+
+// Parallel edges between the same pair would otherwise be drawn exactly on top
+// of each other, hiding the fact that a device holds two roles in one app.
+const pairSeen = {};
 const ALL_EDGES = GRAPH.edges.map(function (e, i) {
+  const pairKey = e.from + '|' + e.to;
+  const dupIndex = pairSeen[pairKey] === undefined ? 0 : pairSeen[pairKey] + 1;
+  pairSeen[pairKey] = dupIndex;
+  // Arrows follow the flow: a trigger or constraint feeds INTO the app, an
+  // action or an owned device is driven BY it.
+  const inbound = (e.kind === 'trigger' || e.kind === 'constraint');
   return {
-    id: i, from: e.from, to: e.to, kind: e.kind, arrows: 'to',
+    id: i, from: e.from, to: e.to, kind: e.kind,
+    arrows: inbound ? 'from' : 'to',
     dashes: e.kind === 'owns',
     color: roleColors[e.kind] || '#999',
-    width: e.kind === 'owns' ? 1 : 1.6
+    width: e.kind === 'owns' ? 1 : 1.6,
+    smooth: { type: 'curvedCW', roundness: 0.12 + (dupIndex * 0.22) }
   };
 });
 
@@ -532,8 +550,14 @@ function applyFilters() {
 
   let roleByDevice = null;
   if (appVal !== '__all__') {
+    // A device can hold several roles in one app, so colour it by the most
+    // significant rather than by whichever edge happened to be processed last.
     roleByDevice = {};
-    shownEdges.forEach(function (e) { if (e.from === appVal) roleByDevice[e.to] = e.kind; });
+    shownEdges.forEach(function (e) {
+      if (e.from !== appVal) return;
+      const prev = roleByDevice[e.to];
+      if (!prev || ROLE_ORDER.indexOf(e.kind) < ROLE_ORDER.indexOf(prev)) roleByDevice[e.to] = e.kind;
+    });
   }
 
   const shownNodes = ids ? ALL_NODES.filter(function (n) { return ids[n.id]; }) : ALL_NODES;
