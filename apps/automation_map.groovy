@@ -107,7 +107,13 @@ Map main() {
         section {
             paragraph 'Pick the devices to scan, then press Scan. "Select All" is the normal choice.'
             paragraph '<span style="opacity:0.75">Automation Map finds your apps by looking at which apps each device belongs to, which is why it needs devices selected. Any extra device an app mentions is added to the map for you.</span>'
-            input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, required: true, submitOnChange: true
+            // Deliberately not required:true. With submitOnChange the page
+            // validates while the picker overlay is still open, before the
+            // selection is committed, so Hubitat throws "Please complete the
+            // required fields" at a user who has in fact just selected 190
+            // devices. Nothing downstream needs it - the scan section below
+            // only renders once devices are chosen.
+            input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, submitOnChange: true
         }
         if (devices) {
             section {
