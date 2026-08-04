@@ -24,7 +24,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Hub Map'
-@Field static final String APP_VERSION = '0.3.0'
+@Field static final String APP_VERSION = '0.4.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer BATCH_SIZE = 15
 
@@ -231,6 +231,10 @@ String buildMapHtml() {
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
   #legend { position:absolute; bottom:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; }
+  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; display:flex; flex-direction:column; gap:6px; width:220px; }
+  #controls label { display:block; margin-bottom:2px; }
+  #controls select { width:100%; box-sizing:border-box; }
+  #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
   .legend-row { display:flex; align-items:center; margin:4px 0; }
   .swatch { width:12px; height:12px; border-radius:50%; margin-right:8px; display:inline-block; }
@@ -247,23 +251,45 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line"></span>Owns (created device)</div>
   <div class="legend-row"><span class="line dashed"></span>Uses (referenced in config)</div>
 </div>
+<div id="controls">
+  <label>Focus app<select id="appFilter"><option value="__all__">All apps</option></select></label>
+  <label>Focus device<select id="deviceFilter"><option value="__all__">All devices</option></select></label>
+  <label>Show<select id="kindFilter">
+    <option value="all">Ownership + Usage</option>
+    <option value="owns">Ownership only</option>
+    <option value="uses">Usage only</option>
+  </select></label>
+  <button id="resetBtn" type="button">Show all</button>
+</div>
 <div id="network"></div>
 <script>
 const GRAPH = ${jsonStr};
 const groupColors = { hub: '#3498db', app: '#e8a33d', device: '#7fae42' };
-const nodes = new vis.DataSet(GRAPH.nodes.map(n => ({
-  id: n.id, label: n.label, title: n.title, color: groupColors[n.group],
-  shape: n.group === 'hub' ? 'diamond' : 'dot',
-  size: n.group === 'hub' ? 24 : (n.group === 'app' ? 17 : 13),
-  font: {
-    color: '#fff', size: n.group === 'hub' ? 16 : 13,
-    strokeWidth: 5, strokeColor: '#062733', vadjust: -4
-  }
-})));
-const edges = new vis.DataSet(GRAPH.edges.map((e, i) => ({
-  id: i, from: e.from, to: e.to, arrows: 'to',
-  dashes: e.kind === 'uses', color: e.kind === 'uses' ? '#5a6b73' : '#9fb3bb', width: e.kind === 'uses' ? 1 : 1.5
-})));
+
+function styledNode(n) {
+  return {
+    id: n.id, label: n.label, title: n.title, color: groupColors[n.group],
+    shape: n.group === 'hub' ? 'diamond' : 'dot',
+    size: n.group === 'hub' ? 24 : (n.group === 'app' ? 17 : 13),
+    font: {
+      color: '#fff', size: n.group === 'hub' ? 16 : 13,
+      strokeWidth: 5, strokeColor: '#062733', vadjust: -4
+    }
+  };
+}
+function styledEdge(e, i) {
+  return {
+    id: i, from: e.from, to: e.to, arrows: 'to',
+    dashes: e.kind === 'uses', color: e.kind === 'uses' ? '#5a6b73' : '#9fb3bb', width: e.kind === 'uses' ? 1 : 1.5
+  };
+}
+
+const ALL_NODES = GRAPH.nodes;
+const ALL_EDGES = GRAPH.edges.map(styledEdge);
+
+const nodes = new vis.DataSet(ALL_NODES.map(styledNode));
+const edges = new vis.DataSet(ALL_EDGES);
+
 const network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
   physics: {
     stabilization: { iterations: 300 },
@@ -272,9 +298,95 @@ const network = new vis.Network(document.getElementById('network'), { nodes, edg
   interaction: { hover: true, tooltipDelay: 100 },
   edges: { smooth: { type: 'continuous' } }
 });
-network.once('stabilizationIterationsDone', function () {
-  network.setOptions({ physics: { enabled: false } });
-  network.fit({ animation: false });
+
+function settle() {
+  network.once('stabilizationIterationsDone', function () {
+    network.setOptions({ physics: { enabled: false } });
+    network.fit({ animation: false });
+  });
+}
+settle();
+
+function neighborhood(nodeId) {
+  const ids = new Set([nodeId]);
+  const edgeList = [];
+  ALL_EDGES.forEach(function (e) {
+    if (e.from === nodeId || e.to === nodeId) {
+      ids.add(e.from); ids.add(e.to);
+      edgeList.push(e);
+    }
+  });
+  return { ids: ids, edgeList: edgeList };
+}
+
+function applyFilters() {
+  const appVal = document.getElementById('appFilter').value;
+  const devVal = document.getElementById('deviceFilter').value;
+  const kindVal = document.getElementById('kindFilter').value;
+
+  let nodeIds = null;
+  let edgeSubset = ALL_EDGES;
+
+  if (appVal !== '__all__') {
+    const focus = neighborhood(appVal);
+    nodeIds = focus.ids; edgeSubset = focus.edgeList;
+  } else if (devVal !== '__all__') {
+    const focus = neighborhood(devVal);
+    nodeIds = focus.ids; edgeSubset = focus.edgeList;
+  }
+
+  if (kindVal !== 'all') {
+    edgeSubset = edgeSubset.filter(function (e) { return e.kind === kindVal; });
+    if (nodeIds) {
+      const keep = new Set();
+      edgeSubset.forEach(function (e) { keep.add(e.from); keep.add(e.to); });
+      if (appVal !== '__all__') keep.add(appVal);
+      if (devVal !== '__all__') keep.add(devVal);
+      nodeIds = keep;
+    }
+  }
+
+  const shownNodes = nodeIds ? ALL_NODES.filter(function (n) { return nodeIds.has(n.id); }) : ALL_NODES;
+  const shownEdges = nodeIds ? edgeSubset : (kindVal === 'all' ? ALL_EDGES : ALL_EDGES.filter(function (e) { return e.kind === kindVal; }));
+
+  nodes.clear(); nodes.add(shownNodes.map(styledNode));
+  edges.clear(); edges.add(shownEdges);
+  network.setOptions({ physics: { enabled: true } });
+  settle();
+}
+
+const appSelect = document.getElementById('appFilter');
+ALL_NODES.filter(function (n) { return n.group === 'app'; })
+  .slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+  .forEach(function (n) {
+    const opt = document.createElement('option');
+    opt.value = n.id; opt.textContent = n.title;
+    appSelect.appendChild(opt);
+  });
+
+const deviceSelect = document.getElementById('deviceFilter');
+ALL_NODES.filter(function (n) { return n.group === 'device'; })
+  .slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+  .forEach(function (n) {
+    const opt = document.createElement('option');
+    opt.value = n.id; opt.textContent = n.title;
+    deviceSelect.appendChild(opt);
+  });
+
+appSelect.addEventListener('change', function () {
+  if (appSelect.value !== '__all__') deviceSelect.value = '__all__';
+  applyFilters();
+});
+deviceSelect.addEventListener('change', function () {
+  if (deviceSelect.value !== '__all__') appSelect.value = '__all__';
+  applyFilters();
+});
+document.getElementById('kindFilter').addEventListener('change', applyFilters);
+document.getElementById('resetBtn').addEventListener('click', function () {
+  appSelect.value = '__all__';
+  deviceSelect.value = '__all__';
+  document.getElementById('kindFilter').value = 'all';
+  applyFilters();
 });
 </script>
 </body>
