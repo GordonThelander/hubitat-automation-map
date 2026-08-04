@@ -132,7 +132,7 @@ Map main() {
         if (devices && !ready) {
             section {
                 paragraph "${devices.size()} device(s) selected."
-                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> Your first scan starts by itself, and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.'
+                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.</b></span>'
             }
         }
         if (devices && ready) {
