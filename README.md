@@ -2,6 +2,17 @@
 
 A Hubitat app that visualizes how installed apps and devices relate to each other, and **in what role** - which app owns a device, which devices trigger an app, which constrain it, and which it acts on - as an interactive force-directed graph, in the same visual style as Dan Danache's [Zigbee Map app](https://codeberg.org/dan-danache/hubitat/src/branch/main/zigbee-map-app).
 
+## What "app" means here
+
+Hubitat uses the word *app* for two different things, and the counts make no sense until you separate them:
+
+- an **app type** is a piece of code in **Apps Code** - Rule Machine, Maker API, CoCoHue
+- an **installed app** is one configured thing built on that code - your "Back Door Night" rule
+
+Automation Map counts **installed apps**, the entries on your **Apps** page. On the hub it was developed against that is **64 installed apps built from only 17 app types**, because 41 of them are individual Rule Machine rules all sharing the one piece of Rule Machine code, alongside 5 Averaging Master instances, 3 Maker APIs and 2 Notifiers.
+
+So each orange square is a single automation or integration you set up, not a piece of code. That is deliberate: "Back Door Night" and "Patio Night" control different lights, so collapsing them into one Rule Machine node would throw away the entire point of the map.
+
 ## Where the data comes from
 
 There is no official Hubitat API for "list every app and what devices it uses, and how". The data comes from the hub's own internal endpoints (the ones the hub's own web UI calls), fetched via a self-request to `127.0.0.1` - an established community technique, not a public API.
@@ -58,8 +69,8 @@ A device can hold different roles in different apps - a motion sensor may trigge
 
 ## Known limitations
 
-- **App discovery can miss apps.** Apps are found via each scanned device's `appsUsingForDialog` list, which the hub truncates when a device is used by many apps (it carries an "and N more" count). Selecting all devices makes a miss unlikely but not impossible. There is no bulk app-list endpoint - `/installedapp/list.json`, `/hub2/appList` and similar all return 404.
-- **Apps with no device references never appear**, since there is nothing to discover them through.
+- **The app count is of installed apps that reference at least one device.** Apps are discovered by asking each scanned device which apps use it, so an installed app referencing no devices is invisible to this method and will not appear in the map or the count. There is no bulk app-list endpoint to cross-check against - `/installedapp/list.json`, `/hub2/appList` and similar all return 404 - so the total cannot be reconciled with your Apps page automatically.
+- **App discovery can also miss apps that do use devices.** Each device's `appsUsingForDialog` list is truncated by the hub when a device is used by many apps (it carries an "and N more" count). An app that only ever appears in a truncated list can be missed. Selecting all devices makes this unlikely but not impossible.
 - **Flow decoding is engine-specific.** Rule Machine 5.1 and Notifier are supported. Other engines (Rule 4.x, Simple Automation, Basic Rules, Room Lighting, Motion Lighting) have their own private layouts and would each need decoding the same empirical way. They are detected and reported, not silently skipped.
 - **Event subscriptions are a snapshot, not static configuration.** Observed live: rule 2279 "Back Door Night" was subscribed *only* to its Required Expression device, with no subscription to its actual trigger, because that expression was false at scan time - Rule Machine drops trigger subscriptions while the gate is closed and restores them when it opens. Rule Machine apps are unaffected, because `tDev*`/`rDev*` settings are static and take precedence over the subscription signal. For **non-Rule-Machine apps**, where subscriptions are the only trigger signal, an app that subscribes conditionally can map differently depending on when the scan ran.
 - Roles reflect how a device is *wired into* an app's configuration, not runtime behaviour.
@@ -76,13 +87,23 @@ A device can hold different roles in different apps - a motion sensor may trigge
 1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> Save.
 2. **Apps** -> **Add User App** -> Automation Map.
 3. Select devices to scan (use "Select All"), click **Scan relationships now**.
-4. The scan runs in two phases - devices first (to discover apps), then apps (for the relationship data). Close and reopen the page to refresh progress.
+4. The scan runs in two phases - devices first (to discover apps), then apps (for the relationship data). It takes a couple of minutes on a large hub; the page refreshes itself and shows a percentage, so there is no need to reload it.
 5. Click **View Automation Map**.
 
 Devices referenced by an app are added to the map automatically even if not selected in step 3 - the selection only decides which devices are used to discover apps.
 
 ## Using the map
 
-- **Focus app** - show one app and every device it touches, coloured by role in that app.
+**Designed for a desktop browser.** The graph, filter panel and flowcharts need room and a pointer, so a small screen is shown a notice rather than an unusable shrunken version.
+
+- **Focus app** - show one app and every device it touches, coloured by role in that app. If it is a supported rule engine you also get a flowchart of its logic.
 - **Focus device** - show one device and every app that touches it.
-- **Show** - filter to triggers, constraints, actions, or ownership.
+- **Show** - filter to a single relationship type: triggers, constraints, monitored, actions, exposed or ownership.
+- **Insights** - contested and unreferenced devices (see above).
+- Each filter has a **search box**, since a large hub puts a couple of hundred entries in the device list.
+
+The whole-hub view is dense by nature. Focusing one app or device is the normal way to use it; the opening screen says so.
+
+## Re-scanning
+
+The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices. If the app is upgraded and the stored graph no longer matches what the new version draws, it refuses to display a stale map and tells you to scan again, rather than rendering something subtly wrong.
