@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Automation Map Probe'
-@Field static final String APP_VERSION = '0.8.0'
+@Field static final String APP_VERSION = '0.9.0'
 
 definition(
     name: APP_NAME,
@@ -46,8 +46,8 @@ void updated() {
 Map main() {
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
         section {
-            paragraph 'Throwaway diagnostic for the Automation Map app. Give it INSTALLED APP IDs, comma separated. Defaults: 2869 (Presence Manager), 2816 (Mode Alarm Status Adjustment rule). Dumps each app\'s event subscriptions and device-bearing settings.'
-            input name: 'sampleAppIds', type: 'text', title: 'Installed app IDs (comma separated)', required: true, defaultValue: '2869,2816'
+            paragraph 'Throwaway diagnostic for the Automation Map app. Set a Rule Machine rule id. Default 2279 = "Back Door Night", deliberately a small rule so its whole structure can be decoded against what the rule page shows.'
+            input name: 'sampleAppId', type: 'number', title: 'Installed app id', required: true, defaultValue: 2279
             input name: 'runProbe', type: 'bool', title: 'Run probe now', submitOnChange: true, defaultValue: false
         }
         if (runProbe) {
@@ -59,58 +59,78 @@ Map main() {
 }
 
 String buildProbeReport() {
-    // Round 6/7: validating against apps whose SOURCE we can read, instead of
-    // reverse-engineering Rule Machine's private format. Two contrasting cases:
+    // Round 9: everything needed to render a rule as an ordered FLOWCHART
+    // rather than a star of relationships. Known so far from bigger rules:
+    //   actionList  ordered action numbers
+    //   actions     action number -> {method, indent, rule, delay, wait}
+    //   eval        rule/branch number -> condition numbers
+    //   predCapabs  condition numbers forming the required expression
+    //   capabstrue  trigger number -> human readable trigger text
+    // and device settings hang off those numbers (rDev_<n>, tDev<n>,
+    // onOffSwitch.<n>, volume.<n>, ...). What is still unknown is whether a
+    // human-readable description exists for CONDITIONS the way capabstrue
+    // provides one for triggers, and what the full method-name vocabulary is.
     //
-    // Presence Manager (Presence_Manager.groovy subscribeEvidenceDevices()):
-    //   subscribes to = person presence devices, houseEvidenceSwitches,
-    //                   guest-mode child switch, output device
-    //   commands      = outputSwitch / outputPresenceDevice,
-    //                   notificationDevices, guest-mode switch
-    //   also creates child devices. The output device is deliberately BOTH
-    //   subscribed and commanded, which is the interesting edge case.
-    //
-    // LIFX Light Manager (LIFX_Light_Manager.groovy): zero subscribe() calls
-    //   and zero capability.* inputs - it only creates child devices. So it
-    //   should show ownership edges and nothing else.
-    //
-    // Key question this answers: does statusJson expose EVENT SUBSCRIPTIONS?
-    // If yes, subscribed-vs-only-configured separates trigger from target for
-    // every app on the hub. If no, per-app setting names are all we have and
-    // only Rule Machine could ever be decoded properly.
+    // So: dump the complete state and settings of one small rule whose logic
+    // is already known from its own page, and decode against that.
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
-
-    List<String> appIds = "${sampleAppIds}".split(',').collect { it.trim() }.findAll { it }
-    appIds.each { String appId -> out << inspectApp(appId) }
-
-    out << '</div>'
-    return out.toString()
-}
-
-String inspectApp(String appId) {
-    StringBuilder out = new StringBuilder()
     out << "<div style='margin-top:1em; padding:.5em; border:2px solid #666'>"
-    out << "<b>/installedapp/statusJson/${appId}</b><br>"
+    out << "<b>/installedapp/statusJson/${sampleAppId}</b><br>"
     try {
-        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
+        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${sampleAppId}", timeout: 20]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : null
             if (data == null) {
                 out << 'Response was not parsed into a Map.'
                 return
             }
             Map installedApp = data.installedApp as Map
-            out << "<pre style='white-space:pre-wrap; word-break:break-all'>"
-            out << "label: ${installedApp?.label}   name: ${installedApp?.name}\n"
-            out << '</pre>'
+            out << "<pre style='white-space:pre-wrap; word-break:break-all'>label: ${installedApp?.label}   name: ${installedApp?.name}</pre>"
+            out << describeState(data)
+            out << describeSettings(data)
             out << describeSubscriptions(data)
-            out << describeSettingsWithDevices(data)
-            out << describeChildDevices(data)
         }
     } catch (Exception ex) {
         out << "ERROR: ${ex.message}"
     }
-    out << '</div>'
+    out << '</div></div>'
+    return out.toString()
+}
+
+String describeState(Map data) {
+    StringBuilder out = new StringBuilder()
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== APP STATE (all entries) ===\n"
+    List entries = (data.appState ?: []) as List
+    if (!entries) {
+        out << '(none)\n'
+    } else {
+        entries.each { e ->
+            if (!(e instanceof Map)) return
+            Map em = e as Map
+            out << "${em.name} [${em.type}] = ${trunc(em.value, 900)}\n"
+        }
+    }
+    out << '</pre>'
+    return out.toString()
+}
+
+String describeSettings(Map data) {
+    StringBuilder out = new StringBuilder()
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== APP SETTINGS (non-empty, or resolving to devices) ===\n"
+    List settings = (data.appSettings ?: []) as List
+    settings.each { s ->
+        if (!(s instanceof Map)) return
+        Map sm = s as Map
+        boolean hasDevices = sm.deviceList as boolean
+        String value = "${sm.value ?: ''}"
+        if (!hasDevices && !value) return
+        if (hasDevices) {
+            out << "${sm.name} (${sm.type}) -> ${sm.deviceList}\n"
+        } else {
+            out << "${sm.name} (${sm.type}) = ${trunc(value, 200)}\n"
+        }
+    }
+    out << '</pre>'
     return out.toString()
 }
 
@@ -124,41 +144,9 @@ String describeSubscriptions(Map data) {
         subs.each { s ->
             if (!(s instanceof Map)) return
             Map sm = s as Map
-            out << '---\n'
-            sm.each { k, v -> out << "  ${k}: ${trunc(v, 250)}\n" }
+            out << "${sm.typeName} (id ${sm.typeId}) attr=${sm.name} handler=${sm.handler} subscriptionData=${sm.subscriptionData}\n"
         }
     }
-    out << '</pre>'
-    return out.toString()
-}
-
-String describeChildDevices(Map data) {
-    StringBuilder out = new StringBuilder()
-    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== CHILD DEVICES ===\n"
-    List kids = (data.childDevices ?: []) as List
-    if (!kids) {
-        out << '(none)\n'
-    } else {
-        kids.each { k -> out << "${trunc(k, 200)}\n" }
-    }
-    out << '</pre>'
-    return out.toString()
-}
-
-String describeSettingsWithDevices(Map data) {
-    StringBuilder out = new StringBuilder()
-    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== SETTINGS THAT RESOLVE TO DEVICES ===\n"
-    List settings = (data.appSettings ?: data.settings ?: []) as List
-    int shown = 0
-    settings.each { s ->
-        if (!(s instanceof Map)) return
-        Map sm = s as Map
-        if (sm.deviceList) {
-            out << "${sm.name} (type=${sm.type}) -> ${sm.deviceList}\n"
-            shown++
-        }
-    }
-    if (shown == 0) out << '(none found - check the top-level key holding settings)\n'
     out << '</pre>'
     return out.toString()
 }
