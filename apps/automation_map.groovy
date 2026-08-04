@@ -90,6 +90,14 @@ preferences {
 
 void installed() {
     log.info "${app.label} installed"
+    // Pressing Done is the first moment the instance exists and work can be
+    // scheduled for it, so the first scan starts here rather than asking the
+    // user to press Done and then come back in to start one - which reads as
+    // though the install did not take.
+    if (devices) {
+        log.info "${app.label}: starting first scan"
+        startScan()
+    }
 }
 
 void updated() {
@@ -124,7 +132,7 @@ Map main() {
         if (devices && !ready) {
             section {
                 paragraph "${devices.size()} device(s) selected."
-                paragraph '<b>Press <i>Done</i> to finish installing Automation Map</b>, then open it again to run your first scan. Scanning is not available until the app is installed.'
+                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> Your first scan starts by itself, and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.'
             }
         }
         if (devices && ready) {
