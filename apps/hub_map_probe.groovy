@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Hub Map Probe'
-@Field static final String APP_VERSION = '0.2.0'
+@Field static final String APP_VERSION = '0.3.0'
 
 definition(
     name: APP_NAME,
@@ -46,9 +46,8 @@ void updated() {
 Map main() {
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
         section {
-            paragraph 'Throwaway diagnostic for the Hub Map app. Pick a real device ID and a real installed-app ID (visible in their URLs in the hub UI), then turn on "Run probe now". Copy the results text back out once it renders.'
-            input name: 'sampleDeviceId', type: 'number', title: 'A real device ID to probe', required: true, defaultValue: 2999
-            input name: 'sampleAppId', type: 'number', title: 'A real installed-app ID to probe (e.g. Zigbee Map)', required: true, defaultValue: 2943
+            paragraph 'Throwaway diagnostic for the Hub Map app. Set a real Rule Machine rule ID (from its URL in the hub UI), then turn on "Run probe now". Copy the results text back out once it renders.'
+            input name: 'sampleRuleId', type: 'number', title: 'A real Rule Machine rule ID to probe', required: true, defaultValue: 2816
             input name: 'runProbe', type: 'bool', title: 'Run probe now', submitOnChange: true, defaultValue: false
         }
         if (runProbe) {
@@ -60,37 +59,51 @@ Map main() {
 }
 
 String buildProbeReport() {
-    // Round 2: round 1 confirmed /device/fullJson/<id> returns real JSON with an
-    // "appsUsingForDialog" list (device -> apps that reference it = usage edges).
-    // This round dumps that endpoint IN FULL (looking for parentAppId/parentDeviceId/
-    // childDevices = ownership edges), tries the equivalent guess for installed apps,
-    // and tries two guesses at bulk list endpoints (would remove the need to derive
-    // the app list from the union of every device's appsUsingForDialog).
+    // Round 3: hunting for REAL Rule Machine rule structure (trigger vs
+    // condition vs action), which /device/fullJson cannot provide - it only
+    // says which apps touch a device, not how. The App Status page is the
+    // best lead: it is an older server-rendered page (not the SPA shell that
+    // /installedapp/configure returned) and lists Event Subscriptions, which
+    // is how Rule Machine registers its trigger devices specifically.
+    //
+    // HTML bodies are searched for keywords rather than dumped from the top,
+    // because round 1 showed the first several KB of any hub page is just
+    // boilerplate <head> shell.
     List<String> paths = [
-        "/device/fullJson/${sampleDeviceId}",
-        "/installedapp/fullJson/${sampleAppId}",
-        '/installedapp/list.json',
-        '/device/list.json',
+        "/installedapp/status/${sampleRuleId}",
+        "/installedapp/statusJson/${sampleRuleId}",
+        "/installedapp/settings/${sampleRuleId}",
+        "/installedapp/subscriptions/${sampleRuleId}",
+        "/installedapp/eventSubscriptions/${sampleRuleId}",
+        "/hub/rules/${sampleRuleId}",
     ]
+
+    List<String> keywords = ['subscription', 'Presence Manager', 'trigger', 'Guest Mode', 'setting']
 
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
-    paths.each { String path -> out << probeOne(path, 6000) }
+    paths.each { String path -> out << probeOne(path, keywords) }
     out << '</div>'
     return out.toString()
 }
 
-String probeOne(String path, int limit) {
+String probeOne(String path, List<String> keywords) {
     StringBuilder out = new StringBuilder()
     out << "<div style='margin-top:1em; padding:.5em; border:1px solid #ccc'>"
     out << "<b>${path}</b><br>"
     try {
-        httpGet([uri: "http://127.0.0.1:8080${path}", textParser: true, timeout: 8, ignoreSSLIssues: true]) { resp ->
+        httpGet([uri: "http://127.0.0.1:8080${path}", textParser: true, timeout: 10, ignoreSSLIssues: true]) { resp ->
             String body = resp?.data?.text ?: ''
-            int fullLength = body.length()
-            if (body.length() > limit) body = body.substring(0, limit) + '... [truncated]'
-            String escaped = body.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-            out << "Status: ${resp.status}, Content-Type: ${resp.headers?.'Content-Type'}, Full length: ${fullLength}<br>"
+            String contentType = "${resp.headers?.'Content-Type'}"
+            out << "Status: ${resp.status}, Content-Type: ${contentType}, Full length: ${body.length()}<br>"
+
+            String extract
+            if (contentType.contains('json')) {
+                extract = body.length() > 6000 ? body.substring(0, 6000) + '... [truncated]' : body
+            } else {
+                extract = extractKeywordWindows(body, keywords, 700)
+            }
+            String escaped = extract.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
             out << "<pre style='white-space:pre-wrap; word-break:break-all'>${escaped}</pre>"
         }
     } catch (Exception ex) {
@@ -98,4 +111,22 @@ String probeOne(String path, int limit) {
     }
     out << '</div>'
     return out.toString()
+}
+
+String extractKeywordWindows(String body, List<String> keywords, int window) {
+    String lowerBody = body.toLowerCase()
+    StringBuilder found = new StringBuilder()
+    keywords.each { String kw ->
+        int idx = lowerBody.indexOf(kw.toLowerCase())
+        if (idx < 0) {
+            found << "\n=== no match for '${kw}' ===\n"
+            return
+        }
+        int start = (idx - window) < 0 ? 0 : (idx - window)
+        int end = (idx + window) > body.length() ? body.length() : (idx + window)
+        found << "\n=== match '${kw}' at offset ${idx} ===\n"
+        found << body.substring(start, end)
+        found << '\n'
+    }
+    return found.toString()
 }
