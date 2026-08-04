@@ -58,11 +58,11 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.11.0'
+@Field static final String APP_VERSION = '1.0.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '7'
+@Field static final String GRAPH_SCHEMA = '1'
 // Rule flow decoding reads Rule Machine's private internals, so it is pinned to
 // the version it was verified against. Rules on any other engine still appear
 // in the graph with their device relationships; they are counted and reported
@@ -135,7 +135,7 @@ Map main() {
                         // A graph built by an older version can carry relationship
                         // kinds this version no longer renders, which silently draws
                         // as uncoloured edges rather than failing visibly.
-                        paragraph "<b style='color:#c0392b'>This map was built by version ${state.graphVersion ?: 'an earlier release'} and will not display correctly. Run the scan again.</b>"
+                        paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
                         paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
                         paragraph compatibilitySummary()
@@ -890,7 +890,7 @@ Map renderMapMapping() {
             data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
 <body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
 <h2>This map is out of date</h2>
-<p>It was built for an older data format than this version of Automation Map expects.
+<p>It was saved in a format this release no longer reads.
 Relationship types have changed since then, so the graph would render without role colours.</p>
 <p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
 </body></html>"""

@@ -1,109 +1,106 @@
 # Automation Map
 
-A Hubitat app that visualizes how installed apps and devices relate to each other, and **in what role** - which app owns a device, which devices trigger an app, which constrain it, and which it acts on - as an interactive force-directed graph, in the same visual style as Dan Danache's [Zigbee Map app](https://codeberg.org/dan-danache/hubitat/src/branch/main/zigbee-map-app).
+Draws every installed app and device on your hub as an interactive graph, colouring each connection by the **role** the device plays in that app. Rules also render as a flowchart of their actual logic.
+
+It answers questions the hub itself makes tedious: what does this rule really touch, which app keeps turning that light on, and what is this device even used for.
+
+**Read-only.** It never commands a device or changes an app. It reads and draws.
+
+## What you get
+
+**Roles.** Every connection is one of:
+
+| Role | Meaning |
+| --- | --- |
+| **Trigger** | the app listens to this device and reacts to it |
+| **Constraint** | a condition or required expression that gates the app |
+| **Monitor** | the app reads this device's state but cannot command it |
+| **Action** | the app can command this device |
+| **Exposed** | published to an external system, such as Maker API or Google Home |
+| **Owns** | the app created this device |
+
+A device can hold different roles in different apps: a motion sensor may trigger one rule and be switched by another. Roles therefore belong to the connection, not the device.
+
+**Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
+
+**Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step.
+
+**Insights.** Two lists the hub cannot give you:
+
+- **Contested devices** - more than one app can leave the device in a lasting state, the usual cause of automations fighting each other. Notifications and chimes are excluded, since repeating those is not a conflict.
+- **Devices nothing references** - no app owns, watches or drives them.
 
 ## What "app" means here
 
-Hubitat uses the word *app* for two different things, and the counts make no sense until you separate them:
+Hubitat uses *app* for two different things, and the counts make no sense until you separate them:
 
 - an **app type** is a piece of code in **Apps Code** - Rule Machine, Maker API, CoCoHue
 - an **installed app** is one configured thing built on that code - your "Back Door Night" rule
 
-Automation Map counts **installed apps**, the entries on your **Apps** page. On the hub it was developed against that is **64 installed apps built from only 17 app types**, because 41 of them are individual Rule Machine rules all sharing the one piece of Rule Machine code, alongside 5 Averaging Master instances, 3 Maker APIs and 2 Notifiers.
+Automation Map counts **installed apps**, the entries on your **Apps** page. A hub with 64 installed apps may have only 17 app types, because each Rule Machine rule is its own installed app sharing the one piece of Rule Machine code.
 
-So each orange square is a single automation or integration you set up, not a piece of code. That is deliberate: "Back Door Night" and "Patio Night" control different lights, so collapsing them into one Rule Machine node would throw away the entire point of the map.
+So each orange square is a single automation or integration you set up, not a piece of code. Two rules built on Rule Machine control different devices, so collapsing them into one node would throw away the point of the map.
 
-## Where the data comes from
+## How it works
 
-There is no official Hubitat API for "list every app and what devices it uses, and how". The data comes from the hub's own internal endpoints (the ones the hub's own web UI calls), fetched via a self-request to `127.0.0.1` - an established community technique, not a public API.
+Hubitat has no API for "list every app and what devices it uses, and how". Automation Map asks the hub's own internal endpoints - the same ones the admin UI calls - through a local request the hub makes to itself. This is an established community technique, not a public API.
 
 | Endpoint | Used for |
 | --- | --- |
-| `/device/fullJson/<id>` | `parentApp` + `appsUsingForDialog`, used **only to discover which app ids exist** |
-| `/installedapp/statusJson/<id>` | the real relationship data per app: `childDevices`, `eventSubscriptions`, and every setting that resolves to devices |
+| `/device/fullJson/<id>` | discovering which apps exist, by asking each device which apps use it |
+| `/installedapp/statusJson/<id>` | the relationship data per app: child devices, event subscriptions, and every setting that resolves to devices |
 
-Two other candidate sources were ruled out first:
+Roles are decided in this order:
 
-- A hub backup (`.lzf`) is an H2 database, but it is encrypted at the storage layer with no known password.
-- The Maker API was tested live and exposes device attributes/commands only - no parent-app, subscription, or per-app device-reference data.
+| Signal | Role |
+| --- | --- |
+| device is in the app's child devices | owns |
+| Rule Machine trigger setting | trigger |
+| Rule Machine condition setting | constraint |
+| setting takes any device type (the wildcard picker) | exposed |
+| device appears in the app's event subscriptions | trigger |
+| setting's capability exposes no commands | monitor |
+| anything else resolving to devices | action |
 
-## How roles are decided
+Child devices, event subscriptions and capability types are platform-level facts, so the graph covers apps it was never specifically written for, including integrations.
 
-Derived by probing two apps whose source is known (Presence Manager, LIFX Light Manager) plus one Rule Machine rule, and cross-checking against both the source and the rule's own UI:
+Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1** and **Notifier** are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
 
-Checked in this order:
+## Requirements and limitations
 
-| Signal | Role | Evidence |
-| --- | --- | --- |
-| device in the app's `childDevices` | **owns** | LIFX Light Manager: 12 child lights, zero subscriptions - matches its source, which only calls `addChildDevice` |
-| setting named `tDev*` | **trigger** | Rule Machine trigger devices; `tDev9` matched the rule's own "reports presence *changed*" trigger |
-| setting named `rDev*` | **constraint** | Rule Machine conditions and required expression; `rDev_20` matched the rule's illuminance `>= 500` check |
-| setting type is the wildcard `capability.*` | **exposed** | integrations publishing devices to an external system. Maker API and Google Home both use it; without this, one Maker API instance alone contributed 192 false "commands this device" edges |
-| device appears in `eventSubscriptions` | **trigger** | general case - an app subscribes to what it listens to. Presence Manager's 5 subscriptions matched its `subscribeEvidenceDevices()` exactly |
-| setting type is a capability with no commands | **monitor** | watched, not driven. Critical Device Monitor subscribes only to its water/smoke/CO pickers but also inspects contact, motion, lock and garage-door pickers it never commands |
-| any other setting resolving to devices | **action** | `onOffSwitch.*`, `volume.*`, `note.*`, `siren.*`, `chime.*`, `speakDevice.*` |
+- **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
+- **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN. The hub itself does not need internet.
+- **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
+- **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
+- **Only apps that reference at least one device appear.** Apps are discovered by asking devices which apps use them, so an app using no devices is invisible. There is no bulk app-list endpoint to cross-check against.
+- **Very heavily shared devices may be missed.** The hub truncates a device's app list when many apps use it, so an app appearing only in truncated lists can be missed. Selecting all devices makes this unlikely.
+- **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
+- **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
+- A scan of roughly 200 devices and 60 apps takes about two minutes.
 
-Only the `tDev`/`rDev` rules are Rule Machine specific. `childDevices`, `eventSubscriptions` and capability types are platform-level, so the graph covers apps it was never written against - it handled all 17 app types on the development hub, 12 of them integrations with no specific support.
+## Install
 
-## Rule flows
+Via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/), or manually:
 
-Focusing a single app draws its logic as a flowchart: trigger, gating expression, then the ordered actions including waits and their timeouts, with `IF` / `ELSE-IF` / `ELSE` rendered as real branches.
+1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> **Save**.
+2. **Apps** -> **Add User App** -> **Automation Map**.
+3. Select the devices to scan - **Select All** is the normal choice - then **Scan relationships now**.
+4. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
+5. **View Automation Map**.
 
-This is reconstructed from each app's internal state, **not** from its source. Built-in apps are compiled classes and expose no source at all (`/app/ajax/code` returns an empty body for them), which is equally true of Rule Machine - it was decoded purely from runtime state, cross-checked against its own UI.
-
-Supported today:
-
-- **Rule Machine 5.1** (`SUPPORTED_RULE_ENGINE`). Rule Machine's `indent` field is not used: one real rule opens three `IF`s and closes only two, and its indents disagree with the visible nesting, so structure comes from the control-flow markers with a stack that auto-closes anything left open.
-- **Notifier**, a built-in app, which stores an already-rendered description in `state.text`.
-
-Rules on any other engine still appear in the graph with their device relationships; they are counted and reported rather than silently producing an empty flow.
-
-## Insights
-
-- **Contested devices** - more than one app can leave the device in a lasting state. Restricted to stateful capabilities, because two apps notifying the same phone is not a conflict while two apps driving the same light is. On the development hub this distinction cut the list from 76 entries to 28 real ones.
-- **Devices nothing references** - no app owns, watches or drives them.
-
-`tDev`/`rDev` are Rule Machine's private naming and could change if Rule Machine changes. The `eventSubscriptions` and `childDevices` signals are structural and apply to every app.
-
-A device can hold different roles in different apps - a motion sensor may trigger one rule and be acted on by another. Roles are therefore per-relationship, not per-device: edges are always coloured by role, and device nodes are coloured by role only when a single app is focused.
-
-## Known limitations
-
-- **The app count is of installed apps that reference at least one device.** Apps are discovered by asking each scanned device which apps use it, so an installed app referencing no devices is invisible to this method and will not appear in the map or the count. There is no bulk app-list endpoint to cross-check against - `/installedapp/list.json`, `/hub2/appList` and similar all return 404 - so the total cannot be reconciled with your Apps page automatically.
-- **App discovery can also miss apps that do use devices.** Each device's `appsUsingForDialog` list is truncated by the hub when a device is used by many apps (it carries an "and N more" count). An app that only ever appears in a truncated list can be missed. Selecting all devices makes this unlikely but not impossible.
-- **Flow decoding is engine-specific.** Rule Machine 5.1 and Notifier are supported. Other engines (Rule 4.x, Simple Automation, Basic Rules, Room Lighting, Motion Lighting) have their own private layouts and would each need decoding the same empirical way. They are detected and reported, not silently skipped.
-- **Event subscriptions are a snapshot, not static configuration.** Observed live: rule 2279 "Back Door Night" was subscribed *only* to its Required Expression device, with no subscription to its actual trigger, because that expression was false at scan time - Rule Machine drops trigger subscriptions while the gate is closed and restores them when it opens. Rule Machine apps are unaffected, because `tDev*`/`rDev*` settings are static and take precedence over the subscription signal. For **non-Rule-Machine apps**, where subscriptions are the only trigger signal, an app that subscribes conditionally can map differently depending on when the scan ran.
-- Roles reflect how a device is *wired into* an app's configuration, not runtime behaviour.
-
-## Components
-
-### Apps
-
-- `apps/automation_map.groovy` - the app.
-- `apps/automation_map_probe.groovy` - **throwaway diagnostic**, not needed to run Automation Map. It dumps candidate internal endpoints so role detection could be built against confirmed facts rather than guesses. Kept in the repo as a tool for re-probing if a hub firmware update changes these undocumented endpoints. Safe to delete from the hub once Automation Map works.
-
-## Installation
-
-1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> Save.
-2. **Apps** -> **Add User App** -> Automation Map.
-3. Select devices to scan (use "Select All"), click **Scan relationships now**.
-4. The scan runs in two phases - devices first (to discover apps), then apps (for the relationship data). It takes a couple of minutes on a large hub; the page refreshes itself and shows a percentage, so there is no need to reload it.
-5. Click **View Automation Map**.
-
-Devices referenced by an app are added to the map automatically even if not selected in step 3 - the selection only decides which devices are used to discover apps.
-
-## Using the map
-
-**Designed for a desktop browser.** The graph, filter panel and flowcharts need room and a pointer, so a small screen is shown a notice rather than an unusable shrunken version.
-
-- **Focus app** - show one app and every device it touches, coloured by role in that app. If it is a supported rule engine you also get a flowchart of its logic.
-- **Focus device** - show one device and every app that touches it.
-- **Show** - filter to a single relationship type: triggers, constraints, monitored, actions, exposed or ownership.
-- **Insights** - contested and unreferenced devices (see above).
-- Each filter has a **search box**, since a large hub puts a couple of hundred entries in the device list.
-
-The whole-hub view is dense by nature. Focusing one app or device is the normal way to use it; the opening screen says so.
+Devices referenced by an app are added to the map automatically even if you did not select them. The selection only decides which devices are used to discover apps.
 
 ## Re-scanning
 
-The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices. If the app is upgraded and the stored graph no longer matches what the new version draws, it refuses to display a stale map and tells you to scan again, rather than rendering something subtly wrong.
+The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices.
+
+If a stored map cannot be drawn correctly by the installed release, the app refuses to show it and asks you to scan again rather than rendering something subtly wrong.
+
+## Troubleshooting
+
+The app exposes two endpoints, using the same access token as the map link, useful if a scan appears stuck:
+
+- `.../scan-status` - progress, counts, and any recorded error
+- `.../scan` - starts a scan without opening the app
+
+`check_template.sh` is a maintainer tool. The map page is built inside a Groovy string, so a stray backslash is consumed before the browser sees it and silently breaks the page script. Run it before committing changes to the page.
