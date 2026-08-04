@@ -24,9 +24,21 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Hub Map'
-@Field static final String APP_VERSION = '0.4.0'
+@Field static final String APP_VERSION = '0.5.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer BATCH_SIZE = 15
+
+// Best-effort "is this device actionable" signal, used only to guess a
+// device's likely role (target vs. sensor/trigger) for display - inferred
+// from which commands the driver exposes, NOT from any real rule logic.
+// A rule's actual trigger/action/condition wiring lives inside its own
+// config, which no endpoint we've found exposes.
+@Field static final List<String> ACTUATOR_COMMANDS = [
+    'on', 'off', 'setLevel', 'setColorTemperature', 'setColor', 'setHue', 'setSaturation',
+    'open', 'close', 'lock', 'unlock', 'setPosition', 'strobe', 'siren', 'both',
+    'setThermostatMode', 'setHeatingSetpoint', 'setCoolingSetpoint', 'start', 'stop', 'pause',
+    'setSpeed', 'setVolume', 'mute', 'unmute', 'arm', 'disarm', 'beep',
+]
 
 definition(
     name: APP_NAME,
@@ -134,7 +146,7 @@ void finishScan() {
 }
 
 Map fetchDeviceRelationships(id) {
-    Map out = [id: id, label: "Device ${id}", apps: [], parentApp: null, error: null]
+    Map out = [id: id, label: "Device ${id}", apps: [], parentApp: null, commands: [], error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${id}", timeout: 8]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -150,6 +162,9 @@ Map fetchDeviceRelationships(id) {
             if (parentApp?.id != null) {
                 out.parentApp = [id: parentApp.id, label: stripTags((parentApp.label ?: parentApp.name ?: "App ${parentApp.id}") as String)]
             }
+
+            List cmds = (data.commands ?: []) as List
+            out.commands = cmds.findAll { it?.name }.collect { it.name as String }
         }
     } catch (Exception ex) {
         out.error = ex.message
@@ -157,15 +172,20 @@ Map fetchDeviceRelationships(id) {
     return out
 }
 
+String deviceRole(List commands) {
+    boolean actionable = commands && commands.any { ACTUATOR_COMMANDS.contains(it) }
+    return actionable ? 'target' : 'sensor'
+}
+
 String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
-Map nodeEntry(String id, String fullLabel, String group) {
+Map nodeEntry(String id, String fullLabel, String group, String role = null) {
     String label = fullLabel ?: id
     String shortLabel = label
     if (shortLabel.length() > 22) shortLabel = "${shortLabel.substring(0, 20)}…"
-    return [id: id, label: shortLabel, title: label, group: group]
+    return [id: id, label: shortLabel, title: label, group: group, role: role]
 }
 
 Map buildGraph(Map results) {
@@ -179,7 +199,7 @@ Map buildGraph(Map results) {
     results.each { String key, Map info ->
         if (info == null) return
         String devNodeId = "d${info.id}"
-        nodes[devNodeId] = nodeEntry(devNodeId, (info.label ?: "Device ${info.id}"), 'device')
+        nodes[devNodeId] = nodeEntry(devNodeId, (info.label ?: "Device ${info.id}"), 'device', deviceRole(info.commands as List))
 
         if (info.parentApp) {
             String appNodeId = "a${info.parentApp.id}"
@@ -238,6 +258,7 @@ String buildMapHtml() {
   #network { width:100%; height:100vh; }
   .legend-row { display:flex; align-items:center; margin:4px 0; }
   .swatch { width:12px; height:12px; border-radius:50%; margin-right:8px; display:inline-block; }
+  .swatch.square { border-radius:2px; }
   .line { width:20px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; }
   .dashed { border-top-style:dashed; }
 </style>
@@ -247,9 +268,11 @@ String buildMapHtml() {
 <div id="legend">
   <div class="legend-row"><span class="swatch" style="background:#3498db"></span>Hub</div>
   <div class="legend-row"><span class="swatch" style="background:#e8a33d"></span>App</div>
-  <div class="legend-row"><span class="swatch" style="background:#7fae42"></span>Device</div>
+  <div class="legend-row"><span class="swatch" style="background:#7fae42"></span>Device (sensor/read-only)</div>
+  <div class="legend-row"><span class="swatch square" style="background:#7fae42"></span>Device (actionable - has on/off/set... commands)</div>
   <div class="legend-row"><span class="line"></span>Owns (created device)</div>
   <div class="legend-row"><span class="line dashed"></span>Uses (referenced in config)</div>
+  <div class="legend-row" style="opacity:0.75; font-size:0.9em">Sensor vs actionable is a guess from device commands, not the rule's real trigger/action wiring.</div>
 </div>
 <div id="controls">
   <label>Focus app<select id="appFilter"><option value="__all__">All apps</option></select></label>
@@ -266,10 +289,15 @@ String buildMapHtml() {
 const GRAPH = ${jsonStr};
 const groupColors = { hub: '#3498db', app: '#e8a33d', device: '#7fae42' };
 
-function styledNode(n) {
+function nodeShape(n) {
+  if (n.group === 'hub') return 'diamond';
+  if (n.group === 'device' && n.role === 'target') return 'square';
+  return 'dot';
+}
+function styledNode(n, useFullLabel) {
   return {
-    id: n.id, label: n.label, title: n.title, color: groupColors[n.group],
-    shape: n.group === 'hub' ? 'diamond' : 'dot',
+    id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: groupColors[n.group],
+    shape: nodeShape(n),
     size: n.group === 'hub' ? 24 : (n.group === 'app' ? 17 : 13),
     font: {
       color: '#fff', size: n.group === 'hub' ? 16 : 13,
@@ -287,7 +315,7 @@ function styledEdge(e, i) {
 const ALL_NODES = GRAPH.nodes;
 const ALL_EDGES = GRAPH.edges.map(styledEdge);
 
-const nodes = new vis.DataSet(ALL_NODES.map(styledNode));
+const nodes = new vis.DataSet(ALL_NODES.map(function (n) { return styledNode(n, false); }));
 const edges = new vis.DataSet(ALL_EDGES);
 
 const network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
@@ -348,8 +376,9 @@ function applyFilters() {
 
   const shownNodes = nodeIds ? ALL_NODES.filter(function (n) { return nodeIds.has(n.id); }) : ALL_NODES;
   const shownEdges = nodeIds ? edgeSubset : (kindVal === 'all' ? ALL_EDGES : ALL_EDGES.filter(function (e) { return e.kind === kindVal; }));
+  const focused = (appVal !== '__all__' || devVal !== '__all__');
 
-  nodes.clear(); nodes.add(shownNodes.map(styledNode));
+  nodes.clear(); nodes.add(shownNodes.map(function (n) { return styledNode(n, focused); }));
   edges.clear(); edges.add(shownEdges);
   network.setOptions({ physics: { enabled: true } });
   settle();
