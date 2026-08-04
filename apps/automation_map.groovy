@@ -46,11 +46,11 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.3.2'
+@Field static final String APP_VERSION = '1.4.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '2'
+@Field static final String GRAPH_SCHEMA = '3'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -434,27 +434,99 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         if (n.endsWith(".${num}")) d.each { if (!devices.contains(it)) devices << it }
     }
 
-    String label = prettyMethod(method)
-    if (method == 'getOnOffSwitch') {
-        label = settingValues["onOff.${num}"] == 'true' ? 'On' : 'Off'
-    } else if (method == 'getSetColorTemp') {
-        label = "Colour temperature ${settingValues["ctL.${num}"] ?: ''}K".trim()
-        String level = settingValues["ctLevel.${num}"]
-        if (level) label += ", level ${level}"
-    } else if (method == 'getWaitRule') {
-        String cond = expressionText((evalMap["${act.rule}"] ?: []) as List, capabs)
-        label = cond ? "Wait for: ${cond}" : 'Wait'
-        if (act.delay) label += " (timeout ${act.delay})"
+    // Control-flow markers drive the branching layout. The rule's own `indent`
+    // field is deliberately NOT used: on rule 2816 it disagrees with the real
+    // nesting, so structure comes from these methods plus a stack instead.
+    String ctrl = null
+    if (method == 'getIfThen') ctrl = 'if'
+    else if (method == 'getElseIf') ctrl = 'elseif'
+    else if (method == 'getElse') ctrl = 'else'
+    else if (method == 'getEndIf') ctrl = 'endif'
+
+    String cond = ''
+    if (ctrl == 'if' || ctrl == 'elseif') {
+        cond = expressionText((evalMap["${act.rule}"] ?: []) as List, capabs)
+        (requiredDevices((evalMap["${act.rule}"] ?: []) as List, settingDevices)).each {
+            if (!devices.contains(it)) devices << it
+        }
+    }
+    if (method == 'getWaitRule') {
         // A wait's devices come from the condition it waits on, not from an
         // action setting numbered after it.
         (requiredDevices((evalMap["${act.rule}"] ?: []) as List, settingDevices)).each {
             if (!devices.contains(it)) devices << it
         }
-    } else if (method == 'getDelay' && act.delay) {
-        label = "Delay ${act.delay}"
     }
 
-    return [kind: 'action', label: label, devices: devices, indent: "${act.indent ?: ''}".length()]
+    return [
+        kind: 'action',
+        ctrl: ctrl,
+        cond: cond,
+        label: actionLabel(method, num, act, settingValues, evalMap, capabs),
+        devices: devices,
+    ]
+}
+
+String actionLabel(String method, String num, Map act, Map settingValues, Map evalMap, Map capabs) {
+    switch (method) {
+        case 'getOnOffSwitch':
+            return settingValues["onOff.${num}"] == 'true' ? 'On' : 'Off'
+        case 'getSetColorTemp':
+            String ctLabel = "Colour temperature ${settingValues["ctL.${num}"] ?: ''}K".trim()
+            String level = settingValues["ctLevel.${num}"]
+            return level ? "${ctLabel}, level ${level}" : ctLabel
+        case 'getSetColor':
+            return 'Set colour'
+        case 'getWaitRule':
+            String waitCond = expressionText((evalMap["${act.rule}"] ?: []) as List, capabs)
+            String waitLabel = waitCond ? "Wait for: ${waitCond}" : 'Wait'
+            return act.delay ? "${waitLabel} (timeout ${act.delay})" : waitLabel
+        case 'getWaitEvents':
+            return act.delay ? "Wait for event (timeout ${act.delay})" : 'Wait for event'
+        case 'getDelay':
+            return act.delay ? "Delay ${act.delay}" : 'Delay'
+        case 'getMsg':
+            String msg = settingValues["msg.${num}"]
+            return msg ? "Notify: ${msg}" : 'Notify'
+        case 'getSetPrivateBoolean':
+            return 'Set Private Boolean'
+        case 'getDefinedAction':
+            return 'Run defined actions'
+        case 'getSetVolume':
+            // volumeVal.<n> holds the level; volume.<n> is the device picker.
+            String vol = settingValues["volumeVal.${num}"] ?: settingValues["speakVolume.${num}"]
+            return vol ? "Set volume ${vol}" : 'Set volume'
+        case 'getChime':
+            return 'Chime'
+        case 'getCapture':
+            return 'Capture device state'
+        case 'getRestore':
+            return 'Restore device state'
+        case 'getStopActions':
+            return 'Stop actions'
+        case 'getSetMode':
+            return 'Set mode'
+        case 'getOCGarage':
+            return 'Open / close garage'
+        case 'getMuteUnmute':
+            return 'Mute / unmute'
+        case 'getHTTPPost':
+            return 'HTTP request'
+        case 'getFlashSwitch':
+            return 'Flash'
+        case 'getPollSwitch':
+            return 'Poll'
+        case 'getIfThen':
+            return 'IF'
+        case 'getElseIf':
+            return 'ELSE IF'
+        case 'getElse':
+            return 'ELSE'
+        case 'getEndIf':
+            return 'END IF'
+        default:
+            return prettyMethod(method)
+    }
 }
 
 // Rule Machine embeds the CURRENT reading in its condition text, e.g.
@@ -625,7 +697,7 @@ String buildMapHtml() {
   .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
   .note { opacity:0.75; font-size:0.9em; margin-top:6px; line-height:1.35; }
   #flow { position:absolute; top:10px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
-          max-width:min(46vw, 620px); max-height:88vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+          max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
@@ -778,7 +850,7 @@ function applyFilters() {
 // ---------------------------------------------------------------------------
 const FLOWS = GRAPH.flows || {};
 if (window.mermaid) {
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: true } });
+  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false } });
 }
 
 // Written without regex literals on purpose: this whole page is a Groovy
@@ -798,29 +870,111 @@ function mermaidEscape(text) {
   return s.split(' ').filter(function (p) { return p.length > 0; }).join(' ');
 }
 
+// Lays out IF / ELSE-IF / ELSE / END-IF as real branches.
+//
+// Rule Machine's own `indent` field cannot be trusted (rule 2816 has three IFs
+// but only two END-IFs, and its indents disagree with the visible nesting), so
+// structure is derived from the control-flow markers with a stack, and any
+// block still open at the end is closed automatically rather than being lost.
 function mermaidFor(steps) {
   const lines = ['flowchart TD'];
-  const ids = [];
-  steps.forEach(function (s, i) {
-    const id = 'S' + i;
-    ids.push(id);
-    let text = mermaidEscape(s.label);
-    if (s.devices && s.devices.length) text += '<br/><i>' + mermaidEscape(s.devices.join(', ')) + '</i>';
-    // Stadium for triggers, hexagon for the gating expression, box for actions.
-    if (s.kind === 'trigger') lines.push('  ' + id + '(["' + text + '"])');
-    else if (s.kind === 'required') lines.push('  ' + id + '{{"' + text + '"}}');
+  const styles = [];
+  let counter = 0;
+  let tails = [];          // [{id, label}] - open ends awaiting the next node
+  const stack = [];        // one frame per open IF block
+
+  function emit(shape, text, kind) {
+    const id = 'S' + (counter++);
+    if (shape === 'stadium') lines.push('  ' + id + '(["' + text + '"])');
+    else if (shape === 'hex') lines.push('  ' + id + '{{"' + text + '"}}');
+    else if (shape === 'diamond') lines.push('  ' + id + '{"' + text + '"}');
     else lines.push('  ' + id + '["' + text + '"]');
+    if (kind === 'trigger') styles.push('  style ' + id + ' fill:#4a2f5e,stroke:#9b59b6,color:#fff');
+    else if (kind === 'required') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
+    else if (kind === 'cond') styles.push('  style ' + id + ' fill:#123a4a,stroke:#4aa3c7,color:#fff');
+    else styles.push('  style ' + id + ' fill:#33502a,stroke:#7fae42,color:#fff');
+    return id;
+  }
+  function connect(to) {
+    const drawn = {};
+    tails.forEach(function (t) {
+      const key = t.id + '|' + t.label;
+      if (drawn[key]) return;
+      drawn[key] = true;
+      lines.push('  ' + t.id + (t.label ? ' -->|' + t.label + '| ' : ' --> ') + to);
+    });
+  }
+  // Mermaid sizes a node to its longest line, so an action listing nine
+  // speakers would stretch the whole diagram and shrink every other node into
+  // illegibility. Long text is wrapped and long device lists are summarised.
+  function wrap(text, width) {
+    const words = String(text).split(' ');
+    const out = [];
+    let line = '';
+    words.forEach(function (w) {
+      if (line.length && (line.length + 1 + w.length) > width) { out.push(line); line = w; }
+      else { line = line.length ? line + ' ' + w : w; }
+    });
+    if (line.length) out.push(line);
+    return out.join('<br/>');
+  }
+  function deviceSummary(devices) {
+    if (devices.length <= 3) return devices.join(', ');
+    return devices.slice(0, 3).join(', ') + ' +' + (devices.length - 3) + ' more';
+  }
+  function nodeText(s) {
+    let t = wrap(mermaidEscape(s.label), 46);
+    if (s.devices && s.devices.length) {
+      t += '<br/><i>' + wrap(mermaidEscape(deviceSummary(s.devices)), 46) + '</i>';
+    }
+    return t;
+  }
+
+  steps.forEach(function (s) {
+    if (s.ctrl === 'if' || s.ctrl === 'elseif') {
+      if (s.ctrl === 'elseif' && stack.length) {
+        const f = stack[stack.length - 1];
+        f.branchTails = f.branchTails.concat(tails);
+        tails = f.pendingFalse;      // this branch is reached when the previous test failed
+        f.pendingFalse = [];
+      }
+      // Diamonds grow in BOTH dimensions with their text, so they are wrapped
+      // harder than boxes to stop one long condition dominating the diagram.
+      const id = emit('diamond', wrap(mermaidEscape(s.cond || s.label), 30), 'cond');
+      connect(id);
+      if (s.ctrl === 'if') stack.push({ branchTails: [], pendingFalse: [] });
+      if (stack.length) stack[stack.length - 1].pendingFalse = [{ id: id, label: 'no' }];
+      tails = [{ id: id, label: 'yes' }];
+    } else if (s.ctrl === 'else') {
+      if (stack.length) {
+        const f = stack[stack.length - 1];
+        f.branchTails = f.branchTails.concat(tails);
+        tails = f.pendingFalse;
+        f.pendingFalse = [];
+      }
+    } else if (s.ctrl === 'endif') {
+      if (stack.length) {
+        const f = stack.pop();
+        tails = f.branchTails.concat(tails).concat(f.pendingFalse);
+      }
+    } else {
+      const shape = s.kind === 'trigger' ? 'stadium' : (s.kind === 'required' ? 'hex' : 'box');
+      const id = emit(shape, nodeText(s), s.kind);
+      connect(id);
+      tails = [{ id: id, label: '' }];
+    }
   });
-  for (let i = 0; i < ids.length - 1; i++) lines.push('  ' + ids[i] + ' --> ' + ids[i + 1]);
-  steps.forEach(function (s, i) {
-    if (s.kind === 'trigger') lines.push('  style S' + i + ' fill:#4a2f5e,stroke:#9b59b6,color:#fff');
-    else if (s.kind === 'required') lines.push('  style S' + i + ' fill:#0f4f45,stroke:#16a085,color:#fff');
-    else lines.push('  style S' + i + ' fill:#33502a,stroke:#7fae42,color:#fff');
-  });
+
+  // Close anything the rule left open, so no branch is silently dropped.
+  while (stack.length) {
+    const f = stack.pop();
+    tails = f.branchTails.concat(tails).concat(f.pendingFalse);
+  }
+
   // Double-escaped on purpose. This page is a Groovy GString, so a single
   // backslash is consumed by Groovy and would emit a real newline inside this
   // string literal - a JavaScript syntax error that kills the whole page.
-  return lines.join('\\n');
+  return lines.concat(styles).join('\\n');
 }
 
 // flowPanel may be absent if the panel markup ever changes; the filter controls
