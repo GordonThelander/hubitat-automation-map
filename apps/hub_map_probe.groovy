@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Hub Map Probe'
-@Field static final String APP_VERSION = '0.1.0'
+@Field static final String APP_VERSION = '0.2.0'
 
 definition(
     name: APP_NAME,
@@ -60,38 +60,37 @@ Map main() {
 }
 
 String buildProbeReport() {
+    // Round 2: round 1 confirmed /device/fullJson/<id> returns real JSON with an
+    // "appsUsingForDialog" list (device -> apps that reference it = usage edges).
+    // This round dumps that endpoint IN FULL (looking for parentAppId/parentDeviceId/
+    // childDevices = ownership edges), tries the equivalent guess for installed apps,
+    // and tries two guesses at bulk list endpoints (would remove the need to derive
+    // the app list from the union of every device's appsUsingForDialog).
     List<String> paths = [
-        '/hub/details/platform',
-        '/hub2/appList',
-        '/hub2/apps',
-        '/hub2/deviceList',
-        '/hub2/devices',
-        '/installedapp/list',
-        '/device/list',
-        "/device/edit/${sampleDeviceId}",
         "/device/fullJson/${sampleDeviceId}",
-        "/installedapp/configure/${sampleAppId}",
-        "/installedapp/detail/${sampleAppId}",
-        "/app/edit/${sampleAppId}",
+        "/installedapp/fullJson/${sampleAppId}",
+        '/installedapp/list.json',
+        '/device/list.json',
     ]
 
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
-    paths.each { String path -> out << probeOne(path) }
+    paths.each { String path -> out << probeOne(path, 6000) }
     out << '</div>'
     return out.toString()
 }
 
-String probeOne(String path) {
+String probeOne(String path, int limit) {
     StringBuilder out = new StringBuilder()
     out << "<div style='margin-top:1em; padding:.5em; border:1px solid #ccc'>"
     out << "<b>${path}</b><br>"
     try {
         httpGet([uri: "http://127.0.0.1:8080${path}", textParser: true, timeout: 8, ignoreSSLIssues: true]) { resp ->
             String body = resp?.data?.text ?: ''
-            if (body.length() > 1500) body = body.substring(0, 1500) + '... [truncated]'
+            int fullLength = body.length()
+            if (body.length() > limit) body = body.substring(0, limit) + '... [truncated]'
             String escaped = body.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-            out << "Status: ${resp.status}, Content-Type: ${resp.headers?.'Content-Type'}<br>"
+            out << "Status: ${resp.status}, Content-Type: ${resp.headers?.'Content-Type'}, Full length: ${fullLength}<br>"
             out << "<pre style='white-space:pre-wrap; word-break:break-all'>${escaped}</pre>"
         }
     } catch (Exception ex) {
