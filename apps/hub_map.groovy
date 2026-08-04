@@ -24,20 +24,34 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Hub Map'
-@Field static final String APP_VERSION = '0.5.0'
+@Field static final String APP_VERSION = '0.6.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer BATCH_SIZE = 15
 
-// Best-effort "is this device actionable" signal, used only to guess a
-// device's likely role (target vs. sensor/trigger) for display - inferred
-// from which commands the driver exposes, NOT from any real rule logic.
-// A rule's actual trigger/action/condition wiring lives inside its own
-// config, which no endpoint we've found exposes.
+// Best-effort "is this device actionable / trigger-like / constraint-like"
+// signal, used only to guess a device's likely role for display - inferred
+// from commands, capability names (if present), and device name keywords,
+// NOT from any real rule logic. A rule's actual trigger/action/condition
+// wiring lives inside its own config, which no endpoint we've found exposes.
 @Field static final List<String> ACTUATOR_COMMANDS = [
     'on', 'off', 'setLevel', 'setColorTemperature', 'setColor', 'setHue', 'setSaturation',
     'open', 'close', 'lock', 'unlock', 'setPosition', 'strobe', 'siren', 'both',
     'setThermostatMode', 'setHeatingSetpoint', 'setCoolingSetpoint', 'start', 'stop', 'pause',
     'setSpeed', 'setVolume', 'mute', 'unmute', 'arm', 'disarm', 'beep',
+]
+@Field static final List<String> ACTUATOR_CAPABILITIES = [
+    'Actuator', 'Switch', 'SwitchLevel', 'ColorControl', 'ColorTemperature', 'Lock',
+    'GarageDoorControl', 'DoorControl', 'WindowShade', 'Thermostat', 'ThermostatMode',
+    'FanControl', 'SpeakerVolume', 'AudioVolume', 'AlarmControl', 'Chime', 'Valve',
+]
+@Field static final List<String> CONSTRAINT_CAPABILITIES = [
+    'IlluminanceMeasurement', 'TemperatureMeasurement', 'RelativeHumidityMeasurement',
+    'PowerMeter', 'EnergyMeter', 'VoltageMeasurement', 'PressureMeasurement', 'Battery',
+    'UltravioletIndex', 'CarbonDioxideMeasurement', 'PM25Measurement',
+]
+@Field static final List<String> CONSTRAINT_KEYWORDS = [
+    'illuminance', 'lux', 'temperature', 'humidity', 'battery', 'power', 'voltage',
+    'average', 'pressure', 'co2', 'aqi',
 ]
 
 definition(
@@ -146,7 +160,7 @@ void finishScan() {
 }
 
 Map fetchDeviceRelationships(id) {
-    Map out = [id: id, label: "Device ${id}", apps: [], parentApp: null, commands: [], error: null]
+    Map out = [id: id, label: "Device ${id}", apps: [], parentApp: null, commands: [], capabilities: [], error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${id}", timeout: 8]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -165,6 +179,10 @@ Map fetchDeviceRelationships(id) {
 
             List cmds = (data.commands ?: []) as List
             out.commands = cmds.findAll { it?.name }.collect { it.name as String }
+
+            Map deviceMap = data.device as Map
+            List rawCaps = (data.capabilities ?: deviceMap?.capabilities ?: []) as List
+            out.capabilities = rawCaps.findAll { it instanceof String }.collect { it as String }
         }
     } catch (Exception ex) {
         out.error = ex.message
@@ -172,9 +190,17 @@ Map fetchDeviceRelationships(id) {
     return out
 }
 
-String deviceRole(List commands) {
-    boolean actionable = commands && commands.any { ACTUATOR_COMMANDS.contains(it) }
-    return actionable ? 'target' : 'sensor'
+String deviceRole(List commands, List capabilities, String label) {
+    boolean actionable = (commands && commands.any { ACTUATOR_COMMANDS.contains(it) }) ||
+        (capabilities && capabilities.any { ACTUATOR_CAPABILITIES.contains(it) })
+    if (actionable) return 'target'
+
+    boolean constraintCap = capabilities && capabilities.any { CONSTRAINT_CAPABILITIES.contains(it) }
+    String lowerLabel = (label ?: '').toLowerCase()
+    boolean constraintKeyword = CONSTRAINT_KEYWORDS.any { lowerLabel.contains(it) }
+    if (constraintCap || constraintKeyword) return 'constraint'
+
+    return 'trigger'
 }
 
 String stripTags(String s) {
@@ -199,7 +225,7 @@ Map buildGraph(Map results) {
     results.each { String key, Map info ->
         if (info == null) return
         String devNodeId = "d${info.id}"
-        nodes[devNodeId] = nodeEntry(devNodeId, (info.label ?: "Device ${info.id}"), 'device', deviceRole(info.commands as List))
+        nodes[devNodeId] = nodeEntry(devNodeId, (info.label ?: "Device ${info.id}"), 'device', deviceRole(info.commands as List, info.capabilities as List, info.label as String))
 
         if (info.parentApp) {
             String appNodeId = "a${info.parentApp.id}"
@@ -268,11 +294,12 @@ String buildMapHtml() {
 <div id="legend">
   <div class="legend-row"><span class="swatch" style="background:#3498db"></span>Hub</div>
   <div class="legend-row"><span class="swatch" style="background:#e8a33d"></span>App</div>
-  <div class="legend-row"><span class="swatch" style="background:#7fae42"></span>Device (sensor/read-only)</div>
-  <div class="legend-row"><span class="swatch square" style="background:#7fae42"></span>Device (actionable - has on/off/set... commands)</div>
+  <div class="legend-row"><span class="swatch square" style="background:#7fae42"></span>Device - target/action</div>
+  <div class="legend-row"><span class="swatch" style="background:#9b59b6"></span>Device - trigger</div>
+  <div class="legend-row"><span class="swatch" style="background:#16a085"></span>Device - constraint</div>
   <div class="legend-row"><span class="line"></span>Owns (created device)</div>
   <div class="legend-row"><span class="line dashed"></span>Uses (referenced in config)</div>
-  <div class="legend-row" style="opacity:0.75; font-size:0.9em">Sensor vs actionable is a guess from device commands, not the rule's real trigger/action wiring.</div>
+  <div class="legend-row" style="opacity:0.75; font-size:0.9em">Role is guessed from device commands/capabilities/name, not the rule's real trigger/action/condition wiring.</div>
 </div>
 <div id="controls">
   <label>Focus app<select id="appFilter"><option value="__all__">All apps</option></select></label>
@@ -288,15 +315,20 @@ String buildMapHtml() {
 <script>
 const GRAPH = ${jsonStr};
 const groupColors = { hub: '#3498db', app: '#e8a33d', device: '#7fae42' };
+const roleColors = { target: '#7fae42', trigger: '#9b59b6', constraint: '#16a085' };
 
 function nodeShape(n) {
   if (n.group === 'hub') return 'diamond';
   if (n.group === 'device' && n.role === 'target') return 'square';
   return 'dot';
 }
+function nodeColor(n) {
+  if (n.group === 'device' && n.role && roleColors[n.role]) return roleColors[n.role];
+  return groupColors[n.group];
+}
 function styledNode(n, useFullLabel) {
   return {
-    id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: groupColors[n.group],
+    id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: nodeColor(n),
     shape: nodeShape(n),
     size: n.group === 'hub' ? 24 : (n.group === 'app' ? 17 : 13),
     font: {
