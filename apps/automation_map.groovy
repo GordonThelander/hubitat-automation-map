@@ -186,7 +186,13 @@ function amStartScan() {
   var m = document.getElementById('amScanMsg');
   b.disabled = true;
   m.textContent = 'Starting...';
-  fetch('${getLocalURL('scan')}', { cache: 'no-store' })
+  // credentials:'omit' is load-bearing, not tidiness. Sending the Hubitat
+  // session cookie makes the hub treat this as part of the open UI transaction,
+  // and scheduled jobs created inside one are discarded - startScan() would
+  // populate the queue and set scanRunning, then runIn() would silently
+  // schedule nothing and scanBatch would never execute. Authenticating with the
+  // access token alone runs it as an ordinary request, which schedules.
+  fetch('${getLocalURL('scan')}', { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
     .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
     .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
