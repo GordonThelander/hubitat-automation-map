@@ -68,6 +68,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 
 ## Requirements and limitations
 
+- **OAuth must be enabled on the app**, since the map is served as a web page from your hub. See Install below.
 - **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
@@ -80,13 +81,28 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 
 ## Install
 
-Via [Hubitat Package Manager](https://hubitatpackagemanager.hubitatcommunity.com/), or manually:
+**OAuth must be enabled.** The map is a web page the app serves from your hub, which needs an OAuth access token. Without it there is no map link. Installing through Hubitat Package Manager enables OAuth for you; installing by hand does not, so step 2 below is not optional.
+
+### Via Hubitat Package Manager
+
+**Install** -> **From a URL**, then:
+
+```
+https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/packageManifest.json
+```
+
+Then continue from step 3.
+
+### By hand
 
 1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> **Save**.
-2. **Apps** -> **Add User App** -> **Automation Map**.
-3. Select the devices to scan - **Select All** is the normal choice - then **Scan relationships now**.
-4. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
-5. **View Automation Map**.
+2. Still in Apps Code, click **OAuth** -> **Enable OAuth in App** -> **Update**.
+3. **Apps** -> **Add User App** -> **Automation Map**.
+4. Select the devices to scan - **Select All** is the normal choice - then **Scan relationships now**.
+5. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
+6. **View Automation Map**.
+
+The map link contains an access token unique to your installation. Open the map from the app rather than bookmarking the URL, since reinstalling the app issues a new token and the old link stops working.
 
 Devices referenced by an app are added to the map automatically even if you did not select them. The selection only decides which devices are used to discover apps.
 
