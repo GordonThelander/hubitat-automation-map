@@ -46,7 +46,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.3.0'
+@Field static final String APP_VERSION = '1.3.1'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -146,26 +146,38 @@ void startScan() {
 }
 
 void scanBatch() {
+    // Anything thrown out of this method is fatal to the whole scan: Hubitat
+    // discards the state written during a failed execution, so the queue would
+    // never advance AND no follow-up job would be scheduled, leaving the app
+    // stuck at "scanning" with no error recorded. Every stage is therefore
+    // guarded separately, and the reschedule happens no matter what.
+    state.scanHeartbeat = now()
+    boolean advanced = false
     try {
         if (state.scanPhase == 'devices') {
             scanDeviceBatch()
         } else {
             scanAppBatch()
         }
+        advanced = true
     } catch (Exception ex) {
         log.warn "${app.label}: scanBatch failed: ${ex.message}"
-        state.scanError = ex.message
+        state.scanError = "${ex.message}"
         state.scanQueue = []
-        finishScan()
-        return
     }
 
-    if (state.scanQueue) {
-        runIn(1, 'scanBatch')
-    } else if (state.scanPhase == 'devices') {
-        startAppPhase()
-    } else {
-        finishScan()
+    try {
+        if (state.scanQueue) {
+            runIn(1, 'scanBatch')
+        } else if (advanced && state.scanPhase == 'devices') {
+            startAppPhase()
+        } else {
+            finishScan()
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: scan could not continue: ${ex.message}"
+        state.scanError = "${ex.message}"
+        state.scanRunning = false
     }
 }
 
@@ -534,6 +546,34 @@ String getLocalURL(String fileName) {
 
 mappings {
     path('/automation-map.html') { action: [ GET: 'renderMapMapping' ] }
+    path('/scan') { action: [ GET: 'scanMapping' ] }
+    path('/scan-status') { action: [ GET: 'scanStatusMapping' ] }
+}
+
+// Starting a scan from a URL rather than only from the page button, so a stalled
+// scan can be restarted (and diagnosed) without sitting in the app UI.
+Map scanMapping() {
+    startScan()
+    return render(status: 200, contentType: 'application/json', data: scanStatusJson())
+}
+
+Map scanStatusMapping() {
+    return render(status: 200, contentType: 'application/json', data: scanStatusJson())
+}
+
+String scanStatusJson() {
+    return JsonOutput.toJson([
+        running: state.scanRunning as boolean,
+        phase: state.scanPhase,
+        done: state.scanDone,
+        total: state.scanTotal,
+        queued: (state.scanQueue ?: []).size(),
+        apps: (state.appInfo ?: [:]).size(),
+        devices: (state.deviceLabels ?: [:]).size(),
+        error: state.scanError,
+        heartbeat: state.scanHeartbeat,
+        graphVersion: state.graphVersion,
+    ])
 }
 
 Map renderMapMapping() {
