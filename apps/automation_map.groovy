@@ -58,7 +58,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.0'
+@Field static final String APP_VERSION = '1.10.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -910,6 +910,10 @@ String buildMapHtml() {
 <html>
 <head>
 <meta charset="utf-8">
+<!-- Without this a phone renders at a ~980px virtual width, so the small-screen
+     media query never fires and the page silently shrinks to an unusable size
+     instead of showing the desktop-only notice. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Automation Map</title>
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
@@ -920,6 +924,7 @@ String buildMapHtml() {
   #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; display:flex; flex-direction:column; gap:6px; width:230px; }
   #controls label { display:block; margin-bottom:2px; }
   #controls select { width:100%; box-sizing:border-box; }
+  #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
   #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
   .legend-row { display:flex; align-items:center; margin:4px 0; }
@@ -929,10 +934,13 @@ String buildMapHtml() {
   #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:rgba(4,20,27,0.96); padding:14px 18px; border-radius:6px;
           max-width:320px; font-size:0.82em; line-height:1.45; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #hint button { cursor:pointer; padding:4px 10px; }
+  /* Deliberately not made to work on a phone. A few hundred nodes, a filter
+     panel and a flowchart need room and a pointer; a shrunken version would be
+     frustrating rather than useful, so small screens get told plainly. */
+  #smallscreen { display:none; }
   @media (max-width: 820px) {
-    #controls { width:auto; left:10px; right:10px; top:auto; bottom:10px; }
-    #legend, #hint { display:none; }
-    #flow { max-width:calc(100vw - 20px); max-height:70vh; }
+    #controls, #legend, #hint, #network, #flow { display:none !important; }
+    #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
   #flow { position:absolute; top:10px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
           max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
@@ -958,9 +966,14 @@ String buildMapHtml() {
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
 </div>
+<div id="smallscreen">
+  <h2>Best viewed on a desktop</h2>
+  <p>Automation Map shows every app and device on your hub at once, with filter controls and rule flowcharts alongside. That needs a large screen and a mouse, so it is not made to work on a phone.</p>
+  <p>Open this same link on a computer.</p>
+</div>
 <div id="controls">
-  <label>Focus app<select id="appFilter"><option value="__all__">All apps</option></select></label>
-  <label>Focus device<select id="deviceFilter"><option value="__all__">All devices</option></select></label>
+  <label>Focus app<input id="appSearch" type="search" placeholder="search apps..." autocomplete="off"><select id="appFilter" size="1"><option value="__all__">All apps</option></select></label>
+  <label>Focus device<input id="deviceSearch" type="search" placeholder="search devices..." autocomplete="off"><select id="deviceFilter" size="1"><option value="__all__">All devices</option></select></label>
   <label>Show<select id="kindFilter">
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
@@ -1058,6 +1071,15 @@ function settle() {
   });
 }
 settle();
+
+// fit() is calculated for the size the canvas had at the time, so without this
+// the graph stays at the old zoom after the window changes size and can end up
+// far too close in.
+let refitTimer = null;
+window.addEventListener('resize', function () {
+  if (refitTimer) clearTimeout(refitTimer);
+  refitTimer = setTimeout(function () { network.fit({ animation: false }); }, 200);
+});
 
 function neighborhood(nodeId, edgePool) {
   const ids = {};
@@ -1270,15 +1292,46 @@ if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () { flowPanel.style.display = 'none'; });
 }
 
-function fillSelect(selectId, group) {
+// With 194 devices a plain dropdown is unusable, so each one gets a search box
+// that filters its options as you type. Rebuilt rather than hidden, because
+// hidden <option> elements are not reliably honoured across browsers.
+function fillSelect(selectId, searchId, group, allLabel) {
   const sel = document.getElementById(selectId);
-  ALL_NODES.filter(function (n) { return n.group === group; })
-    .slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
-    .forEach(function (n) {
+  const search = document.getElementById(searchId);
+  const items = ALL_NODES.filter(function (n) { return n.group === group; })
+    .slice().sort(function (a, b) { return a.title.localeCompare(b.title); });
+
+  function render(term) {
+    const q = (term || '').toLowerCase();
+    const keep = sel.value;
+    sel.innerHTML = '';
+    const all = document.createElement('option');
+    all.value = '__all__'; all.textContent = allLabel;
+    sel.appendChild(all);
+    let shown = 0;
+    items.forEach(function (n) {
+      if (q && n.title.toLowerCase().indexOf(q) < 0) return;
       const opt = document.createElement('option');
       opt.value = n.id; opt.textContent = n.title;
       sel.appendChild(opt);
+      shown++;
     });
+    // Keep the current selection visible even if it no longer matches, so
+    // typing does not silently reset the view.
+    if (keep && keep !== '__all__' && !sel.querySelector('option[value="' + keep + '"]')) {
+      const cur = items.filter(function (n) { return n.id === keep; })[0];
+      if (cur) {
+        const opt = document.createElement('option');
+        opt.value = cur.id; opt.textContent = cur.title;
+        sel.appendChild(opt);
+      }
+    }
+    sel.value = keep || '__all__';
+    search.title = shown + ' of ' + items.length + ' shown';
+  }
+
+  render('');
+  search.addEventListener('input', function () { render(search.value); });
   return sel;
 }
 
@@ -1369,8 +1422,8 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   document.getElementById('hintClose').addEventListener('click', function () { hint.style.display = 'none'; });
 })();
 
-const appSelect = fillSelect('appFilter', 'app');
-const deviceSelect = fillSelect('deviceFilter', 'device');
+const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
+const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
 
 appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') deviceSelect.value = '__all__';
