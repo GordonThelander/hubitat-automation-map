@@ -422,6 +422,18 @@ Map fetchAppRelationships(String appId, Map labels) {
             out.label = stripTags((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.type = installedApp?.name
 
+            // Skip every instance of this app, not just the one doing the
+            // scanning. Its device picker references the whole hub, so a second
+            // instance - including a half-created one left behind by an
+            // abandoned "Add User App", which stays visible to devices - would
+            // otherwise appear as an app with a couple of hundred meaningless
+            // edges. Excluding by app.id alone missed exactly that case.
+            if (out.type == APP_NAME) {
+                out.roles = [:]
+                out.flow = []
+                return
+            }
+
             // A paused rule still holds all its device references but is not
             // running. Shown identically to an active one it would send you
             // debugging an automation that cannot fire.
