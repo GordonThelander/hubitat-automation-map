@@ -1,4 +1,4 @@
-# Hub Map
+# Automation Map
 
 A Hubitat app that visualizes how installed apps and devices relate to each other, and **in what role** - which app owns a device, which devices trigger an app, which constrain it, and which it acts on - as an interactive force-directed graph, in the same visual style as Dan Danache's [Zigbee Map app](https://codeberg.org/dan-danache/hubitat/src/branch/main/zigbee-map-app).
 
@@ -42,16 +42,16 @@ A device can hold different roles in different apps - a motion sensor may trigge
 
 ### Apps
 
-- `apps/hub_map.groovy` - the app.
-- `apps/hub_map_probe.groovy` - **throwaway diagnostic**, not needed to run Hub Map. It dumps candidate internal endpoints so role detection could be built against confirmed facts rather than guesses. Kept in the repo as a tool for re-probing if a hub firmware update changes these undocumented endpoints. Safe to delete from the hub once Hub Map works.
+- `apps/automation_map.groovy` - the app.
+- `apps/automation_map_probe.groovy` - **throwaway diagnostic**, not needed to run Automation Map. It dumps candidate internal endpoints so role detection could be built against confirmed facts rather than guesses. Kept in the repo as a tool for re-probing if a hub firmware update changes these undocumented endpoints. Safe to delete from the hub once Automation Map works.
 
 ## Installation
 
-1. **Apps Code** -> **New App** -> paste in `apps/hub_map.groovy` -> Save.
-2. **Apps** -> **Add User App** -> Hub Map.
+1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> Save.
+2. **Apps** -> **Add User App** -> Automation Map.
 3. Select devices to scan (use "Select All"), click **Scan relationships now**.
 4. The scan runs in two phases - devices first (to discover apps), then apps (for the relationship data). Close and reopen the page to refresh progress.
-5. Click **View Hub Map**.
+5. Click **View Automation Map**.
 
 Devices referenced by an app are added to the map automatically even if not selected in step 3 - the selection only decides which devices are used to discover apps.
 

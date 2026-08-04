@@ -1,11 +1,11 @@
 /*
- * Hub Map Probe
+ * Automation Map Probe
  *
- * Throwaway diagnostic app - not the real Hub Map app.
+ * Throwaway diagnostic app - not the real Automation Map app.
  *
  * Hubitat's app sandbox only gives an app authorized access to devices the
  * user explicitly picks, and there is no official API for "list every
- * installed app and what it's configured with". The Hub Map app needs that
+ * installed app and what it's configured with". The Automation Map app needs that
  * data, so it has to fetch it from the hub's own internal admin endpoints
  * (the same ones the hub's own web UI calls), via a self-request to
  * 127.0.0.1. Nobody has documented which paths exist or what shape they
@@ -17,14 +17,14 @@
  */
 import groovy.transform.Field
 
-@Field static final String APP_NAME = 'Hub Map Probe'
+@Field static final String APP_NAME = 'Automation Map Probe'
 @Field static final String APP_VERSION = '0.8.0'
 
 definition(
     name: APP_NAME,
     namespace: 'Hubitat Integrations',
     author: 'Gordon Thelander',
-    description: 'Throwaway diagnostic - discovers which internal hub endpoints are reachable, to inform the real Hub Map app.',
+    description: 'Throwaway diagnostic - discovers which internal hub endpoints are reachable, to inform the real Automation Map app.',
     category: 'Utility',
     iconUrl: '',
     iconX2Url: '',
@@ -46,7 +46,7 @@ void updated() {
 Map main() {
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
         section {
-            paragraph 'Throwaway diagnostic for the Hub Map app. Give it INSTALLED APP IDs, comma separated. Defaults: 2869 (Presence Manager), 2816 (Mode Alarm Status Adjustment rule). Dumps each app\'s event subscriptions and device-bearing settings.'
+            paragraph 'Throwaway diagnostic for the Automation Map app. Give it INSTALLED APP IDs, comma separated. Defaults: 2869 (Presence Manager), 2816 (Mode Alarm Status Adjustment rule). Dumps each app\'s event subscriptions and device-bearing settings.'
             input name: 'sampleAppIds', type: 'text', title: 'Installed app IDs (comma separated)', required: true, defaultValue: '2869,2816'
             input name: 'runProbe', type: 'bool', title: 'Run probe now', submitOnChange: true, defaultValue: false
         }
