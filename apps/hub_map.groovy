@@ -24,7 +24,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Hub Map'
-@Field static final String APP_VERSION = '0.2.0'
+@Field static final String APP_VERSION = '0.3.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer BATCH_SIZE = 15
 
@@ -161,22 +161,29 @@ String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
+Map nodeEntry(String id, String fullLabel, String group) {
+    String label = fullLabel ?: id
+    String shortLabel = label
+    if (shortLabel.length() > 22) shortLabel = "${shortLabel.substring(0, 20)}…"
+    return [id: id, label: shortLabel, title: label, group: group]
+}
+
 Map buildGraph(Map results) {
     Map<String, Map> nodes = [:]
     List<Map> edges = []
 
     String hubName = 'Hub'
     if (location?.hubs) hubName = (location.hubs[0]?.name ?: hubName)
-    nodes['hub'] = [id: 'hub', label: hubName, group: 'hub']
+    nodes['hub'] = nodeEntry('hub', hubName, 'hub')
 
     results.each { String key, Map info ->
         if (info == null) return
         String devNodeId = "d${info.id}"
-        nodes[devNodeId] = [id: devNodeId, label: (info.label ?: "Device ${info.id}"), group: 'device']
+        nodes[devNodeId] = nodeEntry(devNodeId, (info.label ?: "Device ${info.id}"), 'device')
 
         if (info.parentApp) {
             String appNodeId = "a${info.parentApp.id}"
-            if (!nodes[appNodeId]) nodes[appNodeId] = [id: appNodeId, label: info.parentApp.label, group: 'app']
+            if (!nodes[appNodeId]) nodes[appNodeId] = nodeEntry(appNodeId, info.parentApp.label as String, 'app')
             edges << [from: appNodeId, to: devNodeId, kind: 'owns']
         } else {
             edges << [from: 'hub', to: devNodeId, kind: 'owns']
@@ -186,7 +193,7 @@ Map buildGraph(Map results) {
             boolean isParent = info.parentApp && info.parentApp.id == usingApp.id
             if (isParent) return
             String appNodeId = "a${usingApp.id}"
-            if (!nodes[appNodeId]) nodes[appNodeId] = [id: appNodeId, label: usingApp.label, group: 'app']
+            if (!nodes[appNodeId]) nodes[appNodeId] = nodeEntry(appNodeId, usingApp.label as String, 'app')
             edges << [from: appNodeId, to: devNodeId, kind: 'uses']
         }
     }
@@ -245,18 +252,29 @@ String buildMapHtml() {
 const GRAPH = ${jsonStr};
 const groupColors = { hub: '#3498db', app: '#e8a33d', device: '#7fae42' };
 const nodes = new vis.DataSet(GRAPH.nodes.map(n => ({
-  id: n.id, label: n.label, color: groupColors[n.group],
+  id: n.id, label: n.label, title: n.title, color: groupColors[n.group],
   shape: n.group === 'hub' ? 'diamond' : 'dot',
-  size: n.group === 'hub' ? 22 : (n.group === 'app' ? 16 : 12)
+  size: n.group === 'hub' ? 24 : (n.group === 'app' ? 17 : 13),
+  font: {
+    color: '#fff', size: n.group === 'hub' ? 16 : 13,
+    strokeWidth: 5, strokeColor: '#062733', vadjust: -4
+  }
 })));
 const edges = new vis.DataSet(GRAPH.edges.map((e, i) => ({
   id: i, from: e.from, to: e.to, arrows: 'to',
-  dashes: e.kind === 'uses', color: e.kind === 'uses' ? '#888' : '#ccc'
+  dashes: e.kind === 'uses', color: e.kind === 'uses' ? '#5a6b73' : '#9fb3bb', width: e.kind === 'uses' ? 1 : 1.5
 })));
 const network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
-  physics: { stabilization: true, barnesHut: { gravitationalConstant: -12000, springLength: 120 } },
-  interaction: { hover: true },
+  physics: {
+    stabilization: { iterations: 300 },
+    barnesHut: { gravitationalConstant: -25000, springLength: 220, springConstant: 0.02, avoidOverlap: 1 }
+  },
+  interaction: { hover: true, tooltipDelay: 100 },
   edges: { smooth: { type: 'continuous' } }
+});
+network.once('stabilizationIterationsDone', function () {
+  network.setOptions({ physics: { enabled: false } });
+  network.fit({ animation: false });
 });
 </script>
 </body>
