@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Hub Map Probe'
-@Field static final String APP_VERSION = '0.4.0'
+@Field static final String APP_VERSION = '0.5.0'
 
 definition(
     name: APP_NAME,
@@ -59,79 +59,108 @@ Map main() {
 }
 
 String buildProbeReport() {
-    // Round 4: round 3 confirmed /installedapp/statusJson/<id> (140KB) and
-    // /installedapp/settings/<id> (69KB) both return real data, but the head
-    // of each is just empty UI slots (chkBox/button/trackSwitch settings with
-    // null values). Round 3 only dumped the head of JSON responses, so the
-    // interesting part was never seen. This round applies the same keyword
-    // -window extraction to JSON, with multiple matches per keyword, hunting
-    // for where Rule Machine actually stores its trigger / required-expression
-    // / action device references.
-    List<String> paths = [
-        "/installedapp/statusJson/${sampleRuleId}",
-        "/installedapp/settings/${sampleRuleId}",
-    ]
-
-    // 'Presence Manager' is this rule's real trigger device, so wherever it
-    // appears is where trigger references live. 'deviceList":[{' finds the
-    // settings that actually resolve to devices, vs the null placeholders.
-    List<String> keywords = [
-        'Presence Manager',
-        'deviceList":[{',
-        '"state":',
-        'reqExpr',
-        'trigger',
-        '"actions"',
-        'capability.presence',
-        'ruleDesc',
-    ]
-
+    // Round 5: round 4 proved the rule structure IS in statusJson (rDev_NN
+    // settings hold condition devices; state vars eval / predCapabs /
+    // capabstrue / actionList tie those numbers to trigger vs required-
+    // expression vs action). String-searching a 140KB blob is the wrong tool
+    // for confirming the rest, so this round lets Hubitat parse the JSON and
+    // walks the structure instead.
+    //
+    // Priority question: does this payload carry EVENT SUBSCRIPTIONS? An app
+    // subscribes only to devices it listens to, which separates trigger from
+    // target for EVERY app, not just Rule Machine - a far more general and
+    // durable signal than reverse-engineering RM's private rule format.
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
-    paths.each { String path -> out << probeOne(path, keywords) }
-    out << '</div>'
-    return out.toString()
-}
-
-String probeOne(String path, List<String> keywords) {
-    StringBuilder out = new StringBuilder()
     out << "<div style='margin-top:1em; padding:.5em; border:1px solid #ccc'>"
-    out << "<b>${path}</b><br>"
+    out << "<b>/installedapp/statusJson/${sampleRuleId} (parsed)</b><br>"
     try {
-        httpGet([uri: "http://127.0.0.1:8080${path}", textParser: true, timeout: 15, ignoreSSLIssues: true]) { resp ->
-            String body = resp?.data?.text ?: ''
-            out << "Status: ${resp.status}, Content-Type: ${resp.headers?.'Content-Type'}, Full length: ${body.length()}<br>"
-            String extract = extractKeywordWindows(body, keywords, 600, 2)
-            String escaped = extract.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-            out << "<pre style='white-space:pre-wrap; word-break:break-all'>${escaped}</pre>"
+        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${sampleRuleId}", timeout: 20]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : null
+            if (data == null) {
+                out << 'Response was not parsed into a Map.'
+            } else {
+                out << describeTopLevel(data)
+                out << describeSettingsWithDevices(data)
+                out << describeStateEntries(data)
+            }
         }
     } catch (Exception ex) {
         out << "ERROR: ${ex.message}"
     }
-    out << '</div>'
+    out << '</div></div>'
     return out.toString()
 }
 
-String extractKeywordWindows(String body, List<String> keywords, int window, int maxMatches) {
-    String lowerBody = body.toLowerCase()
-    StringBuilder found = new StringBuilder()
-    keywords.each { String kw ->
-        String lowerKw = kw.toLowerCase()
-        int idx = lowerBody.indexOf(lowerKw)
-        if (idx < 0) {
-            found << "\n=== no match for '${kw}' ===\n"
-            return
-        }
-        int count = 0
-        while (idx >= 0 && count < maxMatches) {
-            int start = (idx - window) < 0 ? 0 : (idx - window)
-            int end = (idx + window) > body.length() ? body.length() : (idx + window)
-            found << "\n=== match ${count + 1} of '${kw}' at offset ${idx} ===\n"
-            found << body.substring(start, end)
-            found << '\n'
-            count++
-            idx = lowerBody.indexOf(lowerKw, idx + 1)
+String describeTopLevel(Map data) {
+    StringBuilder out = new StringBuilder()
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== TOP-LEVEL KEYS ===\n"
+    data.each { k, v ->
+        if (v instanceof List) {
+            List list = v as List
+            String firstKeys = (list && list[0] instanceof Map) ? " firstElementKeys=${(list[0] as Map).keySet()}" : ''
+            out << "${k}: List(size=${list.size()})${firstKeys}\n"
+        } else if (v instanceof Map) {
+            out << "${k}: Map keys=${(v as Map).keySet()}\n"
+        } else {
+            out << "${k}: ${trunc(v, 120)}\n"
         }
     }
-    return found.toString()
+    out << '</pre>'
+    return out.toString()
+}
+
+String describeSettingsWithDevices(Map data) {
+    StringBuilder out = new StringBuilder()
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== SETTINGS THAT RESOLVE TO DEVICES ===\n"
+    List settings = (data.appSettings ?: data.settings ?: []) as List
+    int shown = 0
+    settings.each { s ->
+        if (!(s instanceof Map)) return
+        Map sm = s as Map
+        if (sm.deviceList) {
+            out << "${sm.name} (type=${sm.type}) -> ${sm.deviceList}\n"
+            shown++
+        }
+    }
+    if (shown == 0) out << '(none found - check the top-level key holding settings)\n'
+    out << '</pre>'
+    return out.toString()
+}
+
+String describeStateEntries(Map data) {
+    StringBuilder out = new StringBuilder()
+    // The state list is whichever top-level List whose elements look like
+    // {name:..., value:..., type:...} - discovered rather than assumed.
+    List stateList = null
+    String stateKey = null
+    data.each { k, v ->
+        if (stateList != null) return
+        if (!(v instanceof List)) return
+        List list = v as List
+        if (list && list[0] instanceof Map) {
+            Map first = list[0] as Map
+            if (first.containsKey('name') && first.containsKey('value') && first.containsKey('type')) {
+                stateList = list
+                stateKey = k as String
+            }
+        }
+    }
+
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== STATE ENTRIES (from key '${stateKey}') ===\n"
+    if (stateList == null) {
+        out << '(no state-shaped list found)\n'
+    } else {
+        stateList.each { s ->
+            Map sm = s as Map
+            out << "${sm.name} [${sm.type}] = ${trunc(sm.value, 400)}\n"
+        }
+    }
+    out << '</pre>'
+    return out.toString()
+}
+
+String trunc(Object value, int limit) {
+    String s = "${value}"
+    return s.length() > limit ? s.substring(0, limit) + '...[cut]' : s
 }
