@@ -46,7 +46,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.0.0'
+@Field static final String APP_VERSION = '1.1.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -98,13 +98,20 @@ Map main() {
                 }
                 if (state.graph) {
                     Map g = state.graph as Map
-                    paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
-                    href(
-                        name: 'mapLink', title: 'View Automation Map',
-                        description: 'Open the relationship graph',
-                        url: getLocalURL('automation-map.html'),
-                        style: 'embedded', state: 'complete', required: false,
-                    )
+                    if (graphIsStale()) {
+                        // A graph built by an older version can carry relationship
+                        // kinds this version no longer renders, which silently draws
+                        // as uncoloured edges rather than failing visibly.
+                        paragraph "<b style='color:#c0392b'>This map was built by version ${state.graphVersion ?: 'an earlier release'} and will not display correctly. Run the scan again.</b>"
+                    } else {
+                        paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
+                        href(
+                            name: 'mapLink', title: 'View Automation Map',
+                            description: 'Open the relationship graph',
+                            url: getLocalURL('automation-map.html'),
+                            style: 'embedded', state: 'complete', required: false,
+                        )
+                    }
                 }
             }
         }
@@ -113,6 +120,10 @@ Map main() {
 
 void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
+}
+
+boolean graphIsStale() {
+    return state.graph && state.graphVersion != APP_VERSION
 }
 
 // ===================================================================================================================
@@ -129,6 +140,7 @@ void startScan() {
     state.deviceLabels = [:]
     state.appIds = []
     state.appInfo = [:]
+    state.graphVersion = null
     unschedule('scanBatch')
     runIn(1, 'scanBatch')
 }
@@ -163,11 +175,15 @@ void scanDeviceBatch() {
     List appIds = state.appIds as List
     int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
 
+    // This app's own device picker references every selected device, which would
+    // otherwise draw ~200 meaningless "acts on" edges from Automation Map itself.
+    String selfId = "${app.id}"
+
     queue.take(size).each { String devId ->
         Map info = fetchDeviceApps(devId)
         if (info.label) labels[devId] = info.label
         (info.appIds as List).each { String appId ->
-            if (!appIds.contains(appId)) appIds << appId
+            if (appId != selfId && !appIds.contains(appId)) appIds << appId
         }
     }
 
@@ -205,6 +221,7 @@ void scanAppBatch() {
 void finishScan() {
     state.scanRunning = false
     state.graph = buildGraph()
+    state.graphVersion = APP_VERSION
     log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
 }
 
@@ -366,6 +383,19 @@ mappings {
 }
 
 Map renderMapMapping() {
+    if (graphIsStale()) {
+        return render(
+            status: 200,
+            contentType: 'text/html',
+            data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
+<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<h2>This map is out of date</h2>
+<p>It was built by version ${state.graphVersion ?: 'an earlier release'}, but Automation Map is now version ${APP_VERSION}.
+Relationship types have changed since then, so the graph would render without role colours.</p>
+<p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
+</body></html>"""
+        )
+    }
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
 
