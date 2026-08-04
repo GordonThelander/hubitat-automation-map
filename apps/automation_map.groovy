@@ -174,8 +174,11 @@ void appButtonHandler(String btn) {
 String scanButtonHtml() {
     String label = state.scanRunning ? 'Scanning...' : 'Scan relationships now'
     String disabled = state.scanRunning ? ' disabled' : ''
+    // Hubitat's UI is PrimeVue, so a plain button or Bootstrap classes render
+    // unstyled. These are the classes and data attributes its own buttons carry.
+    String cls = state.scanRunning ? 'p-button p-component p-disabled mr-2 mb-2' : 'p-button p-component mr-2 mb-2'
     return """\
-<button type="button" id="amScanBtn" class="btn btn-default"${disabled} onclick="amStartScan()">${label}</button>
+<button type="button" id="amScanBtn" class="${cls}"${disabled} onclick="amStartScan()" aria-label="${label}" data-pc-name="button" data-pc-section="root" data-pd-ripple="true">${label}</button>
 <span id="amScanMsg" style="margin-left:10px"></span>
 <script type="text/javascript">
 function amStartScan() {
