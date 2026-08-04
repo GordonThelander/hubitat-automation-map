@@ -290,6 +290,13 @@ Map fetchAppRelationships(String appId, Map labels) {
 
             // A subscribed device with no setting of its own is still a trigger,
             // unless this app owns it (a child device it also listens to).
+            //
+            // Note this signal is a snapshot: Rule Machine drops its trigger
+            // subscriptions while a Required Expression is false, and subscribes
+            // to the gate devices instead. Rule rules are unaffected because the
+            // tDev/rDev checks above already claimed those devices, but a
+            // non-rule app that subscribes conditionally can map differently
+            // depending on when the scan ran.
             subscribed.each { String devId ->
                 List existing = (roles[devId] ?: []) as List
                 if (!existing) addRole(roles, devId, 'trigger')
