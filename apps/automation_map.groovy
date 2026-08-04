@@ -1,5 +1,5 @@
 /*
- * Hub Map
+ * Automation Map
  *
  * Visualizes how installed Hubitat apps and devices relate to each other, and
  * in what ROLE - which app owns a device, which devices trigger an app, which
@@ -45,7 +45,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
-@Field static final String APP_NAME = 'Hub Map'
+@Field static final String APP_NAME = 'Automation Map'
 @Field static final String APP_VERSION = '1.0.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
@@ -100,9 +100,9 @@ Map main() {
                     Map g = state.graph as Map
                     paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
                     href(
-                        name: 'mapLink', title: 'View Hub Map',
+                        name: 'mapLink', title: 'View Automation Map',
                         description: 'Open the relationship graph',
-                        url: getLocalURL('hub-map.html'),
+                        url: getLocalURL('automation-map.html'),
                         style: 'embedded', state: 'complete', required: false,
                     )
                 }
@@ -362,7 +362,7 @@ String getLocalURL(String fileName) {
 // ===================================================================================================================
 
 mappings {
-    path('/hub-map.html') { action: [ GET: 'renderMapMapping' ] }
+    path('/automation-map.html') { action: [ GET: 'renderMapMapping' ] }
 }
 
 Map renderMapMapping() {
@@ -380,7 +380,7 @@ String buildMapHtml() {
 <html>
 <head>
 <meta charset="utf-8">
-<title>Hub Map</title>
+<title>Automation Map</title>
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
