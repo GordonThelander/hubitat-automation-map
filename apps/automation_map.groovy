@@ -58,11 +58,11 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.0'
+@Field static final String APP_VERSION = '1.9.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '6'
+@Field static final String GRAPH_SCHEMA = '7'
 // Rule flow decoding reads Rule Machine's private internals, so it is pinned to
 // the version it was verified against. Rules on any other engine still appear
 // in the graph with their device relationships; they are counted and reported
@@ -99,9 +99,14 @@ void updated() {
 Map main() {
     if (!state.accessToken) createAccessToken()
 
-    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
+    // A full scan takes a couple of minutes. Without this the page looked frozen
+    // - the progress line only moved if you closed and reopened it, which reads
+    // as a hang rather than as work in progress.
+    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true,
+                       refreshInterval: state.scanRunning ? 4 : 0) {
         section {
-            paragraph 'Select the devices to scan (use "Select All"). Devices referenced by an app are added to the map automatically, even if not selected here - the selection only decides which devices are used to discover apps.'
+            paragraph 'Pick the devices to scan, then press Scan. "Select All" is the normal choice.'
+            paragraph '<span style="opacity:0.75">Automation Map finds your apps by looking at which apps each device belongs to, which is why it needs devices selected. Any extra device an app mentions is added to the map for you.</span>'
             input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, required: true, submitOnChange: true
         }
         if (devices) {
@@ -109,9 +114,16 @@ Map main() {
                 paragraph "${devices.size()} device(s) selected."
                 input name: 'runScan', type: 'button', title: state.scanRunning ? 'Scanning...' : 'Scan relationships now'
                 if (state.scanTotal) {
-                    String phase = state.scanPhase == 'apps' ? 'apps' : 'devices'
-                    String progress = "Scanning ${phase}: ${state.scanDone ?: 0} / ${state.scanTotal}"
-                    if (state.scanRunning) progress += ' (close and reopen this page to refresh)'
+                    Integer done = (state.scanDone ?: 0) as Integer
+                    Integer total = (state.scanTotal ?: 1) as Integer
+                    Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
+                    String phase = state.scanPhase == 'apps' ? 'Reading apps' : 'Reading devices'
+                    String progress = "${phase}: ${done} of ${total} (${pct}%)"
+                    if (state.scanRunning) {
+                        progress += ' - this page updates itself, no need to reload.'
+                    } else {
+                        progress = "Last scan: ${done} of ${total} ${state.scanPhase == 'apps' ? 'apps' : 'devices'}."
+                    }
                     paragraph progress
                 }
                 if (state.scanError) {
@@ -365,6 +377,15 @@ Map fetchAppRelationships(String appId, Map labels) {
             Map installedApp = data.installedApp as Map
             out.label = stripTags((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.type = installedApp?.name
+
+            // A paused rule still holds all its device references but is not
+            // running. Shown identically to an active one it would send you
+            // debugging an automation that cannot fire.
+            boolean paused = false
+            (data.appState ?: []).each { e ->
+                if (e instanceof Map && e.name == 'paused' && e.value == true) paused = true
+            }
+            out.inactive = (installedApp?.disabled == true) || paused
 
             Map roles = [:]
             List stateful = []
@@ -788,7 +809,9 @@ Map buildGraph() {
         if (!roles) return
 
         String appNodeId = "a${appId}"
-        nodes[appNodeId] = nodeEntry(appNodeId, appMap.label as String, 'app', appMap.type as String)
+        String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
+        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', appMap.type as String)
+        if (appMap.inactive) nodes[appNodeId].inactive = true
         if (appMap.flow) flows[appNodeId] = appMap.flow
 
         roles.each { String devId, devRoles ->
@@ -903,6 +926,14 @@ String buildMapHtml() {
   .swatch { width:12px; height:12px; border-radius:50%; margin-right:8px; display:inline-block; flex:none; }
   .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
   .note { opacity:0.75; font-size:0.9em; margin-top:6px; line-height:1.35; }
+  #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:rgba(4,20,27,0.96); padding:14px 18px; border-radius:6px;
+          max-width:320px; font-size:0.82em; line-height:1.45; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+  #hint button { cursor:pointer; padding:4px 10px; }
+  @media (max-width: 820px) {
+    #controls { width:auto; left:10px; right:10px; top:auto; bottom:10px; }
+    #legend, #hint { display:none; }
+    #flow { max-width:calc(100vw - 20px); max-height:70vh; }
+  }
   #flow { position:absolute; top:10px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
           max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
@@ -944,6 +975,19 @@ String buildMapHtml() {
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
 <div id="network"></div>
+<div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
+  <h2>Could not load the drawing libraries</h2>
+  <p>This page fetches its graph and flowchart libraries from the internet. The hub itself is fine - the browser you are viewing this in could not reach them.</p>
+</div>
+<script>
+// The libraries come from a CDN, so a browser with no internet gets a blank
+// page unless this is checked. Say so rather than showing nothing.
+if (typeof window.vis === 'undefined') {
+  document.getElementById('offline').style.display = 'block';
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('legend').style.display = 'none';
+}
+</script>
 <script>
 const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b' };
@@ -982,9 +1026,11 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
 // for another, so this colouring only makes sense scoped to a single app.
 function styledNode(n, useFullLabel, roleByDevice) {
   const role = roleByDevice ? roleByDevice[n.id] : null;
-  const color = n.group === 'device'
+  let color = n.group === 'device'
     ? (role && roleColors[role] ? roleColors[role] : groupColors.device)
     : groupColors[n.group];
+  // Paused and disabled apps are greyed so they are not mistaken for live ones.
+  if (n.inactive) color = '#6d6a5f';
   return {
     id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: color,
     shape: n.group === 'app' ? 'square' : 'dot',
@@ -1204,9 +1250,10 @@ function showFlow(appId) {
   if (!steps || !steps.length || !window.mermaid) { flowPanel.style.display = 'none'; return; }
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
-  // The app's own page remains the authority; this is reconstructed from the
-  // app's internal state, not from its source, which built-in apps do not expose.
-  document.getElementById('flowSub').textContent = 'Decoded execution order, reconstructed from the app\'s internal state. A reading aid - the app\'s own page is the authority.';
+  // Deliberately free of apostrophes. This page is a Groovy GString, so a
+  // backslash-escaped quote is consumed by Groovy and ends the JS string early -
+  // a syntax error that kills the entire page.
+  document.getElementById('flowSub').textContent = 'Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.';
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
@@ -1306,6 +1353,21 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   flowChart.innerHTML = buildInsights();
   flowPanel.style.display = 'block';
 });
+
+// The whole-hub view is inevitably dense, so say what to do with it rather than
+// dropping the user straight into a few hundred nodes with no starting point.
+(function () {
+  const hint = document.createElement('div');
+  hint.id = 'hint';
+  hint.innerHTML = '<b>Start here</b><br>' +
+    'This is every app and device on your hub at once, so it looks busy - that is expected.<br><br>' +
+    'Pick an <b>app</b> top right to see just that app and what it uses. If it is a rule you also get a flowchart of how it works.<br><br>' +
+    'Pick a <b>device</b> to see every app that touches it.<br><br>' +
+    'Or press <b>Insights</b> for devices controlled by several apps at once.' +
+    '<div style="margin-top:12px"><button id="hintClose" type="button">Got it</button></div>';
+  document.body.appendChild(hint);
+  document.getElementById('hintClose').addEventListener('click', function () { hint.style.display = 'none'; });
+})();
 
 const appSelect = fillSelect('appFilter', 'app');
 const deviceSelect = fillSelect('deviceFilter', 'device');
