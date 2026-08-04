@@ -97,13 +97,18 @@ void updated() {
 }
 
 Map main() {
-    if (!state.accessToken) createAccessToken()
+    // Until Done is pressed the instance does not exist yet, and Hubitat cannot
+    // schedule work for it: runIn() silently does nothing, so a scan started
+    // from this page would set itself running and then never execute a single
+    // batch. So the scan is not offered at all until installation completes.
+    boolean ready = app.installationState == 'COMPLETE'
+    if (ready && !state.accessToken) createAccessToken()
 
     // A full scan takes a couple of minutes. Without this the page looked frozen
     // - the progress line only moved if you closed and reopened it, which reads
     // as a hang rather than as work in progress.
-    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true,
-                       refreshInterval: state.scanRunning ? 4 : 0) {
+    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
+                       refreshInterval: (ready && state.scanRunning) ? 4 : 0) {
         section {
             paragraph 'Pick the devices to scan, then press Scan. "Select All" is the normal choice.'
             paragraph '<span style="opacity:0.75">Automation Map finds your apps by looking at which apps each device belongs to, which is why it needs devices selected. Any extra device an app mentions is added to the map for you.</span>'
@@ -115,7 +120,13 @@ Map main() {
             // only renders once devices are chosen.
             input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, submitOnChange: true
         }
-        if (devices) {
+        if (devices && !ready) {
+            section {
+                paragraph "${devices.size()} device(s) selected."
+                paragraph '<b>Press <i>Done</i> to finish installing Automation Map</b>, then open it again to run your first scan. Scanning is not available until the app is installed.'
+            }
+        }
+        if (devices && ready) {
             section {
                 paragraph "${devices.size()} device(s) selected."
                 // The scan is started by fetching the app's own /scan endpoint
