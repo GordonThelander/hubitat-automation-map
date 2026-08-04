@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Hub Map Probe'
-@Field static final String APP_VERSION = '0.5.0'
+@Field static final String APP_VERSION = '0.7.0'
 
 definition(
     name: APP_NAME,
@@ -46,8 +46,8 @@ void updated() {
 Map main() {
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
         section {
-            paragraph 'Throwaway diagnostic for the Hub Map app. Set a real Rule Machine rule ID (from its URL in the hub UI), then turn on "Run probe now". Copy the results text back out once it renders.'
-            input name: 'sampleRuleId', type: 'number', title: 'A real Rule Machine rule ID to probe', required: true, defaultValue: 2816
+            paragraph 'Throwaway diagnostic for the Hub Map app. Give it device IDs whose PARENT APPS you want to inspect, comma separated. Defaults: 3543 (Presence Manager Main Status) and 2999 (a LIFX Light Manager child light). The probe resolves each device to its parent app, then dumps that app\'s internal structure.'
+            input name: 'sampleDeviceIds', type: 'text', title: 'Device IDs (comma separated)', required: true, defaultValue: '3543,2999'
             input name: 'runProbe', type: 'bool', title: 'Run probe now', submitOnChange: true, defaultValue: false
         }
         if (runProbe) {
@@ -59,36 +59,77 @@ Map main() {
 }
 
 String buildProbeReport() {
-    // Round 5: round 4 proved the rule structure IS in statusJson (rDev_NN
-    // settings hold condition devices; state vars eval / predCapabs /
-    // capabstrue / actionList tie those numbers to trigger vs required-
-    // expression vs action). String-searching a 140KB blob is the wrong tool
-    // for confirming the rest, so this round lets Hubitat parse the JSON and
-    // walks the structure instead.
+    // Round 6/7: validating against apps whose SOURCE we can read, instead of
+    // reverse-engineering Rule Machine's private format. Two contrasting cases:
     //
-    // Priority question: does this payload carry EVENT SUBSCRIPTIONS? An app
-    // subscribes only to devices it listens to, which separates trigger from
-    // target for EVERY app, not just Rule Machine - a far more general and
-    // durable signal than reverse-engineering RM's private rule format.
+    // Presence Manager (Presence_Manager.groovy subscribeEvidenceDevices()):
+    //   subscribes to = person presence devices, houseEvidenceSwitches,
+    //                   guest-mode child switch, output device
+    //   commands      = outputSwitch / outputPresenceDevice,
+    //                   notificationDevices, guest-mode switch
+    //   also creates child devices. The output device is deliberately BOTH
+    //   subscribed and commanded, which is the interesting edge case.
+    //
+    // LIFX Light Manager (LIFX_Light_Manager.groovy): zero subscribe() calls
+    //   and zero capability.* inputs - it only creates child devices. So it
+    //   should show ownership edges and nothing else.
+    //
+    // Key question this answers: does statusJson expose EVENT SUBSCRIPTIONS?
+    // If yes, subscribed-vs-only-configured separates trigger from target for
+    // every app on the hub. If no, per-app setting names are all we have and
+    // only Rule Machine could ever be decoded properly.
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
-    out << "<div style='margin-top:1em; padding:.5em; border:1px solid #ccc'>"
-    out << "<b>/installedapp/statusJson/${sampleRuleId} (parsed)</b><br>"
+
+    List<String> deviceIds = "${sampleDeviceIds}".split(',').collect { it.trim() }.findAll { it }
+    deviceIds.each { String devId -> out << inspectViaDevice(devId) }
+
+    out << '</div>'
+    return out.toString()
+}
+
+String inspectViaDevice(String devId) {
+    StringBuilder out = new StringBuilder()
+    Integer parentAppId = null
+
+    out << "<div style='margin-top:1em; padding:.5em; border:2px solid #666'>"
+    out << "<b>Step 1: /device/fullJson/${devId} -> parent app</b><br>"
     try {
-        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${sampleRuleId}", timeout: 20]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : null
-            if (data == null) {
-                out << 'Response was not parsed into a Map.'
+        httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 15]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
+            Map parentApp = data.parentApp as Map
+            out << "<pre style='white-space:pre-wrap; word-break:break-all'>"
+            out << "device label: ${data.extraBreadcrumb}\n"
+            if (parentApp) {
+                parentAppId = parentApp.id as Integer
+                out << "parentApp.id: ${parentApp.id}\nparentApp.label: ${parentApp.label}\nparentApp.name: ${parentApp.name}\n"
             } else {
-                out << describeTopLevel(data)
-                out << describeSettingsWithDevices(data)
-                out << describeStateEntries(data)
+                out << 'No parentApp on this device - pick a device that an app created.\n'
             }
+            out << '</pre>'
         }
     } catch (Exception ex) {
         out << "ERROR: ${ex.message}"
     }
-    out << '</div></div>'
+
+    if (parentAppId != null) {
+        out << "<b>Step 2: /installedapp/statusJson/${parentAppId} (parsed)</b><br>"
+        try {
+            httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${parentAppId}", timeout: 20]) { resp ->
+                Map data = (resp.data instanceof Map) ? (resp.data as Map) : null
+                if (data == null) {
+                    out << 'Response was not parsed into a Map.'
+                } else {
+                    out << describeTopLevel(data)
+                    out << describeSettingsWithDevices(data)
+                    out << describeStateEntries(data)
+                }
+            }
+        } catch (Exception ex) {
+            out << "ERROR: ${ex.message}"
+        }
+    }
+    out << '</div>'
     return out.toString()
 }
 
@@ -153,7 +194,7 @@ String describeStateEntries(Map data) {
     } else {
         stateList.each { s ->
             Map sm = s as Map
-            out << "${sm.name} [${sm.type}] = ${trunc(sm.value, 400)}\n"
+            out << "${sm.name} [${sm.type}] = ${trunc(sm.value, 150)}\n"
         }
     }
     out << '</pre>'
