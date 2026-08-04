@@ -36,6 +36,7 @@ A device can hold different roles in different apps - a motion sensor may trigge
 
 - **App discovery can miss apps.** Apps are found via each scanned device's `appsUsingForDialog` list, which the hub truncates when a device is used by many apps (it carries an "and N more" count). Selecting all devices makes a miss unlikely but not impossible. There is no bulk app-list endpoint - `/installedapp/list.json`, `/hub2/appList` and similar all return 404.
 - **Apps with no device references never appear**, since there is nothing to discover them through.
+- **Event subscriptions are a snapshot, not static configuration.** Observed live: rule 2279 "Back Door Night" was subscribed *only* to its Required Expression device, with no subscription to its actual trigger, because that expression was false at scan time - Rule Machine drops trigger subscriptions while the gate is closed and restores them when it opens. Rule Machine apps are unaffected, because `tDev*`/`rDev*` settings are static and take precedence over the subscription signal. For **non-Rule-Machine apps**, where subscriptions are the only trigger signal, an app that subscribes conditionally can map differently depending on when the scan ran.
 - Roles reflect how a device is *wired into* an app's configuration, not runtime behaviour.
 
 ## Components
