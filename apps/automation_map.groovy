@@ -112,7 +112,14 @@ Map main() {
         if (devices) {
             section {
                 paragraph "${devices.size()} device(s) selected."
-                input name: 'runScan', type: 'button', title: state.scanRunning ? 'Scanning...' : 'Scan relationships now'
+                // The scan is started by fetching the app's own /scan endpoint
+                // rather than from a Hubitat button. runIn() called out of
+                // appButtonHandler does not reliably schedule anything: on a
+                // clean install the queue was populated, scanRunning was true,
+                // no job was scheduled, and scanBatch never ran even once - its
+                // heartbeat was never written. Driving it through the endpoint
+                // runs the scan in an ordinary app execution, which works.
+                paragraph scanButtonHtml()
                 if (state.scanTotal) {
                     Integer done = (state.scanDone ?: 0) as Integer
                     Integer total = (state.scanTotal ?: 1) as Integer
@@ -152,8 +159,30 @@ Map main() {
     }
 }
 
+// Kept so an existing installation with the old button still works, but the
+// page no longer renders that button - see scanButtonHtml().
 void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
+}
+
+String scanButtonHtml() {
+    String label = state.scanRunning ? 'Scanning...' : 'Scan relationships now'
+    String disabled = state.scanRunning ? ' disabled' : ''
+    return """\
+<button type="button" id="amScanBtn" class="btn btn-default"${disabled} onclick="amStartScan()">${label}</button>
+<span id="amScanMsg" style="margin-left:10px"></span>
+<script type="text/javascript">
+function amStartScan() {
+  var b = document.getElementById('amScanBtn');
+  var m = document.getElementById('amScanMsg');
+  b.disabled = true;
+  m.textContent = 'Starting...';
+  fetch('${getLocalURL('scan')}', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
+    .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
+}
+</script>"""
 }
 
 boolean graphIsStale() {
