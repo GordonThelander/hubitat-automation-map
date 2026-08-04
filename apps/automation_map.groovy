@@ -17,40 +17,57 @@
  *                                 childDevices, eventSubscriptions, and every
  *                                 setting that resolves to devices
  *
- * Role assignment was derived by probing two apps whose source is known
- * (Presence Manager, LIFX Light Manager) plus one Rule Machine rule, and
- * cross-checking against both the source and the rule's own UI:
+ * Role assignment, derived by probing apps whose source is known (Presence
+ * Manager, LIFX Light Manager) plus real rules, and cross-checked against both
+ * that source and the rules' own UI. Checked in this order:
  *
- *   childDevices            -> owns       (LIFX: 12 child lights, no subs)
- *   setting named tDev*     -> trigger    (RM trigger devices)
- *   setting named rDev*     -> constraint (RM conditions + required expression)
- *   device is subscribed    -> trigger    (general case: an app subscribes to
- *                                          what it listens to. Presence
- *                                          Manager's 5 subs matched its
- *                                          subscribeEvidenceDevices() exactly)
- *   any other device setting-> action     (onOffSwitch.*, volume.*, note.*,
- *                                          siren.*, chime.*, speakDevice.*)
+ *   in childDevices          -> owns       (LIFX: 12 child lights, no subs)
+ *   setting named tDev*      -> trigger    (RM trigger devices)
+ *   setting named rDev*      -> constraint (RM conditions + required expression)
+ *   device is subscribed     -> trigger    (general: an app subscribes to what
+ *                                           it listens to. Presence Manager's 5
+ *                                           subs matched subscribeEvidence-
+ *                                           Devices() exactly)
+ *   capability has no commands -> monitor  (watched, not driven - Critical
+ *                                           Device Monitor inspects contact and
+ *                                           motion pickers it never commands)
+ *   any other device setting -> action     (onOffSwitch.*, volume.*, note.*,
+ *                                           siren.*, chime.*, speakDevice.*)
  *
- * tDev/rDev are Rule Machine's private naming and could change if Rule Machine
- * changes; the subscription and childDevices signals are structural and apply
- * to every app.
+ * Only the tDev/rDev rules are Rule Machine's private naming. childDevices,
+ * eventSubscriptions and capability types are platform-level, so the graph
+ * works for apps this was never written against - it handled all 17 app types
+ * on the development hub, 12 of them integrations with no specific support.
  *
- * Known limitation: apps are discovered from the devices you select, via each
- * device's appsUsingForDialog list. That list is truncated by the hub when a
- * device is used by many apps (it carries an "and N more" count), so an app
- * that only ever appears in a truncated list may be missed. Selecting all
- * devices makes this unlikely but not impossible.
+ * Rule FLOW decoding is different: it reads Rule Machine's internal layout and
+ * is pinned to SUPPORTED_RULE_ENGINE. Rules on any other engine still appear in
+ * the graph; they are counted and reported rather than silently empty.
+ *
+ * Known limitations:
+ *  - Apps are discovered via each scanned device's appsUsingForDialog list,
+ *    which the hub truncates when a device is used by many apps, so an app that
+ *    only ever appears in a truncated list may be missed.
+ *  - Event subscriptions are a snapshot: Rule Machine drops trigger
+ *    subscriptions while a Required Expression is false.
+ *  - If Hub Login Security is enabled the internal endpoints may not return
+ *    JSON at all; the scan probes for this and reports it rather than showing
+ *    an empty map.
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.6.0'
+@Field static final String APP_VERSION = '1.8.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '5'
+@Field static final String GRAPH_SCHEMA = '6'
+// Rule flow decoding reads Rule Machine's private internals, so it is pinned to
+// the version it was verified against. Rules on any other engine still appear
+// in the graph with their device relationships; they are counted and reported
+// rather than silently producing an empty flow.
+@Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -146,9 +163,14 @@ String compatibilitySummary() {
     }
     s << "Read ${decoded} app(s)"
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
-    s << ". Decoded ${rules} rule flow(s)."
-    if (decoded > rules) {
-        s << "<br><span style='opacity:0.75'>Apps without a flow still appear in the map with their device relationships. Flow decoding currently understands Rule Machine 5.1 only.</span>"
+    s << ". Decoded ${rules} ${SUPPORTED_RULE_ENGINE} flow(s)."
+
+    int skipped = (state.rulesSkipped ?: 0) as Integer
+    if (skipped > 0) {
+        List engines = (state.otherEngines ?: []) as List
+        s << "<br><b style='color:#b9770e'>${skipped} rule(s) on ${engines.join(', ')} were not decoded</b> - flow decoding supports ${SUPPORTED_RULE_ENGINE} only. They still appear in the map with their device relationships."
+    } else {
+        s << "<br><span style='opacity:0.75'>Flow decoding supports ${SUPPORTED_RULE_ENGINE}. Apps that are not rules appear in the map with their device relationships.</span>"
     }
     return s.toString()
 }
@@ -186,6 +208,8 @@ void startScan() {
     state.appsDecoded = 0
     state.appsUnreadable = 0
     state.rulesDecoded = 0
+    state.rulesSkipped = 0
+    state.otherEngines = []
     state.scanQueue = devices.collect { "${it.id}" }.unique()
     state.scanTotal = (state.scanQueue as List).size()
     state.scanDone = 0
@@ -282,7 +306,16 @@ void scanAppBatch() {
         } else {
             state.appsDecoded = (state.appsDecoded ?: 0) + 1
         }
-        if (info.flow) state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
+        if (info.flow) {
+            state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
+        } else if ("${info.type}".startsWith('Rule-')) {
+            // A rule engine this version does not decode. Counted so it is
+            // reported rather than looking like a rule with nothing in it.
+            List others = (state.otherEngines ?: []) as List
+            if (!others.contains("${info.type}")) others << "${info.type}"
+            state.otherEngines = others
+            state.rulesSkipped = (state.rulesSkipped ?: 0) + 1
+        }
     }
 
     state.appInfo = appInfo
@@ -425,7 +458,13 @@ List buildRuleFlow(Map data) {
     }
 
     List actionList = (st.actionList ?: []) as List
-    if (!actionList) return []
+    if (!actionList) {
+        // Built-in apps have no retrievable source - they are compiled classes,
+        // and /app/ajax/code returns an empty body for them. Their runtime state
+        // is still readable though, which is how Rule Machine was decoded too,
+        // so other engines can be supported the same empirical way.
+        return buildNotifierFlow(data, st)
+    }
 
     Map actions = (st.actions ?: [:]) as Map
     Map evalMap = (st.eval ?: [:]) as Map
@@ -464,6 +503,53 @@ List buildRuleFlow(Map data) {
         steps << actionStep("${a}", (actions["${a}"] ?: [:]) as Map, settingValues, settingDevices, evalMap, capabs)
     }
     return steps
+}
+
+// Hubitat's built-in Notifier. Worth decoding because it stores an already
+// rendered description of what it does in state.text, so the action step needs
+// no reconstruction at all - only the trigger and the time window do.
+List buildNotifierFlow(Map data, Map st) {
+    Map text = st.text as Map
+    if (!text) return []
+
+    Map settingValues = [:]
+    Map settingDevices = [:]
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map)) return
+        Map dl = s.deviceList as Map
+        if (dl) settingDevices["${s.name}"] = dl.values().collect { stripTags("${it}") }
+        if (s.value != null && "${s.value}") settingValues["${s.name}"] = "${s.value}"
+    }
+
+    List steps = []
+
+    // Anything picked that is not an output device is what the Notifier watches.
+    List triggerDevices = []
+    settingDevices.each { String n, List d ->
+        if (n in ['noteDev', 'speechDev', 'speakDevice']) return
+        d.each { if (!triggerDevices.contains(it)) triggerDevices << it }
+    }
+    if (triggerDevices) {
+        String devType = settingValues.devType ?: 'Device'
+        String edge = settingValues.firstSwitch == 'true' ? 'on' : (settingValues.secondSwitch == 'true' ? 'off' : '')
+        steps << [kind: 'trigger', ctrl: null, cond: '', devices: triggerDevices,
+                  label: edge ? "${devType} turns ${edge}" : "${devType} event"]
+    }
+
+    String starting = settingValues.starting
+    String ending = settingValues.ending
+    if (starting && ending) {
+        steps << [kind: 'required', ctrl: null, cond: '', devices: [],
+                  label: "Only between ${starting} and ${ending}"]
+    }
+
+    ['text', 'audio'].each { String key ->
+        String line = stripTags("${text[key] ?: ''}").trim()
+        if (!line) return
+        steps << [kind: 'action', ctrl: null, cond: '', devices: [], label: line]
+    }
+
+    return steps.size() > 1 ? steps : []
 }
 
 String expressionText(List expr, Map capabs) {
@@ -650,6 +736,14 @@ String roleForSetting(String settingName, String settingType, String devId, List
     // condition device (both plain IF conditions and the required expression).
     if (settingName.startsWith('tDev')) return 'trigger'
     if (settingName.startsWith('rDev')) return 'constraint'
+    // The wildcard picker means the app took devices of ANY type, which is what
+    // integrations that publish devices to an external system do - Maker API and
+    // Google Home both use it. They neither react to nor drive these devices on
+    // their own, so calling them triggers or actions misrepresents them (Maker
+    // API Export alone contributed 192 bogus "commands this device" edges).
+    // Checked before the subscription test because such apps do subscribe, to
+    // push state outwards.
+    if (settingType == 'capability.*') return 'exposed'
     // General signal: an app subscribes to what it listens to.
     if (subscribed.contains(devId)) return 'trigger'
     // Read-only by capability: watched, not driven.
@@ -758,6 +852,8 @@ String scanStatusJson() {
         appsDecoded: state.appsDecoded,
         appsUnreadable: state.appsUnreadable,
         rulesDecoded: state.rulesDecoded,
+        rulesSkipped: state.rulesSkipped,
+        otherEngines: state.otherEngines,
         heartbeat: state.scanHeartbeat,
         graphVersion: state.graphVersion,
     ])
@@ -826,6 +922,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
   <div class="legend-row"><span class="line" style="border-color:#3d7ea6"></span>Monitor - app reads this device's state</div>
   <div class="legend-row"><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
+  <div class="legend-row"><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
@@ -839,6 +936,7 @@ String buildMapHtml() {
     <option value="constraint">Constraints only</option>
     <option value="monitor">Monitored only</option>
     <option value="action">Actions only</option>
+    <option value="exposed">Exposed only</option>
     <option value="owns">Ownership only</option>
   </select></label>
   <button id="resetBtn" type="button">Show all</button>
@@ -848,13 +946,13 @@ String buildMapHtml() {
 <div id="network"></div>
 <script>
 const GRAPH = ${jsonStr};
-const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0' };
+const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
 
 // Most-significant role first. Used to colour a device that holds more than one
 // role in the same app - e.g. a motion sensor that is both a rule's trigger and
 // part of that rule's Wait-for-Expression condition.
-const ROLE_ORDER = ['trigger', 'constraint', 'monitor', 'action', 'owns'];
+const ROLE_ORDER = ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'];
 
 const ALL_NODES = GRAPH.nodes;
 
@@ -872,9 +970,9 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   return {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     arrows: inbound ? 'from' : 'to',
-    dashes: e.kind === 'owns',
+    dashes: e.kind === 'owns' ? true : (e.kind === 'exposed' ? [2, 4] : false),
     color: roleColors[e.kind] || '#999',
-    width: e.kind === 'owns' ? 1 : 1.6,
+    width: (e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6,
     smooth: { type: 'curvedCW', roundness: 0.12 + (dupIndex * 0.22) }
   };
 });
@@ -1106,7 +1204,9 @@ function showFlow(appId) {
   if (!steps || !steps.length || !window.mermaid) { flowPanel.style.display = 'none'; return; }
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
-  document.getElementById('flowSub').textContent = 'Decoded execution order. Rule Machine internals, so treat as a reading aid rather than the authority.';
+  // The app's own page remains the authority; this is reconstructed from the
+  // app's internal state, not from its source, which built-in apps do not expose.
+  document.getElementById('flowSub').textContent = 'Decoded execution order, reconstructed from the app\'s internal state. A reading aid - the app\'s own page is the authority.';
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
