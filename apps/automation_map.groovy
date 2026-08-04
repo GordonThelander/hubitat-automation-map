@@ -46,11 +46,11 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.4.1'
+@Field static final String APP_VERSION = '1.6.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '3'
+@Field static final String GRAPH_SCHEMA = '5'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -109,6 +109,7 @@ Map main() {
                         paragraph "<b style='color:#c0392b'>This map was built by version ${state.graphVersion ?: 'an earlier release'} and will not display correctly. Run the scan again.</b>"
                     } else {
                         paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
+                        paragraph compatibilitySummary()
                         href(
                             name: 'mapLink', title: 'View Automation Map',
                             description: 'Open the relationship graph',
@@ -130,11 +131,61 @@ boolean graphIsStale() {
     return state.graph && state.graphVersion != GRAPH_SCHEMA
 }
 
+// Reports what this hub actually supported, so a user whose hub differs sees a
+// reason rather than an unexplained gap. Rule flows are decoded from Rule
+// Machine 5.1's private layout; other rule engines still appear in the graph
+// but have no flow.
+String compatibilitySummary() {
+    int decoded = (state.appsDecoded ?: 0) as Integer
+    int unreadable = (state.appsUnreadable ?: 0) as Integer
+    int rules = (state.rulesDecoded ?: 0) as Integer
+
+    StringBuilder s = new StringBuilder()
+    if (state.compatOk == false) {
+        s << "<b style='color:#c0392b'>${state.compatDetail}</b><br>"
+    }
+    s << "Read ${decoded} app(s)"
+    if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
+    s << ". Decoded ${rules} rule flow(s)."
+    if (decoded > rules) {
+        s << "<br><span style='opacity:0.75'>Apps without a flow still appear in the map with their device relationships. Flow decoding currently understands Rule Machine 5.1 only.</span>"
+    }
+    return s.toString()
+}
+
 // ===================================================================================================================
 // Scanning - phase 1 discovers app ids from devices, phase 2 pulls each app's real relationships
 // ===================================================================================================================
 
+// Everything this app knows comes from undocumented hub endpoints, so on a hub
+// unlike the one it was written against it must say WHY it found nothing rather
+// than presenting an empty map as if that were the answer. The most likely
+// environmental difference is hub login security, which makes the internal
+// endpoints answer with a login page instead of JSON.
+Map probeCompatibility() {
+    Map out = [ok: false, detail: '']
+    try {
+        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${app.id}", timeout: 10]) { resp ->
+            if (resp.data instanceof Map && (resp.data as Map).installedApp) {
+                out.ok = true
+                out.detail = 'Hub internal endpoints reachable.'
+            } else {
+                out.detail = 'The hub answered, but not with app JSON. If Hub Login Security is enabled, Automation Map cannot read app configuration.'
+            }
+        }
+    } catch (Exception ex) {
+        out.detail = "Could not reach the hub's internal app endpoint (${ex.message}). This Hubitat version may not expose /installedapp/statusJson."
+    }
+    return out
+}
+
 void startScan() {
+    Map compat = probeCompatibility()
+    state.compatOk = compat.ok
+    state.compatDetail = compat.detail
+    state.appsDecoded = 0
+    state.appsUnreadable = 0
+    state.rulesDecoded = 0
     state.scanQueue = devices.collect { "${it.id}" }.unique()
     state.scanTotal = (state.scanQueue as List).size()
     state.scanDone = 0
@@ -226,6 +277,12 @@ void scanAppBatch() {
     queue.take(size).each { String appId ->
         Map info = fetchAppRelationships(appId, labels)
         appInfo[appId] = info
+        if (info.error || !(info.roles as Map)) {
+            state.appsUnreadable = (state.appsUnreadable ?: 0) + 1
+        } else {
+            state.appsDecoded = (state.appsDecoded ?: 0) + 1
+        }
+        if (info.flow) state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
     }
 
     state.appInfo = appInfo
@@ -267,7 +324,7 @@ Map fetchDeviceApps(String devId) {
 // Phase 2: the real relationship data. Also harvests device labels for devices
 // the user did not select, since settings carry {id: name} maps.
 Map fetchAppRelationships(String appId, Map labels) {
-    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], error: null]
+    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -277,6 +334,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             out.type = installedApp?.name
 
             Map roles = [:]
+            List stateful = []
 
             (data.childDevices ?: []).each { kid ->
                 if (kid?.id == null) return
@@ -297,10 +355,17 @@ Map fetchAppRelationships(String appId, Map labels) {
                 Map deviceList = s?.deviceList as Map
                 if (!deviceList) return
                 String settingName = "${s.name}"
+                String settingType = "${s.type}"
                 deviceList.each { devIdKey, devName ->
                     String devId = "${devIdKey}"
                     if (devName && !labels[devId]) labels[devId] = stripTags(devName as String)
-                    addRole(roles, devId, roleForSetting(settingName, devId, subscribed))
+                    String role = roleForSetting(settingName, settingType, devId, subscribed)
+                    addRole(roles, devId, role)
+                    // Remembered so conflict detection can ignore transient
+                    // commands like notifications.
+                    if (role == 'action' && isStatefulCapability(settingType) && !stateful.contains(devId)) {
+                        stateful << devId
+                    }
                 }
             }
 
@@ -319,6 +384,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             }
 
             out.roles = roles
+            out.stateful = stateful
             out.flow = buildRuleFlow(data)
         }
     } catch (Exception ex) {
@@ -544,13 +610,50 @@ String prettyMethod(String method) {
     return s ?: 'Action'
 }
 
-String roleForSetting(String settingName, String devId, List subscribed) {
+// Capabilities that expose no commands. A device selected through one of these
+// is being READ, never driven - so it must not be reported as something the app
+// acts on. Found via Critical Device Monitor, which subscribes only to its
+// water/smoke/CO pickers but also has contact, motion, lock and garage-door
+// pickers it merely inspects; without this check all of those were mislabelled
+// as devices the app commands.
+@Field static final List<String> SENSOR_CAPABILITIES = [
+    'capability.contactSensor', 'capability.motionSensor', 'capability.waterSensor',
+    'capability.smokeDetector', 'capability.carbonMonoxideDetector', 'capability.presenceSensor',
+    'capability.illuminanceMeasurement', 'capability.temperatureMeasurement',
+    'capability.relativeHumidityMeasurement', 'capability.battery', 'capability.powerMeter',
+    'capability.energyMeter', 'capability.voltageMeasurement', 'capability.pressureMeasurement',
+    'capability.carbonDioxideMeasurement', 'capability.ultravioletIndex', 'capability.accelerationSensor',
+    'capability.shockSensor', 'capability.soundSensor', 'capability.tamperAlert',
+    'capability.touchSensor', 'capability.sleepSensor', 'capability.stepSensor',
+    'capability.threeAxis', 'capability.signalStrength', 'capability.pushableButton',
+    'capability.holdableButton', 'capability.doubleTapableButton', 'capability.releasableButton',
+]
+
+// Commands that leave the device in a lasting state, so two apps driving the
+// same device really can fight. Sending two notifications or two chimes is not
+// a conflict, which is why Mobile Proxy topping a "contested" list by 20 apps
+// would be noise rather than a finding.
+@Field static final List<String> STATEFUL_CAPABILITIES = [
+    'capability.switch', 'capability.switchLevel', 'capability.colorControl',
+    'capability.colorTemperature', 'capability.lock', 'capability.garageDoorControl',
+    'capability.doorControl', 'capability.windowShade', 'capability.thermostat',
+    'capability.thermostatMode', 'capability.thermostatSetpoint', 'capability.fanControl',
+    'capability.valve', 'capability.light', 'capability.bulb', 'capability.outlet',
+]
+
+boolean isStatefulCapability(String settingType) {
+    return STATEFUL_CAPABILITIES.contains(settingType)
+}
+
+String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
     // Rule Machine's private naming: tDev<n> = trigger device, rDev_<n> =
     // condition device (both plain IF conditions and the required expression).
     if (settingName.startsWith('tDev')) return 'trigger'
     if (settingName.startsWith('rDev')) return 'constraint'
     // General signal: an app subscribes to what it listens to.
     if (subscribed.contains(devId)) return 'trigger'
+    // Read-only by capability: watched, not driven.
+    if (SENSOR_CAPABILITIES.contains(settingType)) return 'monitor'
     return 'action'
 }
 
@@ -599,11 +702,14 @@ Map buildGraph() {
             if (!nodes[devNodeId]) {
                 nodes[devNodeId] = nodeEntry(devNodeId, (labels[devId] ?: "Device ${devId}") as String, 'device')
             }
+            List statefulDevices = (appMap.stateful ?: []) as List
             (devRoles as List).each { String role ->
                 String key = "${appNodeId}|${devNodeId}|${role}"
                 if (seen.contains(key)) return
                 seen << key
-                edges << [from: appNodeId, to: devNodeId, kind: role]
+                Map edge = [from: appNodeId, to: devNodeId, kind: role]
+                if (role == 'action' && statefulDevices.contains(devId)) edge.stateful = true
+                edges << edge
             }
         }
     }
@@ -647,6 +753,11 @@ String scanStatusJson() {
         apps: (state.appInfo ?: [:]).size(),
         devices: (state.deviceLabels ?: [:]).size(),
         error: state.scanError,
+        compatOk: state.compatOk,
+        compatDetail: state.compatDetail,
+        appsDecoded: state.appsDecoded,
+        appsUnreadable: state.appsUnreadable,
+        rulesDecoded: state.rulesDecoded,
         heartbeat: state.scanHeartbeat,
         graphVersion: state.graphVersion,
     ])
@@ -699,6 +810,10 @@ String buildMapHtml() {
   #flow { position:absolute; top:10px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
           max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
+  #flow ul { margin:4px 0 0 0; padding-left:18px; }
+  #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
+  #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
 </style>
@@ -709,7 +824,8 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
   <div class="legend-row"><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
-  <div class="legend-row"><span class="line" style="border-color:#7fae42"></span>Action - app commands this device</div>
+  <div class="legend-row"><span class="line" style="border-color:#3d7ea6"></span>Monitor - app reads this device's state</div>
+  <div class="legend-row"><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
   <div class="legend-row"><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
@@ -721,22 +837,24 @@ String buildMapHtml() {
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
     <option value="constraint">Constraints only</option>
+    <option value="monitor">Monitored only</option>
     <option value="action">Actions only</option>
     <option value="owns">Ownership only</option>
   </select></label>
   <button id="resetBtn" type="button">Show all</button>
+  <button id="insightsBtn" type="button">Insights</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
 <div id="network"></div>
 <script>
 const GRAPH = ${jsonStr};
-const roleColors = { trigger: '#9b59b6', constraint: '#16a085', action: '#7fae42', owns: '#8090a0' };
+const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
 
 // Most-significant role first. Used to colour a device that holds more than one
 // role in the same app - e.g. a motion sensor that is both a rule's trigger and
 // part of that rule's Wait-for-Expression condition.
-const ROLE_ORDER = ['trigger', 'constraint', 'action', 'owns'];
+const ROLE_ORDER = ['trigger', 'constraint', 'monitor', 'action', 'owns'];
 
 const ALL_NODES = GRAPH.nodes;
 
@@ -744,14 +862,15 @@ const ALL_NODES = GRAPH.nodes;
 // of each other, hiding the fact that a device holds two roles in one app.
 const pairSeen = {};
 const ALL_EDGES = GRAPH.edges.map(function (e, i) {
+  // carry the stateful flag through for conflict detection
   const pairKey = e.from + '|' + e.to;
   const dupIndex = pairSeen[pairKey] === undefined ? 0 : pairSeen[pairKey] + 1;
   pairSeen[pairKey] = dupIndex;
   // Arrows follow the flow: a trigger or constraint feeds INTO the app, an
   // action or an owned device is driven BY it.
-  const inbound = (e.kind === 'trigger' || e.kind === 'constraint');
+  const inbound = (e.kind === 'trigger' || e.kind === 'constraint' || e.kind === 'monitor');
   return {
-    id: i, from: e.from, to: e.to, kind: e.kind,
+    id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     arrows: inbound ? 'from' : 'to',
     dashes: e.kind === 'owns',
     color: roleColors[e.kind] || '#999',
@@ -1015,6 +1134,78 @@ function fillSelect(selectId, group) {
     });
   return sel;
 }
+
+// ---------------------------------------------------------------------------
+// Insights. The graph answers "what is connected"; these answer the questions
+// the hub itself cannot: which devices are driven by more than one app (the
+// usual cause of automations fighting each other), and which devices nothing
+// commands at all.
+// ---------------------------------------------------------------------------
+function buildInsights() {
+  const nameOf = {};
+  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
+
+  const commanders = {};   // device -> apps that can leave it in a lasting state
+  const touched = {};      // device -> any relationship at all
+  ALL_EDGES.forEach(function (e) {
+    touched[e.to] = true;
+    // Only stateful commands can conflict. Two apps notifying the same phone
+    // is normal; two apps driving the same light is what you want to find.
+    if (e.kind === 'action' && e.stateful) {
+      if (!commanders[e.to]) commanders[e.to] = [];
+      if (commanders[e.to].indexOf(e.from) < 0) commanders[e.to].push(e.from);
+    }
+  });
+
+  const contested = Object.keys(commanders)
+    .filter(function (d) { return commanders[d].length > 1; })
+    .sort(function (a, b) { return commanders[b].length - commanders[a].length; });
+
+  const untouched = ALL_NODES
+    .filter(function (n) { return n.group === 'device' && !touched[n.id]; })
+    .map(function (n) { return n.id; });
+
+  const readOnly = ALL_NODES.filter(function (n) {
+    if (n.group !== 'device' || !touched[n.id]) return false;
+    return !commanders[n.id];
+  }).map(function (n) { return n.id; });
+
+  let html = '<h3>Insights</h3>';
+  html += '<div class="sub">Derived from the current scan. "Commanded by" counts apps with an action relationship.</div>';
+
+  html += '<h4>Contested devices (' + contested.length + ')</h4>';
+  if (!contested.length) {
+    html += '<p class="sub">No device is commanded by more than one app.</p>';
+  } else {
+    html += '<p class="sub">More than one app can leave these in a lasting state. Where two disagree, the last to run wins. Notifications and chimes are excluded - repeating those is not a conflict.</p><ul>';
+    contested.slice(0, 40).forEach(function (d) {
+      html += '<li><b>' + nameOf[d] + '</b> &mdash; ' + commanders[d].length + ' apps<br><span class="sub">' +
+        commanders[d].map(function (a) { return nameOf[a]; }).join(' &middot; ') + '</span></li>';
+    });
+    html += '</ul>';
+  }
+
+  html += '<h4>Devices nothing references (' + untouched.length + ')</h4>';
+  if (!untouched.length) {
+    html += '<p class="sub">Every device in the map is referenced by at least one app.</p>';
+  } else {
+    html += '<p class="sub">No app owns, watches or drives these. Candidates for removal, or gaps in automation.</p><ul>';
+    untouched.slice(0, 60).forEach(function (d) { html += '<li>' + nameOf[d] + '</li>'; });
+    html += '</ul>';
+  }
+
+  html += '<h4>Read but never driven (' + readOnly.length + ')</h4>';
+  html += '<p class="sub">Referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+
+  return html;
+}
+
+document.getElementById('insightsBtn').addEventListener('click', function () {
+  document.getElementById('flowTitle').textContent = '';
+  document.getElementById('flowSub').textContent = '';
+  flowChart.innerHTML = buildInsights();
+  flowPanel.style.display = 'block';
+});
 
 const appSelect = fillSelect('appFilter', 'app');
 const deviceSelect = fillSelect('deviceFilter', 'device');
