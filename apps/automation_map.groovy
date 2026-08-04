@@ -58,7 +58,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.10.0'
+@Field static final String APP_VERSION = '1.11.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1414,8 +1414,8 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   hint.id = 'hint';
   hint.innerHTML = '<b>Start here</b><br>' +
     'This is every app and device on your hub at once, so it looks busy - that is expected.<br><br>' +
-    'Pick an <b>app</b> top right to see just that app and what it uses. If it is a rule you also get a flowchart of how it works.<br><br>' +
-    'Pick a <b>device</b> to see every app that touches it.<br><br>' +
+    '<b>Click any node</b> to drill into it. Click an app to see what it uses - if it is a rule you also get a flowchart of how it works. Then click one of its devices to see everything else touching that device.<br><br>' +
+    'The dropdowns top right do the same thing, and have search boxes.<br><br>' +
     'Or press <b>Insights</b> for devices controlled by several apps at once.' +
     '<div style="margin-top:12px"><button id="hintClose" type="button">Got it</button></div>';
   document.body.appendChild(hint);
@@ -1424,6 +1424,49 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
 
 const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
 const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
+
+// Clicking a node is the first thing anyone tries, so it drills in: click an
+// app to see what it uses, click one of those devices to see everything else
+// touching it, and so on. A search filter may have removed the option from the
+// dropdown, so put it back before selecting it, otherwise the assignment is
+// silently ignored and the click appears to do nothing.
+function forceSelect(sel, id, label) {
+  if (!sel.querySelector('option[value="' + id + '"]')) {
+    const opt = document.createElement('option');
+    opt.value = id; opt.textContent = label;
+    sel.appendChild(opt);
+  }
+  sel.value = id;
+}
+
+function focusNode(id) {
+  const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
+  if (!node) return false;
+  if (node.group === 'app') {
+    forceSelect(appSelect, node.id, node.title);
+    deviceSelect.value = '__all__';
+    applyFilters();
+    showFlow(node.id);
+  } else {
+    forceSelect(deviceSelect, node.id, node.title);
+    appSelect.value = '__all__';
+    flowPanel.style.display = 'none';
+    applyFilters();
+  }
+  const hint = document.getElementById('hint');
+  if (hint) hint.style.display = 'none';
+  return true;
+}
+
+network.on('click', function (params) {
+  if (params.nodes && params.nodes.length) focusNode(params.nodes[0]);
+});
+
+// vis does not change the cursor by itself, so nothing signals that nodes are
+// clickable at all.
+const canvasEl = document.getElementById('network');
+network.on('hoverNode', function () { canvasEl.style.cursor = 'pointer'; });
+network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 
 appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') deviceSelect.value = '__all__';
