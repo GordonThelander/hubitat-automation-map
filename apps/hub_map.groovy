@@ -1,58 +1,55 @@
 /*
  * Hub Map
  *
- * Visualizes how installed Hubitat apps and devices relate to each other -
- * which app created/owns each device (ownership), and which apps reference
- * each device in their own configuration (usage, e.g. a Rule Machine rule
- * that controls it) - as an interactive force-directed graph, in the same
- * visual style as Dan Danache's Zigbee Map app.
+ * Visualizes how installed Hubitat apps and devices relate to each other, and
+ * in what ROLE - which app owns a device, which devices trigger an app, which
+ * constrain it, and which it acts on - as an interactive force-directed graph,
+ * in the same visual style as Dan Danache's Zigbee Map app.
  *
- * There is no official Hubitat API for "list every app and what devices it
- * uses". This data comes from the hub's own internal /device/fullJson/<id>
- * endpoint (the one the hub's own web UI calls), fetched via a self-request
- * to 127.0.0.1 - an established community technique, not a public API.
- * Field names below were inferred from ONE real device's JSON response and
- * are defensive (fall back to a placeholder) rather than assumed to
- * generalize perfectly across every driver type.
+ * There is no official Hubitat API for any of this. The data comes from the
+ * hub's own internal endpoints (the ones the hub's own web UI calls), fetched
+ * via a self-request to 127.0.0.1 - an established community technique, not a
+ * public API:
  *
- * Device enumeration deliberately uses the standard official device picker
- * (select devices, use "Select All") rather than depending on a separately
- * configured Maker API instance and its own access token.
+ *   /device/fullJson/<id>         parentApp + appsUsingForDialog, used only to
+ *                                 DISCOVER which app ids exist
+ *   /installedapp/statusJson/<id> the real relationship data per app:
+ *                                 childDevices, eventSubscriptions, and every
+ *                                 setting that resolves to devices
+ *
+ * Role assignment was derived by probing two apps whose source is known
+ * (Presence Manager, LIFX Light Manager) plus one Rule Machine rule, and
+ * cross-checking against both the source and the rule's own UI:
+ *
+ *   childDevices            -> owns       (LIFX: 12 child lights, no subs)
+ *   setting named tDev*     -> trigger    (RM trigger devices)
+ *   setting named rDev*     -> constraint (RM conditions + required expression)
+ *   device is subscribed    -> trigger    (general case: an app subscribes to
+ *                                          what it listens to. Presence
+ *                                          Manager's 5 subs matched its
+ *                                          subscribeEvidenceDevices() exactly)
+ *   any other device setting-> action     (onOffSwitch.*, volume.*, note.*,
+ *                                          siren.*, chime.*, speakDevice.*)
+ *
+ * tDev/rDev are Rule Machine's private naming and could change if Rule Machine
+ * changes; the subscription and childDevices signals are structural and apply
+ * to every app.
+ *
+ * Known limitation: apps are discovered from the devices you select, via each
+ * device's appsUsingForDialog list. That list is truncated by the hub when a
+ * device is used by many apps (it carries an "and N more" count), so an app
+ * that only ever appears in a truncated list may be missed. Selecting all
+ * devices makes this unlikely but not impossible.
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Hub Map'
-@Field static final String APP_VERSION = '0.6.0'
+@Field static final String APP_VERSION = '1.0.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
-@Field static final Integer BATCH_SIZE = 15
-
-// Best-effort "is this device actionable / trigger-like / constraint-like"
-// signal, used only to guess a device's likely role for display - inferred
-// from commands, capability names (if present), and device name keywords,
-// NOT from any real rule logic. A rule's actual trigger/action/condition
-// wiring lives inside its own config, which no endpoint we've found exposes.
-@Field static final List<String> ACTUATOR_COMMANDS = [
-    'on', 'off', 'setLevel', 'setColorTemperature', 'setColor', 'setHue', 'setSaturation',
-    'open', 'close', 'lock', 'unlock', 'setPosition', 'strobe', 'siren', 'both',
-    'setThermostatMode', 'setHeatingSetpoint', 'setCoolingSetpoint', 'start', 'stop', 'pause',
-    'setSpeed', 'setVolume', 'mute', 'unmute', 'arm', 'disarm', 'beep',
-]
-@Field static final List<String> ACTUATOR_CAPABILITIES = [
-    'Actuator', 'Switch', 'SwitchLevel', 'ColorControl', 'ColorTemperature', 'Lock',
-    'GarageDoorControl', 'DoorControl', 'WindowShade', 'Thermostat', 'ThermostatMode',
-    'FanControl', 'SpeakerVolume', 'AudioVolume', 'AlarmControl', 'Chime', 'Valve',
-]
-@Field static final List<String> CONSTRAINT_CAPABILITIES = [
-    'IlluminanceMeasurement', 'TemperatureMeasurement', 'RelativeHumidityMeasurement',
-    'PowerMeter', 'EnergyMeter', 'VoltageMeasurement', 'PressureMeasurement', 'Battery',
-    'UltravioletIndex', 'CarbonDioxideMeasurement', 'PM25Measurement',
-]
-@Field static final List<String> CONSTRAINT_KEYWORDS = [
-    'illuminance', 'lux', 'temperature', 'humidity', 'battery', 'power', 'voltage',
-    'average', 'pressure', 'co2', 'aqi',
-]
+@Field static final Integer DEVICE_BATCH_SIZE = 15
+@Field static final Integer APP_BATCH_SIZE = 3
 
 definition(
     name: APP_NAME,
@@ -83,22 +80,25 @@ Map main() {
 
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
         section {
-            paragraph 'Select the devices you want mapped (use "Select All" in the picker - all 199 is fine).'
-            input name: 'devices', type: 'capability.*', title: 'Devices to include in the map', multiple: true, required: true, submitOnChange: true
+            paragraph 'Select the devices to scan (use "Select All"). Devices referenced by an app are added to the map automatically, even if not selected here - the selection only decides which devices are used to discover apps.'
+            input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, required: true, submitOnChange: true
         }
         if (devices) {
             section {
                 paragraph "${devices.size()} device(s) selected."
                 input name: 'runScan', type: 'button', title: state.scanRunning ? 'Scanning...' : 'Scan relationships now'
                 if (state.scanTotal) {
-                    String progress = "Scanned ${state.scanDone ?: 0} / ${state.scanTotal}"
-                    if (state.scanRunning) progress += ' (in progress - close and reopen this page to refresh)'
+                    String phase = state.scanPhase == 'apps' ? 'apps' : 'devices'
+                    String progress = "Scanning ${phase}: ${state.scanDone ?: 0} / ${state.scanTotal}"
+                    if (state.scanRunning) progress += ' (close and reopen this page to refresh)'
                     paragraph progress
                 }
                 if (state.scanError) {
                     paragraph "<b style='color:#c0392b'>Scan error: ${state.scanError}</b>"
                 }
                 if (state.graph) {
+                    Map g = state.graph as Map
+                    paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
                     href(
                         name: 'mapLink', title: 'View Hub Map',
                         description: 'Open the relationship graph',
@@ -115,132 +115,237 @@ void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
 }
 
+// ===================================================================================================================
+// Scanning - phase 1 discovers app ids from devices, phase 2 pulls each app's real relationships
+// ===================================================================================================================
+
 void startScan() {
-    List ids = devices.collect { it.id }.unique()
-    state.scanQueue = ids
-    state.scanTotal = ids.size()
+    state.scanQueue = devices.collect { "${it.id}" }.unique()
+    state.scanTotal = (state.scanQueue as List).size()
     state.scanDone = 0
+    state.scanPhase = 'devices'
     state.scanRunning = true
-    state.scanResults = [:]
     state.scanError = null
+    state.deviceLabels = [:]
+    state.appIds = []
+    state.appInfo = [:]
     unschedule('scanBatch')
     runIn(1, 'scanBatch')
 }
 
 void scanBatch() {
-    List queue = state.scanQueue ?: []
-    if (!queue) {
-        finishScan()
-        return
-    }
     try {
-        Map results = state.scanResults ?: [:]
-        int batchSize = queue.size() < BATCH_SIZE ? queue.size() : BATCH_SIZE
-        List batch = queue.take(batchSize)
-        batch.each { id -> results[id.toString()] = fetchDeviceRelationships(id) }
-        state.scanResults = results
-        state.scanQueue = queue.drop(batchSize)
-        state.scanDone = (state.scanDone ?: 0) + batchSize
+        if (state.scanPhase == 'devices') {
+            scanDeviceBatch()
+        } else {
+            scanAppBatch()
+        }
     } catch (Exception ex) {
         log.warn "${app.label}: scanBatch failed: ${ex.message}"
         state.scanError = ex.message
         state.scanQueue = []
+        finishScan()
+        return
     }
+
     if (state.scanQueue) {
         runIn(1, 'scanBatch')
+    } else if (state.scanPhase == 'devices') {
+        startAppPhase()
     } else {
         finishScan()
     }
 }
 
-void finishScan() {
-    state.scanRunning = false
-    state.graph = buildGraph(state.scanResults ?: [:])
-    log.info "${app.label}: scan complete, ${state.scanTotal} device(s) processed"
+void scanDeviceBatch() {
+    List queue = state.scanQueue as List
+    Map labels = state.deviceLabels as Map
+    List appIds = state.appIds as List
+    int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
+
+    queue.take(size).each { String devId ->
+        Map info = fetchDeviceApps(devId)
+        if (info.label) labels[devId] = info.label
+        (info.appIds as List).each { String appId ->
+            if (!appIds.contains(appId)) appIds << appId
+        }
+    }
+
+    state.deviceLabels = labels
+    state.appIds = appIds
+    state.scanQueue = queue.drop(size)
+    state.scanDone = (state.scanDone ?: 0) + size
 }
 
-Map fetchDeviceRelationships(id) {
-    Map out = [id: id, label: "Device ${id}", apps: [], parentApp: null, commands: [], capabilities: [], error: null]
+void startAppPhase() {
+    state.scanPhase = 'apps'
+    state.scanQueue = (state.appIds as List)
+    state.scanTotal = (state.appIds as List).size()
+    state.scanDone = 0
+    runIn(1, 'scanBatch')
+}
+
+void scanAppBatch() {
+    List queue = state.scanQueue as List
+    Map appInfo = state.appInfo as Map
+    Map labels = state.deviceLabels as Map
+    int size = queue.size() < APP_BATCH_SIZE ? queue.size() : APP_BATCH_SIZE
+
+    queue.take(size).each { String appId ->
+        Map info = fetchAppRelationships(appId, labels)
+        appInfo[appId] = info
+    }
+
+    state.appInfo = appInfo
+    state.deviceLabels = labels
+    state.scanQueue = queue.drop(size)
+    state.scanDone = (state.scanDone ?: 0) + size
+}
+
+void finishScan() {
+    state.scanRunning = false
+    state.graph = buildGraph()
+    log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+}
+
+// Phase 1: only needs the app ids this device is attached to.
+Map fetchDeviceApps(String devId) {
+    Map out = [label: null, appIds: []]
     try {
-        httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${id}", timeout: 8]) { resp ->
+        httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 10]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
             String breadcrumb = data.extraBreadcrumb as String
             if (breadcrumb) out.label = stripTags(breadcrumb)
 
-            List appsUsing = (data.appsUsingForDialog ?: []) as List
-            out.apps = appsUsing.findAll { it?.id != null }.collect {
-                [id: it.id, label: stripTags((it.label ?: it.trueLabel ?: it.name ?: "App ${it.id}") as String)]
-            }
-
+            List ids = []
             Map parentApp = data.parentApp as Map
-            if (parentApp?.id != null) {
-                out.parentApp = [id: parentApp.id, label: stripTags((parentApp.label ?: parentApp.name ?: "App ${parentApp.id}") as String)]
+            if (parentApp?.id != null) ids << "${parentApp.id}"
+            (data.appsUsingForDialog ?: []).each { u ->
+                if (u?.id != null) ids << "${u.id}"
             }
-
-            List cmds = (data.commands ?: []) as List
-            out.commands = cmds.findAll { it?.name }.collect { it.name as String }
-
-            Map deviceMap = data.device as Map
-            List rawCaps = (data.capabilities ?: deviceMap?.capabilities ?: []) as List
-            out.capabilities = rawCaps.findAll { it instanceof String }.collect { it as String }
+            out.appIds = ids.unique()
         }
     } catch (Exception ex) {
-        out.error = ex.message
+        log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
     }
     return out
 }
 
-String deviceRole(List commands, List capabilities, String label) {
-    boolean actionable = (commands && commands.any { ACTUATOR_COMMANDS.contains(it) }) ||
-        (capabilities && capabilities.any { ACTUATOR_CAPABILITIES.contains(it) })
-    if (actionable) return 'target'
+// Phase 2: the real relationship data. Also harvests device labels for devices
+// the user did not select, since settings carry {id: name} maps.
+Map fetchAppRelationships(String appId, Map labels) {
+    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], error: null]
+    try {
+        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
 
-    boolean constraintCap = capabilities && capabilities.any { CONSTRAINT_CAPABILITIES.contains(it) }
-    String lowerLabel = (label ?: '').toLowerCase()
-    boolean constraintKeyword = CONSTRAINT_KEYWORDS.any { lowerLabel.contains(it) }
-    if (constraintCap || constraintKeyword) return 'constraint'
+            Map installedApp = data.installedApp as Map
+            out.label = stripTags((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
+            out.type = installedApp?.name
 
-    return 'trigger'
+            Map roles = [:]
+
+            (data.childDevices ?: []).each { kid ->
+                if (kid?.id == null) return
+                String devId = "${kid.id}"
+                if (kid.name && !labels[devId]) labels[devId] = stripTags(kid.name as String)
+                addRole(roles, devId, 'owns')
+            }
+
+            List subscribed = []
+            (data.eventSubscriptions ?: []).each { sub ->
+                if (sub?.type != 'DEVICE' || sub?.typeId == null) return
+                String devId = "${sub.typeId}"
+                if (sub.typeName && !labels[devId]) labels[devId] = stripTags(sub.typeName as String)
+                if (!subscribed.contains(devId)) subscribed << devId
+            }
+
+            (data.appSettings ?: []).each { s ->
+                Map deviceList = s?.deviceList as Map
+                if (!deviceList) return
+                String settingName = "${s.name}"
+                deviceList.each { devIdKey, devName ->
+                    String devId = "${devIdKey}"
+                    if (devName && !labels[devId]) labels[devId] = stripTags(devName as String)
+                    addRole(roles, devId, roleForSetting(settingName, devId, subscribed))
+                }
+            }
+
+            // A subscribed device with no setting of its own is still a trigger,
+            // unless this app owns it (a child device it also listens to).
+            subscribed.each { String devId ->
+                List existing = (roles[devId] ?: []) as List
+                if (!existing) addRole(roles, devId, 'trigger')
+            }
+
+            out.roles = roles
+        }
+    } catch (Exception ex) {
+        out.error = ex.message
+        log.warn "${app.label}: app ${appId} lookup failed: ${ex.message}"
+    }
+    return out
+}
+
+String roleForSetting(String settingName, String devId, List subscribed) {
+    // Rule Machine's private naming: tDev<n> = trigger device, rDev_<n> =
+    // condition device (both plain IF conditions and the required expression).
+    if (settingName.startsWith('tDev')) return 'trigger'
+    if (settingName.startsWith('rDev')) return 'constraint'
+    // General signal: an app subscribes to what it listens to.
+    if (subscribed.contains(devId)) return 'trigger'
+    return 'action'
+}
+
+void addRole(Map roles, String devId, String role) {
+    List existing = (roles[devId] ?: []) as List
+    if (!existing.contains(role)) existing << role
+    roles[devId] = existing
 }
 
 String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
-Map nodeEntry(String id, String fullLabel, String group, String role = null) {
+// ===================================================================================================================
+// Graph building
+// ===================================================================================================================
+
+Map nodeEntry(String id, String fullLabel, String group, String subtitle = null) {
     String label = fullLabel ?: id
     String shortLabel = label
-    if (shortLabel.length() > 22) shortLabel = "${shortLabel.substring(0, 20)}…"
-    return [id: id, label: shortLabel, title: label, group: group, role: role]
+    if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
+    return [id: id, label: shortLabel, title: subtitle ? "${label} (${subtitle})" : label, group: group]
 }
 
-Map buildGraph(Map results) {
+Map buildGraph() {
+    Map labels = (state.deviceLabels ?: [:]) as Map
+    Map appInfo = (state.appInfo ?: [:]) as Map
+
     Map<String, Map> nodes = [:]
     List<Map> edges = []
+    List<String> seen = []
 
-    String hubName = 'Hub'
-    if (location?.hubs) hubName = (location.hubs[0]?.name ?: hubName)
-    nodes['hub'] = nodeEntry('hub', hubName, 'hub')
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        Map appMap = info as Map
+        Map roles = (appMap.roles ?: [:]) as Map
+        if (!roles) return
 
-    results.each { String key, Map info ->
-        if (info == null) return
-        String devNodeId = "d${info.id}"
-        nodes[devNodeId] = nodeEntry(devNodeId, (info.label ?: "Device ${info.id}"), 'device', deviceRole(info.commands as List, info.capabilities as List, info.label as String))
+        String appNodeId = "a${appId}"
+        nodes[appNodeId] = nodeEntry(appNodeId, appMap.label as String, 'app', appMap.type as String)
 
-        if (info.parentApp) {
-            String appNodeId = "a${info.parentApp.id}"
-            if (!nodes[appNodeId]) nodes[appNodeId] = nodeEntry(appNodeId, info.parentApp.label as String, 'app')
-            edges << [from: appNodeId, to: devNodeId, kind: 'owns']
-        } else {
-            edges << [from: 'hub', to: devNodeId, kind: 'owns']
-        }
-
-        (info.apps ?: []).each { Map usingApp ->
-            boolean isParent = info.parentApp && info.parentApp.id == usingApp.id
-            if (isParent) return
-            String appNodeId = "a${usingApp.id}"
-            if (!nodes[appNodeId]) nodes[appNodeId] = nodeEntry(appNodeId, usingApp.label as String, 'app')
-            edges << [from: appNodeId, to: devNodeId, kind: 'uses']
+        roles.each { String devId, devRoles ->
+            String devNodeId = "d${devId}"
+            if (!nodes[devNodeId]) {
+                nodes[devNodeId] = nodeEntry(devNodeId, (labels[devId] ?: "Device ${devId}") as String, 'device')
+            }
+            (devRoles as List).each { String role ->
+                String key = "${appNodeId}|${devNodeId}|${role}"
+                if (seen.contains(key)) return
+                seen << key
+                edges << [from: appNodeId, to: devNodeId, kind: role]
+            }
         }
     }
 
@@ -251,6 +356,10 @@ String getLocalURL(String fileName) {
     String fullURL = "${fullLocalApiServerUrl}/${fileName}?access_token=${state.accessToken}"
     return (fullURL =~ URL_PATTERN).findAll()[0][1]
 }
+
+// ===================================================================================================================
+// Map page
+// ===================================================================================================================
 
 mappings {
     path('/hub-map.html') { action: [ GET: 'renderMapMapping' ] }
@@ -276,84 +385,79 @@ String buildMapHtml() {
 <style>
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
-  #legend { position:absolute; bottom:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; display:flex; flex-direction:column; gap:6px; width:220px; }
+  #legend { position:absolute; bottom:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; max-width:340px; }
+  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; display:flex; flex-direction:column; gap:6px; width:230px; }
   #controls label { display:block; margin-bottom:2px; }
   #controls select { width:100%; box-sizing:border-box; }
   #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
   .legend-row { display:flex; align-items:center; margin:4px 0; }
-  .swatch { width:12px; height:12px; border-radius:50%; margin-right:8px; display:inline-block; }
-  .swatch.square { border-radius:2px; }
-  .line { width:20px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; }
-  .dashed { border-top-style:dashed; }
+  .swatch { width:12px; height:12px; border-radius:50%; margin-right:8px; display:inline-block; flex:none; }
+  .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
+  .note { opacity:0.75; font-size:0.9em; margin-top:6px; line-height:1.35; }
 </style>
 </head>
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
 <div id="legend">
-  <div class="legend-row"><span class="swatch" style="background:#3498db"></span>Hub</div>
   <div class="legend-row"><span class="swatch" style="background:#e8a33d"></span>App</div>
-  <div class="legend-row"><span class="swatch square" style="background:#7fae42"></span>Device - target/action</div>
-  <div class="legend-row"><span class="swatch" style="background:#9b59b6"></span>Device - trigger</div>
-  <div class="legend-row"><span class="swatch" style="background:#16a085"></span>Device - constraint</div>
-  <div class="legend-row"><span class="line"></span>Owns (created device)</div>
-  <div class="legend-row"><span class="line dashed"></span>Uses (referenced in config)</div>
-  <div class="legend-row" style="opacity:0.75; font-size:0.9em">Role is guessed from device commands/capabilities/name, not the rule's real trigger/action/condition wiring.</div>
+  <div class="legend-row"><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
+  <div class="legend-row"><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
+  <div class="legend-row"><span class="line" style="border-color:#7fae42"></span>Action - app commands this device</div>
+  <div class="legend-row"><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
+  <div class="note">Focus one app to colour its devices by role.</div>
 </div>
 <div id="controls">
   <label>Focus app<select id="appFilter"><option value="__all__">All apps</option></select></label>
   <label>Focus device<select id="deviceFilter"><option value="__all__">All devices</option></select></label>
   <label>Show<select id="kindFilter">
-    <option value="all">Ownership + Usage</option>
+    <option value="all">All relationships</option>
+    <option value="trigger">Triggers only</option>
+    <option value="constraint">Constraints only</option>
+    <option value="action">Actions only</option>
     <option value="owns">Ownership only</option>
-    <option value="uses">Usage only</option>
   </select></label>
   <button id="resetBtn" type="button">Show all</button>
 </div>
 <div id="network"></div>
 <script>
 const GRAPH = ${jsonStr};
-const groupColors = { hub: '#3498db', app: '#e8a33d', device: '#7fae42' };
-const roleColors = { target: '#7fae42', trigger: '#9b59b6', constraint: '#16a085' };
-
-function nodeShape(n) {
-  if (n.group === 'hub') return 'diamond';
-  if (n.group === 'device' && n.role === 'target') return 'square';
-  return 'dot';
-}
-function nodeColor(n) {
-  if (n.group === 'device' && n.role && roleColors[n.role]) return roleColors[n.role];
-  return groupColors[n.group];
-}
-function styledNode(n, useFullLabel) {
-  return {
-    id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: nodeColor(n),
-    shape: nodeShape(n),
-    size: n.group === 'hub' ? 24 : (n.group === 'app' ? 17 : 13),
-    font: {
-      color: '#fff', size: n.group === 'hub' ? 16 : 13,
-      strokeWidth: 5, strokeColor: '#062733', vadjust: -4
-    }
-  };
-}
-function styledEdge(e, i) {
-  return {
-    id: i, from: e.from, to: e.to, arrows: 'to',
-    dashes: e.kind === 'uses', color: e.kind === 'uses' ? '#5a6b73' : '#9fb3bb', width: e.kind === 'uses' ? 1 : 1.5
-  };
-}
+const roleColors = { trigger: '#9b59b6', constraint: '#16a085', action: '#7fae42', owns: '#8090a0' };
+const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
 
 const ALL_NODES = GRAPH.nodes;
-const ALL_EDGES = GRAPH.edges.map(styledEdge);
+const ALL_EDGES = GRAPH.edges.map(function (e, i) {
+  return {
+    id: i, from: e.from, to: e.to, kind: e.kind, arrows: 'to',
+    dashes: e.kind === 'owns',
+    color: roleColors[e.kind] || '#999',
+    width: e.kind === 'owns' ? 1 : 1.6
+  };
+});
 
-const nodes = new vis.DataSet(ALL_NODES.map(function (n) { return styledNode(n, false); }));
+// When one app is focused, its devices are coloured by the role they play in
+// THAT app - a device can legitimately be a trigger for one app and a target
+// for another, so this colouring only makes sense scoped to a single app.
+function styledNode(n, useFullLabel, roleByDevice) {
+  const role = roleByDevice ? roleByDevice[n.id] : null;
+  const color = n.group === 'device'
+    ? (role && roleColors[role] ? roleColors[role] : groupColors.device)
+    : groupColors[n.group];
+  return {
+    id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: color,
+    shape: n.group === 'app' ? 'square' : 'dot',
+    size: n.group === 'app' ? 17 : 13,
+    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 }
+  };
+}
+
+const nodes = new vis.DataSet(ALL_NODES.map(function (n) { return styledNode(n, false, null); }));
 const edges = new vis.DataSet(ALL_EDGES);
 
-const network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
+const network = new vis.Network(document.getElementById('network'), { nodes: nodes, edges: edges }, {
   physics: {
     stabilization: { iterations: 300 },
-    barnesHut: { gravitationalConstant: -25000, springLength: 220, springConstant: 0.02, avoidOverlap: 1 }
+    barnesHut: { gravitationalConstant: -26000, springLength: 220, springConstant: 0.02, avoidOverlap: 1 }
   },
   interaction: { hover: true, tooltipDelay: 100 },
   edges: { smooth: { type: 'continuous' } }
@@ -367,12 +471,13 @@ function settle() {
 }
 settle();
 
-function neighborhood(nodeId) {
-  const ids = new Set([nodeId]);
+function neighborhood(nodeId, edgePool) {
+  const ids = {};
+  ids[nodeId] = true;
   const edgeList = [];
-  ALL_EDGES.forEach(function (e) {
+  edgePool.forEach(function (e) {
     if (e.from === nodeId || e.to === nodeId) {
-      ids.add(e.from); ids.add(e.to);
+      ids[e.from] = true; ids[e.to] = true;
       edgeList.push(e);
     }
   });
@@ -384,55 +489,44 @@ function applyFilters() {
   const devVal = document.getElementById('deviceFilter').value;
   const kindVal = document.getElementById('kindFilter').value;
 
-  let nodeIds = null;
-  let edgeSubset = ALL_EDGES;
+  let pool = kindVal === 'all' ? ALL_EDGES : ALL_EDGES.filter(function (e) { return e.kind === kindVal; });
 
+  let ids = null;
+  let shownEdges = pool;
+  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : null);
+  if (focusId) {
+    const focus = neighborhood(focusId, pool);
+    ids = focus.ids; shownEdges = focus.edgeList;
+    ids[focusId] = true;
+  }
+
+  let roleByDevice = null;
   if (appVal !== '__all__') {
-    const focus = neighborhood(appVal);
-    nodeIds = focus.ids; edgeSubset = focus.edgeList;
-  } else if (devVal !== '__all__') {
-    const focus = neighborhood(devVal);
-    nodeIds = focus.ids; edgeSubset = focus.edgeList;
+    roleByDevice = {};
+    shownEdges.forEach(function (e) { if (e.from === appVal) roleByDevice[e.to] = e.kind; });
   }
 
-  if (kindVal !== 'all') {
-    edgeSubset = edgeSubset.filter(function (e) { return e.kind === kindVal; });
-    if (nodeIds) {
-      const keep = new Set();
-      edgeSubset.forEach(function (e) { keep.add(e.from); keep.add(e.to); });
-      if (appVal !== '__all__') keep.add(appVal);
-      if (devVal !== '__all__') keep.add(devVal);
-      nodeIds = keep;
-    }
-  }
-
-  const shownNodes = nodeIds ? ALL_NODES.filter(function (n) { return nodeIds.has(n.id); }) : ALL_NODES;
-  const shownEdges = nodeIds ? edgeSubset : (kindVal === 'all' ? ALL_EDGES : ALL_EDGES.filter(function (e) { return e.kind === kindVal; }));
-  const focused = (appVal !== '__all__' || devVal !== '__all__');
-
-  nodes.clear(); nodes.add(shownNodes.map(function (n) { return styledNode(n, focused); }));
+  const shownNodes = ids ? ALL_NODES.filter(function (n) { return ids[n.id]; }) : ALL_NODES;
+  nodes.clear(); nodes.add(shownNodes.map(function (n) { return styledNode(n, !!focusId, roleByDevice); }));
   edges.clear(); edges.add(shownEdges);
   network.setOptions({ physics: { enabled: true } });
   settle();
 }
 
-const appSelect = document.getElementById('appFilter');
-ALL_NODES.filter(function (n) { return n.group === 'app'; })
-  .slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
-  .forEach(function (n) {
-    const opt = document.createElement('option');
-    opt.value = n.id; opt.textContent = n.title;
-    appSelect.appendChild(opt);
-  });
+function fillSelect(selectId, group) {
+  const sel = document.getElementById(selectId);
+  ALL_NODES.filter(function (n) { return n.group === group; })
+    .slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
+    .forEach(function (n) {
+      const opt = document.createElement('option');
+      opt.value = n.id; opt.textContent = n.title;
+      sel.appendChild(opt);
+    });
+  return sel;
+}
 
-const deviceSelect = document.getElementById('deviceFilter');
-ALL_NODES.filter(function (n) { return n.group === 'device'; })
-  .slice().sort(function (a, b) { return a.title.localeCompare(b.title); })
-  .forEach(function (n) {
-    const opt = document.createElement('option');
-    opt.value = n.id; opt.textContent = n.title;
-    deviceSelect.appendChild(opt);
-  });
+const appSelect = fillSelect('appFilter', 'app');
+const deviceSelect = fillSelect('deviceFilter', 'device');
 
 appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') deviceSelect.value = '__all__';
