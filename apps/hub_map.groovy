@@ -24,7 +24,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Hub Map'
-@Field static final String APP_VERSION = '0.1.0'
+@Field static final String APP_VERSION = '0.2.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer BATCH_SIZE = 15
 
@@ -69,6 +69,9 @@ Map main() {
                     if (state.scanRunning) progress += ' (in progress - close and reopen this page to refresh)'
                     paragraph progress
                 }
+                if (state.scanError) {
+                    paragraph "<b style='color:#c0392b'>Scan error: ${state.scanError}</b>"
+                }
                 if (state.graph) {
                     href(
                         name: 'mapLink', title: 'View Hub Map',
@@ -93,6 +96,7 @@ void startScan() {
     state.scanDone = 0
     state.scanRunning = true
     state.scanResults = [:]
+    state.scanError = null
     unschedule('scanBatch')
     runIn(1, 'scanBatch')
 }
@@ -103,13 +107,19 @@ void scanBatch() {
         finishScan()
         return
     }
-    Map results = state.scanResults ?: [:]
-    int n = Math.min(BATCH_SIZE, queue.size())
-    List batch = queue.take(n)
-    batch.each { id -> results[id.toString()] = fetchDeviceRelationships(id) }
-    state.scanResults = results
-    state.scanQueue = queue.drop(n)
-    state.scanDone = (state.scanDone ?: 0) + n
+    try {
+        Map results = state.scanResults ?: [:]
+        int batchSize = queue.size() < BATCH_SIZE ? queue.size() : BATCH_SIZE
+        List batch = queue.take(batchSize)
+        batch.each { id -> results[id.toString()] = fetchDeviceRelationships(id) }
+        state.scanResults = results
+        state.scanQueue = queue.drop(batchSize)
+        state.scanDone = (state.scanDone ?: 0) + batchSize
+    } catch (Exception ex) {
+        log.warn "${app.label}: scanBatch failed: ${ex.message}"
+        state.scanError = ex.message
+        state.scanQueue = []
+    }
     if (state.scanQueue) {
         runIn(1, 'scanBatch')
     } else {
