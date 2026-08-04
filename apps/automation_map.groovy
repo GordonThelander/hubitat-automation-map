@@ -103,6 +103,7 @@ Map main() {
     // batch. So the scan is not offered at all until installation completes.
     boolean ready = app.installationState == 'COMPLETE'
     if (ready && !state.accessToken) createAccessToken()
+    clearAbandonedScan()
 
     // A full scan takes a couple of minutes. Without this the page looked frozen
     // - the progress line only moved if you closed and reopened it, which reads
@@ -215,6 +216,21 @@ boolean graphIsStale() {
     return state.graph && state.graphVersion != GRAPH_SCHEMA
 }
 
+// A scan that stops without finishing leaves scanRunning set, which disables the
+// button and shows a progress line that never moves - the app looks permanently
+// mid-scan with no way back. That happens if the hub restarts or the app is
+// updated mid-scan, and it happened to anyone who pressed Scan before the app
+// finished installing. scanBatch stamps a heartbeat every batch, so a scan whose
+// heartbeat has stopped advancing is over whatever its flag says.
+void clearAbandonedScan() {
+    if (!state.scanRunning) return
+    Long beat = (state.scanHeartbeat ?: 0) as Long
+    if (beat > 0 && (now() - beat) < 90000) return
+    state.scanRunning = false
+    state.scanError = 'The previous scan stopped before it finished. Press Scan to run it again.'
+    log.warn "${app.label}: clearing an abandoned scan"
+}
+
 // Reports what this hub actually supported, so a user whose hub differs sees a
 // reason rather than an unexplained gap. Rule flows are decoded from Rule
 // Machine 5.1's private layout; other rule engines still appear in the graph
@@ -283,6 +299,9 @@ void startScan() {
     state.scanPhase = 'devices'
     state.scanRunning = true
     state.scanError = null
+    // Stamped here as well as in scanBatch, so a scan that never manages to run
+    // a single batch still has a timestamp for clearAbandonedScan to age out.
+    state.scanHeartbeat = now()
     state.deviceLabels = [:]
     state.appIds = []
     state.appInfo = [:]
