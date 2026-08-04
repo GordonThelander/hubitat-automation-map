@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = 'Hub Map Probe'
-@Field static final String APP_VERSION = '0.7.0'
+@Field static final String APP_VERSION = '0.8.0'
 
 definition(
     name: APP_NAME,
@@ -46,8 +46,8 @@ void updated() {
 Map main() {
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: true) {
         section {
-            paragraph 'Throwaway diagnostic for the Hub Map app. Give it device IDs whose PARENT APPS you want to inspect, comma separated. Defaults: 3543 (Presence Manager Main Status) and 2999 (a LIFX Light Manager child light). The probe resolves each device to its parent app, then dumps that app\'s internal structure.'
-            input name: 'sampleDeviceIds', type: 'text', title: 'Device IDs (comma separated)', required: true, defaultValue: '3543,2999'
+            paragraph 'Throwaway diagnostic for the Hub Map app. Give it INSTALLED APP IDs, comma separated. Defaults: 2869 (Presence Manager), 2816 (Mode Alarm Status Adjustment rule). Dumps each app\'s event subscriptions and device-bearing settings.'
+            input name: 'sampleAppIds', type: 'text', title: 'Installed app IDs (comma separated)', required: true, defaultValue: '2869,2816'
             input name: 'runProbe', type: 'bool', title: 'Run probe now', submitOnChange: true, defaultValue: false
         }
         if (runProbe) {
@@ -81,71 +81,65 @@ String buildProbeReport() {
     StringBuilder out = new StringBuilder()
     out << '<div style="white-space:normal; font-family:monospace; font-size:0.8em">'
 
-    List<String> deviceIds = "${sampleDeviceIds}".split(',').collect { it.trim() }.findAll { it }
-    deviceIds.each { String devId -> out << inspectViaDevice(devId) }
+    List<String> appIds = "${sampleAppIds}".split(',').collect { it.trim() }.findAll { it }
+    appIds.each { String appId -> out << inspectApp(appId) }
 
     out << '</div>'
     return out.toString()
 }
 
-String inspectViaDevice(String devId) {
+String inspectApp(String appId) {
     StringBuilder out = new StringBuilder()
-    Integer parentAppId = null
-
     out << "<div style='margin-top:1em; padding:.5em; border:2px solid #666'>"
-    out << "<b>Step 1: /device/fullJson/${devId} -> parent app</b><br>"
+    out << "<b>/installedapp/statusJson/${appId}</b><br>"
     try {
-        httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 15]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
-            Map parentApp = data.parentApp as Map
-            out << "<pre style='white-space:pre-wrap; word-break:break-all'>"
-            out << "device label: ${data.extraBreadcrumb}\n"
-            if (parentApp) {
-                parentAppId = parentApp.id as Integer
-                out << "parentApp.id: ${parentApp.id}\nparentApp.label: ${parentApp.label}\nparentApp.name: ${parentApp.name}\n"
-            } else {
-                out << 'No parentApp on this device - pick a device that an app created.\n'
+        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : null
+            if (data == null) {
+                out << 'Response was not parsed into a Map.'
+                return
             }
+            Map installedApp = data.installedApp as Map
+            out << "<pre style='white-space:pre-wrap; word-break:break-all'>"
+            out << "label: ${installedApp?.label}   name: ${installedApp?.name}\n"
             out << '</pre>'
+            out << describeSubscriptions(data)
+            out << describeSettingsWithDevices(data)
+            out << describeChildDevices(data)
         }
     } catch (Exception ex) {
         out << "ERROR: ${ex.message}"
     }
-
-    if (parentAppId != null) {
-        out << "<b>Step 2: /installedapp/statusJson/${parentAppId} (parsed)</b><br>"
-        try {
-            httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${parentAppId}", timeout: 20]) { resp ->
-                Map data = (resp.data instanceof Map) ? (resp.data as Map) : null
-                if (data == null) {
-                    out << 'Response was not parsed into a Map.'
-                } else {
-                    out << describeTopLevel(data)
-                    out << describeSettingsWithDevices(data)
-                    out << describeStateEntries(data)
-                }
-            }
-        } catch (Exception ex) {
-            out << "ERROR: ${ex.message}"
-        }
-    }
     out << '</div>'
     return out.toString()
 }
 
-String describeTopLevel(Map data) {
+String describeSubscriptions(Map data) {
     StringBuilder out = new StringBuilder()
-    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== TOP-LEVEL KEYS ===\n"
-    data.each { k, v ->
-        if (v instanceof List) {
-            List list = v as List
-            String firstKeys = (list && list[0] instanceof Map) ? " firstElementKeys=${(list[0] as Map).keySet()}" : ''
-            out << "${k}: List(size=${list.size()})${firstKeys}\n"
-        } else if (v instanceof Map) {
-            out << "${k}: Map keys=${(v as Map).keySet()}\n"
-        } else {
-            out << "${k}: ${trunc(v, 120)}\n"
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== EVENT SUBSCRIPTIONS ===\n"
+    List subs = (data.eventSubscriptions ?: []) as List
+    if (!subs) {
+        out << '(none)\n'
+    } else {
+        subs.each { s ->
+            if (!(s instanceof Map)) return
+            Map sm = s as Map
+            out << '---\n'
+            sm.each { k, v -> out << "  ${k}: ${trunc(v, 250)}\n" }
         }
+    }
+    out << '</pre>'
+    return out.toString()
+}
+
+String describeChildDevices(Map data) {
+    StringBuilder out = new StringBuilder()
+    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== CHILD DEVICES ===\n"
+    List kids = (data.childDevices ?: []) as List
+    if (!kids) {
+        out << '(none)\n'
+    } else {
+        kids.each { k -> out << "${trunc(k, 200)}\n" }
     }
     out << '</pre>'
     return out.toString()
@@ -165,38 +159,6 @@ String describeSettingsWithDevices(Map data) {
         }
     }
     if (shown == 0) out << '(none found - check the top-level key holding settings)\n'
-    out << '</pre>'
-    return out.toString()
-}
-
-String describeStateEntries(Map data) {
-    StringBuilder out = new StringBuilder()
-    // The state list is whichever top-level List whose elements look like
-    // {name:..., value:..., type:...} - discovered rather than assumed.
-    List stateList = null
-    String stateKey = null
-    data.each { k, v ->
-        if (stateList != null) return
-        if (!(v instanceof List)) return
-        List list = v as List
-        if (list && list[0] instanceof Map) {
-            Map first = list[0] as Map
-            if (first.containsKey('name') && first.containsKey('value') && first.containsKey('type')) {
-                stateList = list
-                stateKey = k as String
-            }
-        }
-    }
-
-    out << "\n<pre style='white-space:pre-wrap; word-break:break-all'>=== STATE ENTRIES (from key '${stateKey}') ===\n"
-    if (stateList == null) {
-        out << '(no state-shaped list found)\n'
-    } else {
-        stateList.each { s ->
-            Map sm = s as Map
-            out << "${sm.name} [${sm.type}] = ${trunc(sm.value, 150)}\n"
-        }
-    }
     out << '</pre>'
     return out.toString()
 }
