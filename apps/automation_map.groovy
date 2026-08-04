@@ -46,7 +46,11 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.3.1'
+@Field static final String APP_VERSION = '1.3.2'
+// Bumped ONLY when the shape of the scanned graph changes, so that a rendering
+// or scanning fix does not needlessly invalidate a good scan and force the user
+// to re-crawl every device and app.
+@Field static final String GRAPH_SCHEMA = '2'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
@@ -123,7 +127,7 @@ void appButtonHandler(String btn) {
 }
 
 boolean graphIsStale() {
-    return state.graph && state.graphVersion != APP_VERSION
+    return state.graph && state.graphVersion != GRAPH_SCHEMA
 }
 
 // ===================================================================================================================
@@ -233,7 +237,7 @@ void scanAppBatch() {
 void finishScan() {
     state.scanRunning = false
     state.graph = buildGraph()
-    state.graphVersion = APP_VERSION
+    state.graphVersion = GRAPH_SCHEMA
     log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
 }
 
@@ -584,7 +588,7 @@ Map renderMapMapping() {
             data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
 <body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
 <h2>This map is out of date</h2>
-<p>It was built by version ${state.graphVersion ?: 'an earlier release'}, but Automation Map is now version ${APP_VERSION}.
+<p>It was built for an older data format than this version of Automation Map expects.
 Relationship types have changed since then, so the graph would render without role colours.</p>
 <p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
 </body></html>"""
@@ -813,11 +817,16 @@ function mermaidFor(steps) {
     else if (s.kind === 'required') lines.push('  style S' + i + ' fill:#0f4f45,stroke:#16a085,color:#fff');
     else lines.push('  style S' + i + ' fill:#33502a,stroke:#7fae42,color:#fff');
   });
-  return lines.join('\n');
+  // Double-escaped on purpose. This page is a Groovy GString, so a single
+  // backslash is consumed by Groovy and would emit a real newline inside this
+  // string literal - a JavaScript syntax error that kills the whole page.
+  return lines.join('\\n');
 }
 
-const flowPanel = document.getElementById('flow');
-const flowChart = document.getElementById('flowChart');
+// flowPanel may be absent if the panel markup ever changes; the filter controls
+// below must keep working regardless, so nothing here is allowed to throw.
+const flowPanel = document.getElementById('flow') || { style: {} };
+const flowChart = document.getElementById('flowChart') || document.createElement('div');
 
 function showFlow(appId) {
   const steps = FLOWS[appId];
@@ -836,9 +845,10 @@ function showFlow(appId) {
   });
 }
 
-document.getElementById('flowClose').addEventListener('click', function () {
-  flowPanel.style.display = 'none';
-});
+const flowCloseBtn = document.getElementById('flowClose');
+if (flowCloseBtn) {
+  flowCloseBtn.addEventListener('click', function () { flowPanel.style.display = 'none'; });
+}
 
 function fillSelect(selectId, group) {
   const sel = document.getElementById(selectId);
