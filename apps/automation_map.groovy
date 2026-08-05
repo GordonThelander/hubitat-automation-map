@@ -72,7 +72,7 @@ import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
 @Field static final String APP_NAME = 'Automation Map'
-@Field static final String APP_VERSION = '1.0.0'
+@Field static final String APP_VERSION = '1.0.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.

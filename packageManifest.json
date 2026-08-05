@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map",
   "author": "Gordon Thelander",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-05",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "licenseFile": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/LICENSE",
-  "releaseNotes": "Draws every installed app and device on your hub as an interactive graph, colouring each connection by the role the device plays: trigger, constraint, monitor, action, exposed to an external system, or owned by the app that created it. Click an app to see just that app and what it uses, then click one of its devices to see everything else touching it. Rule Machine 5.1 rules and Notifier also render as a flowchart of their actual logic, including waits, timeouts and IF/ELSE branches. An Insights panel lists devices more than one app can leave in a lasting state, and devices nothing references at all. Read-only: it never commands a device or changes an app. Desktop browser only.",
+  "releaseNotes": "1.0.1 - fixes a scan summary that reported the app itself as unreadable, and one that flagged an empty Rule Machine rule as being on an undecodable engine. Draws every installed app and device on your hub as an interactive graph, colouring each connection by the role the device plays: trigger, constraint, monitor, action, exposed to an external system, or owned by the app that created it. Click an app to see just that app and what it uses, then click one of its devices to see everything else touching it. Rule Machine 5.1 rules and Notifier also render as a flowchart of their actual logic, including waits, timeouts and IF/ELSE branches. An Insights panel lists devices more than one app can leave in a lasting state, and devices nothing references at all. Read-only: it never commands a device or changes an app. Desktop browser only.",
   "apps": [
     {
       "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.0.0"
+      "version": "1.0.1"
     }
   ],
   "drivers": []
