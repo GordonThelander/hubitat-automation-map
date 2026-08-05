@@ -409,14 +409,19 @@ void scanAppBatch() {
     queue.take(size).each { String appId ->
         Map info = fetchAppRelationships(appId, labels)
         appInfo[appId] = info
-        if (info.error || !(info.roles as Map)) {
+        // Only a genuine fetch failure counts as unreadable. An app with no
+        // roles was read perfectly well - it simply has no device relationships
+        // to draw, which is also true of Automation Map itself once it excludes
+        // itself. Counting those as failures made every scan report "1 app
+        // could not be read", which is what it does to its own entry.
+        if (info.error) {
             state.appsUnreadable = (state.appsUnreadable ?: 0) + 1
         } else {
             state.appsDecoded = (state.appsDecoded ?: 0) + 1
         }
         if (info.flow) {
             state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
-        } else if ("${info.type}".startsWith('Rule-')) {
+        } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
             // A rule engine this version does not decode. Counted so it is
             // reported rather than looking like a rule with nothing in it.
             List others = (state.otherEngines ?: []) as List
