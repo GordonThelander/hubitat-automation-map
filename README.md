@@ -120,3 +120,17 @@ The app exposes two endpoints, using the same access token as the map link, usef
 - `.../scan` - starts a scan without opening the app
 
 `check_template.sh` is a maintainer tool. The map page is built inside a Groovy string, so a stray backslash is consumed before the browser sees it and silently breaks the page script. Run it before committing changes to the page.
+
+## Branches
+
+`main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.
+
+`dev` is a private test channel. It renames the app to **Automation Map (Dev)** with its own package id, so it installs alongside the release version on the same hub without touching it. Both builds exclude every variant of themselves from the map, so neither draws the other.
+
+To use it, add this as a custom repository in your own HPM:
+
+```
+https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/repository.json
+```
+
+Changes are made and tested on `dev`, then merged to `main` for release. Only the app name, package id and the raw URLs differ between the branches.
