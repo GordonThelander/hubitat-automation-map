@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.1.0'
+@Field static final String APP_VERSION = '1.2.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -216,8 +216,20 @@ void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
 }
 
+// True when the app is ready to work but has never produced a map. Opening it in
+// that state starts a scan on its own, which covers the person who pressed Done
+// before choosing any devices and came back to select them afterwards - the one
+// route into the app that otherwise leaves it sitting idle and useless.
+boolean shouldAutoScan() {
+    return app.installationState == 'COMPLETE' &&
+           devices &&
+           !state.graph &&
+           !state.scanRunning &&
+           !state.scanError
+}
+
 String scanButtonHtml() {
-    String label = state.scanRunning ? 'Scanning...' : 'Scan relationships now'
+    String label = state.scanRunning ? 'Scanning...' : (shouldAutoScan() ? 'Starting first scan...' : 'Scan relationships now')
     String disabled = state.scanRunning ? ' disabled' : ''
     // Hubitat's UI is PrimeVue, so a plain button or Bootstrap classes render
     // unstyled. These are the classes and data attributes its own buttons carry.
@@ -242,7 +254,20 @@ function amStartScan() {
     .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
     .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
 }
+${autoScanScript()}
 </script>"""
+}
+
+// Fired from the browser rather than from the page render, for the same reason
+// the button is: a scan started inside Hubitat's UI transaction never gets
+// scheduled. Guarded by shouldAutoScan(), which stops being true the moment the
+// scan sets scanRunning, so a page refresh cannot start a second one.
+String autoScanScript() {
+    if (!shouldAutoScan()) return ''
+    return '''
+document.addEventListener('DOMContentLoaded', function () { amStartScan(); });
+if (document.readyState !== 'loading') { amStartScan(); }
+'''
 }
 
 boolean graphIsStale() {
