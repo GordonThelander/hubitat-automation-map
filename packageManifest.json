@@ -1,13 +1,13 @@
 {
   "packageName": "Automation Map",
   "author": "Gordon Thelander",
-  "version": "1.0.2",
+  "version": "1.2.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-06",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "licenseFile": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/LICENSE",
-  "releaseNotes": "Maps which apps use which devices and in what role, with flowcharts of Rule Machine rules.\n\nRead-only. It never commands a device or changes an app.\nView the map in a desktop browser, not a phone.\nAfter install, add the app, select your devices and press Done. The first scan starts on its own and takes about two minutes on a large hub.\n\n1.0.2 - if a second copy of this app is installed on the same hub, it is no longer drawn on the map. No change for a normal single installation.",
+  "licenseFile": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/LICENSE-SUMMARY.txt",
+  "releaseNotes": "Maps which apps use which devices and in what role, with flowcharts of Rule Machine rules.\n\nRead-only. It never commands a device or changes an app.\nView the map in a desktop browser, not a phone.\nAfter install, add the app, select your devices and press Done. The first scan starts on its own and takes about two minutes on a large hub.\n\n1.2.0 - the scan status and the link to the map now sit above the device list instead of below it, and the first scan starts by itself when the app is opened.",
   "apps": [
     {
       "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -17,7 +17,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.0.2"
+      "version": "1.2.0"
     }
   ],
   "drivers": []
