@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.0.2'
+@Field static final String APP_VERSION = '1.1.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -137,26 +137,13 @@ Map main() {
     // as a hang rather than as work in progress.
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
                        refreshInterval: (ready && state.scanRunning) ? 4 : 0) {
-        section {
-            paragraph 'Pick the devices to scan, then press Scan. "Select All" is the normal choice.'
-            paragraph '<span style="opacity:0.75">Automation Map finds your apps by looking at which apps each device belongs to, which is why it needs devices selected. Any extra device an app mentions is added to the map for you.</span>'
-            // Deliberately not required:true. With submitOnChange the page
-            // validates while the picker overlay is still open, before the
-            // selection is committed, so Hubitat throws "Please complete the
-            // required fields" at a user who has in fact just selected 190
-            // devices. Nothing downstream needs it - the scan section below
-            // only renders once devices are chosen.
-            input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, submitOnChange: true
-        }
-        if (devices && !ready) {
-            section {
-                paragraph "${devices.size()} device(s) selected."
-                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.</b></span>'
-            }
-        }
+        // Scan status, the map link and the Scan button all sit ABOVE the device
+        // picker. The picker renders as a list of every device on the hub, so
+        // anything below it is off the bottom of the screen - which is where the
+        // progress line and the link to the map used to be on every visit after
+        // the first scan.
         if (devices && ready) {
             section {
-                paragraph "${devices.size()} device(s) selected."
                 // The scan is started by fetching the app's own /scan endpoint
                 // rather than from a Hubitat button. runIn() called out of
                 // appButtonHandler does not reliably schedule anything: on a
@@ -199,6 +186,25 @@ Map main() {
                         )
                     }
                 }
+            }
+        }
+
+        section {
+            paragraph 'Pick the devices to scan, then press Scan. "Select All" is the normal choice.'
+            paragraph '<span style="opacity:0.75">Automation Map finds your apps by looking at which apps each device belongs to, which is why it needs devices selected. Any extra device an app mentions is added to the map for you.</span>'
+            // Deliberately not required:true. With submitOnChange the page
+            // validates while the picker overlay is still open, before the
+            // selection is committed, so Hubitat throws "Please complete the
+            // required fields" at a user who has in fact just selected 190
+            // devices. Nothing downstream needs it - the scan section above
+            // only renders once devices are chosen.
+            input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, submitOnChange: true
+            if (devices) paragraph "${devices.size()} device(s) selected."
+        }
+
+        if (devices && !ready) {
+            section {
+                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.</b></span>'
             }
         }
     }
