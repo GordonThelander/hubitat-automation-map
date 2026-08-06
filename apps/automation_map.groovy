@@ -71,7 +71,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
-@Field static final String APP_NAME = 'Automation Map'
+@Field static final String APP_NAME = 'Automation Map (Dev)'
 // Every build of this app excludes all of its own variants from the map,
 // whatever each one calls itself. A dev copy installed beside the release would
 // otherwise show up as an app referencing every device on the hub, and the
