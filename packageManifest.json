@@ -1,11 +1,10 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-06",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
-  "licenseFile": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/LICENSE-SUMMARY.txt",
   "releaseNotes": "Development build. Installs alongside the release version under a separate name so both can run on the same hub.\n\nNot for general use - install the release version instead.",
   "apps": [
     {
@@ -16,7 +15,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.2.0"
+      "version": "1.2.1"
     }
   ],
   "drivers": []
