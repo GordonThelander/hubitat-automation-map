@@ -170,7 +170,16 @@ Map main() {
                 }
                 if (state.graph) {
                     Map g = state.graph as Map
-                    if (graphIsStale()) {
+                    if (state.scanRunning) {
+                        // Nothing here while a scan is running. startScan clears
+                        // graphVersion but keeps the old graph, so graphIsStale()
+                        // is true for the whole scan - which used to show "run the
+                        // scan again to rebuild it" to someone watching that very
+                        // scan run. The else branch is no better mid-scan: it
+                        // reports the previous graph's counts and offers a map
+                        // link that refuses to render. The progress line above
+                        // already says what is happening.
+                    } else if (graphIsStale()) {
                         // A graph built by an older version can carry relationship
                         // kinds this version no longer renders, which silently draws
                         // as uncoloured edges rather than failing visibly.
