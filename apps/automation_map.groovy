@@ -867,12 +867,27 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         }
     }
 
+    // An action that targets another rule names no device, so without this the
+    // step reads as a bare "Run Actions" with nothing to say which rule. The
+    // ids are carried through and turned into names in buildGraph, which is the
+    // first point where every app label is known.
+    List ruleTargets = []
+    Map linkFam = RULE_LINK_ACTIONS[method] as Map
+    if (linkFam) {
+        String rawTargets = settingValues["${linkFam.target}.${num}"] ?: ''
+        if (rawTargets && !rawTargets.contains('*')) {
+            String cleaned = rawTargets.replaceAll('[^0-9]', ' ').trim()
+            if (cleaned) cleaned.split(' +').each { String t -> if (t) ruleTargets << t }
+        }
+    }
+
     return [
         kind: 'action',
         ctrl: ctrl,
         cond: cond,
         label: actionLabel(method, num, act, settingValues, evalMap, capabs),
         devices: devices,
+        ruleTargets: ruleTargets,
     ]
 }
 
@@ -912,7 +927,12 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map ev
         case 'getRestore':
             return 'Restore device state'
         case 'getStopActions':
-            return 'Stop actions'
+            // Rule Machine's own wording for this action is "Cancel Timed
+            // Actions". prettyMethod would derive "Stop Actions" from the
+            // method name, which matches nothing the user sees on the rule.
+            return 'Cancel Timed Actions'
+        case 'getRuleActions':
+            return 'Run Actions'
         case 'getSetMode':
             return 'Set mode'
         case 'getOCGarage':
@@ -1042,6 +1062,38 @@ Map fetchAppName(String appId) {
     return out
 }
 
+// Name of a rule referenced by another rule. Prefers what the scan already
+// read, falls back to a direct lookup, and finally to the bare id. Cached
+// because a rule can be both a flowchart target and a graph edge target.
+String linkedRuleName(String targetId, Map appInfo, Map cache) {
+    if (cache.containsKey(targetId)) return cache[targetId] as String
+    Map target = appInfo[targetId] as Map
+    String label = target?.label as String
+    if (!label) label = fetchAppName(targetId).label as String
+    if (!label) label = "Rule ${targetId}"
+    cache[targetId] = label
+    return label
+}
+
+// Action steps carry the ids of any rule they act on. Turned into names here,
+// added to the step's device list so the flowchart renders them under the
+// action exactly as it renders device names.
+List resolveFlowTargets(List flow, Map appInfo, Map cache) {
+    (flow ?: []).each { step ->
+        if (!(step instanceof Map)) return
+        Map s = step as Map
+        List targets = (s.ruleTargets ?: []) as List
+        if (!targets) return
+        List devices = (s.devices ?: []) as List
+        targets.each { t ->
+            String nm = linkedRuleName("${t}", appInfo, cache)
+            if (!devices.contains(nm)) devices << nm
+        }
+        s.devices = devices
+    }
+    return flow
+}
+
 Map nodeEntry(String id, String fullLabel, String group, String subtitle = null) {
     String label = fullLabel ?: id
     String shortLabel = label
@@ -1057,6 +1109,7 @@ Map buildGraph() {
     List<Map> edges = []
     List<String> seen = []
     Map flows = [:]
+    Map nameCache = [:]
 
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
@@ -1070,7 +1123,7 @@ Map buildGraph() {
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
         nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', appMap.type as String)
         if (appMap.inactive) nodes[appNodeId].inactive = true
-        if (appMap.flow) flows[appNodeId] = appMap.flow
+        if (appMap.flow) flows[appNodeId] = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
 
         roles.each { String devId, devRoles ->
             String devNodeId = "d${devId}"
@@ -1112,17 +1165,10 @@ Map buildGraph() {
                 // for a Rule Function. Drawn anyway, labelled for what it is,
                 // rather than dropping the relationship on the floor.
                 Map target = appInfo[targetId] as Map
-                String label = target?.label as String
-                String type = target?.type as String
-                if (!label) {
-                    // Worth one extra lookup: the alternative is a node reading
-                    // "Rule 1845", which tells the user nothing. Only ever runs
-                    // for a target the scan missed, so at most a couple per hub.
-                    Map named = fetchAppName(targetId)
-                    label = named.label ?: "Rule ${targetId}"
-                    type = named.type ?: 'not scanned'
-                }
-                nodes[toId] = nodeEntry(toId, label, 'app', type)
+                // Worth the lookup when the scan missed it: the alternative is
+                // a node reading "Rule 1845", which tells the user nothing.
+                String label = linkedRuleName(targetId, appInfo, nameCache)
+                nodes[toId] = nodeEntry(toId, label, 'app', (target?.type ?: 'not scanned') as String)
                 if (!target) nodes[toId].unscanned = true
             }
 
