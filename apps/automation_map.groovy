@@ -77,11 +77,11 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.2.1'
+@Field static final String APP_VERSION = '1.3.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '1'
+@Field static final String GRAPH_SCHEMA = '2'
 // Rule flow decoding reads Rule Machine's private internals, so it is pinned to
 // the version it was verified against. Rules on any other engine still appear
 // in the graph with their device relationships; they are counted and reported
@@ -306,6 +306,13 @@ String compatibilitySummary() {
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} ${SUPPORTED_RULE_ENGINE} flow(s)."
 
+    int links = (state.ruleLinks ?: 0) as Integer
+    if (links > 0) {
+        s << " Found ${links} rule-to-rule link(s)."
+    } else {
+        s << " No rule-to-rule links found - no rule on this hub runs, stops, or sets the Private Boolean of another."
+    }
+
     int skipped = (state.rulesSkipped ?: 0) as Integer
     if (skipped > 0) {
         List engines = (state.otherEngines ?: []) as List
@@ -350,6 +357,7 @@ void startScan() {
     state.appsUnreadable = 0
     state.rulesDecoded = 0
     state.rulesSkipped = 0
+    state.ruleLinks = 0
     state.otherEngines = []
     state.scanQueue = devices.collect { "${it.id}" }.unique()
     state.scanTotal = (state.scanQueue as List).size()
@@ -455,6 +463,9 @@ void scanAppBatch() {
         } else {
             state.appsDecoded = (state.appsDecoded ?: 0) + 1
         }
+        if (info.ruleLinks) {
+            state.ruleLinks = (state.ruleLinks ?: 0) + (info.ruleLinks as List).size()
+        }
         if (info.flow) {
             state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
         } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
@@ -506,7 +517,7 @@ Map fetchDeviceApps(String devId) {
 // Phase 2: the real relationship data. Also harvests device labels for devices
 // the user did not select, since settings carry {id: name} maps.
 Map fetchAppRelationships(String appId, Map labels) {
-    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], error: null]
+    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -524,6 +535,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             if ("${out.type}".startsWith(APP_FAMILY)) {
                 out.roles = [:]
                 out.flow = []
+                out.ruleLinks = []
                 return
             }
 
@@ -589,6 +601,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             out.roles = roles
             out.stateful = stateful
             out.flow = buildRuleFlow(data)
+            out.ruleLinks = extractRuleLinks(data, appId)
         }
     } catch (Exception ex) {
         out.error = ex.message
@@ -620,6 +633,71 @@ Map fetchAppRelationships(String appId, Map labels) {
 // This is Rule Machine's private layout, not a documented API. Apps that are
 // not rules simply have no actionList and produce no flow.
 // ===================================================================================================================
+
+// ===================================================================================================================
+// Rule-to-rule links
+//
+// Requested on the community thread: show it when one rule runs another. Rule
+// Machine stores every "act on another rule" action the same way, and the
+// action object itself carries no target at all - only a method name. The
+// target is in the app's SETTINGS, keyed by the action number:
+//
+//   actType.<n>        'rulesActs' for this whole family of actions
+//   actSubType.<n>     which action it is, e.g. getRuleActions
+//   ruleAct.<n>        target installed app ids, as a list: ["1806"]
+//   runRuleType.<n>    engine of the target, e.g. Rule Machine
+//
+// Confirmed against a live hub for all three subtypes below.
+//
+// Two traps found while working this out. Every action object has a field
+// literally called 'rule', and it is NOT a rule reference - it is a condition
+// index used by getIfThen / getElseIf / getWaitRule. Keying on it produces
+// confident, entirely fictional links. And a target of ["*"] means the rule
+// itself, which is how Set Private Boolean is normally used, so it must not
+// become an edge either.
+// ===================================================================================================================
+
+@Field static final Map RULE_LINK_ACTIONS = [
+    getRuleActions      : [target: 'ruleAct',  engine: 'runRuleType',  kind: 'runs'],
+    getStopActions      : [target: 'stopAct',  engine: 'stopRuleType', kind: 'stops'],
+    getSetPrivateBoolean: [target: 'privateT', engine: 'pvRuleType',   kind: 'setspb'],
+]
+
+List extractRuleLinks(Map data, String appId) {
+    Map vals = [:]
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map) || s.name == null) return
+        // Assigned through String-typed locals on purpose. Keying a map with a
+        // GString and then looking it up with another GString of the same text
+        // misses, because their hash codes differ.
+        String n = "${s.name}"
+        String v = "${s.value}"
+        vals[n] = v
+    }
+
+    List out = []
+    vals.each { String name, String value ->
+        if (!name.startsWith('actType.') || value != 'rulesActs') return
+        String num = name.substring(8)
+        Map fam = RULE_LINK_ACTIONS[vals['actSubType.' + num]] as Map
+        if (!fam) return
+
+        String raw = vals[fam.target + '.' + num] ?: ''
+        if (!raw || raw.contains('*')) return
+
+        String engine = vals[fam.engine + '.' + num] ?: ''
+        // Written with replaceAll rather than a regex literal - this file also
+        // builds the map page inside a GString, so slash-delimited patterns are
+        // avoided throughout for consistency.
+        String cleaned = raw.replaceAll('[^0-9]', ' ').trim()
+        if (!cleaned) return
+        cleaned.split(' +').each { String targetId ->
+            if (!targetId || targetId == appId) return
+            out << [to: targetId, kind: fam.kind, engine: engine]
+        }
+    }
+    return out
+}
 
 List buildRuleFlow(Map data) {
     Map st = [:]
@@ -935,6 +1013,26 @@ String stripTags(String s) {
 // Graph building
 // ===================================================================================================================
 
+// Label only, for a rule named as the target of a rule-to-rule link that the
+// device-driven scan never reached. Failure is not an error - the node is still
+// drawn, just with its id for a name.
+Map fetchAppName(String appId) {
+    Map out = [label: null, type: null]
+    try {
+        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 10]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
+            Map installedApp = data.installedApp as Map
+            if (installedApp?.label || installedApp?.name) {
+                out.label = stripTags((installedApp?.label ?: installedApp?.name) as String)
+                out.type = installedApp?.name
+            }
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not name linked rule ${appId}: ${ex.message}"
+    }
+    return out
+}
+
 Map nodeEntry(String id, String fullLabel, String group, String subtitle = null) {
     String label = fullLabel ?: id
     String shortLabel = label
@@ -955,7 +1053,9 @@ Map buildGraph() {
         if (!(info instanceof Map)) return
         Map appMap = info as Map
         Map roles = (appMap.roles ?: [:]) as Map
-        if (!roles) return
+        // A rule whose only relationship is to another rule has no device roles
+        // at all, and used to be dropped here before it could be drawn.
+        if (!roles && !(appMap.ruleLinks ?: [])) return
 
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
@@ -977,6 +1077,50 @@ Map buildGraph() {
                 if (role == 'action' && statefulDevices.contains(devId)) edge.stateful = true
                 edges << edge
             }
+        }
+    }
+
+    // App-to-app edges are emitted in a second pass, so a link is still drawn
+    // when it points at a rule that came later in the scan than the rule
+    // pointing at it.
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        List links = ((info as Map).ruleLinks ?: []) as List
+        if (!links) return
+        String fromId = "a${appId}"
+        if (!nodes[fromId]) return
+
+        links.each { link ->
+            if (!(link instanceof Map)) return
+            String targetId = "${(link as Map).to}"
+            String kind = "${(link as Map).kind}"
+            String toId = "a${targetId}"
+
+            if (!nodes[toId]) {
+                // The target was never reached by the scan. Apps are discovered
+                // through the devices you selected, so a rule that touches no
+                // selected device is invisible to phase one - which is normal
+                // for a Rule Function. Drawn anyway, labelled for what it is,
+                // rather than dropping the relationship on the floor.
+                Map target = appInfo[targetId] as Map
+                String label = target?.label as String
+                String type = target?.type as String
+                if (!label) {
+                    // Worth one extra lookup: the alternative is a node reading
+                    // "Rule 1845", which tells the user nothing. Only ever runs
+                    // for a target the scan missed, so at most a couple per hub.
+                    Map named = fetchAppName(targetId)
+                    label = named.label ?: "Rule ${targetId}"
+                    type = named.type ?: 'not scanned'
+                }
+                nodes[toId] = nodeEntry(toId, label, 'app', type)
+                if (!target) nodes[toId].unscanned = true
+            }
+
+            String key = "${fromId}|${toId}|${kind}"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: fromId, to: toId, kind: kind]
         }
     }
 
@@ -1112,6 +1256,9 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
   <div class="legend-row"><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Stops - rule stops another rule's actions</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
 </div>
@@ -1131,6 +1278,7 @@ String buildMapHtml() {
     <option value="action">Actions only</option>
     <option value="exposed">Exposed only</option>
     <option value="owns">Ownership only</option>
+    <option value="rulelinks">Rule to rule only</option>
   </select></label>
   <button id="resetBtn" type="button">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
@@ -1152,8 +1300,13 @@ if (typeof window.vis === 'undefined') {
 </script>
 <script>
 const GRAPH = ${jsonStr};
-const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b' };
+const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
+                     runs: '#d9534f', stops: '#d9534f', setspb: '#d9534f' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
+
+// Rule-to-rule kinds. These join two apps rather than an app and a device, so
+// they must never take part in colouring a device by its role.
+const RULE_LINK_KINDS = ['runs', 'stops', 'setspb'];
 
 // Most-significant role first. Used to colour a device that holds more than one
 // role in the same app - e.g. a motion sensor that is both a rule's trigger and
@@ -1173,12 +1326,20 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   // Arrows follow the flow: a trigger or constraint feeds INTO the app, an
   // action or an owned device is driven BY it.
   const inbound = (e.kind === 'trigger' || e.kind === 'constraint' || e.kind === 'monitor');
+  // A rule link always reads caller to target, and is drawn heavier than a
+  // device relationship because it is the rarer and more surprising one.
+  const isRuleLink = RULE_LINK_KINDS.indexOf(e.kind) !== -1;
+  let dashes = false;
+  if (e.kind === 'owns') dashes = true;
+  else if (e.kind === 'exposed') dashes = [2, 4];
+  else if (e.kind === 'stops') dashes = [8, 4];
+  else if (e.kind === 'setspb') dashes = [2, 3];
   return {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     arrows: inbound ? 'from' : 'to',
-    dashes: e.kind === 'owns' ? true : (e.kind === 'exposed' ? [2, 4] : false),
+    dashes: dashes,
     color: roleColors[e.kind] || '#999',
-    width: (e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6,
+    width: isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6),
     smooth: { type: 'curvedCW', roundness: 0.12 + (dupIndex * 0.22) }
   };
 });
@@ -1193,6 +1354,10 @@ function styledNode(n, useFullLabel, roleByDevice) {
     : groupColors[n.group];
   // Paused and disabled apps are greyed so they are not mistaken for live ones.
   if (n.inactive) color = '#6d6a5f';
+  // A rule reached only as the target of another rule, never scanned itself
+  // because it touches none of the selected devices. Outlined rather than
+  // filled so it does not look like a fully mapped app.
+  if (n.unscanned) color = { background: '#2b2b2b', border: '#e8a33d' };
   return {
     id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: color,
     shape: n.group === 'app' ? 'square' : 'dot',
@@ -1248,7 +1413,12 @@ function applyFilters() {
   const devVal = document.getElementById('deviceFilter').value;
   const kindVal = document.getElementById('kindFilter').value;
 
-  let pool = kindVal === 'all' ? ALL_EDGES : ALL_EDGES.filter(function (e) { return e.kind === kindVal; });
+  let pool = ALL_EDGES;
+  if (kindVal === 'rulelinks') {
+    pool = ALL_EDGES.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
+  } else if (kindVal !== 'all') {
+    pool = ALL_EDGES.filter(function (e) { return e.kind === kindVal; });
+  }
 
   let ids = null;
   let shownEdges = pool;
@@ -1266,6 +1436,9 @@ function applyFilters() {
     roleByDevice = {};
     shownEdges.forEach(function (e) {
       if (e.from !== appVal) return;
+      // Rule links point at another app, and are not in ROLE_ORDER at all -
+      // indexOf would return -1 and win every comparison.
+      if (RULE_LINK_KINDS.indexOf(e.kind) !== -1) return;
       const prev = roleByDevice[e.to];
       if (!prev || ROLE_ORDER.indexOf(e.kind) < ROLE_ORDER.indexOf(prev)) roleByDevice[e.to] = e.kind;
     });

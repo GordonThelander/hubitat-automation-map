@@ -21,6 +21,18 @@ It answers questions the hub itself makes tedious: what does this rule really to
 
 A device can hold different roles in different apps: a motion sensor may trigger one rule and be switched by another. Roles therefore belong to the connection, not the device.
 
+**Rule to rule.** Rules do not only touch devices, they act on each other, and that is invisible everywhere else on the hub. Three relationships are drawn directly between two rules:
+
+| Link | Meaning |
+| --- | --- |
+| **Runs** | the rule runs another rule's actions |
+| **Stops** | the rule stops another rule's actions |
+| **Private Boolean** | the rule sets another rule's Private Boolean |
+
+Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden.
+
+A rule that is only ever a target, and touches none of the devices you selected, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped.
+
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
 **Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step.
@@ -73,7 +85,8 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
-- **Only apps that reference at least one device appear.** Apps are discovered by asking devices which apps use them, so an app using no devices is invisible. There is no bulk app-list endpoint to cross-check against.
+- **Only apps that reference at least one device appear.** Apps are discovered by asking devices which apps use them, so an app using no devices is invisible. There is no bulk app-list endpoint to cross-check against. The one exception is a rule named as the target of a rule-to-rule link, which is drawn even when the scan never reached it.
+- **Rule-to-rule links are read from Rule Machine 5.1 only.** A rule on another engine is not analysed for them, so it will show no links rather than showing that it has none. Room Lighting, Basic Rules, Simple Automation and webCoRE are not read this way.
 - **Very heavily shared devices may be missed.** The hub truncates a device's app list when many apps use it, so an app appearing only in truncated lists can be missed. Selecting all devices makes this unlikely.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
