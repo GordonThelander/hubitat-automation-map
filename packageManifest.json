@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Beta)",
   "author": "Gordon Thelander",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-12",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Beta: rule-to-rule relationships.\n\nShows when one rule runs another rule's actions, stops another rule's actions, or sets another rule's Private Boolean. Pick \"Rule to rule only\" in the Show filter to see just those.\n\nInstalls alongside the release version under its own name, so both can run on the same hub at once. Your existing Automation Map install is not touched.\n\nThis is a test build. Please report what you find on the community thread.",
+  "releaseNotes": "Beta: rule-to-rule relationships.\n\nShows when one rule runs another rule's actions, cancels another rule's timed actions, or sets another rule's Private Boolean. Pick \"Rule to rule only\" in the Show filter to see just those. Rule flowcharts now name the rule each of those steps acts on.\n\nInstalls alongside the release version under its own name, so both can run on the same hub at once. Your existing Automation Map install is not touched.\n\nThis is a test build. Please report what you find on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.3.0"
+      "version": "1.3.1"
     }
   ],
   "drivers": []
