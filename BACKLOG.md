@@ -4,7 +4,11 @@ Not shipped with the HPM package. Items here are agreed ideas awaiting a decisio
 
 ---
 
-## External system dependencies (proposed, 1.3.0)
+## External system dependencies (SUPERSEDED, see "Integration registry" below)
+
+Retained for the rejection reasoning only. The hand-rolled design in this section was
+replaced on 2026-08-12 by the registry pack, which does the same job better. Do not build
+this version. Skip to "Integration registry (proposed, 1.3.0)".
 
 Let users declare which external systems each app type depends on, render them as a
 new node class, and use that to answer "what breaks if this fails".
@@ -103,6 +107,174 @@ into the graph builder, filter dropdown entry, focus mode, one Insights line.
 Low risk, purely additive, does not touch scanning. With an empty table the map behaves
 exactly as it does now. Main hazard is the GString backslash trap on any new JavaScript,
 which `check_template.sh` catches mechanically. Run it before pushing.
+
+---
+
+## Integration registry (proposed, 1.3.0)
+
+Adopt the registry pack (`hubitat_automation_map_registry_pack_v0.3.zip`, generated
+2026-08-11) as the source of external dependency knowledge, replacing the hand-rolled
+design above. Source files live in Gordon's Downloads folder; move the app/integration
+registry into this repo before building, or the reference will rot.
+
+### Why this supersedes the earlier design
+
+Assessed 2026-08-12 by running its `matchRules` against the live hub. Three concrete
+improvements over the superseded section:
+
+**`dependencies[]` rather than one system per app.** LIFX is the proof case and the exact
+thing the earlier design got wrong:
+
+    LIFX Light Manager
+      +-- LIFX Cloud        HTTPS     MANAGEMENT
+      +-- LIFX LAN Devices  LAN_UDP   RUNTIME
+
+One class per app would have labelled LIFX "LAN" and lost the cloud dependency entirely.
+
+**`runtimeCriticality` beats an internet/LAN binary.** RUNTIME / MANAGEMENT / SETUP_ONLY /
+DISCOVERY_ONLY actually predicts failure. Meross cloud is SETUP_ONLY for authentication
+while control is LAN, so losing the WAN means the garage door still opens but cannot be
+re-paired. The binary would have said "garage door dies", which is wrong.
+
+**Maker API is handled correctly.** `Home Assistant via Maker API` and
+`Homebridge via Maker API` both key on `appName equals "Maker API"` but carry
+`matchMode: ALL` plus a `userMapping` rule, so neither fires without explicit user
+annotation. That is the right answer to a genuinely undecidable case, and it preserves the
+user-override layer the earlier design needed anyway.
+
+### Measured coverage on the dev hub
+
+11 of 19 app types matched. Misses were Rule-5.1, Notifier, Critical Device Monitor,
+Presence Manager, Notification Proxy, Averaging Master, Automation Map and Zigbee Map.
+Most are Gordon's own apps, correctly absent from a public registry and covered by user
+overrides. Critical Device Monitor does have real dependencies (8.8.8.8 and Gmail) so it
+needs a user entry.
+
+### Blockers to fix before building
+
+- **The scanner does not collect the fields the matcher needs.** `appInfo` currently stores
+  only `label` and `type` per app. The registry matches on `appName`, `parentAppName`,
+  `driverName`, `namespace`, `deviceMetadata` and `userMapping`, so five of six fields have
+  no data. Extending the scan is a prerequisite, not an optional refinement.
+- **`Rule-5.1` does not match.** The registry's Rule Machine entry keys on
+  `contains "Rule Machine"` but the hub emits the type string `Rule-5.1`. That is 36 of 61
+  apps. Harmless in itself (that entry declares no dependencies) but it proves the registry
+  was authored against display names rather than the strings the hub actually reports.
+  Audit every entry for this before trusting the match rates.
+- **Schema inconsistency.** Four entry classes are used but never declared in `nodeClasses`
+  (DASHBOARD, PLATFORM_UTILITY, SECURITY_ORCHESTRATOR, VIRTUALISATION_ORCHESTRATOR), plus
+  three dependency classes (EXTERNAL_OR_LOCAL_SERVICE, LOCAL_DEVICE_OR_BRIDGE,
+  LOCAL_OR_EXTERNAL_SERVICE). Those last three are a design smell too: a class meaning "one
+  of two things" defeats the taxonomy, and `transport: LAN_OR_CLOUD` already expresses that
+  ambiguity properly.
+- **19 of 101 entries declare no dependencies** (webCoRE, Basic Rules, Room Lighting, Rule
+  Machine). Redundant here, since the hub already reports those apps directly. Drop them
+  from the embedded copy.
+- **Pack hygiene.** Ships duplicate files with `(1)`/`(2)` suffixes and stale v0.1/v0.2
+  registries next to v0.3. All 13 checksums in SHA256SUMS.txt verify, so nothing is
+  corrupt, just noisy. Import one version.
+
+### Size
+
+    as shipped             85,802 bytes / 101 entries
+    trimmed + minified     23,876 bytes /  82 entries
+    automation_map.groovy  78,063 bytes / 1642 lines
+
+Trimming the zero-dependency entries and prose fields lands at 24KB, roughly a 30% increase
+in app size. Keep it as a source constant, never in app state, so it costs nothing against
+the state ceiling.
+
+### Out of scope
+
+`device_driver_registry_v0.1.json` contains **3 device entries**. It is a schema stub, not
+data. The companion `harvest_hubitat_compatible_devices.py` is sound (Playwright because
+docs2.hubitat.com/en/devices/list-of-compatible-devices is JS-rendered, conservative parsing
+that preserves raw rows) but it only runs on a desktop, not the hub, and manufacturer and
+protocol detail barely changes the dependency graph. Skip both.
+
+### Carry over from the superseded design
+
+Still required, and not provided by the registry itself:
+
+- Unclassified must be an explicit state, never silent absence.
+- User assertions render differently from scanned relationships (dashed edges).
+- Blast radius is the actual payoff: external system, to apps, to devices.
+
+---
+
+## Rule-to-rule mapping, Phase 1 only (proposed)
+
+Requested by JimB on the community thread. Full design in
+`hubitat_automation_map_rule_to_rule_implementation.md` (Gordon's Downloads folder).
+
+Show when one automation causes, enables, disables or invokes another, instead of leaving
+the reader to infer it from two rules touching the same device.
+
+### Build Phase 1 only
+
+Direct rule actions: Run Rule Actions, pause, resume, enable, disable, cancel. These are
+explicit in Rule Machine's settings, need no inference, carry 100% confidence, and answer
+"which rules control other rules" outright. The RM action decode already exists for the
+flowcharts, so this is largely reusing work that is in the app today.
+
+### Defer Phase 2, drop Phase 3 onward
+
+Phase 2 is device-mediated relationships (Rule A writes a virtual switch, Rule B triggers on
+it). That is where the real payoff sits and also where every false positive lives. Worth
+doing after Phase 1, but only with the correctness discipline below enforced.
+
+The source document is roughly five times bigger than what should be built: 15 edge types,
+5 phases, cycle detection, feedback-loop oscillation analysis, three separate semantic JSON
+files, and confidence values quoted to the percent (95 versus 90 is false precision).
+
+### The discipline that must survive any trimming
+
+This is the good part of the document and it is the same principle that killed endpoint
+auto-detection. Without it, rule-to-rule is a false-positive generator that draws an edge
+between any two rules touching the same device.
+
+- A condition is not a trigger: TRIGGERS_VIA versus INFLUENCES_VIA (doc sections 10, 11).
+- Value matching: Rule A sets switch X on, Rule B triggers on X off, therefore no edge (19).
+- Key on `deviceId + attribute`, never `deviceId` alone (20).
+- Required Expressions never produce trigger edges (23).
+- POSSIBLE_RELATIONSHIP when subscription versus read cannot be established (44).
+
+### Honest limitation to document
+
+Only works for Rule-5.1. Room Lighting, Basic Rules, Simple Automation and webCoRE would be
+invisible in the rule-to-rule view. Same partial-coverage trap as the rejected items below,
+so it needs the same explicit "not analysed" state rather than silent absence.
+
+---
+
+## Rule Machine 5.1 execution documentation (separate publication)
+
+`Rule_Machine_5_1_Execution_Explained_Draft.md` (Gordon's Downloads folder). A community
+documentation project, not an Automation Map feature. Keep the two separate.
+
+Assessed 2026-08-12 as high quality: sourced to specific Bruce Ravenel posts rather than
+folklore, evidence markers separating documented from author-confirmed from unvalidated, and
+tests T01 to T13 written as procedures with result placeholders instead of asserted
+outcomes. T13 is the right instinct exactly, since the indexed docs still describe "Ignore
+trigger events while running" while Bruce stated in June 2025 that it was removed.
+
+### The one item that feeds back into this app
+
+**Section 3 explains a limitation Automation Map does not currently disclose.** A false
+Required Expression causes Rule Machine to drop its trigger subscriptions. This app derives
+triggers from `eventSubscriptions`, which is a snapshot, so scanning while a rule's Required
+Expression is false under-reports that rule's triggers, and a later rescan shows different
+edges with nothing having changed.
+
+Add this to the Limitations list in the README and the community post. Cheap, independent of
+everything else here, and worth doing regardless of whether the document is ever published.
+
+### Tests that can be run directly
+
+T01 (Required Expression subscription gating), T03 (plain Delay schedules a continuation) and
+T08 (delays accumulate) are all readable from `scheduledJobs` and `eventSubscriptions` on
+`/installedapp/statusJson/<id>`, against virtual devices. The remaining ten need manual
+observation.
 
 ---
 
