@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.3.1'
+@Field static final String APP_VERSION = '1.3.2'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -472,9 +472,6 @@ void scanAppBatch() {
         } else {
             state.appsDecoded = (state.appsDecoded ?: 0) + 1
         }
-        if (info.ruleLinks) {
-            state.ruleLinks = (state.ruleLinks ?: 0) + (info.ruleLinks as List).size()
-        }
         if (info.flow) {
             state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
         } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
@@ -495,8 +492,21 @@ void scanAppBatch() {
 
 void finishScan() {
     state.scanRunning = false
-    state.graph = buildGraph()
+    Map graph = buildGraph()
+    state.graph = graph
     state.graphVersion = GRAPH_SCHEMA
+    // Counted from the finished graph rather than tallied during the scan.
+    // A rule that sets another rule's Private Boolean both true and false is
+    // two actions but one relationship, so a running tally reported 8 where
+    // the map drew 7.
+    int links = 0
+    ((graph.edges ?: []) as List).each { e ->
+        // Compared through a String-typed local: a GString never matches a
+        // String in contains(), because their hash codes differ.
+        String kind = "${(e as Map).kind}"
+        if (RULE_LINK_KIND_NAMES.contains(kind)) links++
+    }
+    state.ruleLinks = links
     log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
 }
 
@@ -672,6 +682,8 @@ Map fetchAppRelationships(String appId, Map labels) {
     getSetPrivateBoolean: [target: 'privateT', engine: 'pvRuleType',   kind: 'setspb'],
 ]
 
+@Field static final List<String> RULE_LINK_KIND_NAMES = ['runs', 'stops', 'setspb']
+
 List extractRuleLinks(Map data, String appId) {
     Map vals = [:]
     (data.appSettings ?: []).each { s ->
@@ -692,9 +704,15 @@ List extractRuleLinks(Map data, String appId) {
         if (!fam) return
 
         String raw = vals[fam.target + '.' + num] ?: ''
-        if (!raw || raw.contains('*')) return
+        if (!raw) return
 
         String engine = vals[fam.engine + '.' + num] ?: ''
+        // "*" means this rule, and it can appear ALONGSIDE other rules:
+        // ["*","1809"] is Rule Machine's way of storing "set the Private
+        // Boolean of this rule AND Perimeter Closed". Skipping the whole
+        // action whenever a "*" was present therefore dropped a real
+        // cross-rule link every time a rule also set its own boolean.
+        // Stripping non-digits discards the "*" and keeps the ids.
         // Written with replaceAll rather than a regex literal - this file also
         // builds the map page inside a GString, so slash-delimited patterns are
         // avoided throughout for consistency.
@@ -872,10 +890,14 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
     // ids are carried through and turned into names in buildGraph, which is the
     // first point where every app label is known.
     List ruleTargets = []
+    boolean selfTarget = false
     Map linkFam = RULE_LINK_ACTIONS[method] as Map
     if (linkFam) {
         String rawTargets = settingValues["${linkFam.target}.${num}"] ?: ''
-        if (rawTargets && !rawTargets.contains('*')) {
+        if (rawTargets) {
+            // A "*" entry is this rule itself, and can sit alongside real
+            // targets - ["*","1809"] is "this rule AND Perimeter Closed".
+            selfTarget = rawTargets.contains('*')
             String cleaned = rawTargets.replaceAll('[^0-9]', ' ').trim()
             if (cleaned) cleaned.split(' +').each { String t -> if (t) ruleTargets << t }
         }
@@ -888,6 +910,7 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         label: actionLabel(method, num, act, settingValues, evalMap, capabs),
         devices: devices,
         ruleTargets: ruleTargets,
+        selfTarget: selfTarget,
     ]
 }
 
@@ -913,6 +936,14 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map ev
             String msg = settingValues["msg.${num}"]
             return msg ? "Notify: ${msg}" : 'Notify'
         case 'getSetPrivateBoolean':
+            // Deliberately does NOT show the true/false value. pvTF.<n> looks
+            // like it holds it, but reads inverted against the rule page: on
+            // rule 1806 action 31 is second in actionList with pvTF=true while
+            // the rule shows "Rule Boolean False" there, and action 33 is last
+            // with pvTF=false against a displayed "Rule Boolean True". Every
+            // other step of that rule matches order exactly, so the ordering is
+            // right and this field means something other than the value set.
+            // Better silent than confidently backwards.
             return 'Set Private Boolean'
         case 'getDefinedAction':
             return 'Run defined actions'
@@ -1085,6 +1116,10 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
         List targets = (s.ruleTargets ?: []) as List
         if (!targets) return
         List devices = (s.devices ?: []) as List
+        // Named the way the rule page names it: "This Rule, Perimeter Closed".
+        // Only worth saying when the action reaches beyond this rule - a rule
+        // setting only its own boolean needs no list at all.
+        if (s.selfTarget && !devices.contains('This Rule')) devices << 'This Rule'
         targets.each { t ->
             String nm = linkedRuleName("${t}", appInfo, cache)
             if (!devices.contains(nm)) devices << nm
