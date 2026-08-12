@@ -21,6 +21,20 @@ execution semantics (delays, waits, retriggering, simultaneous instances) the of
 [Rule 5.1 documentation](https://docs2.hubitat.com/en/apps/rule-machine/rule-5-1) is the
 authority and covers the ground properly.
 
+That split is not just a scoping convenience. It is the real boundary:
+
+> The stored representation contains enough information to **reconstruct** a rule, but not
+> necessarily enough to independently **execute or reason about** one correctly.
+
+Reconstruction is well supported. You can recover a rule's triggers, conditions, ordered
+actions and targets, and check the result against the rule's own page. Evaluation is not:
+section 5.2 shows the stored expression carries no grouping, and the one live test available
+contradicts conventional precedence.
+
+A tool that displays what a rule *is* stands on solid ground. A tool that decides what a
+rule *would do* is reimplementing Rule Machine from an undocumented format, and will be
+wrong in ways its author cannot see.
+
 Three warnings before you build anything on this:
 
 - **None of it is a public API.** These are the hub's own internal endpoints, the ones its
@@ -139,6 +153,29 @@ by its method: `getOnOffSwitch` appears in both. **[invariant]**
 
 The practical consequence is that **presence of a key means nothing**. Test values, not
 keys. Section 9.1 is the case where this matters most.
+
+Thirteen shapes across one action type suggests the objects are not serialised from a clean
+per-action schema. Whatever the cause, the safe conclusion for a reader is the same: this is
+not a typed structure and should not be deserialised as one.
+
+### 3.2 Treat the action object as an untyped property bag
+
+Do not model actions as method-specific types with required fields. Read them defensively
+and take meaning from the settings instead:
+
+    actionList  ->  action number
+                ->  actSubType.<n>          what kind of action this is
+                ->  settings ending .<n>    what it is configured to do
+                ->  action object fields    only where non-null and understood
+
+Put another way: **`actSubType` tells you what an action probably is, the settings tell you
+what it is configured to do, and the presence of a property in the action object tells you
+almost nothing.**
+
+Prefer the setting over the action object even where both carry the same information.
+`actSubType.<n>` and `method` agree in every case observed, but `actSubType` was always
+present while the action object's field set varies. A reader that falls back from `method`
+to `actSubType` costs one line and removes a whole class of failure.
 
 ---
 
