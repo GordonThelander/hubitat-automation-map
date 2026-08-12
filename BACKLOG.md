@@ -150,29 +150,40 @@ links rather than showing that they have none.
 
 ---
 
-## Rule Machine 5.1 execution documentation (separate publication)
+## Rule Machine 5.1 documentation (written, awaiting publication)
 
-`Supporting Docs/Rule_Machine_5_1_Execution_Explained_Draft.md`. A community
-documentation project, not an Automation Map feature. Keep the two separate.
+`Supporting Docs/rule_machine_5_1_storage_format.md`. Documents how Rule Machine **stores**
+a rule, verified against a live hub. A community publication, not an app feature.
 
-Assessed 2026-08-12 as high quality: sourced to specific Bruce Ravenel posts rather than
-folklore, evidence markers separating documented from author-confirmed from unvalidated, and
-tests T01 to T13 written as procedures with result placeholders instead of asserted
-outcomes. T13 is the right instinct exactly, since the indexed docs still describe "Ignore
-trigger events while running" while Bruce stated in June 2025 that it was removed.
+### Why storage rather than execution
 
-Nothing in it needs to feed back into the app. Section 3, on a false Required Expression
-causing Rule Machine to drop its trigger subscriptions, was briefly logged here as an
-undisclosed limitation; the README already covered it, and Rule Machine rules are unaffected
-anyway because their trigger and condition settings are read directly rather than from
-`eventSubscriptions`.
+Checked the official docs before writing anything, and most of the originally planned
+execution document would have restated what Hubitat already publishes. The
+[Rule 5.1 page](https://docs2.hubitat.com/en/apps/rule-machine/rule-5-1) already covers, in
+its own words: required expressions "typically remove the trigger event subscriptions when
+false"; Run Rule Actions is "not identical to a triggering of the other rule" including the
+Cancel-pending interaction; a delayed action "affects only that action, and not subsequent
+actions"; re-triggering "does not cancel previously scheduled delays" by default; and the
+"Multiple simultaneous rule execution error", including that platform 2.3.8.186 fixed
+top-level conditionals.
 
-### Tests that can be run directly
+Storage format is documented nowhere, and the Automation Map work is the primary source for
+it. That is the piece worth publishing.
 
-T01 (Required Expression subscription gating), T03 (plain Delay schedules a continuation) and
-T08 (delays accumulate) are all readable from `scheduledJobs` and `eventSubscriptions` on
-`/installedapp/statusJson/<id>`, against virtual devices. The remaining ten need manual
-observation.
+`Rule_Machine_5_1_Execution_Explained_Draft.md` is retained as the superseded input.
+
+### Two loose ends worth a separate short post
+
+- **"Ignore trigger events while running" is still fully documented** on the Rule 5.1 page,
+  while Bruce stated in June 2025 that it had been removed. No corresponding setting was
+  found across 38 Rule-5.1 rules, which is suggestive but not proof since an unused option
+  may store nothing. Opening any rule and looking for the toggle settles it. Either a stale
+  doc or a misremembering, and worth reporting either way.
+- **Rule Functions are entirely undocumented officially.** Zero mentions on the Rule 5.1
+  page and zero on the Rule Machine index page; the only source is Bruce's forum post. A
+  practical guide would fill a real void, and there is now hands-on material: a Rule
+  Function reports itself identically to an ordinary rule, and normally references no
+  devices at all.
 
 ---
 
