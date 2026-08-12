@@ -6,10 +6,9 @@ Not shipped with the HPM package. Items here are agreed ideas awaiting a decisio
 
 ## Integration registry (proposed)
 
-Adopt the registry pack (`hubitat_automation_map_registry_pack_v0.3.zip`, generated
-2026-08-11) as the source of external dependency knowledge. Source files live in Gordon's
-Downloads folder; move the app/integration registry into this repo before building, or the
-reference will rot.
+Adopt the registry pack (generated 2026-08-11) as the source of external dependency
+knowledge. Imported to `Supporting Docs/registry-pack-v0.3/`; the file to build from is
+`hubitat_automation_map_app_integration_registry_v0.3.json`.
 
 The map currently claims to show what drives an app, and is silently wrong for anything not
 device driven. BOM Weather Alerts is driven by a ten minute poll of a BOM feed, but the map
@@ -109,8 +108,9 @@ Direct rule-to-rule links shipped in 1.3.3. Four action families are decoded fro
 
 Device-mediated relationships: Rule A writes a virtual switch, Rule B triggers on it,
 therefore A leads to B. That is where the remaining payoff sits and also where every false
-positive lives. Full design in `hubitat_automation_map_rule_to_rule_implementation.md`
-(Gordon's Downloads folder), which is roughly five times bigger than what should be built:
+positive lives. Full design in
+`Supporting Docs/hubitat_automation_map_rule_to_rule_implementation.md`,
+which is roughly five times bigger than what should be built:
 15 edge types, 5 phases, cycle detection, feedback-loop oscillation analysis, three separate
 semantic JSON files, and confidence values quoted to the percent (95 versus 90 is false
 precision). Phases 3 onward are not worth building at all.
@@ -152,7 +152,7 @@ links rather than showing that they have none.
 
 ## Rule Machine 5.1 execution documentation (separate publication)
 
-`Rule_Machine_5_1_Execution_Explained_Draft.md` (Gordon's Downloads folder). A community
+`Supporting Docs/Rule_Machine_5_1_Execution_Explained_Draft.md`. A community
 documentation project, not an Automation Map feature. Keep the two separate.
 
 Assessed 2026-08-12 as high quality: sourced to specific Bruce Ravenel posts rather than

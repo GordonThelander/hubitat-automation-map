@@ -1,0 +1,4 @@
+﻿id,manufacturer,product,model,protocol,recommendedDriver,support,hubCompatibility,verification
+ikea-rodret-wireless-dimmer-power-switch,IKEA,RODRET Wireless Dimmer/Power Switch,,ZIGBEE,,HUBITAT_NATIVE,,SEARCH_INDEX_VERIFIED
+iris-v1-family,Iris / AlertMe,Iris v1 (AlertMe) device family,,ZIGBEE,,HUBITAT_NATIVE_LEGACY,"{""supported"": [""C-7 and earlier""], ""notSupported"": [""C-8"", ""C-8 Pro""]}",SEARCH_INDEX_VERIFIED
+monoprice-multizone-audio-controller,Monoprice,Multi-Zone Audio Controller,,LAN_SERIAL,Monoprice - Audio Video Receiver,HUBITAT_NATIVE,,SECONDARY_SOURCE_CROSSCHECKED

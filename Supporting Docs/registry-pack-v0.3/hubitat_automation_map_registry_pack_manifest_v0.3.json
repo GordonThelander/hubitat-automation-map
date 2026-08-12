@@ -1,0 +1,29 @@
+{
+  "package": "Hubitat Automation Map Registry Pack",
+  "version": "0.3",
+  "generatedDate": "2026-08-11",
+  "registries": [
+    {
+      "file": "hubitat_automation_map_app_integration_registry_v0.3.json",
+      "role": "Applications, automations, integrations and architectural dependencies"
+    },
+    {
+      "file": "hubitat_automation_map_device_driver_registry_v0.1.json",
+      "role": "Physical device, built-in driver and protocol enrichment"
+    }
+  ],
+  "supportingTools": [
+    {
+      "file": "harvest_hubitat_compatible_devices.py",
+      "role": "Refresh the official dynamically rendered Hubitat compatible-device catalogue"
+    }
+  ],
+  "effectiveGraphOrder": [
+    "Runtime Hubitat object graph",
+    "App/Integration Registry",
+    "Device/Driver Registry",
+    "Protocol dependencies",
+    "User overrides",
+    "Optional network enrichment"
+  ]
+}
