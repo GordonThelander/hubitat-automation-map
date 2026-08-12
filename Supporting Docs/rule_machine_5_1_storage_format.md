@@ -3,8 +3,14 @@
 Notes for anyone building a tool that reads Rule Machine rules from a Hubitat hub.
 
 **Status:** derived empirically from a C-8 running platform 2.5.1.142, cross-checked against
-each rule's own page in the Rule Machine UI. Everything below was verified against a live
-hub with 38 Rule-5.1 rules.
+each rule's own page in the Rule Machine UI. The sample was one hub with 38 Rule-5.1 rules,
+so some findings rest on a single example. Each claim carries an evidence marker; see
+"How confident is each finding" below.
+
+**Design principle, if you take only one thing from this:** do not manufacture meaning from
+undocumented fields. Retain what you do not recognise, flag it, and refuse to guess. Section
+9.1 exists because guessing what one field meant produced 28 confident and entirely
+fictional relationships on a 38-rule hub.
 
 ---
 
@@ -26,17 +32,43 @@ Three warnings before you build anything on this:
   Rule Machine shows on the rule's own page, your reconstruction is wrong. That rule of
   thumb caught every bug described in section 9.
 
+### How confident is each finding
+
+Reverse-engineered notes are worth little without saying how well evidenced each claim is.
+Findings below carry one of these markers:
+
+| Marker | Meaning |
+| --- | --- |
+| **[invariant]** | held across all 38 rules examined, with no counter-example |
+| **[strong]** | held in every case examined, but the sample did not cover every variation |
+| **[limited]** | a handful of samples only, stated as a caution rather than a rule |
+| **[single]** | one observation, which is not evidence of a pattern |
+| **[heuristic]** | a technique that works in practice, not a property of the format |
+| **[unknown]** | explicitly not established |
+
+Unmarked prose is description or advice rather than a claim about the format.
+
 ### The short version
 
 If you read nothing else, read these:
 
 - An action's parameters are **not** in the action. They are in the app's settings, keyed by
-  the action number. Neither half is usable alone (section 3).
-- Every action carries a field called `rule` that is **not a rule reference**. It is a
-  condition index (section 9.1).
-- `indent` does not reliably describe nesting. Do not build a tree from it (section 9.2).
+  the action number. Neither half is usable alone (section 3). **[invariant]**
+- Some actions carry a field called `rule` which is **not a rule reference**. It is a
+  condition index, and it is non-null for only three action types (section 9.1). **[invariant]**
+- `indent` does not reliably describe nesting. Do not build a tree from it (section 9.2). **[strong]**
 - `eventSubscriptions` is a snapshot that changes with Required Expression state, so a
-  rule's triggers can appear to vanish (section 10.3).
+  rule's triggers can appear to vanish (section 10.3). **[strong]**
+
+### A note on reading settings
+
+`/installedapp/statusJson/<id>` returns **every** setting an app holds, and that is not
+limited to Rule Machine. Other apps store API tokens, passwords, cloud endpoints and account
+identifiers in ordinary settings.
+
+If you build something that reads this endpoint, persist only the fields your model needs
+and redact everything else by default. Do not log whole settings blocks, and be careful
+about what ends up in an exported map, a diagnostic bundle or a GitHub issue attachment.
 
 ---
 
@@ -82,16 +114,31 @@ joined by action number.**
 Neither half is usable on its own. The action object tells you an On/Off switch action
 exists; only the settings tell you which device and whether it is on or off.
 
-Two settings always accompany an action:
+Two settings accompanied every action examined: **[strong]**
 
 | Setting | Meaning |
 | --- | --- |
 | `actType.<n>` | the action *family*, e.g. `switchActs`, `dimmerActs`, `condActs`, `delayActs`, `rulesActs` |
 | `actSubType.<n>` | the specific action, matching the `method` in the action object |
 
-`actSubType` duplicates `method`. Prefer whichever you like, but note `method` is absent
-from the action object for some actions while `actSubType` has been present in every case
-observed, so `actSubType` is the safer primary key.
+`actSubType` duplicates `method`. Prefer whichever you like, but `actSubType` was present in
+every case observed, so it is the safer primary key. **[strong]**
+
+### 3.1 Action objects come in more than one shape
+
+Do not assume a fixed set of fields. Across 38 rules the action objects took **13 distinct
+shapes**. The three most common:
+
+    {indent, method, quick}                                    175x
+    {delay, indent, method, quick}                              30x
+    {cond, delay, indent, method, modes, quick, rule, wait}     19x
+
+The abbreviated shape carries three fields. The fullest shape seen carries ten, including
+`label` and `nested`. Whether an action is stored abbreviated or full is **not** determined
+by its method: `getOnOffSwitch` appears in both. **[invariant]**
+
+The practical consequence is that **presence of a key means nothing**. Test values, not
+keys. Section 9.1 is the case where this matters most.
 
 ---
 
@@ -142,8 +189,22 @@ condition numbers `5` and `7` with the *string* `"10"`. Coerce everything to str
 handle all shapes, or you will crash on the very common single-condition branch and silently
 mis-handle mixed lists.
 
-Operators appear inline as strings between condition numbers, so an expression is read left
-to right rather than as a nested tree.
+Operators appear inline as strings between condition numbers. **The stored form is flat and
+carries no grouping information at all** for the expressions examined. **[strong]**
+
+**Do not infer evaluation order from that flatness.** How Rule Machine evaluates a mixed
+AND/OR chain is an execution question this document does not answer, and it is not safely
+guessable: a separate live test of a three-term expression `A AND B OR C` on build 2.5.1.140
+resolved as `A AND (B OR C)`, which is the *opposite* of conventional Boolean precedence.
+One test is not a specification. **[single]**
+
+Not examined at all, and required before anyone writes an evaluator: explicit grouping or
+parentheses, NOT, whether `eval[n]` can reference another expression rather than a bare
+condition, and any operators beyond AND and OR. **[unknown]**
+
+For reconstructing and displaying a rule, reproduce the stored sequence as it stands and let
+the reader apply their own understanding, which is what Rule Machine's own page effectively
+does.
 
 `eval["0"]` is the Required Expression when `hasPredicate` is true. `predCapabs` lists the
 condition numbers it involves, with duplicates, so deduplicate if you use it.
@@ -244,7 +305,19 @@ user has never seen.
 `"*"` means **this rule**. Critically, it can appear **alongside** real targets: `["*","1809"]`
 is Rule Machine's way of storing "set the Private Boolean of this rule *and* of rule 1809".
 Treating the presence of `"*"` as meaning self-only will silently drop genuine cross-rule
-references. Stripping non-digits handles it cleanly.
+references. **[strong]**
+
+Parse each element explicitly rather than stripping non-digits out of the whole value:
+
+    for each element:
+        if element == "*"            -> this rule
+        else if element is all digits -> installed app id
+        else                          -> unknown, record and skip
+
+Stripping non-digits is tempting and shorter, but it silently turns any element you have not
+anticipated into a plausible-looking id. A future sentinel of the form `RM1809` would become
+`1809`, which is a real installed app, and the resulting wrong edge would look entirely
+credible. Rejecting what you do not recognise is the safer default throughout this format.
 
 `actType.<n> = rulesActs` also covers actions with no target at all, so check `actSubType`
 before assuming a target setting exists.
@@ -257,15 +330,33 @@ Each of these cost real debugging time.
 
 ### 9.1 The `rule` field is not a rule reference
 
-Every action object carries a field named `rule`:
+Some action objects carry a field named `rule`:
 
     { "method": "getIfThen",   "rule": 2 }
     { "method": "getWaitRule", "rule": 1, "delay": "0:10:00" }
 
-It is a **condition index**, used to look up `eval[<rule>]`. It is used by `getIfThen`,
-`getElseIf` and `getWaitRule`. In the example above, `rule: 2` resolves through
-`eval[2] = 12` to condition 12, and `rule: 1` through `eval[1] = 2` to condition 2. Neither
-has anything to do with a rule numbered 1 or 2.
+It is a **condition index**, used to look up `eval[<rule>]`. Above, `rule: 2` resolves
+through `eval[2] = 12` to condition 12, and `rule: 1` through `eval[1] = 2` to condition 2.
+Neither has anything to do with a rule numbered 1 or 2.
+
+**Test the value, not the key.** Whether the key is present depends on which storage shape
+the action happens to use (section 3.1), not on what the action does. Across 38 rules the
+key appeared on twelve different methods, including `getOnOffSwitch`, `getMsg` and
+`getDelay`. But it is **non-null for exactly three**: **[invariant]**
+
+| Method | `rule` non-null | `rule` present but null |
+| --- | --- | --- |
+| `getIfThen` | 13 | 0 |
+| `getWaitRule` | 12 | 0 |
+| `getElseIf` | 3 | 0 |
+| `getEndIf` | 0 | 10 |
+| `getSetPrivateBoolean` | 0 | 11 |
+| `getOnOffSwitch` | 0 | 6 |
+| `getMsg`, `getDelay`, `getChime`, `getElse`, `getStopActions`, `getHTTPPost` | 0 | 16 |
+
+So `if (action.rule != null)` is correct and `if ('rule' in action)` is not. Note this makes
+the method list above descriptive rather than prescriptive: gate on the non-null value and
+you do not need to know which methods can carry one.
 
 Reading it as a target rule id produces confident, entirely fictional rule-to-rule links,
 one for every conditional and wait on the hub. On a 38-rule hub that was 28 fabricated
@@ -278,7 +369,17 @@ observed rule the IF is at `""` while its own `getEndIf` is at `"\t"`, and anoth
 three IFs and closes two.
 
 Build structure from the control-flow markers instead: `getIfThen`, `getElseIf`, `getElse`,
-`getEndIf`, maintaining your own stack. Use `indent` for nothing.
+`getEndIf`, maintaining your own stack. Use `indent` for nothing. **[strong]**
+
+**Those four are not the whole grammar.** They are the IF family, and they are the only
+block construct the rules examined actually used. Rule Machine also has repeat and while
+constructs, which every rule on the test hub carries state for even without using them:
+`hasWhileRule` in 22 rules, `inRepIf` in 22, `nestedRepIf` in 38, `blockIf` in 20. Their
+action-level markers were never observed and are **[unknown]**.
+
+Treat a marker you do not recognise as an unclosed block and say so, rather than assuming
+the four above are exhaustive and silently producing a flat action list from a rule that has
+real nesting.
 
 ### 9.3 `pvTF` reads inverted
 
@@ -320,19 +421,24 @@ through a `String`-typed local first:
 
 Being clear about the limits matters as much as the format.
 
-### 10.1 A Rule Function is indistinguishable from an ordinary rule
+### 10.1 No Rule Function discriminator found
 
 A Rule Function reports `installedApp.name` of `Rule-5.1`, exactly like any other rule, and
 a `Run Actions` call targeting one stores `runRuleType = "Rule Machine"`, exactly like a
-call targeting an ordinary rule. No examined field distinguishes them.
+call targeting an ordinary rule. No examined field distinguishes them. **[limited]**
+
+Only one Rule Function was available to test against, so this is an absence of evidence
+rather than evidence of absence: a discriminator may well exist in a field not examined.
 
 In practice this does not matter for reading the link, since the target id resolves either
 way. It matters if you want to label the two differently.
 
-### 10.2 Pause cannot be told from Resume
+### 10.2 Pause/Resume discriminator not established
 
 Both use `getPauseResumeRules`. A setting `pR.<n>` looks like the discriminator but was
-empty on the only available example, which the rule page displayed as a Pause.
+empty on the only available example, which the rule page displayed as a Pause. **[single]**
+
+One rule containing a Resume action would settle it.
 
 ### 10.3 `eventSubscriptions` is a snapshot, not a definition
 
@@ -349,11 +455,12 @@ legitimately disagree.
 
 ## 11. Finding rules in the first place
 
-There is no bulk app-list endpoint. `/app/list` and `/installedapp/list` return a JavaScript
-application shell of about 6KB with no app data in it; a browser executing the JavaScript
-renders the list, but plain HTTP does not.
+**No usable bulk app-list endpoint was found on 2.5.1.142.** `/app/list` and
+`/installedapp/list` return a JavaScript application shell of about 6KB with no app data in
+it; a browser executing the JavaScript renders the list, but plain HTTP does not. An
+undocumented endpoint may exist and simply was not found. **[unknown]**
 
-Two workable routes:
+Two routes that do work, both **[heuristic]** rather than properties of the format:
 
 - **From a known id.** `/installedapp/statusJson/<id>` gives you `appTypeId` and everything
   else. Getting that first id usually means reading it out of the URL bar while the app's
