@@ -180,7 +180,7 @@ observation.
 
 ### Auto detection of external endpoints from app settings
 
-Investigated 2026-08-09, rejected. See the reasoning above. Roughly 40 percent precision
+Investigated 2026-08-09, rejected. Roughly 40 percent precision
 on a naive URL and host heuristic, and it misses exactly the integrations where a
 dependency map would be most useful. Source grepping does not rescue it: `importUrl`
 points at GitHub in every app, documentation links and commented out endpoints produce
