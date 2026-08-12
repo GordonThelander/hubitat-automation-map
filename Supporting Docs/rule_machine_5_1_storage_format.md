@@ -119,9 +119,9 @@ Conditions are numbered independently of actions, and are stored across several 
 `capabstrue` and `capabsfalse` together describe **every** condition in plain text. The
 split between them is only whether the condition currently evaluates true:
 
-    capabsfalse["11"] = "Time between 22:00 and 06:00"
-    capabsfalse["2"]  = "Illuminance of Back Garden Left, Back Garden Right any is < 500"
-    capabstrue["1"]   = "Guest Toilet Motion Sensor motion reports active"
+    capabsfalse["7"]  = "Time between Sunset-15 minutes(18:08) and 21:30"
+    capabsfalse["12"] = "Temperature of _ Average External Temperature(20.2) is <= 15.0"
+    capabstrue["1"]   = "TV Room Motion Sensor motion reports active"
 
 Merge both maps to get the full set. Do not read anything into which map a condition landed
 in beyond its truth at the moment you fetched.
@@ -132,13 +132,18 @@ The text carries HTML, so strip tags before displaying it.
 
 `eval` maps a branch number to the condition expression for that branch:
 
-    eval["0"] = [2, "OR", 9]
-    eval["2"] = 6
-    eval["3"] = "11"
+    eval["0"] = [5, "AND", 7, "OR", "10"]
+    eval["1"] = 2
+    eval["2"] = 12
 
-**The value type is inconsistent.** In one rule it is a list of condition numbers and
-operators, a bare integer, and a quoted string. Coerce to string and handle all three, or
-you will crash on rules that happen to have a single-condition branch.
+**The value type is inconsistent, including within a single value.** Across one rule it is a
+list, a bare integer and, elsewhere, a quoted string. Worse, that first list mixes integer
+condition numbers `5` and `7` with the *string* `"10"`. Coerce everything to string and
+handle all shapes, or you will crash on the very common single-condition branch and silently
+mis-handle mixed lists.
+
+Operators appear inline as strings between condition numbers, so an expression is read left
+to right rather than as a nested tree.
 
 `eval["0"]` is the Required Expression when `hasPredicate` is true. `predCapabs` lists the
 condition numbers it involves, with duplicates, so deduplicate if you use it.
@@ -171,9 +176,9 @@ role a device plays in a rule.
 | `tDev<n>` | devices that **trigger** condition n |
 | `rDev_<n>` | devices used in condition n as a **condition** |
 
-    tDev1   -> Guest Toilet Motion Sensor        (the trigger)
-    rDev_2  -> Back Garden Left, Back Garden Right  (an illuminance gate)
-    rDev_6  -> Guest Toilet Motion Sensor        (the same device, as a condition)
+    tDev1   -> TV Room Motion Sensor           (the trigger, motion becomes active)
+    rDev_2  -> TV Room Motion Sensor           (the same device, as a condition)
+    rDev_12 -> _ Average External Temperature  (a temperature gate)
 
 The same physical device appears as both, and means different things each time. A tool that
 keys on device id alone cannot tell a rule's trigger from its gating conditions; a tool that
@@ -231,9 +236,9 @@ user has never seen.
     privateT.31  = ["*","1809"]
 
 `"*"` means **this rule**. Critically, it can appear **alongside** real targets: `["*","1809"]`
-is Rule Machine's way of storing "set the Private Boolean of this rule *and* Perimeter
-Closed". Treating the presence of `"*"` as meaning self-only will silently drop genuine
-cross-rule references. Stripping non-digits handles it cleanly.
+is Rule Machine's way of storing "set the Private Boolean of this rule *and* of rule 1809".
+Treating the presence of `"*"` as meaning self-only will silently drop genuine cross-rule
+references. Stripping non-digits handles it cleanly.
 
 `actType.<n> = rulesActs` also covers actions with no target at all, so check `actSubType`
 before assuming a target setting exists.
@@ -286,7 +291,7 @@ samples are not enough to justify rendering `!pvTF`, so the safe move is to show
 
 An app's label is not clean text. Hubitat appends status markup:
 
-    Guest Toilet <span style='color:red'>(Required Expression false)</span>
+    TV Room Light and Fireplace <span style='color:red'>(Required Expression false)</span>
 
 Strip tags. Note the parenthetical text survives stripping, which is usually what you want,
 since it is real information.
@@ -358,84 +363,107 @@ another rule named it as a target.
 
 ## 12. Worked example
 
-Rule **Guest Toilet**, installed app 2290. Its page shows a Required Expression, a motion
-trigger, an IF/ELSE setting two different colour temperatures, then a two-minute wait and a
-switch off.
+Rule **TV Room Light and Fireplace**, installed app 2325. Its page shows a Required
+Expression, a motion trigger, a lamp switched on, an IF that also lights the fireplace when
+it is cold, then a ten-minute wait for motion to stop before turning everything off.
 
 ### Raw
 
-    actionList:   6, 1, 9, 10, 11, 3, 4
+    actionList:   7, 6, 4, 1, 5, 2, 8, 3
     hasPredicate: true
 
     actions:
-      6:  { method: getIfThen,      indent: "",   rule: 3 }
-      1:  { method: getSetColorTemp, indent: "" }
-      9:  { method: getElse,        indent: "\t" }
-      10: { method: getSetColorTemp, indent: "\t" }
-      11: { method: getEndIf,       indent: "\t" }
-      3:  { method: getWaitRule,    indent: "",   rule: 2, delay: "0:02:00", wait: 2 }
-      4:  { method: getOnOffSwitch, indent: "" }
+      7: { method: getSetPrivateBoolean, indent: "\t" }
+      6: { method: getOnOffSwitch,       indent: "" }
+      4: { method: getIfThen,            indent: "",   rule: 2 }
+      1: { method: getOnOffSwitch,       indent: "" }
+      5: { method: getEndIf,             indent: "\t", rule: null, label: "END-IF" }
+      2: { method: getWaitRule,          indent: "",   rule: 1, delay: "0:10:00", wait: 1 }
+      8: { method: getSetPrivateBoolean, indent: "" }
+      3: { method: getOnOffSwitch,       indent: "" }
 
     eval:
-      0: [2, "OR", 9]
-      2: 6
-      3: "11"
+      0: [5, "AND", 7, "OR", "10"]
+      1: 2
+      2: 12
 
-    capabstrue:   1  -> "Guest Toilet Motion Sensor motion reports active"
-    capabsfalse:  2  -> "Illuminance of Back Garden Left, Back Garden Right any is < 500"
-                  6  -> "Guest Toilet Motion Sensor motion is inactive"
-                  9  -> "Time between Sunset(18:05) and Sunrise(06:33)"
-                  11 -> "Time between 22:00 and 06:00"
+    capabstrue:   1  -> "TV Room Motion Sensor motion reports active"
+    capabsfalse:  2  -> "TV Room Motion Sensor motion is inactive"
+                  5  -> "Mode in [Home, Visitor]"
+                  7  -> "Time between Sunset-15 minutes(18:08) and 21:30"
+                  10 -> "Time between 06:00 and Sunrise+15 minutes(07:19)"
+                  12 -> "Temperature of _ Average External Temperature(20.2) is <= 15.0"
+                  15 -> "Private Boolean(true) is true"
 
-    tDev1  -> Guest Toilet Motion Sensor
-    rDev_2 -> Back Garden Left, Back Garden Right
-    rDev_6 -> Guest Toilet Motion Sensor
+    tDev1   -> TV Room Motion Sensor
+    rDev_2  -> TV Room Motion Sensor
+    rDev_12 -> _ Average External Temperature
 
-    ct.1 -> _LLM Guest Toilet Light,  ctL.1  = 2500, ctLevel.1  = 1
-    ct.10 -> _LLM Guest Toilet Light, ctL.10 = 2500, ctLevel.10 = 40
-    onOffSwitch.4 -> _LLM Guest Toilet Light, onOff.4 = false
+    onOffSwitch.6 -> TV Room Lamp,             onOff.6 = true
+    onOffSwitch.1 -> Fireplace,                onOff.1 = true
+    onOffSwitch.3 -> TV Room Lamp, Fireplace,  onOff.3 = false
+    delayAct.2 = hrs:min:sec, delayMin.2 = 10
+    pvTF.7 = true
 
 ### Decoded
 
-**Trigger.** `tDev1` names the trigger device, and condition 1 renders it: Guest Toilet
-Motion Sensor becomes active.
+**Trigger.** `tDev1` names the trigger device, and condition 1 renders it: TV Room Motion
+Sensor becomes active.
 
-**Required Expression.** `hasPredicate` is true, so `eval[0]` applies: `[2, "OR", 9]`, which
-is condition 2 OR condition 9, that is illuminance below 500 OR between sunset and sunrise.
-A darkness gate.
+**Required Expression.** `hasPredicate` is true, so `eval[0]` applies:
+`[5, "AND", 7, "OR", "10"]`, read left to right as condition 5 AND condition 7 OR condition
+10. That is: the mode is Home or Visitor, and it is either evening or early morning.
+
+Note this single expression contains integer condition numbers `5` and `7` next to the
+string `"10"`. Any parser that assumes a consistent element type fails here.
 
 **Actions**, walked in `actionList` order:
 
 | # | Action | Resolution |
 | --- | --- | --- |
-| 6 | `getIfThen` | `rule: 3` to `eval[3] = "11"` to condition 11, between 22:00 and 06:00 |
-| 1 | `getSetColorTemp` | `_LLM Guest Toilet Light` to 2500K at level 1 |
-| 9 | `getElse` | |
-| 10 | `getSetColorTemp` | `_LLM Guest Toilet Light` to 2500K at level 40 |
-| 11 | `getEndIf` | |
-| 3 | `getWaitRule` | `rule: 2` to `eval[2] = 6` to condition 6, motion inactive, timeout 0:02:00 |
-| 4 | `getOnOffSwitch` | `onOff.4 = false`, so off |
+| 7 | `getSetPrivateBoolean` | `pvTF.7 = true`, value not shown, see 9.3 |
+| 6 | `getOnOffSwitch` | `TV Room Lamp`, `onOff.6 = true`, so on |
+| 4 | `getIfThen` | `rule: 2` to `eval[2] = 12` to condition 12, external temperature <= 15 |
+| 1 | `getOnOffSwitch` | `Fireplace`, `onOff.1 = true`, so on |
+| 5 | `getEndIf` | |
+| 2 | `getWaitRule` | `rule: 1` to `eval[1] = 2` to condition 2, motion inactive, timeout 0:10:00 |
+| 8 | `getSetPrivateBoolean` | |
+| 3 | `getOnOffSwitch` | `TV Room Lamp, Fireplace`, `onOff.3 = false`, so off |
 
-Reading out: on motion, if it is between 22:00 and 06:00 use a dim 2500K, otherwise a
-brighter 2500K, then wait for motion to stop with a two-minute timeout, then turn off.
+Reading out: on motion, set the Private Boolean, turn the lamp on, and if it is 15 degrees
+or colder outside also light the fireplace; then wait up to ten minutes for motion to stop,
+reset the Private Boolean, and turn both off.
 
 Which is what the rule's own page says.
 
+### Three traps visible in this one rule
+
+**`actionList` order.** The list starts at action **7**, and action 3 runs last. Iterating
+the `actions` map by key would produce a rule nobody wrote.
+
+**`indent` is wrong here in two directions.** Action 7 is the *first* action, at top level,
+yet carries `"\t"`. Action 5 is the `getEndIf` closing the IF opened by action 4, and carries
+`"\t"` while action 4 itself carries `""`. Reconstructing nesting from these values gives a
+structure that matches neither the rule nor itself.
+
+**The `rule` field is a condition index.** Actions 4 and 2 both carry one: `rule: 2` and
+`rule: 1`. Neither is a reference to rule 2 or rule 1. They index `eval`, resolving to
+conditions 12 and 2 respectively.
+
 ### The subscription trap, live
 
-This rule's label at the time of reading was `Guest Toilet (Required Expression false)`, and
-its `eventSubscriptions` were:
+This rule's label at the time of reading was
+`TV Room Light and Fireplace (Required Expression false)`, and its complete
+`eventSubscriptions` were:
 
-    DEVICE   / Back Garden Left
-    DEVICE   / Back Garden Right
-    LOCATION / Volos Cove (C8)
+    LOCATION / [Hub Name]
+    LOCATION / [Hub Name]
 
-**The trigger device is not in that list.** Guest Toilet Motion Sensor, the entire reason
-this rule exists, has no subscription at all, because the Required Expression is false and
-Rule Machine has removed it. What remains is exactly what the rule needs to notice the
-Required Expression becoming true again: the two illuminance sensors and the location, for
-the sunset/sunrise condition.
+**No device subscriptions at all.** TV Room Motion Sensor, the rule's entire trigger, has
+none. Because the Required Expression is false, Rule Machine has removed the trigger
+subscription and kept only what it needs to notice the expression becoming true again, which
+for a mode-and-time expression is location events alone.
 
-Anything inferring this rule's triggers from `eventSubscriptions` would conclude it is
-triggered by garden illuminance. Reading `tDev1` gives the right answer regardless of when
-you look.
+Anything inferring this rule's triggers from `eventSubscriptions` would conclude it has no
+device triggers whatsoever. Reading `tDev1` gives the right answer regardless of when you
+look.
