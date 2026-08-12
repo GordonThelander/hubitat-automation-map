@@ -132,16 +132,13 @@ auto-detection.
 Both found while building 1.3.3, both currently handled by showing less rather than
 guessing. Neither blocks anything.
 
-- **`pvTF.<n>` reads inverted.** It looks like it holds the value a Set Private Boolean
-  action writes, but is backwards against the rule page in all three observed cases: rule
-  1806 action 31 (`true`, page shows "Rule Boolean False"), 1806 action 33 (`false`, page
-  shows "True"), and 2972 action 7 (`true`, page shows "False"). Ordering is confirmed
-  correct, since every other step of 1806 matches its page exactly. Rendering `!pvTF` would
-  be right on every known case, but the reason is unknown, so the value is not shown at all.
-- **Pause and Resume cannot be told apart.** Both use `getPauseResumeRules`. `pR.<n>` looks
-  like the discriminator but is empty on the only available example, which the rule page
-  shows as a Pause. Both currently render as "Pause / Resume Rules". One rule with a Resume
-  action would settle it.
+Both are tracked in full under the Rule Machine 5.1 documentation item above, which is the
+canonical record for anything learned about the storage format. In brief:
+
+- **`pvTF.<n>` reads inverted** against the rule page in all three observed cases, so the
+  value is not shown at all rather than shown backwards.
+- **Pause and Resume cannot be told apart.** Both use `getPauseResumeRules` and render as
+  "Pause / Resume Rules". One rule containing a Resume action would settle it.
 
 ### Honest limitation, already documented in the README
 
@@ -152,8 +149,60 @@ links rather than showing that they have none.
 
 ## Rule Machine 5.1 documentation (written, awaiting publication)
 
-`Supporting Docs/rule_machine_5_1_storage_format.md`. Documents how Rule Machine **stores**
-a rule, verified against a live hub. A community publication, not an app feature.
+**"Reverse-engineering the Rule Machine 5.1 storage format"**,
+`Supporting Docs/rule_machine_5_1_storage_format.md`. A community publication, not an app
+feature. Gordon will publish when he judges it ready; no deadline.
+
+**This is a living document. Add to it whenever Automation Map work turns up something new
+about how Rule Machine stores a rule, without being asked.** Anything learned while
+extending the decoder belongs there, and the open questions below are the specific gaps a
+future finding might close.
+
+### Current state
+
+663 lines, 12 sections, complete and internally consistent. Contains:
+
+- A method section: rule page as ground truth, differential reading, corpus-wide checks
+  across all 38 rules, building a working decoder so misreadings render as visibly wrong
+  flowcharts, constructing test rules where the corpus had gaps, and checking official docs
+  before claiming novelty. Also states what was *not* done.
+- Evidence markers on every claim: `[invariant]` `[strong]` `[limited]` `[single]`
+  `[heuristic]` `[unknown]`, so a finding holding across 38 rules is distinguishable from
+  one resting on a single sample.
+- A framing boundary: the stored representation holds enough to **reconstruct** a rule, but
+  not necessarily enough to **execute or reason about** one. Reconstruction is checkable
+  against the rule page; evaluation is not.
+- A security warning that `appSettings` returns every setting an app holds, including other
+  apps' tokens and credentials, so nothing should be logged or exported wholesale.
+- A worked example decoding one rule end to end, which also demonstrates the
+  `eventSubscriptions` snapshot trap live.
+
+Reviewed externally 2026-08-12; review incorporated. Two review points led to better
+findings than the review proposed, both now in the document: the 13 action-object shapes,
+and the correction that expressions must not be assumed to evaluate left to right.
+
+### Open questions, any of which a future finding could close
+
+Tracked here so a discovery is recognised as closing something rather than passed over.
+
+- **Expression grammar.** Explicit grouping or parentheses, NOT, whether `eval[n]` can
+  reference another expression rather than a bare condition, and operators beyond AND/OR.
+  All `[unknown]`.
+- **Evaluation order.** One live test on 2.5.1.140 resolved `A AND B OR C` as
+  `A AND (B OR C)`, the opposite of conventional precedence. Cannot distinguish "OR binds
+  tighter" from right-associative evaluation; a four-term case such as `A OR B AND C OR D`
+  would separate them.
+- **Repeat and while.** Every rule carries state for them (`hasWhileRule`, `inRepIf`,
+  `nestedRepIf`, `blockIf`) but no rule on the hub uses them, so their action-level markers
+  are unobserved. The IF family is therefore known to be an incomplete grammar.
+- **Rule Function discriminator.** One sample only. Reports identically to an ordinary rule
+  in every field examined, which is absence of evidence rather than evidence of absence.
+- **Pause versus Resume.** `pR.<n>` looks like the discriminator but was empty on the only
+  example. One rule containing a Resume action settles it.
+- **`pvTF` meaning.** Three observed cases, all inverted against the rule page. Rendering
+  `!pvTF` would be right on all three, but the reason is unknown so the value is not shown.
+- **Bulk app enumeration.** No usable endpoint found on 2.5.1.142; an undocumented one may
+  exist.
 
 ### Why storage rather than execution
 
