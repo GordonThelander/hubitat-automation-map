@@ -4,126 +4,25 @@ Not shipped with the HPM package. Items here are agreed ideas awaiting a decisio
 
 ---
 
-## External system dependencies (SUPERSEDED, see "Integration registry" below)
-
-Retained for the rejection reasoning only. The hand-rolled design in this section was
-replaced on 2026-08-12 by the registry pack, which does the same job better. Do not build
-this version. Skip to "Integration registry (proposed, 1.3.0)".
-
-Let users declare which external systems each app type depends on, render them as a
-new node class, and use that to answer "what breaks if this fails".
-
-### Why
-
-The map currently claims to show what drives an app, and is silently wrong for anything
-not device driven. BOM Weather Alerts is driven by a ten minute poll of a BOM feed, but
-the map shows OpenweatherMap as its trigger, because that is the only device it touches.
-
-Auto detection was investigated and rejected. Scanning app settings for URL and host
-values across eight apps found only two genuine external feeds, one false positive
-(Maker API `corsHosts`), and four LAN phone IPs. Critically it missed every polished
-integration (CoCoHue, LIFX, Kasa, Tapo, Sensibo, Google Home, Chromecast), because a
-well written integration hardcodes or discovers its endpoint rather than exposing it as
-a text setting. Partial coverage is worse than none in an audit tool: if BOM shows a
-dependency and CoCoHue does not, the natural reading is that CoCoHue is self contained.
-
-Manual declaration fixes that, because unknown becomes an explicit state rather than an
-inferred absence.
-
-### Data model
-
-One list in app state, keyed on the app **type** string, never on installed app id:
-
-    { name: "Hue Bridge",   class: "lan",      types: ["CoCoHue - Hue Bridge Integration"] }
-    { name: "Meross Cloud", class: "internet", types: ["Meross MSG100 Garage Door Setup"] }
-    { name: "BOM",          class: "internet", types: ["BOM Weather Alerts"] }
-
-Keying on type is what makes this cheap. The dev hub has 61 installed apps but only 19
-distinct types, because 36 Rule-5.1 rules and 5 Averaging Master instances collapse to
-one row each. It also means the table does not go stale when rules are added or removed.
-
-Stored separately from the graph blob, since a rescan rebuilds that, and re-applied at
-render time by matching type strings. Nineteen rows is negligible against the roughly
-2500 to 3000 node and relationship state ceiling.
-
-### Seeding
-
-App type strings are identical across hubs, so a static table of around thirty common
-integrations ships inside the app. First scan matches what it recognises and leaves the
-rest unclassified. The settings table shows whether a row is built in or user set, and
-user values always win. A new user's table should be mostly correct before they touch it.
-
-### Unclassified is explicit
-
-Any app type neither seeded nor user classified is shown as unclassified in the table and
-counted in Insights ("3 app types not classified"). Never silently treated as having no
-dependency. This is the property that makes the manual version worth building when auto
-detection was not.
-
-### Rendering
-
-- New node class, visually distinct from devices.
-- Dashed edges, because these are asserted by a human, not read from the hub. A user
-  assertion must not render with the same authority as a scanned relationship.
-- External systems added to the existing filter dropdown.
-
-### The actual payoff
-
-Blast radius. Selecting an external system focuses to that system, every app that depends
-on it, and every device those apps own or command. Nothing in Hubitat answers this today,
-and the map already holds the other two legs of the chain.
-
-This is why the useful axis is `class` (internet vs lan) rather than vendor name. LIFX
-Light Manager is LAN UDP despite LIFX being a cloud brand; Meross is internet dependent
-despite the garage door being three metres away.
-
-### UI
-
-Per system rather than per app type, which is about 10 blocks instead of 19:
-
-    [ Hue Bridge ]   class: (LAN v)        used by: [multi-select of app types]
-    [ Meross Cloud ] class: (Internet v)   used by: [multi-select of app types]
-    [ + add system ]
-
-Native Hubitat inputs on a dynamic page. No new write endpoint, so the map page stays
-read only and the OAuth token keeps guarding a pure view.
-
-Settings names must be sanitised from the system name. App type strings contain spaces,
-hyphens and dots ("CoCoHue - Hue Bridge Integration", "Zigbee Map 3.0.4").
-
-### Known limitations to document
-
-- User entered data is only as good as the person entering it.
-- Kasa and Tapo are genuinely both local and cloud depending on configuration. One class
-  per system is lossy for those.
-- The built in seed will go stale as integrations rename. Keep it additive and always
-  user overridable.
-
-### Cost and risk
-
-Roughly 250 to 350 lines: settings page, seed table, state merge, node and edge injection
-into the graph builder, filter dropdown entry, focus mode, one Insights line.
-
-Low risk, purely additive, does not touch scanning. With an empty table the map behaves
-exactly as it does now. Main hazard is the GString backslash trap on any new JavaScript,
-which `check_template.sh` catches mechanically. Run it before pushing.
-
----
-
-## Integration registry (proposed, 1.3.0)
+## Integration registry (proposed)
 
 Adopt the registry pack (`hubitat_automation_map_registry_pack_v0.3.zip`, generated
-2026-08-11) as the source of external dependency knowledge, replacing the hand-rolled
-design above. Source files live in Gordon's Downloads folder; move the app/integration
-registry into this repo before building, or the reference will rot.
+2026-08-11) as the source of external dependency knowledge. Source files live in Gordon's
+Downloads folder; move the app/integration registry into this repo before building, or the
+reference will rot.
 
-### Why this supersedes the earlier design
+The map currently claims to show what drives an app, and is silently wrong for anything not
+device driven. BOM Weather Alerts is driven by a ten minute poll of a BOM feed, but the map
+shows OpenweatherMap as its trigger, because that is the only device it touches.
+
+### Why a registry rather than declaring systems per app
 
 Assessed 2026-08-12 by running its `matchRules` against the live hub. Three concrete
-improvements over the superseded section:
+improvements over simply letting users name one external system per app type, which was the
+first design considered and rejected:
 
-**`dependencies[]` rather than one system per app.** LIFX is the proof case and the exact
-thing the earlier design got wrong:
+**`dependencies[]` rather than one system per app.** LIFX is the proof case, and the exact
+thing the simpler design got wrong:
 
     LIFX Light Manager
       +-- LIFX Cloud        HTTPS     MANAGEMENT
@@ -192,9 +91,9 @@ docs2.hubitat.com/en/devices/list-of-compatible-devices is JS-rendered, conserva
 that preserves raw rows) but it only runs on a desktop, not the hub, and manufacturer and
 protocol detail barely changes the dependency graph. Skip both.
 
-### Carry over from the superseded design
+### Not provided by the registry itself
 
-Still required, and not provided by the registry itself:
+Still required:
 
 - Unclassified must be an explicit state, never silent absence.
 - User assertions render differently from scanned relationships (dashed edges).
@@ -202,36 +101,25 @@ Still required, and not provided by the registry itself:
 
 ---
 
-## Rule-to-rule mapping, Phase 1 only (proposed)
+## Rule-to-rule: device-mediated links (proposed, deferred)
 
-Requested by JimB on the community thread. Full design in
-`hubitat_automation_map_rule_to_rule_implementation.md` (Gordon's Downloads folder).
+Direct rule-to-rule links shipped in 1.3.3. Four action families are decoded from the
+`rulesActs` settings: `getRuleActions`, `getStopActions`, `getPauseResumeRules` and
+`getSetPrivateBoolean`. What follows is the part deliberately not built.
 
-Show when one automation causes, enables, disables or invokes another, instead of leaving
-the reader to infer it from two rules touching the same device.
-
-### Build Phase 1 only
-
-Direct rule actions: Run Rule Actions, pause, resume, enable, disable, cancel. These are
-explicit in Rule Machine's settings, need no inference, carry 100% confidence, and answer
-"which rules control other rules" outright. The RM action decode already exists for the
-flowcharts, so this is largely reusing work that is in the app today.
-
-### Defer Phase 2, drop Phase 3 onward
-
-Phase 2 is device-mediated relationships (Rule A writes a virtual switch, Rule B triggers on
-it). That is where the real payoff sits and also where every false positive lives. Worth
-doing after Phase 1, but only with the correctness discipline below enforced.
-
-The source document is roughly five times bigger than what should be built: 15 edge types,
-5 phases, cycle detection, feedback-loop oscillation analysis, three separate semantic JSON
-files, and confidence values quoted to the percent (95 versus 90 is false precision).
+Device-mediated relationships: Rule A writes a virtual switch, Rule B triggers on it,
+therefore A leads to B. That is where the remaining payoff sits and also where every false
+positive lives. Full design in `hubitat_automation_map_rule_to_rule_implementation.md`
+(Gordon's Downloads folder), which is roughly five times bigger than what should be built:
+15 edge types, 5 phases, cycle detection, feedback-loop oscillation analysis, three separate
+semantic JSON files, and confidence values quoted to the percent (95 versus 90 is false
+precision). Phases 3 onward are not worth building at all.
 
 ### The discipline that must survive any trimming
 
-This is the good part of the document and it is the same principle that killed endpoint
-auto-detection. Without it, rule-to-rule is a false-positive generator that draws an edge
-between any two rules touching the same device.
+Without this, device-mediated inference is a false-positive generator that draws an edge
+between any two rules touching the same device. Same principle that killed endpoint
+auto-detection.
 
 - A condition is not a trigger: TRIGGERS_VIA versus INFLUENCES_VIA (doc sections 10, 11).
 - Value matching: Rule A sets switch X on, Rule B triggers on X off, therefore no edge (19).
@@ -239,11 +127,26 @@ between any two rules touching the same device.
 - Required Expressions never produce trigger edges (23).
 - POSSIBLE_RELATIONSHIP when subscription versus read cannot be established (44).
 
-### Honest limitation to document
+### Open questions from the delivered work
 
-Only works for Rule-5.1. Room Lighting, Basic Rules, Simple Automation and webCoRE would be
-invisible in the rule-to-rule view. Same partial-coverage trap as the rejected items below,
-so it needs the same explicit "not analysed" state rather than silent absence.
+Both found while building 1.3.3, both currently handled by showing less rather than
+guessing. Neither blocks anything.
+
+- **`pvTF.<n>` reads inverted.** It looks like it holds the value a Set Private Boolean
+  action writes, but is backwards against the rule page in all three observed cases: rule
+  1806 action 31 (`true`, page shows "Rule Boolean False"), 1806 action 33 (`false`, page
+  shows "True"), and 2972 action 7 (`true`, page shows "False"). Ordering is confirmed
+  correct, since every other step of 1806 matches its page exactly. Rendering `!pvTF` would
+  be right on every known case, but the reason is unknown, so the value is not shown at all.
+- **Pause and Resume cannot be told apart.** Both use `getPauseResumeRules`. `pR.<n>` looks
+  like the discriminator but is empty on the only available example, which the rule page
+  shows as a Pause. Both currently render as "Pause / Resume Rules". One rule with a Resume
+  action would settle it.
+
+### Honest limitation, already documented in the README
+
+Only Rule-5.1 is analysed. Room Lighting, Basic Rules, Simple Automation and webCoRE show no
+links rather than showing that they have none.
 
 ---
 
@@ -258,16 +161,11 @@ tests T01 to T13 written as procedures with result placeholders instead of asser
 outcomes. T13 is the right instinct exactly, since the indexed docs still describe "Ignore
 trigger events while running" while Bruce stated in June 2025 that it was removed.
 
-### The one item that feeds back into this app
-
-**Section 3 explains a limitation Automation Map does not currently disclose.** A false
-Required Expression causes Rule Machine to drop its trigger subscriptions. This app derives
-triggers from `eventSubscriptions`, which is a snapshot, so scanning while a rule's Required
-Expression is false under-reports that rule's triggers, and a later rescan shows different
-edges with nothing having changed.
-
-Add this to the Limitations list in the README and the community post. Cheap, independent of
-everything else here, and worth doing regardless of whether the document is ever published.
+Nothing in it needs to feed back into the app. Section 3, on a false Required Expression
+causing Rule Machine to drop its trigger subscriptions, was briefly logged here as an
+undisclosed limitation; the README already covered it, and Rule Machine rules are unaffected
+anyway because their trigger and condition settings are read directly rather than from
+`eventSubscriptions`.
 
 ### Tests that can be run directly
 
