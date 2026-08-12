@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.3.2'
+@Field static final String APP_VERSION = '1.3.3'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -680,9 +680,10 @@ Map fetchAppRelationships(String appId, Map labels) {
     getRuleActions      : [target: 'ruleAct',  engine: 'runRuleType',  kind: 'runs'],
     getStopActions      : [target: 'stopAct',  engine: 'stopRuleType', kind: 'stops'],
     getSetPrivateBoolean: [target: 'privateT', engine: 'pvRuleType',   kind: 'setspb'],
+    getPauseResumeRules : [target: 'pauseRule', engine: 'pauseRuleType', kind: 'pauses'],
 ]
 
-@Field static final List<String> RULE_LINK_KIND_NAMES = ['runs', 'stops', 'setspb']
+@Field static final List<String> RULE_LINK_KIND_NAMES = ['runs', 'stops', 'setspb', 'pauses']
 
 List extractRuleLinks(Map data, String appId) {
     Map vals = [:]
@@ -964,6 +965,12 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map ev
             return 'Cancel Timed Actions'
         case 'getRuleActions':
             return 'Run Actions'
+        case 'getPauseResumeRules':
+            // One action type covers both directions. pR.<n> looks like the
+            // discriminator but is empty on the only example available, which
+            // the rule page shows as a Pause, so which one it is cannot be
+            // read reliably yet. Named for the pair rather than guessing.
+            return 'Pause / Resume Rules'
         case 'getSetMode':
             return 'Set mode'
         case 'getOCGarage':
@@ -1349,6 +1356,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Stops - rule stops another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Pause / resume - rule pauses another rule</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
 </div>
@@ -1391,12 +1399,12 @@ if (typeof window.vis === 'undefined') {
 <script>
 const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
-                     runs: '#d9534f', stops: '#d9534f', setspb: '#d9534f' };
+                     runs: '#d9534f', stops: '#d9534f', setspb: '#d9534f', pauses: '#d9534f' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
-const RULE_LINK_KINDS = ['runs', 'stops', 'setspb'];
+const RULE_LINK_KINDS = ['runs', 'stops', 'setspb', 'pauses'];
 
 // Most-significant role first. Used to colour a device that holds more than one
 // role in the same app - e.g. a motion sensor that is both a rule's trigger and
@@ -1424,6 +1432,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'exposed') dashes = [2, 4];
   else if (e.kind === 'stops') dashes = [8, 4];
   else if (e.kind === 'setspb') dashes = [2, 3];
+  else if (e.kind === 'pauses') dashes = [12, 4, 2, 4];
   return {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     arrows: inbound ? 'from' : 'to',
