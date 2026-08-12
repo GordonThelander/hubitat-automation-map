@@ -72,12 +72,12 @@ joined by action number.**
 
 `appState.actions` is a map keyed by action number, and holds what *kind* of action it is:
 
-    "6": { "quick": false, "method": "getIfThen", "indent": "", "rule": 3 }
+    "4": { "quick": false, "method": "getIfThen", "indent": "", "rule": 2 }
 
 `appSettings` holds that action's *parameters*, keyed `<prefix>.<actionNumber>`:
 
-    actType.6      = condActs
-    actSubType.6   = getIfThen
+    actType.4      = condActs
+    actSubType.4   = getIfThen
 
 Neither half is usable on its own. The action object tells you an On/Off switch action
 exists; only the settings tell you which device and whether it is on or off.
@@ -101,9 +101,9 @@ observed, so `actSubType` is the safer primary key.
 
 **It is not the numeric order of the keys, and not the insertion order.** A real example:
 
-    actionList: 6, 1, 9, 10, 11, 3, 4
+    actionList: 7, 6, 4, 1, 5, 2, 8, 3
 
-Action 6 runs first and action 3 runs sixth. Action numbers are stable identifiers assigned
+Action 7 runs first and action 3 runs last. Action numbers are stable identifiers assigned
 when an action is created; reordering actions in the UI rewrites `actionList` and leaves the
 numbers alone. Iterating the `actions` map directly will give you a rule in an order that
 resembles the user's rule only by accident.
@@ -121,7 +121,7 @@ split between them is only whether the condition currently evaluates true:
 
     capabsfalse["7"]  = "Time between Sunset-15 minutes(18:08) and 21:30"
     capabsfalse["12"] = "Temperature of _ Average External Temperature(20.2) is <= 15.0"
-    capabstrue["1"]   = "TV Room Motion Sensor motion reports active"
+    capabstrue["1"]   = "Theatre Room Motion Sensor motion reports active"
 
 Merge both maps to get the full set. Do not read anything into which map a condition landed
 in beyond its truth at the moment you fetched.
@@ -152,14 +152,20 @@ condition numbers it involves, with duplicates, so deduplicate if you use it.
 
 Each condition also has settings describing how it is built:
 
-    rCapab_2    = Illuminance          the condition type
-    state_2     = 500                  the comparison value
-    RelrDev_2   = <                    the operator
-    rCapab_11   = Between two times
-    starting11  = A specific time
-    startingA11 = 22:00
-    ending11    = A specific time
-    endingA11   = 06:00
+    rCapab_12  = Temperature          the condition type
+    state_12   = 15                   the comparison value
+    RelrDev_12 = <=                   the operator
+
+    rCapab_7           = Between two times
+    starting7          = Sunset
+    startSunsetOffset7 = -15
+    ending7            = A specific time
+    endingA7           = 21:30
+    atOrBetween7       = false
+
+A time condition is built from a starting kind and an ending kind, each either a clock time
+or a sun event, with an optional offset in minutes. Condition 7 above reads as "between 15
+minutes before sunset and 21:30".
 
 You rarely need these if you are using `capabstrue`/`capabsfalse`, which already render the
 condition in words. They matter if you want the raw values rather than the prose.
@@ -176,8 +182,8 @@ role a device plays in a rule.
 | `tDev<n>` | devices that **trigger** condition n |
 | `rDev_<n>` | devices used in condition n as a **condition** |
 
-    tDev1   -> TV Room Motion Sensor           (the trigger, motion becomes active)
-    rDev_2  -> TV Room Motion Sensor           (the same device, as a condition)
+    tDev1   -> Theatre Room Motion Sensor      (the trigger, motion becomes active)
+    rDev_2  -> Theatre Room Motion Sensor      (the same device, as a condition)
     rDev_12 -> _ Average External Temperature  (a temperature gate)
 
 The same physical device appears as both, and means different things each time. A tool that
@@ -253,11 +259,13 @@ Each of these cost real debugging time.
 
 Every action object carries a field named `rule`:
 
-    { "method": "getIfThen",   "rule": 3 }
-    { "method": "getWaitRule", "rule": 2, "delay": "0:02:00" }
+    { "method": "getIfThen",   "rule": 2 }
+    { "method": "getWaitRule", "rule": 1, "delay": "0:10:00" }
 
 It is a **condition index**, used to look up `eval[<rule>]`. It is used by `getIfThen`,
-`getElseIf` and `getWaitRule`.
+`getElseIf` and `getWaitRule`. In the example above, `rule: 2` resolves through
+`eval[2] = 12` to condition 12, and `rule: 1` through `eval[1] = 2` to condition 2. Neither
+has anything to do with a rule numbered 1 or 2.
 
 Reading it as a target rule id produces confident, entirely fictional rule-to-rule links,
 one for every conditional and wait on the hub. On a 38-rule hub that was 28 fabricated
@@ -291,7 +299,7 @@ samples are not enough to justify rendering `!pvTF`, so the safe move is to show
 
 An app's label is not clean text. Hubitat appends status markup:
 
-    TV Room Light and Fireplace <span style='color:red'>(Required Expression false)</span>
+    Theatre Room Light and Fireplace <span style='color:red'>(Required Expression false)</span>
 
 Strip tags. Note the parenthetical text survives stripping, which is usually what you want,
 since it is real information.
@@ -363,7 +371,7 @@ another rule named it as a target.
 
 ## 12. Worked example
 
-Rule **TV Room Light and Fireplace**, installed app 2325. Its page shows a Required
+Rule **Theatre Room Light and Fireplace**, installed app 2325. Its page shows a Required
 Expression, a motion trigger, a lamp switched on, an IF that also lights the fireplace when
 it is cold, then a ten-minute wait for motion to stop before turning everything off.
 
@@ -387,27 +395,27 @@ it is cold, then a ten-minute wait for motion to stop before turning everything 
       1: 2
       2: 12
 
-    capabstrue:   1  -> "TV Room Motion Sensor motion reports active"
-    capabsfalse:  2  -> "TV Room Motion Sensor motion is inactive"
+    capabstrue:   1  -> "Theatre Room Motion Sensor motion reports active"
+    capabsfalse:  2  -> "Theatre Room Motion Sensor motion is inactive"
                   5  -> "Mode in [Home, Visitor]"
                   7  -> "Time between Sunset-15 minutes(18:08) and 21:30"
                   10 -> "Time between 06:00 and Sunrise+15 minutes(07:19)"
                   12 -> "Temperature of _ Average External Temperature(20.2) is <= 15.0"
                   15 -> "Private Boolean(true) is true"
 
-    tDev1   -> TV Room Motion Sensor
-    rDev_2  -> TV Room Motion Sensor
+    tDev1   -> Theatre Room Motion Sensor
+    rDev_2  -> Theatre Room Motion Sensor
     rDev_12 -> _ Average External Temperature
 
-    onOffSwitch.6 -> TV Room Lamp,             onOff.6 = true
+    onOffSwitch.6 -> Theatre Room Lamp,             onOff.6 = true
     onOffSwitch.1 -> Fireplace,                onOff.1 = true
-    onOffSwitch.3 -> TV Room Lamp, Fireplace,  onOff.3 = false
+    onOffSwitch.3 -> Theatre Room Lamp, Fireplace,  onOff.3 = false
     delayAct.2 = hrs:min:sec, delayMin.2 = 10
     pvTF.7 = true
 
 ### Decoded
 
-**Trigger.** `tDev1` names the trigger device, and condition 1 renders it: TV Room Motion
+**Trigger.** `tDev1` names the trigger device, and condition 1 renders it: Theatre Room Motion
 Sensor becomes active.
 
 **Required Expression.** `hasPredicate` is true, so `eval[0]` applies:
@@ -422,13 +430,13 @@ string `"10"`. Any parser that assumes a consistent element type fails here.
 | # | Action | Resolution |
 | --- | --- | --- |
 | 7 | `getSetPrivateBoolean` | `pvTF.7 = true`, value not shown, see 9.3 |
-| 6 | `getOnOffSwitch` | `TV Room Lamp`, `onOff.6 = true`, so on |
+| 6 | `getOnOffSwitch` | `Theatre Room Lamp`, `onOff.6 = true`, so on |
 | 4 | `getIfThen` | `rule: 2` to `eval[2] = 12` to condition 12, external temperature <= 15 |
 | 1 | `getOnOffSwitch` | `Fireplace`, `onOff.1 = true`, so on |
 | 5 | `getEndIf` | |
 | 2 | `getWaitRule` | `rule: 1` to `eval[1] = 2` to condition 2, motion inactive, timeout 0:10:00 |
 | 8 | `getSetPrivateBoolean` | |
-| 3 | `getOnOffSwitch` | `TV Room Lamp, Fireplace`, `onOff.3 = false`, so off |
+| 3 | `getOnOffSwitch` | `Theatre Room Lamp, Fireplace`, `onOff.3 = false`, so off |
 
 Reading out: on motion, set the Private Boolean, turn the lamp on, and if it is 15 degrees
 or colder outside also light the fireplace; then wait up to ten minutes for motion to stop,
@@ -453,13 +461,13 @@ conditions 12 and 2 respectively.
 ### The subscription trap, live
 
 This rule's label at the time of reading was
-`TV Room Light and Fireplace (Required Expression false)`, and its complete
+`Theatre Room Light and Fireplace (Required Expression false)`, and its complete
 `eventSubscriptions` were:
 
     LOCATION / [Hub Name]
     LOCATION / [Hub Name]
 
-**No device subscriptions at all.** TV Room Motion Sensor, the rule's entire trigger, has
+**No device subscriptions at all.** Theatre Room Motion Sensor, the rule's entire trigger, has
 none. Because the Required Expression is false, Rule Machine has removed the trigger
 subscription and kept only what it needs to notice the expression becoming true again, which
 for a mode-and-time expression is location events alone.
