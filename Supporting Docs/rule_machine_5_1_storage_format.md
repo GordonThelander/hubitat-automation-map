@@ -1,4 +1,4 @@
-# How Rule Machine 5.1 stores a rule
+# Reverse-engineering the Rule Machine 5.1 storage format
 
 Notes for anyone building a tool that reads Rule Machine rules from a Hubitat hub.
 
@@ -45,6 +45,48 @@ Three warnings before you build anything on this:
 - **Treat the rule page as the authority.** When your reconstruction disagrees with what
   Rule Machine shows on the rule's own page, your reconstruction is wrong. That rule of
   thumb caught every bug described in section 9.
+
+### How this was worked out
+
+Rule Machine is a built-in app, so there is no source to read: `/app/ajax/code` returns an
+empty body for it. Everything here was obtained by observing stored state and comparing it
+against what Rule Machine displays.
+
+**1. Ground truth is the rule page.** Every finding was checked against what Rule Machine
+itself shows for that rule. This is the whole method in one sentence: the hub renders the
+rule correctly by definition, so any reading of the stored data that produces a different
+rule is wrong. Nothing here was accepted because it looked plausible.
+
+**2. Differential reading.** Take a rule whose displayed behaviour is known, read its
+`appState` and `appSettings`, and work out which stored fields account for which displayed
+elements. Fields that changed when a rule changed were the informative ones.
+
+**3. Corpus checking rather than single examples.** A pattern noticed in one rule was then
+queried across all 38 by script. This is what the evidence markers record, and it repeatedly
+mattered. "Every action carries a `rule` field" survived several rules and was **false**
+across the corpus. The thirteen object shapes in section 3.1 and the null-value table in
+section 9.1 both came out of corpus queries, not from reading rules individually.
+
+**4. Building a decoder as the test.** The real validation was implementing the format in a
+working app that renders each rule as a flowchart, then comparing every flowchart against
+its rule page. A misreading is not subtle in that setup: it produces a visibly wrong rule.
+Three of the five traps in section 9 were found this way rather than by inspection,
+including the `rule` field, which produced 28 confident and entirely fictional relationships
+before anyone noticed.
+
+**5. Constructing cases the corpus lacked.** Where no rule exercised something, one was
+built to order. That is how the rule-to-rule actions in section 8 were established, and
+building a test rule that used all of them immediately exposed a whole action family
+(`getPauseResumeRules`) that had been missed.
+
+**6. Checking the official documentation before claiming novelty.** Execution semantics
+turned out to be well covered by Hubitat already, which is why this document is scoped to
+storage. Do not assume something is undocumented because it is undocumented in the place you
+first looked.
+
+**Not done, and therefore not claimed:** no decompilation and no access to Rule Machine's
+source; no writes to rule configuration; no testing of evaluation semantics; one hub, one
+platform build, one person's rules.
 
 ### How confident is each finding
 
