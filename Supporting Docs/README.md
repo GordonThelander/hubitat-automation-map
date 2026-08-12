@@ -11,9 +11,22 @@ where the backlog referenced them and they would eventually have been lost.
 
 | File | Backlog item |
 | --- | --- |
+| `rule_machine_5_1_storage_format.md` | Rule Machine 5.1 documentation (**written**, ready to publish) |
 | `registry-pack-v0.3/` | Integration registry |
-| `Rule_Machine_5_1_Execution_Explained_Draft.md` | Rule Machine 5.1 execution documentation |
+| `Rule_Machine_5_1_Execution_Explained_Draft.md` | Rule Machine 5.1 documentation (superseded, see below) |
 | `hubitat_automation_map_rule_to_rule_implementation.md` | Rule-to-rule: device-mediated links |
+
+## rule_machine_5_1_storage_format.md
+
+The one piece here that is finished work rather than an input. Documents how Rule Machine
+stores a rule, derived from the Automation Map decoding and verified against a live hub.
+
+Written because a check of the official documentation showed the *execution* draft was
+largely restating what Hubitat already publishes: Required Expression removing trigger
+subscriptions, Run Rule Actions not being a trigger, delay versus delayed action, retrigger
+not cancelling delays, and simultaneous execution are all covered on the
+[Rule 5.1 page](https://docs2.hubitat.com/en/apps/rule-machine/rule-5-1). Storage format is
+not documented anywhere.
 
 ## registry-pack-v0.3
 
