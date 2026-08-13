@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.3.3'
+@Field static final String APP_VERSION = '1.4.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1525,6 +1525,25 @@ String buildMapHtml() {
   #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  #ext { position:absolute; top:10px; left:10px; z-index:21; background:rgba(4,20,27,0.97); padding:14px 18px; border-radius:6px;
+         max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
+  #ext table { border-collapse:collapse; width:100%; font-size:0.8em; }
+  #ext th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #ext td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
+  #ext tr.unclassified td { background:rgba(217,83,79,0.09); }
+  #ext .tag { display:inline-block; padding:1px 6px; border-radius:3px; font-size:0.88em; }
+  #ext .tag-none { background:#2c3e44; color:#9fb4bc; }
+  #ext .tag-unset { background:#5a2b29; color:#f0b8b5; }
+  #ext .tag-user { background:#2b4a2c; color:#b6e0b8; }
+  #ext input[type=text], #ext select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
+  #ext input[type=text] { width:150px; }
+  #ext button { margin:0 4px 0 0; }
+  #ext .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:1px 6px; font-size:0.95em; }
+  #ext .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #ext .msg { font-size:0.8em; margin-left:6px; }
+  #extClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
 </style>
 </head>
 <body>
@@ -1567,8 +1586,10 @@ String buildMapHtml() {
   </select></label>
   <button id="resetBtn" type="button">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
+  <button id="extBtn" type="button">External systems</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
+<div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -2027,6 +2048,212 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   document.getElementById('flowSub').textContent = '';
   flowChart.innerHTML = buildInsights();
   flowPanel.style.display = 'block';
+});
+
+// ---------------------------------------------------------------------------
+// External systems panel.
+//
+// The map can only show what the hub reports, and the hub does not know that
+// CoCoHue needs a Hue bridge. That has to be declared. This is where.
+//
+// Every app type is listed, not only the unclassified ones, because the value
+// is as much in correcting a wrong classification as in filling a gap - Kasa
+// and Tapo can each be local or cloud depending on how they were set up.
+// ---------------------------------------------------------------------------
+const EXT_URL = '${getLocalURL('externals')}';
+const extPanel = document.getElementById('ext');
+const extBody = document.getElementById('extBody');
+let EXT = null;
+
+function extEsc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .split('&').join('&amp;').split('<').join('&lt;')
+    .split('>').join('&gt;').split('"').join('&quot;');
+}
+
+function extLoad() {
+  extBody.innerHTML = '<h3>External systems</h3><p class="sub">Loading...</p>';
+  fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { EXT = d; extRender(''); })
+    .catch(function (e) {
+      extBody.innerHTML = '<h3>External systems</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
+    });
+}
+
+function extRowsFor(type) {
+  return (EXT.entries || []).filter(function (e) { return e.type === type; });
+}
+
+function extRender(message) {
+  const kinds = EXT.kinds || {};
+  const crits = EXT.criticality || {};
+  const none = EXT.noneMarker;
+
+  let h = '<h3>External systems</h3>';
+  h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
+       'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
+
+  h += '<table><thead><tr><th>App type</th><th>Needs</th><th>Kind</th><th>Needed for</th><th></th></tr></thead><tbody>';
+
+  (EXT.appTypes || []).forEach(function (type) {
+    const rows = extRowsFor(type);
+    if (!rows.length) {
+      h += '<tr class="unclassified"><td>' + extEsc(type) + '</td>' +
+           '<td colspan="3"><span class="tag tag-unset">not classified</span></td>' +
+           '<td><button class="rowbtn" data-add="' + extEsc(type) + '">add</button>' +
+           '<button class="rowbtn" data-none="' + extEsc(type) + '">needs nothing</button></td></tr>';
+      return;
+    }
+    rows.forEach(function (row, i) {
+      const isNone = (row.name === none);
+      h += '<tr><td>' + (i === 0 ? extEsc(type) : '') + '</td>';
+      if (isNone) {
+        h += '<td colspan="3"><span class="tag tag-none">nothing external needed</span></td>';
+      } else {
+        h += '<td><input type="text" data-f="name" data-t="' + extEsc(type) + '" data-i="' + i + '" value="' + extEsc(row.name) + '"></td>';
+        h += '<td><select data-f="kind" data-t="' + extEsc(type) + '" data-i="' + i + '">';
+        Object.keys(kinds).forEach(function (k) {
+          h += '<option value="' + k + '"' + (k === row.kind ? ' selected' : '') + '>' + extEsc(kinds[k]) + '</option>';
+        });
+        h += '</select></td>';
+        h += '<td><select data-f="crit" data-t="' + extEsc(type) + '" data-i="' + i + '">';
+        Object.keys(crits).forEach(function (c) {
+          h += '<option value="' + c + '"' + (c === row.crit ? ' selected' : '') + '>' + extEsc(crits[c]) + '</option>';
+        });
+        h += '</select></td>';
+      }
+      h += '<td><button class="rowbtn" data-del="' + extEsc(type) + '" data-i="' + i + '">remove</button>';
+      if (i === rows.length - 1 && !isNone) {
+        h += '<button class="rowbtn" data-add="' + extEsc(type) + '">add</button>';
+      }
+      h += '</td></tr>';
+    });
+  });
+  h += '</tbody></table>';
+
+  h += '<div class="bar">' +
+       '<button id="extSave" type="button">Save</button>' +
+       '<button id="extExport" type="button">Download backup</button>' +
+       '<button id="extImport" type="button">Restore from file</button>' +
+       '<input type="file" id="extFile" accept="application/json" style="display:none">' +
+       '<span class="msg" id="extMsg">' + extEsc(message) + '</span></div>';
+  h += '<p class="sub" style="margin-top:10px">Declarations live with this app. Removing the app removes them, so download a backup before you do.</p>';
+
+  extBody.innerHTML = h;
+  extWire();
+}
+
+function extWire() {
+  extBody.querySelectorAll('input[data-f], select[data-f]').forEach(function (el) {
+    el.addEventListener('change', function () {
+      const rows = extRowsFor(el.getAttribute('data-t'));
+      const row = rows[parseInt(el.getAttribute('data-i'), 10)];
+      if (row) row[el.getAttribute('data-f')] = el.value;
+    });
+  });
+
+  extBody.querySelectorAll('[data-add]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const type = b.getAttribute('data-add');
+      EXT.entries = (EXT.entries || []).filter(function (e) {
+        return !(e.type === type && e.name === EXT.noneMarker);
+      });
+      EXT.entries.push({ type: type, name: '', kind: 'internet', crit: 'RUNTIME' });
+      extRender('');
+    });
+  });
+
+  extBody.querySelectorAll('[data-none]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const type = b.getAttribute('data-none');
+      EXT.entries = (EXT.entries || []).filter(function (e) { return e.type !== type; });
+      EXT.entries.push({ type: type, name: EXT.noneMarker });
+      extRender('');
+    });
+  });
+
+  extBody.querySelectorAll('[data-del]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const type = b.getAttribute('data-del');
+      const idx = parseInt(b.getAttribute('data-i'), 10);
+      const rows = extRowsFor(type);
+      const target = rows[idx];
+      EXT.entries = (EXT.entries || []).filter(function (e) { return e !== target; });
+      extRender('');
+    });
+  });
+
+  document.getElementById('extSave').addEventListener('click', extSave);
+  document.getElementById('extExport').addEventListener('click', extExport);
+  document.getElementById('extImport').addEventListener('click', function () {
+    document.getElementById('extFile').click();
+  });
+  document.getElementById('extFile').addEventListener('change', extImport);
+}
+
+function extSave() {
+  const rows = (EXT.entries || []).filter(function (e) {
+    return e.name && String(e.name).trim() !== '';
+  });
+  const msg = document.getElementById('extMsg');
+  msg.textContent = 'Saving...';
+  fetch(EXT_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entries: rows })
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      EXT = d;
+      extRender('Saved. Reload the page to redraw the map.');
+    })
+    .catch(function (e) { msg.textContent = 'Save failed: ' + e; });
+}
+
+// Plain browser download. No hub involvement, so nothing to go wrong on an
+// older platform, and the file lands wherever the user's downloads go.
+function extExport() {
+  const payload = {
+    kind: 'automation-map-external-systems',
+    version: 1,
+    exported: new Date().toISOString(),
+    entries: EXT.entries || []
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'automation-map-external-systems.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  document.getElementById('extMsg').textContent = 'Downloaded.';
+}
+
+function extImport(evt) {
+  const file = evt.target.files && evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    let parsed = null;
+    try { parsed = JSON.parse(reader.result); }
+    catch (e) { document.getElementById('extMsg').textContent = 'That file is not valid JSON.'; return; }
+    const rows = parsed && parsed.entries ? parsed.entries : (Array.isArray(parsed) ? parsed : null);
+    if (!rows) { document.getElementById('extMsg').textContent = 'No entries found in that file.'; return; }
+    EXT.entries = rows;
+    extRender('Loaded ' + rows.length + ' entries from the file. Press Save to keep them.');
+  };
+  reader.readAsText(file);
+  evt.target.value = '';
+}
+
+document.getElementById('extBtn').addEventListener('click', function () {
+  extPanel.style.display = 'block';
+  extLoad();
+});
+document.getElementById('extClose').addEventListener('click', function () {
+  extPanel.style.display = 'none';
 });
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
