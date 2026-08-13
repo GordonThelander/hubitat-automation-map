@@ -113,6 +113,15 @@ block:
 Record `definitionName` and `definitionNamespace` **as separate fields**, never overwriting
 the manifest values. Where they differ, that difference is a finding.
 
+**Do not parse Groovy.** Extract only **literal quoted strings** assigned to `name:` and
+`namespace:` inside a recognisable `definition(` block. If the value is a variable, a
+concatenation, an interpolated string, or anything other than a plain literal, or if no
+`definition(` block is found, record `null` and add an extraction warning against that URL.
+
+Never evaluate the file, and never attempt to resolve an expression. Guessing here would
+manufacture exactly the kind of wrong authoritative-looking string this pass exists to
+detect.
+
 This roughly doubles the fetch count. Do it as a second pass so partial results are still
 useful.
 
@@ -122,7 +131,7 @@ useful.
 
     {
       "schemaVersion": "1",
-      "generated": "2026-08-13T00:00:00Z",
+      "snapshotGenerated": "2026-08-13T00:00:00Z",
       "source": "https://raw.githubusercontent.com/HubitatCommunity/hubitat-packagerepositories/master/repositories.json",
       "repositoryCount": 217,
       "repositoriesFetched": 214,
@@ -164,37 +173,105 @@ Rules:
 
 - `null` means not retrieved. Never substitute a fallback value.
 - `manifestFetched: false` where level 3 failed; keep the level 2 data.
-- Sort `packages` by `repoName` then `packageName`. Sort keys within objects. Output must be
-  **byte-identical across runs given identical input**, so it can be diffed.
 - Include every package found, including ones with no apps and no drivers.
+
+### 5.1 `snapshotGenerated` is not execution time
+
+It is the timestamp of the **data**, not of the run. Set it once, when a URL is first fetched
+into an empty cache, and persist it in the cache metadata. A re-run served entirely from
+cache reuses the stored value unchanged.
+
+Using the current time here would make byte-identical output impossible, which contradicts
+the determinism requirement below and the acceptance criteria.
+
+### 5.2 Serialisation contract
+
+Two correct implementations must produce the same bytes, so this is specified rather than
+left to taste:
+
+| Setting | Value |
+| --- | --- |
+| Encoding | UTF-8, no BOM |
+| Indentation | 2 spaces |
+| Key order within objects | sorted, ascending, byte order |
+| Non-ASCII | preserved, not escaped (`ensure_ascii = false`) |
+| Line endings | LF |
+| Final newline | yes |
+| `packages` order | by `repoName`, then `packageName`, then `packageId` |
+| `errors` order | by `level`, then `url`, then `reason` |
+| `apps` / `drivers` order | **manifest order, preserved** |
+
+App and driver order is deliberately not sorted. It is meaningful, since the primary app is
+conventionally listed first.
 
 ---
 
 ## 6. Output 2: `registry_validation_report.md`
 
 Check `hubitat_automation_map_app_integration_registry_v0.3.json` against the index. Each
-registry entry has `matchRules`, each with `field`, `operator` and `value`.
+registry entry has `matchRules`, each with `field`, `operator` and `value`, and the entry has
+a `matchMode` of `ANY` or `ALL`.
 
-Evaluate only these fields, ignoring the rest:
+### 6.1 Which fields can be evaluated
 
-| `field` | Check `value` against |
-| --- | --- |
-| `appName` | every `apps[].manifestName`, and `definitionName` where present |
-| `parentAppName` | same as `appName` |
-| `driverName` | every `drivers[].manifestName`, and `definitionName` where present |
-| `namespace` | every `manifestNamespace` and `definitionNamespace` |
+| `field` | Check `value` against | Evaluable? |
+| --- | --- | --- |
+| `appName` | every `apps[].manifestName`, and `definitionName` where present | yes |
+| `parentAppName` | same as `appName` | yes |
+| `driverName` | every `drivers[].manifestName`, and `definitionName` where present | yes |
+| `namespace` | every `manifestNamespace` and `definitionNamespace` | yes |
+| `userMapping` | nothing. It is user-entered on a hub. | **no** |
+| `deviceMetadata` | nothing. It is per-device runtime data. | **no** |
 
 Operators: `equals` is exact and case-sensitive; `contains` is a substring test,
 case-sensitive. Report case-insensitive near-misses separately, since those are likely bugs.
 
+### 6.2 Three-state evaluation, and why it matters
+
+**Do not treat an unevaluable rule as ignored.** Evaluate to one of three states:
+
+    supported rule    ->  MATCH  or  NO_MATCH
+    unsupported rule  ->  NOT_EVALUABLE
+
+Then combine by the entry's `matchMode`:
+
+    ANY:  MATCH          if at least one rule is MATCH
+          NO_MATCH       if every rule is evaluable and none match
+          NOT_EVALUABLE  otherwise
+
+    ALL:  MATCH          only if every rule is evaluable and every rule matches
+          NO_MATCH       if any evaluable rule is NO_MATCH
+          NOT_EVALUABLE  otherwise
+
+**This is not pedantry, it prevents a specific known-wrong result.** The registry contains
+three entries keyed on the same app name:
+
+    Maker API                      matchMode ANY   appName equals "Maker API"
+    Home Assistant via Maker API   matchMode ALL   appName equals "Maker API"
+                                                   userMapping equals "Home Assistant"
+    Homebridge via Maker API       matchMode ALL   appName equals "Maker API"
+                                                   userMapping equals "Homebridge"
+
+Ignoring the unevaluable `userMapping` rule makes both `ALL` entries appear to match on
+`appName` alone, and section F would then report three entries colliding on every Maker API
+installation. That conclusion is **wrong**: the `ALL` mode plus the user-supplied rule is
+precisely what stops those entries firing without a human saying so. It is correct design,
+not a defect.
+
+Under the rules above both `ALL` entries evaluate to `NOT_EVALUABLE`, no collision is
+reported, and the design is left alone.
+
+Carry the three states through every section below. A `NOT_EVALUABLE` entry is never a dead
+rule and never an overlap.
+
 Report these sections, each as a table:
 
-**A. Dead rules.** Rules matching zero packages in the index. **This is the highest value
-output.** A known real example: the registry's Rule Machine entry uses
+**A. Dead rules.** Evaluable rules matching zero packages in the index. **This is the highest
+value output.** A known real example: the registry's Rule Machine entry uses
 `appName contains "Rule Machine"`, but hubs report the app type as `Rule-5.1`, so it matches
 nothing on any hub. Find every rule with that shape. Note that built-in Hubitat apps are not
 in HPM at all, so a dead rule may mean "built in" rather than "wrong": list them, do not
-judge them.
+judge them. Exclude `NOT_EVALUABLE` rules; absence of evidence is not a dead rule.
 
 **B. Near misses.** Rules matching zero packages exactly, but matching if compared
 case-insensitively or after trimming whitespace. Give the registry value and the index value
@@ -210,8 +287,15 @@ Count them and list them.
 does not appear in the registry's own top-level `nodeClasses` array. Same check for
 `edgeTypes` and `runtimeCriticality`.
 
-**F. Duplicate identifiers.** Any repeated `id` in the registry, and any two entries whose
-matchRules would both fire on the same package.
+**F. Duplicate identifiers and genuine overlaps.** Any repeated `id` in the registry, and any
+two entries that both evaluate to **MATCH** on the same package.
+
+Compare **whole entries under their own `matchMode`**, never individual rules. Two entries
+sharing a rule are not an overlap if one of them is `ALL` and its other rules are
+unevaluable. See 6.2, which exists because of this exact case.
+
+Report an entry pair only where both are `MATCH`. Pairs involving a `NOT_EVALUABLE` entry
+belong in a separate "cannot determine from HPM data alone" list, if you list them at all.
 
 **G. Unrepresented packages.** Packages in the index that no registry entry matches. Do not
 list all of them. Report the count, then list only those whose `category` is `Integrations`
@@ -245,14 +329,27 @@ End the report with a summary table of counts per section.
 
 The work is done when:
 
-1. `hpm_package_index.json` validates against the schema in section 5, and re-running the
-   scraper against the cache produces a byte-identical file.
+1. `hpm_package_index.json` validates against the schema in section 5 and follows the
+   serialisation contract in 5.2, and re-running the scraper entirely from cache produces a
+   **byte-identical** file, including an unchanged `snapshotGenerated`.
 2. `repositoryCount` matches the master list, and `repositoriesFetched` plus repository-level
    errors accounts for all of them.
 3. Every package in the index traces back to a real `repository.json` entry.
 4. `registry_validation_report.md` contains all seven sections, each present even when empty.
 5. Section A explicitly states whether the known `Rule Machine` versus `Rule-5.1` case was
    detected. If it was not, the matching logic is wrong; fix it before delivering.
-6. No file other than the two outputs has been modified.
+6. Section F does **not** report the three Maker API entries as colliding. If it does, the
+   three-state evaluation in 6.2 has not been implemented.
+7. Section E reports these seven known values, which are present in the supplied registry and
+   confirmed by two independent checks. Fewer than seven means the check is incomplete:
+   `DASHBOARD`, `PLATFORM_UTILITY`, `SECURITY_ORCHESTRATOR`, `VIRTUALISATION_ORCHESTRATOR`
+   as entry classes, and `EXTERNAL_OR_LOCAL_SERVICE`, `LOCAL_DEVICE_OR_BRIDGE`,
+   `LOCAL_OR_EXTERNAL_SERVICE` as dependency classes.
+8. Section D reports 19 entries with empty `dependencies`, and section F reports zero
+   duplicate `id` values. Both are known true of the supplied file.
+9. No file other than the two outputs has been modified.
 
-Point 5 is a deliberate canary. It is a real defect that a correct implementation must find.
+Points 5 to 8 are deliberate canaries with known answers. Five and seven fail if the
+implementation is too lax; six fails if it is too eager. A run that satisfies all four has
+demonstrated its comparison logic works in both directions, which a clean-looking empty
+report does not.
