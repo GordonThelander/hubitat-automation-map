@@ -619,3 +619,29 @@ promote broken references into Insights
 ```
 
 If implemented this way, Automation Map will not merely reproduce Rule References Rule Table. It will subsume its useful capability inside a richer topology model while remaining more resistant to stale settings, undocumented storage variation and false-positive dependencies.
+
+---
+
+### Reviewed and accepted position (2026-08-14)
+
+Cross-checked against the current `dev` source rather than taken on the document's word. `RULE_LINK_ACTIONS` does have exactly one `target` string per family, not a list, so `privateF`/`ruleActMain` are genuinely unrecognised. There is no `/hub2/appsList` discovery path in the app at all. The `pvTF` warning matches the existing comment in the code, which means this analysis actually engaged with Automation Map's own documented findings rather than guessing.
+
+**Accepted, low effort, closes a real gap:**
+
+- `privateF` / `ruleActMain` as additional target-setting aliases within the existing families. A structural change from `target: 'x'` to `targets: ['x', 'y']`, nothing more.
+- Rename `stops` -> `cancelTimedActions` and `pauses` -> `pauseResume`. Not cosmetic - the app does not currently know which of pause/resume it is looking at, and the label should not claim more than that.
+- Promote deleted/paused rule targets from an inline label into an Insights finding. `fetchAppName()` already computes `missing: true`; this is surfacing existing data, not new detection.
+
+**Accepted in principle, but gated on a live fixture before implementation, not on this document's say-so:**
+
+- `valFunction` as a `callsFunction` edge type. Real gap if Rule Functions are genuinely separate installed apps on this hub - confirm that shape against a live fixture first, the same discipline used to test and reject the HTTP-proximity heuristic for Sensibo rather than ship it on a hunch.
+- `/hub2/appsList` as a second discovery channel. Sound reasoning, but verify a Rule Function actually has its own installed-app id on this hub before treating this as the fix for device-less automation discovery. If it does not, this solves the wrong layer.
+
+**Right instinct, correctly deferred:**
+
+- Per-edge confidence/provenance (verified vs candidate) mirrors the three-state MATCH/NO_MATCH/NOT_EVALUABLE pattern already used for the integration registry. P1/P2 is the right call - it is a data-model and UI change, not a quick add.
+- A fixture suite is the right discipline, but fold it into the existing `Supporting Docs/rule_machine_5_1_storage_format.md` living document rather than standing up a second system. That document already carries evidence markers per finding; a separate fixture file would duplicate the job.
+
+**The generalizable method, worth reusing deliberately:** someone else's reverse-engineering of the same undocumented platform is a source of candidate hypotheses, never a source of facts about this hub. Each claim here was checked against the live `statusJson` shape before being accepted. `privateF` is credible because a community thread showed it being hit in practice, not because the code looks plausible. That standard is what makes it worth adopting, and it applies equally to any future outside source, including the HPM manifest crawl.
+
+No code changed as part of this review. See the priority table above for sequencing when implementation starts.
