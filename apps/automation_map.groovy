@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.4.0'
+@Field static final String APP_VERSION = '1.4.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -381,6 +381,12 @@ void startScan() {
     state.appIds = []
     state.appInfo = [:]
     state.graphVersion = null
+    // Dropped, not merely marked stale. Holding the previous graph while
+    // appInfo fills doubles peak state for the whole scan, and on a 74-app hub
+    // that was enough to kill a scan two apps from the end: no error logged, no
+    // job scheduled, just a heartbeat that stopped. The old graph is unusable
+    // during a scan anyway, since graphVersion is cleared on the line above.
+    state.graph = null
     unschedule('scanBatch')
     runIn(1, 'scanBatch')
 }
@@ -495,6 +501,16 @@ void finishScan() {
     Map graph = buildGraph()
     state.graph = graph
     state.graphVersion = GRAPH_SCHEMA
+
+    // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
+    // 61KB of a 244KB state on this hub, a quarter of everything stored, held
+    // twice for no reason. buildGraph falls back to the existing graph.flows on
+    // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    appInfo.each { String appId, info ->
+        if (info instanceof Map) (info as Map).remove('flow')
+    }
+    state.appInfo = appInfo
     // Counted from the finished graph rather than tallied during the scan.
     // A rule that sets another rule's Private Boolean both true and false is
     // two actions but one relationship, so a running tally reported 8 where
@@ -522,8 +538,23 @@ Map fetchDeviceApps(String devId) {
             List ids = []
             Map parentApp = data.parentApp as Map
             if (parentApp?.id != null) ids << "${parentApp.id}"
-            (data.appsUsingForDialog ?: []).each { u ->
-                if (u?.id != null) ids << "${u.id}"
+
+            // appsUsing, NOT appsUsingForDialog.
+            //
+            // appsUsingForDialog is capped at five entries on every device, with
+            // appsUsingForDialogMore holding only a COUNT of the remainder, not
+            // the ids. It exists to render a dialog, not to enumerate anything.
+            // appsUsing sits beside it in the same response and is complete: on
+            // one device here it holds 29 entries where the dialog field holds
+            // five.
+            //
+            // Reading the dialog field made every app beyond the fifth on a
+            // shared device invisible, which is not the rare edge case it sounds
+            // like. A rule using only popular devices was missed entirely, and
+            // was noticed only because another rule named it as a target.
+            List using = (data.appsUsing ?: data.appsUsingForDialog ?: []) as List
+            using.each { u ->
+                if (u instanceof Map && u.id != null) ids << "${u.id}"
             }
             out.appIds = ids.unique()
         }
@@ -1084,7 +1115,7 @@ String stripTags(String s) {
 // device-driven scan never reached. Failure is not an error - the node is still
 // drawn, just with its id for a name.
 Map fetchAppName(String appId) {
-    Map out = [label: null, type: null]
+    Map out = [label: null, type: null, missing: false]
     try {
         httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 10]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -1092,6 +1123,13 @@ Map fetchAppName(String appId) {
             if (installedApp?.label || installedApp?.name) {
                 out.label = stripTags((installedApp?.label ?: installedApp?.name) as String)
                 out.type = installedApp?.name
+            } else {
+                // A deleted app still answers 200 here, with an empty shell
+                // rather than a 404. So a rule naming a rule that no longer
+                // exists is not an error to swallow, it is a dangling
+                // reference worth showing: the action stays in the calling
+                // rule and silently does nothing.
+                out.missing = true
             }
         }
     } catch (Exception ex) {
@@ -1107,7 +1145,13 @@ String linkedRuleName(String targetId, Map appInfo, Map cache) {
     if (cache.containsKey(targetId)) return cache[targetId] as String
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
-    if (!label) label = fetchAppName(targetId).label as String
+    if (!label) {
+        Map named = fetchAppName(targetId)
+        label = named.label as String
+        // Named so the user can act on it. "Rule 2328" invites a hunt for a
+        // rule that is not there; saying so turns it into a finding.
+        if (!label && named.missing) label = "Rule ${targetId} - deleted"
+    }
     if (!label) label = "Rule ${targetId}"
     cache[targetId] = label
     return label
@@ -1152,6 +1196,7 @@ Map buildGraph() {
     List<String> seen = []
     Map flows = [:]
     Map nameCache = [:]
+    Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
 
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
@@ -1165,7 +1210,11 @@ Map buildGraph() {
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
         nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', appMap.type as String)
         if (appMap.inactive) nodes[appNodeId].inactive = true
+        // Flows come from appInfo during a scan, and from the previously built
+        // graph on a rebuild - see finishScan, which strips them from appInfo
+        // once they are here, so the same 60KB is not held twice.
         if (appMap.flow) flows[appNodeId] = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
+        else if (priorFlows[appNodeId]) flows[appNodeId] = priorFlows[appNodeId]
 
         roles.each { String devId, devRoles ->
             String devNodeId = "d${devId}"

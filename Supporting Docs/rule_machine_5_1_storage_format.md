@@ -569,14 +569,43 @@ Two routes that do work, both **[heuristic]** rather than properties of the form
 - **From a known id.** `/installedapp/statusJson/<id>` gives you `appTypeId` and everything
   else. Getting that first id usually means reading it out of the URL bar while the app's
   page is open.
-- **Through devices.** `/device/fullJson/<deviceId>` returns `appsUsingForDialog`, the apps
-  that reference that device. Walking every device discovers most apps.
+- **Through devices.** `/device/fullJson/<deviceId>` returns the apps referencing that
+  device. Walking every device discovers nearly all apps.
 
-The device route has two known blind spots. An app referencing no devices is invisible
-entirely, which is the normal case for a Rule Function. And `appsUsingForDialog` is
-**truncated** when many apps use one device, so an app appearing only in truncated lists is
-missed. On a 193-device hub this caused one real rule to be missed, discovered only because
-another rule named it as a target.
+### 11.1 Use `appsUsing`, never `appsUsingForDialog`
+
+That response carries three related fields, and only one of them is complete: **[invariant]**
+
+| Field | Contents |
+| --- | --- |
+| `appsUsingForDialog` | **capped at five entries**, on every device |
+| `appsUsingForDialogMore` | a **count** of the remainder, not the ids |
+| `appsUsing` | the complete list |
+
+Measured on one device with 29 apps: `appsUsingForDialog` held 5, `appsUsingForDialogMore`
+held the integer 24, and `appsUsing` held all 29. The name is the clue. The dialog field
+exists to render a UI element, not to enumerate anything.
+
+This is worth stating flatly because reading the wrong field does not look like a bug. It
+returns a plausible list and silently omits everything past the fifth entry on every shared
+device. On a 193-device hub it hid **12 of 74 apps**, including two whole app types that
+never appeared at all, and the loss was noticed only because an unrelated rule named a
+missing rule as a target.
+
+### 11.2 A deleted app still answers 200
+
+`/installedapp/statusJson/<id>` for an app that no longer exists returns HTTP 200 with an
+empty `installedApp` shell rather than a 404. **[strong]**
+
+So a rule naming a rule that has since been deleted cannot be detected by status code. Check
+whether `installedApp.label` and `installedApp.name` are both absent. This is worth
+detecting rather than ignoring: the action remains in the calling rule and silently does
+nothing, which is the kind of thing a dependency map exists to surface.
+
+### 11.3 Remaining blind spot
+
+An app referencing no devices is invisible to device-driven discovery entirely, which is the
+normal case for a Rule Function.
 
 ---
 
