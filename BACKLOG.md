@@ -54,8 +54,8 @@ Settled in discussion. Build in this order, because the user layer is what makes
 incomplete registry honest, and retrofitting storage after users have data in it is worse
 than building it first.
 
-**1. User layer and the classification page.** One table listing **every** app type on the
-hub, not only the unclassified ones:
+**1. User layer and the classification page, on the map page rather than in settings.** One
+table listing **every** app type on the hub, not only the unclassified ones:
 
     App type                          External system        Source
     CoCoHue - Hue Bridge Integration  Philips Hue Bridge     built in
@@ -78,16 +78,25 @@ Stored in **state as a list**, not in settings. Settings are keyed by name and a
 orphans as entries are added and removed; a list is clean and is already the shape the graph
 builder wants.
 
-**2. Backup, user-triggered.** Explicit "Save backup" and "Restore" buttons writing
-`automation_map_user_registry.json` to Hubitat's File Manager, which is hub-level and
-therefore outlives any app instance. Deliberately **not** an automatic mirror: an automatic
-write would overwrite a good backup with a bad state, whereas an explicit save is a snapshot
-the user chose to take. Include a timestamp so restore can say what it is about to restore.
+**2. Backup as an ordinary file download and upload, user-triggered.**
 
-Needs `uploadHubFile()` / `downloadHubFile()`, firmware 2.3.4.134+, so `minimumHEVersion`
-rises from 2.3.0 or degrades gracefully. **Unverified in this app's sandbox**; HPM uses both
-calls, so they exist, but test before relying on them. Keep copy-paste export as the
-fallback, since it also covers moving between hubs and sharing an entry on the forum.
+- **Export**: the page builds a Blob and triggers a browser save to
+  `automation-map-backup.json`. Entirely client side, no hub involvement.
+- **Import**: `<input type="file">`, read in the browser, posted to the app.
+
+Deliberately **not** an automatic mirror. An automatic write would overwrite a good backup
+with a bad state; an explicit save is a snapshot the user chose to take. Stamp the file with
+a date so restore can say what it is about to replace.
+
+*Rejected: Hubitat File Manager via `uploadHubFile()` / `downloadHubFile()`.* It would have
+worked and does survive uninstalling the package, since HPM only ever deletes files listed in
+its own manifest. But it needs firmware 2.3.4.134, raising `minimumHEVersion` from 2.3.0, it
+was unverified in this app's sandbox, and it makes the user visit a different part of
+Hubitat's UI to get the file onto their PC. A browser download is one click and has none of
+those costs.
+
+*Rejected: copy-and-paste JSON.* Most users are not technical, and asking them to shepherd a
+block of JSON is a poor answer when the browser already has file download and upload built in.
 
 **3. Registry fetched from `main`, with cache and embedded fallback.** Precedence:
 
@@ -118,6 +127,38 @@ type string the scan already stores. Only three entries are reachable exclusivel
 field (Shelly MQTT Variant, Hub Mesh, Matter Bridge / Controller). `driverName` appears on 50
 entries but always alongside `appName`, so it raises confidence rather than unlocking
 anything. Capture the extra fields for confidence and those three entries, not as a gate.
+
+### Consequence: the map page stops being read-only
+
+Import needs the app to accept a write, so the OAuth-served page gains an endpoint that
+replaces the user's classifications. The token already guards the map; it now guards this
+too. The data is low harm, being labels the user typed themselves.
+
+The README currently says "The app is read-only. It does not command devices or modify
+apps." That is still true of the important part but the wording must change, to something
+like "does not command devices or modify other apps", rather than being quietly dropped.
+
+### Registry maintenance tooling
+
+Discussed 2026-08-13. A separate Hubitat "admin app" was considered and rejected: it cannot
+write to GitHub, cannot validate a pull request, and cannot run unattended. The registry
+lives in the repo, so its tooling belongs there.
+
+Two pieces worth building instead:
+
+- **On the hub, inside Automation Map**, a "copy details for reporting" action on each
+  unclassified row, emitting the exact identity strings an entry needs (`appName`,
+  `namespace`, `author`, driver names, `parentAppName`). About twenty lines, since all of it
+  is already fetched. This addresses the real constraint, which is that entries can only be
+  authored for integrations the author personally runs. Any user can then supply correct raw
+  material for an integration nobody here has installed.
+- **In the repo, a validation script.** Not hypothetical: run against v0.3 it would have
+  caught every defect found by hand, being the four entry classes and three dependency
+  classes used but never declared in `nodeClasses`, the nineteen entries with no
+  dependencies, and the duplicate shipped files. Add a check that a `matchRule` value is not
+  a UI display name where the hub reports something different, and the `Rule-5.1` class of
+  bug stops recurring. It also becomes the gate for community pull requests, which is the
+  point of putting the registry on GitHub at all.
 
 ### Genuine blockers
 
