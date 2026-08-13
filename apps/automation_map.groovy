@@ -2156,7 +2156,14 @@ function extWire() {
     el.addEventListener('change', function () {
       const rows = extRowsFor(el.getAttribute('data-t'));
       const row = rows[parseInt(el.getAttribute('data-i'), 10)];
-      if (row) row[el.getAttribute('data-f')] = el.value;
+      if (!row) return;
+      const field = el.getAttribute('data-f');
+      // Trimmed here, not only on save. The server trims too, so without this
+      // a downloaded backup could carry "Hue Bridge " while the hub held
+      // "Hue Bridge", and restoring it would build a different node.
+      const value = (field === 'name') ? el.value.trim() : el.value;
+      if (field === 'name' && el.value !== value) el.value = value;
+      row[field] = value;
     });
   });
 
@@ -2220,11 +2227,19 @@ function extSave() {
 // Plain browser download. No hub involvement, so nothing to go wrong on an
 // older platform, and the file lands wherever the user's downloads go.
 function extExport() {
+  // Normalised on the way out as well, so a backup taken with unsaved edits on
+  // screen still restores to exactly what the hub would have stored.
+  const clean = (EXT.entries || []).map(function (e) {
+    const row = { type: String(e.type).trim(), name: String(e.name).trim() };
+    if (row.name !== EXT.noneMarker) { row.kind = e.kind; row.crit = e.crit; }
+    return row;
+  }).filter(function (e) { return e.type && e.name; });
+
   const payload = {
     kind: 'automation-map-external-systems',
     version: 1,
     exported: new Date().toISOString(),
-    entries: EXT.entries || []
+    entries: clean
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2255,11 +2270,25 @@ function extImport(evt) {
   evt.target.value = '';
 }
 
+// The legend is hidden while this panel is open rather than relied on to sit
+// underneath it. It was showing through as ghost text across the table even
+// with an opaque background and a higher z-index, and chasing that was not
+// worth it when a colour key is useless while editing a table anyway.
 document.getElementById('extBtn').addEventListener('click', function () {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  if (lg) lg.style.visibility = 'hidden';
+  if (hn) hn.style.visibility = 'hidden';
   extPanel.style.display = 'block';
   extLoad();
 });
 document.getElementById('extClose').addEventListener('click', function () {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  // visibility rather than display, so a hint the user already dismissed
+  // stays dismissed instead of reappearing.
+  if (lg) lg.style.visibility = '';
+  if (hn) hn.style.visibility = '';
   extPanel.style.display = 'none';
 });
 
