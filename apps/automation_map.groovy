@@ -1314,7 +1314,12 @@ List discoveredAppTypes() {
     ((state.appInfo ?: [:]) as Map).each { String appId, info ->
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
-        if (t && t != 'null' && !types.contains(t)) types << t
+        if (!t || t == 'null') return
+        // This app and its dev twin are already excluded from the graph.
+        // Offering them for classification asks the user to declare what
+        // Automation Map depends on, which is nothing and not their problem.
+        if (t.startsWith(APP_FAMILY)) return
+        if (!types.contains(t)) types << t
     }
     return types.sort()
 }
@@ -1525,7 +1530,9 @@ String buildMapHtml() {
   #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
-  #ext { position:absolute; top:10px; left:10px; z-index:21; background:rgba(4,20,27,0.97); padding:14px 18px; border-radius:6px;
+  /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
+     through as ghost text across the middle of the table. */
+  #ext { position:absolute; top:10px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
          max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
   #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
