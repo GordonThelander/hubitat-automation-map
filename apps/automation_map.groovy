@@ -1782,10 +1782,107 @@ function applyFilters() {
   }
 
   const shownNodes = ids ? ALL_NODES.filter(function (n) { return ids[n.id]; }) : ALL_NODES;
-  nodes.clear(); nodes.add(shownNodes.map(function (n) { return styledNode(n, !!focusId, roleByDevice); }));
+  const styled = shownNodes.map(function (n) { return styledNode(n, !!focusId, roleByDevice); });
+
+  // With one app focused the whole neighbourhood is known, so it can be laid
+  // out deliberately instead of being left to settle. See sectorLayout.
+  const placed = (appVal !== '__all__') ? sectorLayout(appVal, styled, shownEdges) : false;
+
+  nodes.clear(); nodes.add(styled);
   edges.clear(); edges.add(shownEdges);
-  network.setOptions({ physics: { enabled: true } });
-  settle();
+  if (placed) {
+    network.setOptions({ physics: { enabled: false } });
+    network.fit({ animation: false });
+  } else {
+    network.setOptions({ physics: { enabled: true } });
+    settle();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deliberate layout for a focused app.
+//
+// Force-directed placement is right for the whole hub, where nothing is known
+// in advance. Focus one app and that stops being true: every neighbour has a
+// known relationship to it, and scattering them by physics throws that away.
+//
+// So each relationship gets a sector of the circle, and the arrangement reads
+// the way a rule reads. What feeds the app sits on the left, what the app
+// drives sits on the right, other rules sit above, and systems outside the hub
+// sit below.
+//
+//                        other rules
+//         triggers            |            actions
+//        constraints  ---> [ app ] --->     owns
+//         monitors            |            exposed
+//                      external systems
+//
+// Angles are clockwise from east, and y is negated because screen y grows
+// downwards.
+// ---------------------------------------------------------------------------
+const SECTORS = [
+  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 130, to: 230 },
+  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: -50, to: 50 },
+  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 55,  to: 125 },
+  { name: 'external', kinds: ['depends'],                          from: 235, to: 305 },
+];
+
+function sectorLayout(appId, styledNodes, shownEdges) {
+  const byId = {};
+  styledNodes.forEach(function (n) { byId[n.id] = n; });
+  if (!byId[appId]) return false;
+
+  // Assign each neighbour to a sector by its strongest relationship. A device
+  // that is both a trigger and an action belongs on the input side, because
+  // that is what ROLE_ORDER already decided it is.
+  const assigned = {};
+  shownEdges.forEach(function (e) {
+    const other = (e.from === appId) ? e.to : ((e.to === appId) ? e.from : null);
+    if (other === null || other === appId) return;
+    for (let s = 0; s < SECTORS.length; s++) {
+      if (SECTORS[s].kinds.indexOf(e.kind) === -1) continue;
+      const prev = assigned[other];
+      if (prev === undefined || s < prev) assigned[other] = s;
+      break;
+    }
+  });
+
+  const buckets = SECTORS.map(function () { return []; });
+  let anyPlaced = false;
+  styledNodes.forEach(function (n) {
+    if (n.id === appId) return;
+    const s = assigned[n.id];
+    if (s === undefined) return;
+    buckets[s].push(n);
+    anyPlaced = true;
+  });
+  // Nothing recognised means an unusual view, so leave it to physics rather
+  // than pinning nodes into a layout that does not describe them.
+  if (!anyPlaced) return false;
+
+  byId[appId].x = 0;
+  byId[appId].y = 0;
+  byId[appId].fixed = true;
+
+  buckets.forEach(function (list, s) {
+    if (!list.length) return;
+    list.sort(function (a, b) { return String(a.label).localeCompare(String(b.label)); });
+    const sector = SECTORS[s];
+    // Radius grows with crowding so labels have room, and external systems
+    // start further out for the same reason they do under physics.
+    const base = (sector.name === 'external') ? 400 : 300;
+    const radius = base + Math.max(0, list.length - 4) * 26;
+    const span = sector.to - sector.from;
+    list.forEach(function (n, i) {
+      const t = (list.length === 1) ? 0.5 : (i / (list.length - 1));
+      const deg = sector.from + (span * t);
+      const rad = deg * Math.PI / 180;
+      n.x = Math.round(Math.cos(rad) * radius);
+      n.y = Math.round(-Math.sin(rad) * radius);
+      n.fixed = true;
+    });
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
