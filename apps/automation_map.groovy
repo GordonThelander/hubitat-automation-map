@@ -1221,7 +1221,130 @@ Map buildGraph() {
         }
     }
 
+    // External systems, declared by the user rather than discovered. Emitted
+    // last so every app node exists.
+    //
+    // Nodes are keyed on the system NAME, so two apps naming the same bridge
+    // share one node. That sharing is the whole point: it is what turns a list
+    // of dependencies into "everything that stops working if this fails".
+    List externals = userRegistry()
+    if (externals) {
+        Map typeToApps = [:]
+        appInfo.each { String appId, info ->
+            if (!(info instanceof Map)) return
+            String t = "${(info as Map).type}"
+            if (!nodes["a${appId}"]) return
+            if (!typeToApps.containsKey(t)) typeToApps[t] = []
+            (typeToApps[t] as List) << "a${appId}"
+        }
+
+        externals.each { ext ->
+            if (!(ext instanceof Map)) return
+            Map e = ext as Map
+            String name = "${e.name}"
+            String extType = "${e.type}"
+            if (name == EXTERNAL_NONE) return
+            List appNodeIds = (typeToApps[extType] ?: []) as List
+            if (!appNodeIds) return
+
+            String extNodeId = "x${name.toLowerCase().replaceAll('[^a-z0-9]', '')}"
+            if (!nodes[extNodeId]) {
+                String kindLabel = (EXTERNAL_KINDS["${e.kind}"] ?: 'External system') as String
+                nodes[extNodeId] = nodeEntry(extNodeId, name, 'external', kindLabel)
+                nodes[extNodeId].kindKey = "${e.kind}"
+            }
+
+            appNodeIds.each { String appNodeId ->
+                String key = "${appNodeId}|${extNodeId}|depends"
+                if (seen.contains(key)) return
+                seen << key
+                edges << [from: appNodeId, to: extNodeId, kind: 'depends', crit: "${e.crit}"]
+            }
+        }
+    }
+
     return [nodes: nodes.values().toList(), edges: edges, flows: flows]
+}
+
+// ===================================================================================================================
+// External systems
+//
+// What an app depends on OUTSIDE the hub: a Hue bridge, a vendor cloud, an MQTT
+// broker. None of it is discoverable - a Hubitat app's dependency on the LIFX
+// cloud is a fact about the integration, not something the hub records - so it
+// is declared rather than detected.
+//
+// Declarations are keyed on the app TYPE, not on the installed app id, so one
+// entry covers every instance and survives rules being added and removed. A hub
+// with 61 installed apps has only 19 distinct types.
+//
+// Stored as a flat list rather than nested under each type, because the UI adds
+// and removes single rows and a flat list leaves no orphans behind.
+// ===================================================================================================================
+
+@Field static final Map EXTERNAL_KINDS = [
+    local_bridge : 'Bridge or hub on my network',
+    local_device : 'Device on my network',
+    internet     : 'Internet service',
+    platform     : 'Another platform',
+    infra        : 'Network infrastructure',
+]
+
+@Field static final Map EXTERNAL_CRITICALITY = [
+    RUNTIME       : 'Needed all the time',
+    MANAGEMENT    : 'Needed to configure it',
+    SETUP_ONLY    : 'Needed only at setup',
+    DISCOVERY_ONLY: 'Needed only to find devices',
+]
+
+// Marks an app type the user has looked at and decided needs nothing external.
+// Distinct from never having been classified, which is the point: the map must
+// be able to say "nothing needed" separately from "nobody has said".
+@Field static final String EXTERNAL_NONE = '__none__'
+
+List userRegistry() {
+    return (state.userRegistry ?: []) as List
+}
+
+// Every app type the scan found, which is what the classification page offers.
+// Types rather than installed apps, and sorted so the page does not reshuffle
+// between visits.
+List discoveredAppTypes() {
+    List types = []
+    ((state.appInfo ?: [:]) as Map).each { String appId, info ->
+        if (!(info instanceof Map)) return
+        String t = "${(info as Map).type}"
+        if (t && t != 'null' && !types.contains(t)) types << t
+    }
+    return types.sort()
+}
+
+// The declarations for one app type. Returns [] for an unclassified type and
+// for one explicitly marked as needing nothing, which the caller separates by
+// asking classifiedTypes().
+// Every comparison below goes through a String-typed local on purpose. A GString
+// never equals a String and never matches one as a map key, because their hash
+// codes differ, and it fails silently rather than throwing.
+List externalsForType(String appType) {
+    List out = []
+    userRegistry().each { entry ->
+        if (!(entry instanceof Map)) return
+        Map e = entry as Map
+        String t = "${e.type}"
+        String n = "${e.name}"
+        if (t == appType && n != EXTERNAL_NONE) out << e
+    }
+    return out
+}
+
+List classifiedTypes() {
+    List out = []
+    userRegistry().each { entry ->
+        if (!(entry instanceof Map)) return
+        String t = "${(entry as Map).type}"
+        if (t && !out.contains(t)) out << t
+    }
+    return out
 }
 
 String getLocalURL(String fileName) {
@@ -1237,6 +1360,67 @@ mappings {
     path('/automation-map.html') { action: [ GET: 'renderMapMapping' ] }
     path('/scan') { action: [ GET: 'scanMapping' ] }
     path('/scan-status') { action: [ GET: 'scanStatusMapping' ] }
+    path('/externals') { action: [ GET: 'externalsGetMapping', POST: 'externalsSaveMapping' ] }
+}
+
+// The map page was read-only until this. It now accepts one write: the user's
+// own declarations about what their apps depend on. Nothing here commands a
+// device or alters another app, and the access token that already guards the
+// map guards this too.
+Map externalsGetMapping() {
+    return render(status: 200, contentType: 'application/json', data: externalsJson())
+}
+
+Map externalsSaveMapping() {
+    List incoming = []
+    try {
+        def body = request?.JSON
+        List rows = (body instanceof Map) ? ((body as Map).entries as List) : (body as List)
+        (rows ?: []).each { row ->
+            if (!(row instanceof Map)) return
+            Map r = row as Map
+            String type = "${r.type}".trim()
+            String name = "${r.name}".trim()
+            if (!type || type == 'null' || !name || name == 'null') return
+            String kind = "${r.kind}"
+            String crit = "${r.crit}"
+            Map entry = [type: type, name: name]
+            // A "nothing needed" marker carries no kind or criticality; storing
+            // them would imply a dependency that does not exist.
+            if (name != EXTERNAL_NONE) {
+                entry.kind = EXTERNAL_KINDS.containsKey(kind) ? kind : 'internet'
+                entry.crit = EXTERNAL_CRITICALITY.containsKey(crit) ? crit : 'RUNTIME'
+            }
+            incoming << entry
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not read externals payload: ${ex.message}"
+        return render(status: 400, contentType: 'application/json',
+                      data: '{"ok":false,"error":"could not read payload"}')
+    }
+
+    state.userRegistry = incoming
+    // The graph is rebuilt from stored scan data rather than rescanning: the
+    // declarations changed, the hub did not.
+    state.graph = buildGraph()
+    state.graphVersion = GRAPH_SCHEMA
+    log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
+    return render(status: 200, contentType: 'application/json', data: externalsJson())
+}
+
+String externalsJson() {
+    List types = discoveredAppTypes()
+    List classified = classifiedTypes()
+    Map out = [
+        ok: true,
+        kinds: EXTERNAL_KINDS,
+        criticality: EXTERNAL_CRITICALITY,
+        noneMarker: EXTERNAL_NONE,
+        appTypes: types,
+        unclassified: types.findAll { !classified.contains(it) },
+        entries: userRegistry(),
+    ]
+    return groovy.json.JsonOutput.toJson(out)
 }
 
 // Starting a scan from a URL rather than only from the page button, so a stalled
@@ -1357,6 +1541,8 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Stops - rule stops another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Pause / resume - rule pauses another rule</div>
+  <div class="legend-row"><span class="swatch" style="background:#cfd8dc; transform:rotate(45deg)"></span>External system - declared, not detected</div>
+  <div class="legend-row"><span class="line" style="border-color:#cfd8dc; border-top-style:dashed"></span>Depends on - thick means needed all the time</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
 </div>
@@ -1377,6 +1563,7 @@ String buildMapHtml() {
     <option value="exposed">Exposed only</option>
     <option value="owns">Ownership only</option>
     <option value="rulelinks">Rule to rule only</option>
+    <option value="depends">External systems only</option>
   </select></label>
   <button id="resetBtn" type="button">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
@@ -1399,8 +1586,9 @@ if (typeof window.vis === 'undefined') {
 <script>
 const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
-                     runs: '#d9534f', stops: '#d9534f', setspb: '#d9534f', pauses: '#d9534f' };
-const groupColors = { app: '#e8a33d', device: '#5f7d8c' };
+                     runs: '#d9534f', stops: '#d9534f', setspb: '#d9534f', pauses: '#d9534f',
+                     depends: '#cfd8dc' };
+const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc' };
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
@@ -1433,12 +1621,20 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'stops') dashes = [8, 4];
   else if (e.kind === 'setspb') dashes = [2, 3];
   else if (e.kind === 'pauses') dashes = [12, 4, 2, 4];
+  // Always dashed, because a dependency on an external system is asserted by a
+  // person, not read off the hub. Weight carries the part that matters
+  // operationally: whether losing it stops the automation or merely stops you
+  // reconfiguring it.
+  else if (e.kind === 'depends') dashes = (e.crit === 'RUNTIME') ? [6, 3] : [2, 5];
+  let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
+  if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
   return {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
+    crit: e.crit || null,
     arrows: inbound ? 'from' : 'to',
     dashes: dashes,
     color: roleColors[e.kind] || '#999',
-    width: isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6),
+    width: width,
     smooth: { type: 'curvedCW', roundness: 0.12 + (dupIndex * 0.22) }
   };
 });
@@ -1457,10 +1653,15 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // because it touches none of the selected devices. Outlined rather than
   // filled so it does not look like a fully mapped app.
   if (n.unscanned) color = { background: '#2b2b2b', border: '#e8a33d' };
+  // External systems get their own shape as well as their own colour, because
+  // they are the only nodes on the map that nobody measured.
+  let shape = 'dot';
+  if (n.group === 'app') shape = 'square';
+  else if (n.group === 'external') shape = 'diamond';
   return {
     id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: color,
-    shape: n.group === 'app' ? 'square' : 'dot',
-    size: n.group === 'app' ? 17 : 13,
+    shape: shape,
+    size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
     font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 }
   };
 }
