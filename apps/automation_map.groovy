@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.6.0'
+@Field static final String APP_VERSION = '1.6.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -414,7 +414,23 @@ void scanBatch() {
             //
             // Splitting it also means the batch work is already committed if
             // the build itself fails.
+            //
+            // The PENDING marker is written HERE, not inside fetchRegistry,
+            // because state is only committed at the END of an execution. An
+            // execution that dies mid-fetch discards everything it wrote, so
+            // fetchRegistry structurally cannot record that it started. Without
+            // this marker, "never ran" and "died trying" look identical from the
+            // outside, and the page told a user who had just run a scan that the
+            // registry had never been fetched.
+            state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
+                                  matched: 0, error: null, schemaVersion: null]
             runIn(1, 'fetchRegistry')
+            // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
+            // dies takes the graph build down with it and the scan never
+            // completes at all. Scheduling finishScan again for the same handler
+            // replaces this job, so the normal path cancels the watchdog simply
+            // by rescheduling it one second out.
+            runIn(45, 'finishScan')
         }
     } catch (Exception ex) {
         log.warn "${app.label}: scan could not continue: ${ex.message}"
@@ -504,7 +520,7 @@ void fetchRegistry() {
     state.scanHeartbeat = now()
     List types = discoveredAppTypes()
     List matches = []
-    Map meta = [fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
+    Map meta = [state: 'OK', fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
 
     try {
         httpGet([uri: REGISTRY_URL, contentType: 'application/json', timeout: 30]) { resp ->
@@ -534,6 +550,7 @@ void fetchRegistry() {
             meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
         }
     } catch (Exception ex) {
+        meta.state = 'ERROR'
         meta.error = "${ex.message}"
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
@@ -551,6 +568,19 @@ void finishScan() {
     // data intact and reports itself, rather than silently stranding the app
     // mid-scan the way an inline call did.
     state.scanHeartbeat = now()
+
+    // Still PENDING means fetchRegistry never reached its own bookkeeping, so
+    // this execution is the watchdog firing rather than the normal chain. Say
+    // so. The alternative is what shipped before: an app that had tried and
+    // failed reporting that it had never tried, which is worse than an error.
+    Map regMeta = (state.registryMeta ?: [:]) as Map
+    if ("${regMeta.state}" == 'PENDING') {
+        regMeta.state = 'FAILED'
+        regMeta.error = 'the registry fetch did not complete'
+        state.registryMeta = regMeta
+        log.warn "${app.label}: registry fetch did not complete, continuing without it"
+    }
+
     Map graph = [:]
     try {
         graph = buildGraph()
@@ -1510,8 +1540,16 @@ Map buildGraph() {
 // rows and discards the rest.
 // ===================================================================================================================
 
+// The SLIM registry, deliberately not the canonical one. The canonical file
+// carries provenance, status and documentation evidence for human review, and
+// had reached 165KB - enough to kill the execution that fetched it, silently.
+// See fetchRegistry for why that failure was invisible.
+//
+// The slim file holds only the fields evaluated below. It is generated from the
+// canonical registry by build_slim_registry.py, which fails the build if it ever
+// grows past 64KB, so this cannot quietly regress.
 @Field static final String REGISTRY_URL =
-    'https://raw.githubusercontent.com/GordonThelander/HPM_Manifest_Crawl/main/hubitat_automation_map_app_integration_registry.json'
+    'https://raw.githubusercontent.com/GordonThelander/HPM_Manifest_Crawl/main/hubitat_automation_map_app_integration_registry_slim.json'
 
 // The registry's own vocabulary, mapped onto the four plain-English kinds the
 // classification page offers.
@@ -2668,11 +2706,17 @@ function extRender(message) {
        '<span class="msg" id="extMsg">' + extEsc(message) + '</span></div>';
   const rm = EXT.registryMeta || {};
   let reg = '';
-  if (rm.error) {
-    reg = 'Shared registry unavailable (' + extEsc(rm.error) + '). Your own declarations are unaffected.';
-  } else if (rm.fetched) {
+  const rs = rm.state ? String(rm.state) : '';
+  if (rm.fetched && !rm.error) {
     reg = 'Shared registry: ' + extEsc(rm.matched) + ' match(es) from ' + extEsc(rm.entries) +
           ' entries, fetched ' + extEsc(rm.fetched) + '. Yours always wins.';
+  } else if (rm.error) {
+    // Tried and failed. Distinct from never having tried, which is what this
+    // said before and was actively misleading to anyone who had just scanned.
+    reg = 'Shared registry could not be read (' + extEsc(rm.error) + '). Re-scan to retry. ' +
+          'Your own declarations are unaffected.';
+  } else if (rs === 'PENDING') {
+    reg = 'Shared registry is being read now. Re-open this page in a moment.';
   } else {
     reg = 'Shared registry not fetched yet. It is read during a scan.';
   }

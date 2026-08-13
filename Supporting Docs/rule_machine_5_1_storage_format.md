@@ -28,8 +28,8 @@ That split is not just a scoping convenience. It is the real boundary:
 
 Reconstruction is well supported. You can recover a rule's triggers, conditions, ordered
 actions and targets, and check the result against the rule's own page. Evaluation is not:
-section 5.2 shows the stored expression carries no grouping, and the one live test available
-contradicts conventional precedence.
+section 5.2 shows the stored expression carries no grouping, and the live tests available
+contradict conventional precedence.
 
 A tool that displays what a rule *is* stands on solid ground. A tool that decides what a
 rule *would do* is reimplementing Rule Machine from an undocumented format, and will be
@@ -273,9 +273,49 @@ carries no grouping information at all** for the expressions examined. **[strong
 
 **Do not infer evaluation order from that flatness.** How Rule Machine evaluates a mixed
 AND/OR chain is an execution question this document does not answer, and it is not safely
-guessable: a separate live test of a three-term expression `A AND B OR C` on build 2.5.1.140
-resolved as `A AND (B OR C)`, which is the *opposite* of conventional Boolean precedence.
-One test is not a specification. **[single]**
+guessable. Two live tests on build 2.5.1.140, both reading the Required Expression result
+the rule page prints:
+
+| terms | expression | condition values | result | build |
+|---|---|---|---|---|
+| 3 | `A AND B OR C` | F, F, T | FALSE | 2.5.1.140 |
+| 4 | `A AND B OR C AND D` | T, T, F, F | TRUE | 2.5.1.147 |
+
+**The two tests are from different builds.** An expression evaluator changing across a patch
+release is unlikely but not excluded, so the combined conclusion below is weaker than two
+measurements on one build would be.
+
+The three-term case resolved as `A AND (B OR C)`, the *opposite* of conventional Boolean
+precedence, since `(A AND B) OR C` would have printed TRUE. The four-term case then ruled
+out two more candidates:
+
+    (A∧B) ∨ (C∧D)      conventional      TRUE    survives test 2, fails test 1
+    A ∧ (B ∨ (C∧D))    right grouping    TRUE    survives both
+    A ∧ (B∨C) ∧ D      OR binds first    FALSE   ruled out
+    ((A∧B) ∨ C) ∧ D    left to right     FALSE   ruled out
+
+**Right-associative grouping, rightmost operator applied first, is the only model consistent
+with both results.** It also subsumes the three-term result, which was previously described
+as "OR binds tighter" and is better read as a special case of grouping from the right.
+Conventional precedence fits test 2 alone and is not excluded by it, only by test 1. **[limited]**
+
+Two measurements are still not a specification. Neither test used NOT, neither used more than
+one OR, and no test has yet forced conventional and right grouping apart directly, which needs
+a case such as `F AND F OR T AND T` where conventional gives TRUE and right grouping FALSE.
+
+The practical consequence is worth stating because it bites real rules: **under either
+surviving model, a term to the right of an OR is unreachable whenever the OR's left operand
+is true.** A Private Boolean placed last in `Mode AND Evening OR Morning AND PB` is silently
+ignored throughout the evening window. Observed on a live rule, diagnosed as a lamp that never
+turned off.
+
+The obvious workaround, moving the gate into the actions as an early `Exit Rule`, is **not
+available for a Private Boolean**. Rule Machine 5.1 uses a different capability list for
+"Select capability for Action Condition" than for Required Expression conditions, and Private
+Boolean is absent from the action list. Verified on 2.5.1.140: the action list runs
+`... Power source, Presence, Switch, Temperature, ...` with no `Private Boolean` entry where
+alphabetical order would place it. **[single]** The remaining fix is to reorder the expression
+so the gate sits leftmost, which under right grouping makes it the outermost test.
 
 Not examined at all, and required before anyone writes an evaluator: explicit grouping or
 parentheses, NOT, whether `eval[n]` can reference another expression rather than a bare
@@ -287,6 +327,39 @@ does.
 
 `eval["0"]` is the Required Expression when `hasPredicate` is true. `predCapabs` lists the
 condition numbers it involves, with duplicates, so deduplicate if you use it.
+
+**`eval` keys above 0 do not follow `actionList` order.** Do not pair the nth `eval` entry with
+the nth conditional action; it is wrong and the failure is silent, because both sequences are
+plausible and a mismatched pair still renders. Live counter-example, rule 2329, whose action
+order is IF, ELSE-IF, END-IF, WAIT: **[single]**
+
+    eval["1"] = [8, "OR", 16]              the WAIT   (fourth conditional in action order)
+    eval["2"] = [18, "OR", 21, "AND", 23]  the IF     (first)
+    eval["3"] = ["23"]                     the ELSE-IF (second)
+
+The correct association has not been established. Until it is, a tool that needs to name which
+action an expression belongs to should say it cannot, rather than assume order. Matching on the
+condition numbers rendered in the rule's own page is currently the only reliable check.
+
+**`capabstrue` and `capabsfalse` are NOT a per-condition truth cache.** Reading them as one
+produces confident nonsense: on a live rule they reported every condition false, including a
+Private Boolean whose `private` value was demonstrably `true`, which led to a false diagnosis
+of a stuck rule. Whatever they hold, it is not "which conditions currently evaluate true", and
+no tool should present them as condition state. The rule's own page computes truth at render
+time; the stored state does not carry it in these keys. **[strong]**
+
+A Private Boolean test inside a Required Expression is an **ordinary numbered condition** in
+`eval["0"]` and `predCapabs`, not a special case. Live sample, rule 2325: **[single]**
+
+    eval["0"]   = [5, "AND", 7, "OR", "10", "AND", 15]
+                   Mode      Evening   Morning     PrivateBoolean
+    predCapabs  = [5, 7, "7", 10, 15, "7", "10", "7", "7", "7", "7"]
+
+Note the duplicates and the mixed integer/string types in both, consistent with 5.2. Separate
+state keys carry the boolean's own value and are easy to confuse with the condition:
+`private` is the rule's actual Private Boolean value, `p.PB` mirrors it, and `predPB` is a
+flag rather than the condition. Read the value from `private`, and read the *test* from the
+condition referenced in `eval["0"]`. **[single]**
 
 ### 5.3 Condition definitions
 
