@@ -77,11 +77,16 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.6.4'
+@Field static final String APP_VERSION = '1.7.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
-@Field static final String GRAPH_SCHEMA = '2'
+// Bumped for the stops->cancelTimedActions / pauses->pauseResume kind rename
+// and the addition of node.missing - a cached graph from schema 2 would
+// otherwise render with edge kinds that no longer match any colour/dash
+// lookup, degrading silently to the '#999' fallback instead of forcing the
+// rescan that already exists for exactly this situation.
+@Field static final String GRAPH_SCHEMA = '3'
 // Rule flow decoding reads Rule Machine's private internals, so it is pinned to
 // the version it was verified against. Rules on any other engine still appear
 // in the graph with their device relationships; they are counted and reported
@@ -303,7 +308,7 @@ String compatibilitySummary() {
     if (links > 0) {
         s << " Found ${links} rule-to-rule link(s)."
     } else {
-        s << " No rule-to-rule links found - no rule on this hub runs, stops, or sets the Private Boolean of another."
+        s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
     }
 
     int skipped = (state.rulesSkipped ?: 0) as Integer
@@ -832,14 +837,22 @@ Map fetchAppRelationships(String appId, Map labels) {
 // become an edge either.
 // ===================================================================================================================
 
+// 'targets' is a list, not a single setting name, because Rule Machine has
+// been observed to store the same semantic action under more than one
+// setting prefix (ruleAct.<n> and ruleActMain.<n> for Run Actions; privateT.<n>
+// and privateF.<n> for Set Private Boolean). Both extractRuleLinks and
+// actionStep must check every alias - checking only the first one means a
+// rule using the less common storage form is silently dropped rather than
+// linked. buildGraph's from/to/kind dedup means checking every alias can
+// never produce a duplicate edge, only a missed one if an alias is skipped.
 @Field static final Map RULE_LINK_ACTIONS = [
-    getRuleActions      : [target: 'ruleAct',  engine: 'runRuleType',  kind: 'runs'],
-    getStopActions      : [target: 'stopAct',  engine: 'stopRuleType', kind: 'stops'],
-    getSetPrivateBoolean: [target: 'privateT', engine: 'pvRuleType',   kind: 'setspb'],
-    getPauseResumeRules : [target: 'pauseRule', engine: 'pauseRuleType', kind: 'pauses'],
+    getRuleActions      : [targets: ['ruleAct', 'ruleActMain'], engine: 'runRuleType',   kind: 'runs'],
+    getStopActions      : [targets: ['stopAct'],                engine: 'stopRuleType',  kind: 'cancelTimedActions'],
+    getSetPrivateBoolean: [targets: ['privateT', 'privateF'],   engine: 'pvRuleType',    kind: 'setspb'],
+    getPauseResumeRules : [targets: ['pauseRule'],              engine: 'pauseRuleType', kind: 'pauseResume'],
 ]
 
-@Field static final List<String> RULE_LINK_KIND_NAMES = ['runs', 'stops', 'setspb', 'pauses']
+@Field static final List<String> RULE_LINK_KIND_NAMES = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume']
 
 List extractRuleLinks(Map data, String appId) {
     Map vals = [:]
@@ -859,25 +872,29 @@ List extractRuleLinks(Map data, String appId) {
         String num = name.substring(8)
         Map fam = RULE_LINK_ACTIONS[vals['actSubType.' + num]] as Map
         if (!fam) return
-
-        String raw = vals[fam.target + '.' + num] ?: ''
-        if (!raw) return
-
         String engine = vals[fam.engine + '.' + num] ?: ''
-        // "*" means this rule, and it can appear ALONGSIDE other rules:
-        // ["*","1809"] is Rule Machine's way of storing "set the Private
-        // Boolean of this rule AND Perimeter Closed". Skipping the whole
-        // action whenever a "*" was present therefore dropped a real
-        // cross-rule link every time a rule also set its own boolean.
-        // Stripping non-digits discards the "*" and keeps the ids.
-        // Written with replaceAll rather than a regex literal - this file also
-        // builds the map page inside a GString, so slash-delimited patterns are
-        // avoided throughout for consistency.
-        String cleaned = raw.replaceAll('[^0-9]', ' ').trim()
-        if (!cleaned) return
-        cleaned.split(' +').each { String targetId ->
-            if (!targetId || targetId == appId) return
-            out << [to: targetId, kind: fam.kind, engine: engine]
+
+        // More than one setting can carry the same semantic target - see the
+        // comment on RULE_LINK_ACTIONS. Every alias is checked.
+        (fam.targets as List<String>).each { String targetSetting ->
+            String raw = vals[targetSetting + '.' + num] ?: ''
+            if (!raw) return
+
+            // "*" means this rule, and it can appear ALONGSIDE other rules:
+            // ["*","1809"] is Rule Machine's way of storing "set the Private
+            // Boolean of this rule AND Perimeter Closed". Skipping the whole
+            // action whenever a "*" was present therefore dropped a real
+            // cross-rule link every time a rule also set its own boolean.
+            // Stripping non-digits discards the "*" and keeps the ids.
+            // Written with replaceAll rather than a regex literal - this file
+            // also builds the map page inside a GString, so slash-delimited
+            // patterns are avoided throughout for consistency.
+            String cleaned = raw.replaceAll('[^0-9]', ' ').trim()
+            if (!cleaned) return
+            cleaned.split(' +').each { String targetId ->
+                if (!targetId || targetId == appId) return
+                out << [to: targetId, kind: fam.kind, engine: engine]
+            }
         }
     }
     return out
@@ -1050,13 +1067,17 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
     boolean selfTarget = false
     Map linkFam = RULE_LINK_ACTIONS[method] as Map
     if (linkFam) {
-        String rawTargets = settingValues["${linkFam.target}.${num}"] ?: ''
-        if (rawTargets) {
+        // Same alias list as extractRuleLinks, and for the same reason: the
+        // graph and this focused flowchart must read the same setting or they
+        // can disagree about which rules an action targets.
+        (linkFam.targets as List<String>).each { String targetSetting ->
+            String rawTargets = settingValues["${targetSetting}.${num}"] ?: ''
+            if (!rawTargets) return
             // A "*" entry is this rule itself, and can sit alongside real
             // targets - ["*","1809"] is "this rule AND Perimeter Closed".
-            selfTarget = rawTargets.contains('*')
+            if (rawTargets.contains('*')) selfTarget = true
             String cleaned = rawTargets.replaceAll('[^0-9]', ' ').trim()
-            if (cleaned) cleaned.split(' +').each { String t -> if (t) ruleTargets << t }
+            if (cleaned) cleaned.split(' +').each { String t -> if (t && !ruleTargets.contains(t)) ruleTargets << t }
         }
     }
 
@@ -1263,23 +1284,34 @@ Map fetchAppName(String appId) {
     return out
 }
 
-// Name of a rule referenced by another rule. Prefers what the scan already
-// read, falls back to a direct lookup, and finally to the bare id. Cached
-// because a rule can be both a flowchart target and a graph edge target.
-String linkedRuleName(String targetId, Map appInfo, Map cache) {
-    if (cache.containsKey(targetId)) return cache[targetId] as String
+// Name (and deleted status) of a rule referenced by another rule. Prefers what
+// the scan already read, falls back to a direct lookup, and finally to the
+// bare id. Cached because a rule can be both a flowchart target and a graph
+// edge target.
+//
+// Returns [label, missing] rather than a bare label. The label alone used to
+// be the only record of a deleted target - "Rule 2328 - deleted" - which meant
+// the only way to find deleted references again was to string-match that
+// suffix. missing is now a fact a caller (Insights) can filter on directly,
+// separate from unscanned: unscanned means a real app the scan never reached,
+// missing means the id no longer resolves to anything at all.
+Map linkedRuleName(String targetId, Map appInfo, Map cache) {
+    if (cache.containsKey(targetId)) return cache[targetId] as Map
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
+    boolean missing = false
     if (!label) {
         Map named = fetchAppName(targetId)
         label = named.label as String
+        missing = named.missing as boolean
         // Named so the user can act on it. "Rule 2328" invites a hunt for a
         // rule that is not there; saying so turns it into a finding.
-        if (!label && named.missing) label = "Rule ${targetId} - deleted"
+        if (!label && missing) label = "Rule ${targetId} - deleted"
     }
     if (!label) label = "Rule ${targetId}"
-    cache[targetId] = label
-    return label
+    Map result = [label: label, missing: missing]
+    cache[targetId] = result
+    return result
 }
 
 // Action steps carry the ids of any rule they act on. Turned into names here,
@@ -1297,7 +1329,7 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
         // setting only its own boolean needs no list at all.
         if (s.selfTarget && !devices.contains('This Rule')) devices << 'This Rule'
         targets.each { t ->
-            String nm = linkedRuleName("${t}", appInfo, cache)
+            String nm = (linkedRuleName("${t}", appInfo, cache).label) as String
             if (!devices.contains(nm)) devices << nm
         }
         s.devices = devices
@@ -1383,9 +1415,15 @@ Map buildGraph() {
                 Map target = appInfo[targetId] as Map
                 // Worth the lookup when the scan missed it: the alternative is
                 // a node reading "Rule 1845", which tells the user nothing.
-                String label = linkedRuleName(targetId, appInfo, nameCache)
-                nodes[toId] = nodeEntry(toId, label, 'app', (target?.type ?: 'not scanned') as String)
+                Map named = linkedRuleName(targetId, appInfo, nameCache)
+                nodes[toId] = nodeEntry(toId, named.label as String, 'app', (target?.type ?: 'not scanned') as String)
                 if (!target) nodes[toId].unscanned = true
+                // Distinct from unscanned: unscanned is a real app the scan
+                // never reached, missing is an id that no longer resolves to
+                // anything. A deleted target is both (it was never reached
+                // AND does not exist), but Insights needs to tell them apart
+                // to report "broken reference" rather than "just not scanned".
+                if (named.missing) nodes[toId].missing = true
             }
 
             String key = "${fromId}|${toId}|${kind}"
@@ -1988,9 +2026,9 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
-  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Stops - rule stops another rule's actions</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
-  <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses another rule</div>
+  <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses or resumes another rule (not yet distinguishable)</div>
   <div class="legend-row"><span class="line ln-pat ln-thick" style="border-color:#cfd8dc; background:repeating-linear-gradient(to right,#cfd8dc 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time</div>
   <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
@@ -2064,13 +2102,13 @@ if (typeof window.vis === 'undefined') {
 <script>
 const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
-                     runs: '#d9534f', stops: '#d9534f', setspb: '#d9534f', pauses: '#d9534f',
+                     runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc' };
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
-const RULE_LINK_KINDS = ['runs', 'stops', 'setspb', 'pauses'];
+const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
 
 // Most-significant role first. Used to colour a device that holds more than one
 // role in the same app - e.g. a motion sensor that is both a rule's trigger and
@@ -2096,9 +2134,9 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   let dashes = false;
   if (e.kind === 'owns') dashes = true;
   else if (e.kind === 'exposed') dashes = [2, 4];
-  else if (e.kind === 'stops') dashes = [8, 4];
+  else if (e.kind === 'cancelTimedActions') dashes = [8, 4];
   else if (e.kind === 'setspb') dashes = [2, 3];
-  else if (e.kind === 'pauses') dashes = [12, 4, 2, 4];
+  else if (e.kind === 'pauseResume') dashes = [12, 4, 2, 4];
   // Always dashed, because a dependency on an external system is asserted by a
   // person, not read off the hub. Weight carries the part that matters
   // operationally: whether losing it stops the automation or merely stops you
@@ -2589,6 +2627,20 @@ function buildInsights() {
   const nameOf = {};
   ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
 
+  // A node this hub cannot resolve at all - the id was named by a rule-to-rule
+  // link but the target no longer exists. Built from node.missing rather than
+  // string-matching a "- deleted" label, so it survives whatever the display
+  // label happens to say.
+  const missingIds = {};
+  ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
+  const referencesTo = {};   // deleted target -> apps that still reference it
+  ALL_EDGES.forEach(function (e) {
+    if (!missingIds[e.to]) return;
+    if (!referencesTo[e.to]) referencesTo[e.to] = [];
+    if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
+  });
+  const brokenTargets = Object.keys(missingIds);
+
   const commanders = {};   // device -> apps that can leave it in a lasting state
   const touched = {};      // device -> any relationship at all
   ALL_EDGES.forEach(function (e) {
@@ -2640,6 +2692,18 @@ function buildInsights() {
 
   html += '<h4>Read but never driven (' + readOnly.length + ')</h4>';
   html += '<p class="sub">Referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+
+  html += '<h4>Broken rule references (' + brokenTargets.length + ')</h4>';
+  if (!brokenTargets.length) {
+    html += '<p class="sub">No rule references a target that no longer exists.</p>';
+  } else {
+    html += '<p class="sub">These rule/action/pause/private-boolean targets no longer resolve to anything. The referencing action still runs and silently does nothing.</p><ul>';
+    brokenTargets.forEach(function (id) {
+      html += '<li><b>' + nameOf[id] + '</b><br><span class="sub">Referenced by ' +
+        (referencesTo[id] || []).map(function (a) { return nameOf[a]; }).join(' &middot; ') + '</span></li>';
+    });
+    html += '</ul>';
+  }
 
   return html;
 }
