@@ -1788,10 +1788,20 @@ function applyFilters() {
   // out deliberately instead of being left to settle. See sectorLayout.
   const placed = (appVal !== '__all__') ? sectorLayout(appVal, styled, shownEdges) : false;
 
+  // Physics is switched off BEFORE the positioned nodes are added, not after.
+  //
+  // Adding them first and disabling afterwards leaves a window in which the
+  // engine is still running, and on the first focus after a page load it is
+  // still working through its stabilisation pass, so it shoves the nodes off
+  // their assigned positions before physics is stopped. Opening the same view
+  // a second time looked correct purely because the engine had already settled
+  // and stopped by then.
+  if (placed) network.setOptions({ physics: { enabled: false } });
+
   nodes.clear(); nodes.add(styled);
   edges.clear(); edges.add(shownEdges);
+
   if (placed) {
-    network.setOptions({ physics: { enabled: false } });
     network.fit({ animation: false });
   } else {
     network.setOptions({ physics: { enabled: true } });
