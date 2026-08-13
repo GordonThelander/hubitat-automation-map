@@ -1811,20 +1811,26 @@ function applyFilters() {
 // drives sits on the right, other rules sit above, and systems outside the hub
 // sit below.
 //
-//                        other rules
+//                     external systems
 //         triggers            |            actions
 //        constraints  ---> [ app ] --->     owns
 //         monitors            |            exposed
-//                      external systems
+//                        other rules
 //
-// Angles are clockwise from east, and y is negated because screen y grows
-// downwards.
+// Angles run anticlockwise from east and y is negated, because screen y grows
+// downwards. Each sector spans 80 degrees with a 10 degree gap either side.
+//
+// The gaps matter. An earlier version used -50..50 for outputs and 235..305
+// for external, which look separate but are only five degrees apart once -50
+// is read as 310, so the last output and the first external landed on top of
+// each other. Keep every sector expressed in one continuous ascending range
+// and keep the gaps, rather than relying on negative angles reading correctly.
 // ---------------------------------------------------------------------------
 const SECTORS = [
-  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 130, to: 230 },
-  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: -50, to: 50 },
-  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 55,  to: 125 },
-  { name: 'external', kinds: ['depends'],                          from: 235, to: 305 },
+  { name: 'external', kinds: ['depends'],                          from: 50,  to: 130 },
+  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 140, to: 220 },
+  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 230, to: 310 },
+  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: 320, to: 400 },
 ];
 
 function sectorLayout(appId, styledNodes, shownEdges) {
