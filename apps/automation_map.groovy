@@ -1833,6 +1833,11 @@ const SECTORS = [
   { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: 320, to: 400 },
 ];
 
+function sectorIndex(name) {
+  for (let i = 0; i < SECTORS.length; i++) { if (SECTORS[i].name === name) return i; }
+  return SECTORS.length - 1;
+}
+
 function sectorLayout(appId, styledNodes, shownEdges) {
   const byId = {};
   styledNodes.forEach(function (n) { byId[n.id] = n; });
@@ -1853,17 +1858,28 @@ function sectorLayout(appId, styledNodes, shownEdges) {
     }
   });
 
+  // Placement has to be total. Physics is switched off once a layout is
+  // produced, so any node left unassigned keeps whatever position it happened
+  // to have from the previous view - which is how three rule targets ended up
+  // sitting in the external systems sector at the top of the screen.
+  //
+  // So an edge kind that matches no sector falls back to the node's own group,
+  // which is always known.
+  function fallbackSector(node) {
+    if (node.shape === 'diamond') return sectorIndex('external');
+    if (node.shape === 'square') return sectorIndex('rules');
+    return sectorIndex('outputs');
+  }
+
   const buckets = SECTORS.map(function () { return []; });
   let anyPlaced = false;
   styledNodes.forEach(function (n) {
     if (n.id === appId) return;
-    const s = assigned[n.id];
-    if (s === undefined) return;
+    let s = assigned[n.id];
+    if (s === undefined) s = fallbackSector(n);
     buckets[s].push(n);
     anyPlaced = true;
   });
-  // Nothing recognised means an unusual view, so leave it to physics rather
-  // than pinning nodes into a layout that does not describe them.
   if (!anyPlaced) return false;
 
   byId[appId].x = 0;
