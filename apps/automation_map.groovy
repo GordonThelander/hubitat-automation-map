@@ -1656,7 +1656,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'depends') dashes = (e.crit === 'RUNTIME') ? [6, 3] : [2, 5];
   let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
-  return {
+  const edge = {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     crit: e.crit || null,
     arrows: inbound ? 'from' : 'to',
@@ -1665,6 +1665,11 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     width: width,
     smooth: { type: 'curvedCW', roundness: 0.12 + (dupIndex * 0.22) }
   };
+  // A longer spring on dependency edges settles external systems out past the
+  // ring of devices, so the outside world reads as outside rather than as one
+  // more thing scattered among the hardware.
+  if (e.kind === 'depends') edge.length = 380;
+  return edge;
 });
 
 // When one app is focused, its devices are coloured by the role they play in
@@ -1686,12 +1691,16 @@ function styledNode(n, useFullLabel, roleByDevice) {
   let shape = 'dot';
   if (n.group === 'app') shape = 'square';
   else if (n.group === 'external') shape = 'diamond';
-  return {
+  const styled = {
     id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
     font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 }
   };
+  // Heavier, so an external system shared by several apps holds its position
+  // instead of being dragged about by whichever app pulls hardest.
+  if (n.group === 'external') styled.mass = 3;
+  return styled;
 }
 
 const nodes = new vis.DataSet(ALL_NODES.map(function (n) { return styledNode(n, false, null); }));
