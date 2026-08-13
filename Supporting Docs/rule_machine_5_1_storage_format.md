@@ -486,13 +486,38 @@ since it is real information.
 
 ### 9.5 Groovy: a GString key never matches a String key
 
-Not a Rule Machine issue, but it will bite anyone parsing this inside a Hubitat app.
-Building a map with `vals["${s.name}"] = ...` stores a **GString** key, and looking it up
-later with another GString of identical text misses, because their hash codes differ. Assign
-through a `String`-typed local first:
+Not a Rule Machine issue, but it will bite anyone parsing this inside a Hubitat app, and the
+boundary is narrower and stranger than folklore suggests. Measured on Groovy directly rather
+than assumed. **[invariant]**
+
+**Safe.** Groovy coerces, or uses `==` which compares by value:
+
+    map["${x}"] = v        // putAt coerces: the stored key is a String
+    map["${x}"]            // getAt coerces too
+    "${x}" == 'literal'    // true
+    switch ("${x}") { case 'literal': }   // matches
+
+**Broken.** These go through `equals()`, and `String.equals(GString)` is false in both
+directions even though the two print identically:
+
+    map.get("${x}")            // null, even when map['x'] exists
+    map.containsKey("${x}")    // false
+    list.contains("${x}")      // false
+    "${x}" in list             // false
+
+So a map built with subscript syntax is fine, which is why decoding code written this way
+works. What fails is membership testing. The failure is silent: no exception, just a `false`
+or a `null` that sends you looking in the wrong place entirely.
+
+Assign through a `String`-typed local before any comparison or membership test:
 
     String n = "${s.name}"
-    vals[n] = v
+    if (!seen.contains(n)) seen << n
+
+**Corrected 2026-08-13.** An earlier version of this section claimed map keys were the
+problem. They are not; `putAt` coerces them. The real hazard is `contains`, `in`, `get` and
+`containsKey`. The claim was written from folklore rather than from a test, which is exactly
+the failure this document warns about elsewhere.
 
 ---
 
