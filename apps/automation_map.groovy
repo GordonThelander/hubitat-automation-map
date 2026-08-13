@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.6.1'
+@Field static final String APP_VERSION = '1.6.2'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1898,8 +1898,27 @@ String buildMapHtml() {
   #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
   #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
+  #legend-head { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; font-weight:bold; }
+  #legend-toggle { background:none; border:none; color:#eee; font-size:1em; line-height:1; padding:0 2px; cursor:pointer; }
+  #legend.collapsed #legend-body { display:none; }
+  #legend.collapsed { padding:6px 10px; }
   .legend-row { display:flex; align-items:center; margin:4px 0; }
-  .swatch { width:12px; height:12px; border-radius:50%; margin-right:8px; display:inline-block; flex:none; }
+  /* Shape is per row now. The old single .swatch rule forced border-radius 50%
+     on every swatch, so the legend drew a circle for an app that the map draws
+     as a square, and rotating that circle 45 degrees for an external system was
+     a no-op: a rotated circle is still a circle. Reported on the thread. */
+  .swatch { width:12px; height:12px; margin-right:8px; display:inline-block; flex:none; }
+  .sw-dot { border-radius:50%; }
+  .sw-square { border-radius:2px; }
+  .sw-diamond { width:10px; height:10px; border-radius:1px; transform:rotate(45deg); margin:1px 9px 1px 1px; }
+  .sw-outline { background:#2b2b2b; border:2px solid #e8a33d; box-sizing:border-box; }
+  /* Dash patterns drawn to match the canvas. border-top-style has no dash-dot,
+     which is why pause/resume used to look identical to stops in the legend.
+     These variants take their colour from the row's inline color, not from
+     border-color, so a row using one must set color rather than border-color. */
+  .ln-pat { height:2px; border-top:none; }
+  .ln-dashdot { background:repeating-linear-gradient(to right, currentColor 0 12px, transparent 12px 15px, currentColor 15px 17px, transparent 17px 22px); }
+  .ln-thick { height:3px; }
   .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
   .note { opacity:0.75; font-size:0.9em; margin-top:6px; line-height:1.35; }
   #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:rgba(4,20,27,0.96); padding:14px 18px; border-radius:6px;
@@ -1950,7 +1969,13 @@ String buildMapHtml() {
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
 <div id="legend">
-  <div class="legend-row"><span class="swatch" style="background:#e8a33d"></span>App</div>
+  <div id="legend-head"><button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body">&#9662;</button><span>Legend</span></div>
+  <div id="legend-body">
+  <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
+  <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
+  <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device</div>
+  <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
   <div class="legend-row"><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
   <div class="legend-row"><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
   <div class="legend-row"><span class="line" style="border-color:#3d7ea6"></span>Monitor - app reads this device's state</div>
@@ -1960,12 +1985,38 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Stops - rule stops another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
-  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Pause / resume - rule pauses another rule</div>
-  <div class="legend-row"><span class="swatch" style="background:#cfd8dc; transform:rotate(45deg)"></span>External system - declared, not detected</div>
-  <div class="legend-row"><span class="line" style="border-color:#cfd8dc; border-top-style:dashed"></span>Depends on - thick means needed all the time</div>
+  <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses another rule</div>
+  <div class="legend-row"><span class="line ln-pat ln-thick" style="border-color:#cfd8dc; background:repeating-linear-gradient(to right,#cfd8dc 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time</div>
+  <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
+  </div>
 </div>
+<script>
+  // Collapsible legend, asked for on the community thread: on a busy map it
+  // covers the bottom-left corner and there was no way to get it out of the
+  // way. The choice is remembered, because someone who folds it away once
+  // almost certainly wants it folded away next time.
+  //
+  // The handler sits on the whole header rather than the arrow, so the target
+  // is the full width rather than a 12px glyph. The button is inside the
+  // header, so it must NOT get its own listener or a click would toggle twice.
+  (function () {
+    var lg = document.getElementById('legend');
+    var tg = document.getElementById('legend-toggle');
+    var hd = document.getElementById('legend-head');
+    function apply(collapsed) {
+      if (collapsed) { lg.classList.add('collapsed'); } else { lg.classList.remove('collapsed'); }
+      tg.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+      tg.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      try { localStorage.setItem('amLegendCollapsed', collapsed ? '1' : '0'); } catch (e) { }
+    }
+    var saved = '0';
+    try { saved = localStorage.getItem('amLegendCollapsed') || '0'; } catch (e) { }
+    apply(saved === '1');
+    hd.addEventListener('click', function () { apply(!lg.classList.contains('collapsed')); });
+  })();
+</script>
 <div id="smallscreen">
   <h2>Best viewed on a desktop</h2>
   <p>Automation Map shows every app and device on your hub at once, with filter controls and rule flowcharts alongside. That needs a large screen and a mouse, so it is not made to work on a phone.</p>
