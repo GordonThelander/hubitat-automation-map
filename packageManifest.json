@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-13",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.5.0. Installs alongside the release version; your existing install is untouched.\n\nFIX: apps beyond the fifth on any shared device were never discovered. Hid 12 of 74 apps on the test hub. Re-scan after installing.\n\nNEW: rule-to-rule links. Shows when one rule runs, cancels, pauses or sets the Private Boolean of another. Filter: \"Rule to rule only\".\n\nNEW: external systems. What each app needs outside the hub, drawn as diamonds. Known integrations are recognised automatically; your own entries override them and can be backed up to a file.\n\nFocused view is now laid out by relationship: inputs left, outputs right, rules below, external systems above.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.6.0. Installs alongside the release version; your existing install is untouched.\n\nNO MORE DEVICE PICKER. Press Done and the scan starts. Every device is scanned, so the map no longer depends on remembering to tick them all.\n\nFIX: apps beyond the fifth on any shared device were never discovered. Hid 12 of 74 apps on the test hub. Re-scan after installing.\n\nNEW: rule-to-rule links. Shows when one rule runs, cancels, pauses or sets the Private Boolean of another. Filter: \"Rule to rule only\".\n\nNEW: external systems. What each app needs outside the hub, drawn as diamonds. Known integrations are recognised automatically; your own entries override them and can be backed up to a file.\n\nFocused view is now laid out by relationship: inputs left, outputs right, rules below, external systems above.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.5.0"
+      "version": "1.6.0"
     }
   ],
   "drivers": []

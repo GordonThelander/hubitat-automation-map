@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.5.0'
+@Field static final String APP_VERSION = '1.6.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -113,10 +113,8 @@ void installed() {
     // scheduled for it, so the first scan starts here rather than asking the
     // user to press Done and then come back in to start one - which reads as
     // though the install did not take.
-    if (devices) {
-        log.info "${app.label}: starting first scan"
-        startScan()
-    }
+    log.info "${app.label}: starting first scan"
+    startScan()
 }
 
 void updated() {
@@ -142,7 +140,7 @@ Map main() {
         // anything below it is off the bottom of the screen - which is where the
         // progress line and the link to the map used to be on every visit after
         // the first scan.
-        if (devices && ready) {
+        if (ready) {
             section {
                 // The scan is started by fetching the app's own /scan endpoint
                 // rather than from a Hubitat button. runIn() called out of
@@ -198,22 +196,10 @@ Map main() {
             }
         }
 
-        section {
-            paragraph 'Pick the devices to scan, then press Scan. "Select All" is the normal choice.'
-            paragraph '<span style="opacity:0.75">Automation Map finds your apps by looking at which apps each device belongs to, which is why it needs devices selected. Any extra device an app mentions is added to the map for you.</span>'
-            // Deliberately not required:true. With submitOnChange the page
-            // validates while the picker overlay is still open, before the
-            // selection is committed, so Hubitat throws "Please complete the
-            // required fields" at a user who has in fact just selected 190
-            // devices. Nothing downstream needs it - the scan section above
-            // only renders once devices are chosen.
-            input name: 'devices', type: 'capability.*', title: 'Devices to scan', multiple: true, submitOnChange: true
-            if (devices) paragraph "${devices.size()} device(s) selected."
-        }
-
-        if (devices && !ready) {
+        if (!ready) {
             section {
                 paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.</b></span>'
+                paragraph '<span style="opacity:0.75">There is nothing to configure. Every device on the hub is scanned, and the apps are found by asking each device which apps use it.</span>'
             }
         }
     }
@@ -226,12 +212,10 @@ void appButtonHandler(String btn) {
 }
 
 // True when the app is ready to work but has never produced a map. Opening it in
-// that state starts a scan on its own, which covers the person who pressed Done
-// before choosing any devices and came back to select them afterwards - the one
-// route into the app that otherwise leaves it sitting idle and useless.
+// that state starts a scan on its own, so an install that somehow got past
+// installed() without scanning still recovers rather than sitting idle.
 boolean shouldAutoScan() {
     return app.installationState == 'COMPLETE' &&
-           devices &&
            !state.graph &&
            !state.scanRunning &&
            !state.scanError
@@ -368,7 +352,7 @@ void startScan() {
     state.rulesSkipped = 0
     state.ruleLinks = 0
     state.otherEngines = []
-    state.scanQueue = devices.collect { "${it.id}" }.unique()
+    state.scanQueue = fetchAllDeviceIds()
     state.scanTotal = (state.scanQueue as List).size()
     state.scanDone = 0
     state.scanPhase = 'devices'
@@ -604,6 +588,37 @@ void finishScan() {
     log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
 }
 
+// Every device on the hub.
+//
+// This used to be a device picker, and it was the biggest piece of friction in
+// the app: a new user had to select ~200 devices before anything worked. The
+// picker was never a permission gate here - this app reads /device/fullJson
+// directly, which does not consult app-device bindings - so the selection only
+// ever served as a list of ids, and the hub will hand over that list anyway.
+//
+// It also fixes a correctness problem. With a picker, an app whose devices the
+// user did not tick was simply invisible, so how complete the map was depended
+// on a user action rather than on the hub.
+//
+// The capability parameter is required. Without it the endpoint returns [].
+List fetchAllDeviceIds() {
+    List ids = []
+    try {
+        httpGet([uri: 'http://127.0.0.1:8080/device/listJson?capability=capability.*', timeout: 30]) { resp ->
+            def data = resp.data
+            if (data instanceof List) {
+                data.each { d ->
+                    if (d instanceof Map && d.id != null) ids << "${d.id}"
+                }
+            }
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not list devices: ${ex.message}"
+        state.scanError = "Could not list devices from the hub: ${ex.message}"
+    }
+    return ids.unique()
+}
+
 // Phase 1: only needs the app ids this device is attached to.
 Map fetchDeviceApps(String devId) {
     Map out = [label: null, appIds: []]
@@ -645,7 +660,7 @@ Map fetchDeviceApps(String devId) {
 // Phase 2: the real relationship data. Also harvests device labels for devices
 // the user did not select, since settings carry {id: name} maps.
 Map fetchAppRelationships(String appId, Map labels) {
-    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], error: null]
+    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -664,6 +679,7 @@ Map fetchAppRelationships(String appId, Map labels) {
                 out.roles = [:]
                 out.flow = []
                 out.ruleLinks = []
+                out.endpoints = []
                 return
             }
 
@@ -730,6 +746,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             out.stateful = stateful
             out.flow = buildRuleFlow(data)
             out.ruleLinks = extractRuleLinks(data, appId)
+            out.endpoints = extractRuleEndpoints(data)
         }
     } catch (Exception ex) {
         out.error = ex.message
@@ -1282,7 +1299,7 @@ Map buildGraph() {
         Map roles = (appMap.roles ?: [:]) as Map
         // A rule whose only relationship is to another rule has no device roles
         // at all, and used to be dropped here before it could be drawn.
-        if (!roles && !(appMap.ruleLinks ?: [])) return
+        if (!roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: [])) return
 
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
@@ -1404,6 +1421,42 @@ Map buildGraph() {
         }
     }
 
+    // Endpoints a rule calls directly, read from its own settings rather than
+    // declared. These belong to ONE rule, not to its type, which is why they
+    // cannot come through the registry: every rule on a hub shares the type
+    // Rule-5.1, so a registry entry would attach the endpoint to all of them.
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        List eps = ((info as Map).endpoints ?: []) as List
+        if (!eps) return
+        String fromId = "a${appId}"
+        if (!nodes[fromId]) return
+
+        eps.each { ep ->
+            if (!(ep instanceof Map)) return
+            Map e = ep as Map
+            String host = "${e.host}"
+            if (!host || host == 'null') return
+            boolean loop = (e.loopback == true)
+
+            String nodeId = "x${host.toLowerCase().replaceAll('[^a-z0-9]', '')}"
+            if (!nodes[nodeId]) {
+                // A rule POSTing to the hub itself is worth showing, since one
+                // of them reboots it, but it is not an external system and is
+                // labelled for what it actually is.
+                nodes[nodeId] = nodeEntry(nodeId, loop ? 'This hub' : host, 'external',
+                                          loop ? 'the hub itself' : 'endpoint a rule calls')
+                nodes[nodeId].kindKey = loop ? 'infra' : 'internet'
+                nodes[nodeId].detected = true
+            }
+
+            String key = "${fromId}|${nodeId}|depends"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: fromId, to: nodeId, kind: 'depends', crit: 'RUNTIME', detected: true]
+        }
+    }
+
     return [nodes: nodes.values().toList(), edges: edges, flows: flows]
 }
 
@@ -1476,6 +1529,75 @@ Map buildGraph() {
 // its identity, so a rule on a driver name or a user mapping is not false, it
 // is unanswerable - which is a different thing and must be treated as such.
 @Field static final List<String> REGISTRY_EVALUABLE_FIELDS = ['appName', 'parentAppName']
+
+// ===================================================================================================================
+// Endpoints a rule calls directly
+//
+// A rule with an HTTP action names its endpoint in its own settings, under
+// httper.<n>. That makes it the one external dependency on the whole map that
+// is detected rather than declared, and safely so:
+//
+//   the endpoint is CONFIGURED, not a string found in source, so there is no
+//   iconUrl-versus-real-endpoint problem;
+//   an HTTP action unambiguously calls it, so no judgement is needed about
+//   whether it is a dependency;
+//   it is an action the rule performs, so it is RUNTIME for that rule by
+//   definition.
+//
+// It also fills a gap the shared registry structurally cannot. Registry entries
+// key on app TYPE, and every rule on a hub shares the type Rule-5.1, so an
+// entry there would attach the same endpoint to all 45 of them. A rule's
+// endpoint belongs to that one rule.
+// ===================================================================================================================
+
+// The hub calling itself, as in a rule that POSTs to /hub/reboot. Worth showing,
+// since a rule that reboots the hub is exactly what a dependency map should
+// surface, but it is not an EXTERNAL system and must not be drawn as one.
+@Field static final List<String> LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', '::1']
+
+// Written without regex literals, like everything else on the page-building
+// path, because this file builds its HTML inside a GString.
+String hostFromUrl(String url) {
+    if (!url) return null
+    String s = url.trim()
+    int scheme = s.indexOf('://')
+    if (scheme >= 0) s = s.substring(scheme + 3)
+    int at = s.indexOf('@')
+    if (at >= 0) s = s.substring(at + 1)
+    int cut = s.length()
+    ['/', '?', '#'].each { String c ->
+        int i = s.indexOf(c)
+        if (i >= 0 && i < cut) cut = i
+    }
+    s = s.substring(0, cut)
+    int colon = s.lastIndexOf(':')
+    if (colon > 0 && !s.contains(']')) s = s.substring(0, colon)
+    s = s.trim().toLowerCase()
+    return s ?: null
+}
+
+// Endpoints named by one rule's actions. Returns [[host: ..., url: ..., loopback: bool]].
+List extractRuleEndpoints(Map data) {
+    Map vals = [:]
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map) || s.name == null) return
+        String n = "${s.name}"
+        String v = "${s.value}"
+        vals[n] = v
+    }
+
+    List out = []
+    List seen = []
+    vals.each { String name, String value ->
+        if (!name.startsWith('httper.')) return
+        String host = hostFromUrl(value)
+        if (!host) return
+        if (seen.contains(host)) return
+        seen << host
+        out << [host: host, url: value.trim(), loopback: LOOPBACK_HOSTS.contains(host)]
+    }
+    return out
+}
 
 List userRegistry() {
     return (state.userRegistry ?: []) as List
@@ -2030,6 +2152,10 @@ function applyFilters() {
   // their assigned positions before physics is stopped. Opening the same view
   // a second time looked correct purely because the engine had already settled
   // and stopped by then.
+  // Physics off, but nodes are NOT marked fixed. Fixed pins a node against the
+  // physics engine, which is already disabled here, so it bought nothing and
+  // stopped you dragging a node out from under an overlapping label. Positions
+  // are honoured because physics is off, and dragging still works.
   if (placed) network.setOptions({ physics: { enabled: false } });
 
   nodes.clear(); nodes.add(styled);
@@ -2134,7 +2260,6 @@ function sectorLayout(appId, styledNodes, shownEdges) {
 
   byId[appId].x = 0;
   byId[appId].y = 0;
-  byId[appId].fixed = true;
 
   buckets.forEach(function (list, s) {
     if (!list.length) return;
@@ -2149,7 +2274,6 @@ function sectorLayout(appId, styledNodes, shownEdges) {
       const rad = deg * Math.PI / 180;
       n.x = Math.round(Math.cos(rad) * radius);
       n.y = Math.round(-Math.sin(rad) * radius);
-      n.fixed = true;
     });
   });
   return true;
