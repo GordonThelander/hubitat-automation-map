@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.6.2'
+@Field static final String APP_VERSION = '1.6.3'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1898,8 +1898,12 @@ String buildMapHtml() {
   #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
   #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
-  #legend-head { display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; font-weight:bold; }
-  #legend-toggle { background:none; border:none; color:#eee; font-size:1em; line-height:1; padding:0 2px; cursor:pointer; }
+  /* First shipped as a bare 1em glyph with no background - reported as "had to
+     go hunting for it". A visible pill with its own border and a hover state
+     reads as a button; a lone triangle in a wall of text does not. */
+  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:bold; padding:2px; border-radius:4px; }
+  #legend-head:hover { background:rgba(255,255,255,0.10); }
+  #legend-toggle { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.35); color:#fff; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:5px; padding:0; cursor:pointer; }
   #legend.collapsed #legend-body { display:none; }
   #legend.collapsed { padding:6px 10px; }
   .legend-row { display:flex; align-items:center; margin:4px 0; }
@@ -1974,8 +1978,9 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
-  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - grey with no app focused</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
+  <div class="note" style="margin:2px 0 6px 0">Focus an app and a device instead takes the colour of its role below - a device an app can command shows green, the "Action" colour, not the grey above.</div>
   <div class="legend-row"><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
   <div class="legend-row"><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
   <div class="legend-row"><span class="line" style="border-color:#3d7ea6"></span>Monitor - app reads this device's state</div>

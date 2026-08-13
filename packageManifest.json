@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.6.2. Installs alongside the release version; your existing install is untouched.\n\nLEGEND: the legend now draws the same shapes the map does. An app was drawn as a circle when the map draws a square, and the external-system diamond was a rotated circle, which is a circle. Added the missing Device, paused/disabled and rule-target entries, and pause/resume no longer looks identical to stops.\n\nLEGEND: click the header to fold it away. The choice is remembered.\n\nFIX: the shared registry is now a 37KB file built for the app rather than the 165KB one built for people. The old one was too big to fetch and parse in a single Hubitat execution, so it failed silently and the panel then claimed it had never been fetched. It now says when a fetch failed, and a failed fetch no longer strands the whole scan.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.6.3. Installs alongside the release version; your existing install is untouched.\n\nLEGEND: the collapse arrow was a bare 1em glyph with no background, easy to miss. It is now a visible button with its own border, and the whole header highlights on hover.\n\nLEGEND: the Device row only showed the default grey, which does not match a focused view where devices take the colour of their role instead - a device an app can command shows green, not grey. Labelled the default explicitly and added a note pointing at the row that explains the colour actually on screen.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.6.2"
+      "version": "1.6.3"
     }
   ],
   "drivers": []
