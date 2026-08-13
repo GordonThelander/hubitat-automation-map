@@ -48,12 +48,79 @@ Most are Gordon's own apps, correctly absent from a public registry and covered 
 overrides. Critical Device Monitor does have real dependencies (8.8.8.8 and Gmail) so it
 needs a user entry.
 
-### Blockers to fix before building
+### Agreed design (2026-08-13)
 
-- **The scanner does not collect the fields the matcher needs.** `appInfo` currently stores
-  only `label` and `type` per app. The registry matches on `appName`, `parentAppName`,
-  `driverName`, `namespace`, `deviceMetadata` and `userMapping`, so five of six fields have
-  no data. Extending the scan is a prerequisite, not an optional refinement.
+Settled in discussion. Build in this order, because the user layer is what makes an
+incomplete registry honest, and retrofitting storage after users have data in it is worse
+than building it first.
+
+**1. User layer and the classification page.** One table listing **every** app type on the
+hub, not only the unclassified ones:
+
+    App type                          External system        Source
+    CoCoHue - Hue Bridge Integration  Philips Hue Bridge     built in
+    Critical Device Monitor           Google DNS, Gmail      yours
+    Notification Proxy                --                     unclassified
+    Rule-5.1                          none needed            built in
+
+Showing only the gaps would hide the thing users most need to check: whether the shipped
+classification is right for them. Kasa and Tapo can each run local or cloud depending on
+setup, so the shipped answer is a guess for half of users and they cannot correct what they
+cannot see. Any row is editable; a user entry overrides a shipped one rather than modifying
+it.
+
+Classifying is four fields: app type (chosen from the discovered list, never typed), system
+name, kind, and what it is needed for (Runtime / Management / Setup only / Discovery only).
+Those last two map onto the registry's own `class` and `runtimeCriticality`, so user and
+shipped entries are the same shape and render identically.
+
+Stored in **state as a list**, not in settings. Settings are keyed by name and accumulate
+orphans as entries are added and removed; a list is clean and is already the shape the graph
+builder wants.
+
+**2. Backup, user-triggered.** Explicit "Save backup" and "Restore" buttons writing
+`automation_map_user_registry.json` to Hubitat's File Manager, which is hub-level and
+therefore outlives any app instance. Deliberately **not** an automatic mirror: an automatic
+write would overwrite a good backup with a bad state, whereas an explicit save is a snapshot
+the user chose to take. Include a timestamp so restore can say what it is about to restore.
+
+Needs `uploadHubFile()` / `downloadHubFile()`, firmware 2.3.4.134+, so `minimumHEVersion`
+rises from 2.3.0 or degrades gracefully. **Unverified in this app's sandbox**; HPM uses both
+calls, so they exist, but test before relying on them. Keep copy-paste export as the
+fallback, since it also covers moving between hubs and sharing an entry on the forum.
+
+**3. Registry fetched from `main`, with cache and embedded fallback.** Precedence:
+
+    user entries  >  fetched registry  >  embedded baseline
+
+Fetch on scan with a short timeout, cache the result in state, fall back to the cache and
+then to the embedded copy. Show which source is in use and its date, so a stale registry is
+visible rather than silent. Carry a schema version in the file so a newer registry and an
+older app cannot misread each other.
+
+The registry lives on `main` only and **both branches read the same one**, so there is one
+registry rather than two that drift. Fetching is what makes the registry maintainable: a new
+integration is one JSON edit rather than an app release, and a community pull request that
+touches only the registry cannot break the app.
+
+### Corrected 2026-08-13: the scanner is not a blocker
+
+An earlier version of this item claimed the scan had to be extended first, because the
+matcher needs six fields and `appInfo` stores only `label` and `type`. That was wrong twice.
+
+**The data is already in hand.** `namespace` sits in `installedApp.appType` in the response
+already fetched per app, alongside `author` and `category`. The device response already
+fetched in phase 1 carries `device.deviceTypeName` (the driver name) and a whole `parentApp`
+object. All of it is currently discarded, so capturing it is a few lines.
+
+**It barely matters for reach.** 98 of 101 entries carry an `appName` rule, which is the app
+type string the scan already stores. Only three entries are reachable exclusively by another
+field (Shelly MQTT Variant, Hub Mesh, Matter Bridge / Controller). `driverName` appears on 50
+entries but always alongside `appName`, so it raises confidence rather than unlocking
+anything. Capture the extra fields for confidence and those three entries, not as a gate.
+
+### Genuine blockers
+
 - **`Rule-5.1` does not match.** The registry's Rule Machine entry keys on
   `contains "Rule Machine"` but the hub emits the type string `Rule-5.1`. That is 36 of 61
   apps. Harmless in itself (that entry declares no dependencies) but it proves the registry
