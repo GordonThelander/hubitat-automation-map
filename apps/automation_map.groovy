@@ -418,7 +418,19 @@ void scanBatch() {
         } else if (advanced && state.scanPhase == 'devices') {
             startAppPhase()
         } else {
-            finishScan()
+            // Scheduled rather than called, so the graph build gets an
+            // execution to itself.
+            //
+            // Called inline it ran in the same execution as the last batch of
+            // app fetches, so one execution did up to three 20-second HTTP
+            // fetches, then built a 285-node graph, then made up to three more
+            // HTTP calls naming deleted rules, then wrote the whole state. That
+            // execution died on a 74-app hub: no error, no scheduled job, just a
+            // heartbeat that stopped two apps from the end.
+            //
+            // Splitting it also means the batch work is already committed if
+            // the build itself fails.
+            runIn(1, 'finishScan')
         }
     } catch (Exception ex) {
         log.warn "${app.label}: scan could not continue: ${ex.message}"
@@ -497,8 +509,20 @@ void scanAppBatch() {
 }
 
 void finishScan() {
+    // Runs as its own scheduled execution, so a failure here leaves the scan
+    // data intact and reports itself, rather than silently stranding the app
+    // mid-scan the way an inline call did.
+    state.scanHeartbeat = now()
+    Map graph = [:]
+    try {
+        graph = buildGraph()
+    } catch (Exception ex) {
+        log.warn "${app.label}: graph build failed: ${ex.message}"
+        state.scanError = "Graph build failed: ${ex.message}"
+        state.scanRunning = false
+        return
+    }
     state.scanRunning = false
-    Map graph = buildGraph()
     state.graph = graph
     state.graphVersion = GRAPH_SCHEMA
 
