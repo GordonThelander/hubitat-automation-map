@@ -31,7 +31,7 @@ A device can hold different roles in different apps: a motion sensor may trigger
 
 Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden.
 
-A rule that is only ever a target, and touches none of the devices you selected, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped.
+A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped.
 
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
@@ -85,7 +85,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
-- **Only apps that reference at least one device appear.** Apps are discovered by asking devices which apps use them, so an app using no devices is invisible. There is no bulk app-list endpoint to cross-check against. The one exception is a rule named as the target of a rule-to-rule link, which is drawn even when the scan never reached it.
+- **Only apps that reference at least one device appear.** Apps are discovered by asking every device which apps use it, so an app using no devices at all is invisible. There is no bulk app-list endpoint to cross-check against. The one exception is a rule named as the target of a rule-to-rule link, which is drawn even when the scan never reached it.
 - **Rule-to-rule links are read from Rule Machine 5.1 only.** A rule on another engine is not analysed for them, so it will show no links rather than showing that it has none. Room Lighting, Basic Rules, Simple Automation and webCoRE are not read this way.
 - **Rules that reference a deleted rule are shown as such.** If a rule still names a rule that no longer exists, the target is drawn and labelled `deleted`. The action stays in the calling rule and silently does nothing, so it is worth seeing.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
@@ -111,13 +111,13 @@ Then continue from step 3.
 1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> **Save**.
 2. Still in Apps Code, click **OAuth** -> **Enable OAuth in App** -> **Update**.
 3. **Apps** -> **Add User App** -> **Automation Map**.
-4. Select the devices to scan - **Select All** is the normal choice - then **Scan relationships now**.
+4. Press **Done**. The first scan starts by itself; there is nothing to configure.
 5. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
 6. **View Automation Map**.
 
 The map link contains an access token unique to your installation. Open the map from the app rather than bookmarking the URL, since reinstalling the app issues a new token and the old link stops working.
 
-Devices referenced by an app are added to the map automatically even if you did not select them. The selection only decides which devices are used to discover apps.
+Every device on the hub is scanned. There is no device picker: apps are found by asking each device which apps use it, and the hub supplies the device list.
 
 ## Re-scanning
 
