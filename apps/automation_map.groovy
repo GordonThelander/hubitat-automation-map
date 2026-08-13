@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.4.1'
+@Field static final String APP_VERSION = '1.5.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -419,7 +419,7 @@ void scanBatch() {
             startAppPhase()
         } else {
             // Scheduled rather than called, so the graph build gets an
-            // execution to itself.
+            // execution to itself. fetchRegistry chains on to finishScan.
             //
             // Called inline it ran in the same execution as the last batch of
             // app fetches, so one execution did up to three 20-second HTTP
@@ -430,7 +430,7 @@ void scanBatch() {
             //
             // Splitting it also means the batch work is already committed if
             // the build itself fails.
-            runIn(1, 'finishScan')
+            runIn(1, 'fetchRegistry')
         }
     } catch (Exception ex) {
         log.warn "${app.label}: scan could not continue: ${ex.message}"
@@ -506,6 +506,60 @@ void scanAppBatch() {
     state.deviceLabels = labels
     state.scanQueue = queue.drop(size)
     state.scanDone = (state.scanDone ?: 0) + size
+}
+
+// Runs as its own scheduled execution between the app phase and the graph
+// build. It fetches ~170KB over the internet and parses it, which is far too
+// much to bolt onto a batch that is already doing HTTP work - the lesson from
+// finishScan, which died when it was called inline.
+//
+// Failure here is not fatal. The registry is a convenience; the user's own
+// declarations are the authority, and an unclassified app type is an explicit,
+// visible state rather than a silent absence.
+void fetchRegistry() {
+    state.scanHeartbeat = now()
+    List types = discoveredAppTypes()
+    List matches = []
+    Map meta = [fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
+
+    try {
+        httpGet([uri: REGISTRY_URL, contentType: 'application/json', timeout: 30]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
+            List entries = (data.entries ?: []) as List
+            meta.entries = entries.size()
+            meta.schemaVersion = "${data.schemaVersion}"
+
+            types.each { String appType ->
+                entries.each { ent ->
+                    if (!(ent instanceof Map)) return
+                    Map e = ent as Map
+                    if (registryEntryState(e, appType) != 'MATCH') return
+                    (e.dependencies ?: []).each { dep ->
+                        if (!(dep instanceof Map)) return
+                        Map d = dep as Map
+                        String name = "${d.name}".trim()
+                        if (!name || name == 'null') return
+                        String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
+                        String crit = "${d.runtimeCriticality}"
+                        if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
+                        matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
+                    }
+                }
+            }
+            meta.matched = matches.size()
+            meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
+        }
+    } catch (Exception ex) {
+        meta.error = "${ex.message}"
+        log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
+    }
+
+    // Only on success, so a failed fetch keeps the last good set rather than
+    // silently emptying the map of everything the registry contributed.
+    if (!meta.error) state.registryMatches = matches
+    state.registryMeta = meta
+    log.info "${app.label}: registry ${meta.error ? 'unavailable' : "gave ${meta.matched} dependency match(es) from ${meta.entries} entries"}"
+    runIn(1, 'finishScan')
 }
 
 void finishScan() {
@@ -1300,7 +1354,21 @@ Map buildGraph() {
     // Nodes are keyed on the system NAME, so two apps naming the same bridge
     // share one node. That sharing is the whole point: it is what turns a list
     // of dependencies into "everything that stops working if this fails".
-    List externals = userRegistry()
+    // User declarations override the shared registry rather than adding to it.
+    // A user who has said anything at all about an app type has looked at it,
+    // and their answer beats a curated guess - Kasa and Tapo can each be local
+    // or cloud depending on how they were set up, so the shipped answer is
+    // right for roughly half of installs.
+    List externals = []
+    List userRows = userRegistry()
+    List userTypes = classifiedTypes()
+    registryMatches().each { row ->
+        if (!(row instanceof Map)) return
+        String t = "${(row as Map).type}"
+        if (!userTypes.contains(t)) externals << row
+    }
+    userRows.each { externals << it }
+
     if (externals) {
         Map typeToApps = [:]
         appInfo.each { String appId, info ->
@@ -1375,8 +1443,91 @@ Map buildGraph() {
 // be able to say "nothing needed" separately from "nobody has said".
 @Field static final String EXTERNAL_NONE = '__none__'
 
+// ===================================================================================================================
+// Shared registry
+//
+// A curated list of what known integrations depend on, maintained separately
+// and validated against every package published to Hubitat Package Manager.
+// Fetched rather than embedded, so a new integration is one edit to a JSON
+// file instead of a release of this app.
+//
+// Only the MATCHES are kept. The registry is ~170KB and this app's state is
+// already large; storing it whole would roughly double state for data that is
+// 95% irrelevant to any one hub. A hub with 20 app types keeps a handful of
+// rows and discards the rest.
+// ===================================================================================================================
+
+@Field static final String REGISTRY_URL =
+    'https://raw.githubusercontent.com/GordonThelander/HPM_Manifest_Crawl/main/hubitat_automation_map_app_integration_registry.json'
+
+// The registry's own vocabulary, mapped onto the four plain-English kinds the
+// classification page offers.
+@Field static final Map REGISTRY_CLASS_TO_KIND = [
+    LOCAL_BRIDGE      : 'local_bridge',
+    LOCAL_DEVICE      : 'local_device',
+    LOCAL_SERVICE     : 'infra',
+    INFRASTRUCTURE    : 'infra',
+    EXTERNAL_PLATFORM : 'platform',
+    EXTERNAL_SERVICE  : 'internet',
+    UNKNOWN_EXTERNAL  : 'internet',
+]
+
+// Fields this app can evaluate. It knows an app's TYPE and nothing else about
+// its identity, so a rule on a driver name or a user mapping is not false, it
+// is unanswerable - which is a different thing and must be treated as such.
+@Field static final List<String> REGISTRY_EVALUABLE_FIELDS = ['appName', 'parentAppName']
+
 List userRegistry() {
     return (state.userRegistry ?: []) as List
+}
+
+List registryMatches() {
+    return (state.registryMatches ?: []) as List
+}
+
+// Case-insensitive and whitespace-trimmed, matching the validator that checks
+// this registry against live package data. Published names really are
+// inconsistent: BOND against Bond, Ecowitt against EcoWitt.
+boolean registryRuleMatches(String op, String value, String appType) {
+    String n = value?.trim()?.toLowerCase()
+    String h = appType?.trim()?.toLowerCase()
+    if (!n || !h) return false
+    if (op == 'equals') return h == n
+    if (op == 'contains') return h.contains(n)
+    return false
+}
+
+// Three states, not two.
+//
+// A rule this app cannot evaluate is NOT a failed rule. Treating it as one
+// would let an ALL entry match on its remaining rules alone, which is exactly
+// what the registry uses matchMode ALL to prevent: "Home Assistant via Maker
+// API" is gated behind a user mapping precisely so it does NOT fire on every
+// Maker API install. Ignoring that rule would attach Home Assistant to anyone
+// running Maker API.
+String registryEntryState(Map entry, String appType) {
+    boolean anyMatch = false
+    boolean anyFail = false
+    boolean anyUnknown = false
+
+    (entry.matchRules ?: []).each { rule ->
+        if (!(rule instanceof Map)) return
+        Map r = rule as Map
+        String field = "${r.field}"
+        if (!REGISTRY_EVALUABLE_FIELDS.contains(field)) { anyUnknown = true; return }
+        if (registryRuleMatches("${r.operator}", "${r.value}", appType)) anyMatch = true
+        else anyFail = true
+    }
+
+    boolean all = "${entry.matchMode}" == 'ALL'
+    if (all) {
+        if (anyFail) return 'NO_MATCH'
+        if (anyUnknown) return 'NOT_EVALUABLE'
+        return anyMatch ? 'MATCH' : 'NO_MATCH'
+    }
+    if (anyMatch) return 'MATCH'
+    if (anyUnknown) return 'NOT_EVALUABLE'
+    return 'NO_MATCH'
 }
 
 // Every app type the scan found, which is what the classification page offers.
@@ -1489,14 +1640,22 @@ Map externalsSaveMapping() {
 String externalsJson() {
     List types = discoveredAppTypes()
     List classified = classifiedTypes()
+    List reg = registryMatches()
+    List regTypes = []
+    reg.each { r -> String t = "${(r as Map).type}"; if (t && !regTypes.contains(t)) regTypes << t }
+
     Map out = [
         ok: true,
         kinds: EXTERNAL_KINDS,
         criticality: EXTERNAL_CRITICALITY,
         noneMarker: EXTERNAL_NONE,
         appTypes: types,
-        unclassified: types.findAll { !classified.contains(it) },
+        // Unclassified means nobody has said, by user OR registry. An app type
+        // the registry covers is not a gap the user needs to fill.
+        unclassified: types.findAll { !classified.contains(it) && !regTypes.contains(it) },
         entries: userRegistry(),
+        registry: reg,
+        registryMeta: (state.registryMeta ?: [:]),
     ]
     return groovy.json.JsonOutput.toJson(out)
 }
@@ -1617,6 +1776,8 @@ String buildMapHtml() {
   #ext .tag-none { background:#2c3e44; color:#9fb4bc; }
   #ext .tag-unset { background:#5a2b29; color:#f0b8b5; }
   #ext .tag-user { background:#2b4a2c; color:#b6e0b8; }
+  #ext .tag-reg { background:#243c52; color:#a8c8e4; }
+  #ext tr.fromreg td { opacity:0.86; }
   #ext input[type=text], #ext select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #ext input[type=text] { width:150px; }
   #ext button { margin:0 4px 0 0; }
@@ -2307,6 +2468,14 @@ function extRowsFor(type) {
   return (EXT.entries || []).filter(function (e) { return e.type === type; });
 }
 
+// Rows the shared registry supplied, shown only where the user has said
+// nothing about that app type. The moment they do, theirs replaces these.
+function extRegistryFor(type) {
+  const claimed = (EXT.entries || []).some(function (e) { return e.type === type; });
+  if (claimed) return [];
+  return (EXT.registry || []).filter(function (e) { return e.type === type; });
+}
+
 function extRender(message) {
   const kinds = EXT.kinds || {};
   const crits = EXT.criticality || {};
@@ -2321,6 +2490,19 @@ function extRender(message) {
   (EXT.appTypes || []).forEach(function (type) {
     const rows = extRowsFor(type);
     if (!rows.length) {
+      const fromRegistry = extRegistryFor(type);
+      if (fromRegistry.length) {
+        fromRegistry.forEach(function (r, i) {
+          h += '<tr class="fromreg"><td>' + (i === 0 ? extEsc(type) : '') + '</td>' +
+               '<td>' + extEsc(r.name) + '</td>' +
+               '<td>' + extEsc(kinds[r.kind] || r.kind) + '</td>' +
+               '<td>' + extEsc(crits[r.crit] || r.crit) + '</td>' +
+               '<td>' + (i === 0 ? '<span class="tag tag-reg">from registry</span>' +
+                                   '<button class="rowbtn" data-over="' + extEsc(type) + '">override</button>' : '') +
+               '</td></tr>';
+        });
+        return;
+      }
       h += '<tr class="unclassified"><td>' + extEsc(type) + '</td>' +
            '<td colspan="3"><span class="tag tag-unset">not classified</span></td>' +
            '<td><button class="rowbtn" data-add="' + extEsc(type) + '">add</button>' +
@@ -2360,7 +2542,18 @@ function extRender(message) {
        '<button id="extImport" type="button">Restore from file</button>' +
        '<input type="file" id="extFile" accept="application/json" style="display:none">' +
        '<span class="msg" id="extMsg">' + extEsc(message) + '</span></div>';
-  h += '<p class="sub" style="margin-top:10px">Declarations live with this app. Removing the app removes them, so download a backup before you do.</p>';
+  const rm = EXT.registryMeta || {};
+  let reg = '';
+  if (rm.error) {
+    reg = 'Shared registry unavailable (' + extEsc(rm.error) + '). Your own declarations are unaffected.';
+  } else if (rm.fetched) {
+    reg = 'Shared registry: ' + extEsc(rm.matched) + ' match(es) from ' + extEsc(rm.entries) +
+          ' entries, fetched ' + extEsc(rm.fetched) + '. Yours always wins.';
+  } else {
+    reg = 'Shared registry not fetched yet. It is read during a scan.';
+  }
+  h += '<p class="sub" style="margin-top:10px">' + reg + '<br>' +
+       'Your declarations live with this app. Removing the app removes them, so download a backup before you do.</p>';
 
   extBody.innerHTML = h;
   extWire();
@@ -2390,6 +2583,19 @@ function extWire() {
       });
       EXT.entries.push({ type: type, name: '', kind: 'internet', crit: 'RUNTIME' });
       extRender('');
+    });
+  });
+
+  // Overriding seeds the user's rows from the registry's, so correcting one
+  // value does not mean retyping the rest.
+  extBody.querySelectorAll('[data-over]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const type = b.getAttribute('data-over');
+      (EXT.registry || []).filter(function (e) { return e.type === type; })
+        .forEach(function (r) {
+          EXT.entries.push({ type: type, name: r.name, kind: r.kind, crit: r.crit });
+        });
+      extRender('Copied from the registry. Edit and Save, and yours will be used instead.');
     });
   });
 

@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-08-12",
+  "dateReleased": "2026-08-13",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Beta: rule-to-rule relationships.\n\nShows when one rule runs another rule's actions, cancels another rule's timed actions, or sets another rule's Private Boolean. Pick \"Rule to rule only\" in the Show filter to see just those. Rule flowcharts now name the rule each of those steps acts on.\n\nInstalls alongside the release version under its own name, so both can run on the same hub at once. Your existing Automation Map install is not touched.\n\nThis is a test build. Please report what you find on the community thread.",
+  "releaseNotes": "Test build 1.5.0.\n\nFIX: app discovery was reading a list the hub caps at five entries per device, so apps beyond the fifth on any shared device were invisible. On the test hub this hid 12 of 74 apps, including two whole app types. If your map has ever looked short of apps, this is why. Re-scan after updating.\n\nRule to rule: shows when one rule runs another rule's actions, cancels its timed actions, pauses it, or sets its Private Boolean. Pick \"Rule to rule only\" in the Show filter. A rule that names a rule you have since deleted is drawn and labelled, because that action silently does nothing.\n\nExternal systems: declare what each app needs outside your hub, drawn as diamonds. Known integrations are recognised automatically from a shared registry; anything you declare yourself overrides it. Download and restore your declarations as a file.\n\nFocused view is now laid out by relationship: what feeds an app on the left, what it drives on the right, other rules below, external systems above.\n\nInstalls alongside the release version under its own name. Your existing Automation Map install is not touched.\n\nPlease report what you find on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.4.1"
+      "version": "1.5.0"
     }
   ],
   "drivers": []
