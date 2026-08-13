@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.6.4",
+  "version": "1.7.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.6.4. Installs alongside the release version; your existing install is untouched.\n\nLEGEND: the six device-role rows (Trigger, Constraint, Monitor, Action, Exposed, Owns) only showed a coloured LINE. A focused device turns into a coloured DOT, and nothing in the legend looked like a dot, so a purple or green circle on the map had no matching swatch to find. Each row now shows both.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.7.0. Installs alongside the release version; your existing install is untouched. RESCAN REQUIRED - the rule-link data model changed.\n\nRULE LINKS: recognises two more Rule Machine storage forms seen in community testing - ruleActMain (an alternate Run Actions target) and privateF (an alternate Private Boolean target). A rule using either was previously invisible to the graph.\n\nRENAMED for accuracy: the 'Stops' relationship is now 'Cancel timed actions', matching what the action actually does (cancels a pending Wait/Delay, not a running process). 'Pauses' is now 'Pause/resume', since the two cannot yet be told apart on this hub.\n\nINSIGHTS: a new 'Broken rule references' section lists any rule/action/pause/private-boolean target that no longer resolves to anything, and which apps still reference it.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.6.4"
+      "version": "1.7.0"
     }
   ],
   "drivers": []
