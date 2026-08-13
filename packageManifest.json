@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.6.3. Installs alongside the release version; your existing install is untouched.\n\nLEGEND: the collapse arrow was a bare 1em glyph with no background, easy to miss. It is now a visible button with its own border, and the whole header highlights on hover.\n\nLEGEND: the Device row only showed the default grey, which does not match a focused view where devices take the colour of their role instead - a device an app can command shows green, not grey. Labelled the default explicitly and added a note pointing at the row that explains the colour actually on screen.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.6.4. Installs alongside the release version; your existing install is untouched.\n\nLEGEND: the six device-role rows (Trigger, Constraint, Monitor, Action, Exposed, Owns) only showed a coloured LINE. A focused device turns into a coloured DOT, and nothing in the legend looked like a dot, so a purple or green circle on the map had no matching swatch to find. Each row now shows both.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.6.3"
+      "version": "1.6.4"
     }
   ],
   "drivers": []
