@@ -1836,11 +1836,17 @@ function applyFilters() {
 // each other. Keep every sector expressed in one continuous ascending range
 // and keep the gaps, rather than relying on negative angles reading correctly.
 // ---------------------------------------------------------------------------
+// Each sector also has its own radius. Angular gaps alone are not enough: the
+// last input at 220 and the first rule at 230 are only ten degrees apart, and
+// on the same circle a node labelled "Mode Alarm Reminder (Required Expression
+// false)" lands squarely on top of one labelled "Master Bedroom Button".
+// Putting neighbouring sectors on different circles separates them regardless
+// of how long the labels are.
 const SECTORS = [
-  { name: 'external', kinds: ['depends'],                          from: 50,  to: 130 },
-  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 140, to: 220 },
-  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 230, to: 310 },
-  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: 320, to: 400 },
+  { name: 'external', kinds: ['depends'],                          from: 55,  to: 125, radius: 430 },
+  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 145, to: 215, radius: 300 },
+  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 235, to: 305, radius: 420 },
+  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: 325, to: 395, radius: 320 },
 ];
 
 function sectorIndex(name) {
@@ -1900,10 +1906,8 @@ function sectorLayout(appId, styledNodes, shownEdges) {
     if (!list.length) return;
     list.sort(function (a, b) { return String(a.label).localeCompare(String(b.label)); });
     const sector = SECTORS[s];
-    // Radius grows with crowding so labels have room, and external systems
-    // start further out for the same reason they do under physics.
-    const base = (sector.name === 'external') ? 400 : 300;
-    const radius = base + Math.max(0, list.length - 4) * 26;
+    // Radius grows with crowding so labels keep their room as a sector fills.
+    const radius = sector.radius + Math.max(0, list.length - 4) * 26;
     const span = sector.to - sector.from;
     list.forEach(function (n, i) {
       const t = (list.length === 1) ? 0.5 : (i / (list.length - 1));
