@@ -217,7 +217,6 @@ actType.<n> == rulesActs
 ```
 
 so a Rule Function target stored outside that family can be missed completely.
-
 Rule Functions should therefore be extracted through a second, explicit decoder rather than pretending they are `getRuleActions`:
 
 ```text
@@ -438,7 +437,6 @@ Referenced target IDs ------------------+
 The recommendation is **not** to replace device-led discovery. Union the sources.
 
 Also do not copy TheBearMay's `type.contains("Rule")` filter blindly. His application is specifically a Rule reference utility. Automation Map is broader. Investigate whether `/hub2/appsList` can safely enumerate all installed child applications and use the full hierarchy as an additional source of app instances.
-
 Potential benefit: this may remove the architectural limitation that an app must reference at least one device before it is naturally discovered.
 
 ---
@@ -678,3 +676,56 @@ and `privateF`, which are already handled defensively as aliases. Nothing here c
 refutes the claim, so it stays gated exactly as written. This is the same standard applied
 to the rest of that analysis: another project's source is a source of hypotheses, not facts
 about this hub.
+
+---
+
+## Dev branch review - 2026-08-14, head `e72a738`
+
+### Status
+
+This section is the current-state review of the `dev` branch and supersedes any earlier statements in this handoff that describe features as still missing when they have since been implemented. Historical reverse-engineering notes above are intentionally retained.
+
+**Release recommendation: do not promote this head to `main` yet.** The UI and topology improvements are strong, but three scan-integrity paths can still turn incomplete or unreadable source data into an apparently authoritative map.
+
+### Confirmed findings
+
+| Priority | Finding | Consequence | Recommended correction |
+|---|---|---|---|
+| P1 | Fatal `scanBatch()` failure still falls through to registry/`finishScan()` | A partial scan can receive a current graph schema and look complete | On batch failure set `scanRunning=false` and return. Do not build a graph from a failed scan |
+| P1 | `fetchAllDeviceIds()` failure is overwritten by `startScan()` | The useful device-enumeration error is set, then immediately cleared by `state.scanError = null` | Clear the old error before enumeration, or return structured `[ok, ids, error]` from the enumeration call |
+| P1 | Unreadable apps can be classified as inert | `fetchAppRelationships()` returns empty relationship collections plus `error`; `buildGraph()` treats empty collections as proof that the app references nothing | Give unreadable apps their own state/style and exclude them from inert counting |
+| P2 | Failed compatibility probe does not stop the scan | A hub that cannot return usable `statusJson` is allowed into a phase that depends on that endpoint | Treat `compat.ok == false` as a hard scan prerequisite failure |
+| P2 | Pivot presets labelled `Rule -> Devices` and `Device -> Rules` operate on all `app` nodes | Integrations and other non-rule apps can be presented as rules, making a useful table semantically wrong | Either rename those presets to App/Device views or carry an explicit `isRule`/app type predicate into pivot queries |
+| P2 | Browser navigation has two independent sources of truth | `focusTrail` and `history.pushState()` can diverge; Forward is not reconstructed and Exit/Show all clears only the JS trail, not browser entries | Make `history.state.amFocus` the source of truth and restore directly from `popstate` state |
+| P2 | 90 s abandoned-scan threshold is below the device-batch timeout envelope | A 15-device batch with 10 s per lookup can remain legitimately active beyond the 90 s heartbeat threshold | Reduce batch size or move the threshold above the maximum credible batch duration with margin |
+| P2 | External node IDs are lossy canonicalisations | Different names/hosts such as punctuation variants can collapse onto the same `x...` ID and silently merge dependencies | Generate IDs from a collision-resistant canonical key/hash, while keeping the friendly name for display |
+| P2 | Registry says `parentAppName` is evaluable but passes only current `appType` into the matcher | A parent-name rule can be evaluated against the wrong datum and produce false classification | Remove `parentAppName` until parent context is supplied, or pass structured app/parent identity to the evaluator |
+| P3 | `APP_VERSION` remains `1.8.4` across three substantial new dev commits | HPM/dev-channel update detection can miss the new code outside the manually updated hub | Bump the dev version before expecting HPM to distribute these changes |
+| P3 | Header limitation still describes `appsUsingForDialog` as the discovery path | The source-level documentation now contradicts the implementation, which uses `appsUsing` with a fallback plus `/hub2/appsList` | Rewrite the limitation to reflect current discovery and only retain genuine residual limitations |
+| P3 | Generated Groovy `.class` files remain committed at repository root | Repository noise, larger diffs and increased risk of stale build artefacts being mistaken for source | Remove generated classes and add `*.class` to `.gitignore` |
+
+### New work reviewed positively
+
+| Enhancement | Assessment |
+|---|---|
+| Inert shelf divider scaled by `network.getScale()` | Correct fix. The divider now behaves like vis-network labels rather than shrinking with graph-space zoom |
+| Inert-node click behaviour | Correct. Skipping neighbourhood filtering for a zero-edge node prevents the map collapsing to a single square while still showing the useful detail panel |
+| Exit to whole map and Exit map controls | Good usability improvement. The shared reset function removes duplicated reset logic, although the deeper browser-history model still needs correction |
+| Scheduled-job normalisation | Strong correctness fix. A bare one-job map is now normalised to a one-element list instead of being miscounted by its fields |
+| Scheduled-job detail in inert panel | Useful and appropriately conservative: next-run and raw cron are shown without inventing an English interpretation |
+| Pivot query architecture | Good separation. Presets and the free-form builder share one query/render path and CSV exports exactly the current rendered result |
+| `check_template.sh` additions | Good regression guard. It caught real Groovy-GString/JavaScript escape failures during the pivot work |
+
+### Release gate
+
+The critical release gate remains **truthfulness under failure**, not feature completeness. Automation Map is increasingly an operational diagnostic tool. Its data model must distinguish these states explicitly:
+
+```text
+relationship absent
+relationship present
+source unreadable
+scan incomplete
+platform incompatible
+```
+
+The current P1 defects still collapse some of the last three states into an apparently valid absence. Fix those before promotion. The P2 items can then be addressed according to whether the next target is a public 1.8.x release or further private dev testing.
