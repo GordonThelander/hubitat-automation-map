@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.3'
+@Field static final String APP_VERSION = '1.8.4'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -2481,6 +2481,16 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
 // When one app is focused, its devices are coloured by the role they play in
 // THAT app - a device can legitimately be a trigger for one app and a target
 // for another, so this colouring only makes sense scoped to a single app.
+// Shelf coordinates for the unconnected apps: computed once by
+// shelveInertNodes after the first stabilization, then treated as permanent.
+//
+// Declared HERE, above styledNode, and not next to the function that fills it.
+// styledNode reads it, and the initial DataSet is built by calling styledNode,
+// which happens before that function is reached - a const declared later is in
+// its temporal dead zone at that moment, and the ReferenceError would kill the
+// whole page script rather than just the shelf.
+const INERT_POS = {};
+
 function styledNode(n, useFullLabel, roleByDevice) {
   const role = roleByDevice ? roleByDevice[n.id] : null;
   let color = n.group === 'device'
@@ -2535,6 +2545,16 @@ function styledNode(n, useFullLabel, roleByDevice) {
   if (n.inert) {
     styled.shapeProperties = { borderDashes: [4, 3] };
     styled.size = 14;
+    // The shelf position is re-applied on every render, not set once after the
+    // first stabilization. Every filter change rebuilds the DataSet from this
+    // function, so a position applied afterwards was thrown away the moment you
+    // focused something and came back, and the physics scattered them.
+    if (INERT_POS[n.id]) {
+      styled.x = INERT_POS[n.id].x;
+      styled.y = INERT_POS[n.id].y;
+      styled.fixed = { x: true, y: true };
+      styled.physics = false;
+    }
   }
   // Heavier, so an external system shared by several apps holds its position
   // instead of being dragged about by whichever app pulls hardest.
@@ -2590,13 +2610,19 @@ function shelveInertNodes() {
   const startY = maxY + 200;
 
   const updates = inertIds.map(function (id, i) {
+    const pos = {
+      x: Math.round(startX + (i % perRow) * COL_W),
+      y: Math.round(startY + Math.floor(i / perRow) * ROW_H)
+    };
+    INERT_POS[id] = pos;
     return {
       id: id,
-      x: Math.round(startX + (i % perRow) * COL_W),
-      y: Math.round(startY + Math.floor(i / perRow) * ROW_H),
+      x: pos.x,
+      y: pos.y,
       // Pinned, so a later drag of a connected node cannot drag the shelf out
       // of shape, and so re-enabling physics would not scatter them again.
-      fixed: { x: true, y: true }
+      fixed: { x: true, y: true },
+      physics: false
     };
   });
   nodes.update(updates);
@@ -2652,6 +2678,14 @@ function applyFilters() {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
     ids[focusId] = true;
+  } else if (kindVal !== 'all') {
+    // Narrowing the relationship must narrow the NODES too, not just the lines.
+    // Without this, "External systems only" kept drawing all 288 nodes and hid
+    // every edge that was not a dependency, so a handful of real clusters sat in
+    // a field of 250 unconnected dots. It looked like the filter was broken; it
+    // was drawing exactly what it was told to.
+    ids = {};
+    pool.forEach(function (e) { ids[e.from] = true; ids[e.to] = true; });
   }
 
   let roleByDevice = null;
