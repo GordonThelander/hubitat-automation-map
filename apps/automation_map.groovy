@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.7.0'
+@Field static final String APP_VERSION = '1.7.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1954,6 +1954,10 @@ String buildMapHtml() {
   .sw-square { border-radius:2px; }
   .sw-diamond { width:10px; height:10px; border-radius:1px; transform:rotate(45deg); margin:1px 9px 1px 1px; }
   .sw-outline { background:#2b2b2b; border:2px solid #e8a33d; box-sizing:border-box; }
+  /* Deliberately not a variant of sw-outline. A deleted target and an unscanned
+     rule are different findings, and sharing a style is what made them
+     indistinguishable on the map in the first place. */
+  .sw-missing { background:#2b2b2b; border:2px solid #d9534f; box-sizing:border-box; }
   /* Dash patterns drawn to match the canvas. border-top-style has no dash-dot,
      which is why pause/resume used to look identical to stops in the legend.
      These variants take their colour from the row's inline color, not from
@@ -2015,6 +2019,7 @@ String buildMapHtml() {
   <div id="legend-body">
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
+  <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
   <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - grey with no app focused</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
@@ -2174,6 +2179,12 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // because it touches none of the selected devices. Outlined rather than
   // filled so it does not look like a fully mapped app.
   if (n.unscanned) color = { background: '#2b2b2b', border: '#e8a33d' };
+  // A target id that no longer resolves to anything. buildGraph sets missing
+  // alongside unscanned, because a deleted rule is by definition also one the
+  // scan never reached, so this must be tested AFTER unscanned to win. Red
+  // rather than orange: it is the same finding Insights reports under "Broken
+  // rule references", and it is not an app at all any more.
+  if (n.missing) color = { background: '#2b2b2b', border: '#d9534f' };
   // External systems get their own shape as well as their own colour, because
   // they are the only nodes on the map that nobody measured.
   let shape = 'dot';
