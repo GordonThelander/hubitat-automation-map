@@ -14,10 +14,14 @@
 # Legitimate backslashes, whitelisted below:
 #   ~/^https?:\/\/.../   the URL pattern constant (a Groovy slashy regex)
 #   /\([^)]*\)/          condition-cleanup regexes (Groovy source, not template)
-#   /\s+/                    "
+#   /\s+/                    "  (Groovy-side use, via replaceAll)
 #   <\\/script>          escaping a closing script tag inside the JSON blob
 #   """\                 an opening line continuation
 #   join('\\n')          an intentionally double-escaped newline
+#   [",\\n]              a CSV-escaping regex's own double-escaped newline -
+#                         same reasoning as join('\\n'), different call site
+#   replace(/\\s+/g,     JS-side whitespace regex (CSV filename sanitising) -
+#                         \s+ alone here would be Groovy's, not the browser's
 #
 # Usage: ./check_template.sh apps/automation_map.groovy
 set -euo pipefail
@@ -30,6 +34,8 @@ BAD=$(grep -n '\\' "$FILE" \
   | grep -v '<\\\\/script>' \
   | grep -v '"""\\$' \
   | grep -v "join('\\\\\\\\n')" \
+  | grep -v '\[",\\\\n\]' \
+  | grep -v 'replace(/\\\\s+/g' \
   || true)
 
 if [ -n "$BAD" ]; then
