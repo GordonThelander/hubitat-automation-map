@@ -645,3 +645,36 @@ Cross-checked against the current `dev` source rather than taken on the document
 **The generalizable method, worth reusing deliberately:** someone else's reverse-engineering of the same undocumented platform is a source of candidate hypotheses, never a source of facts about this hub. Each claim here was checked against the live `statusJson` shape before being accepted. `privateF` is credible because a community thread showed it being hit in practice, not because the code looks plausible. That standard is what makes it worth adopting, and it applies equally to any future outside source, including the HPM manifest crawl.
 
 No code changed as part of this review. See the priority table above for sequencing when implementation starts.
+
+---
+
+### Gate results, measured 2026-08-14
+
+Both items gated in the section above were tested against the live hub on firmware
+2.5.1.147. No code was changed.
+
+**`/hub2/appsList` gate: PASSED.** The gate was "verify a Rule Function actually has its own
+installed-app id on this hub before treating this as the fix for device-less automation
+discovery". It does. `_Testy Function` is installed app 2973, `type` of `Rule-5.1`,
+indistinguishable in the listing from any other rule, present in `/hub2/appsList` and absent
+from the device-led scan. The endpoint returns 89 apps against 74 found by walking devices,
+and carries `appTypeId` and `disabled` per app without a second request.
+
+Two qualifications that should shape how it is adopted:
+
+- It is a supplement, not a replacement. It reports that an app exists, never which devices
+  it touches, so device-led discovery still does the work it does today.
+- On this hub the union found **no rule links** the device-led scan had missed, because
+  every rule that acts on another rule happened to be reachable through devices. What it
+  buys here is the guarantee and the device-less apps. The guarantee is not nothing, given
+  `appsUsingForDialog` once hid 12 of 74 apps.
+
+The free `appTypeId` is worth noting against the integration registry item in BACKLOG.md,
+whose recorded blocker was that the scanner stores only `label` and `type` per app.
+
+**`valFunction` gate: NOT PASSED, no fixture.** Every rule-typed app on the hub was
+enumerated and searched: zero instances of `valFunction`, and likewise zero of `ruleActMain`
+and `privateF`, which are already handled defensively as aliases. Nothing here confirms or
+refutes the claim, so it stays gated exactly as written. This is the same standard applied
+to the rest of that analysis: another project's source is a source of hypotheses, not facts
+about this hub.
