@@ -2295,7 +2295,11 @@ String buildMapHtml() {
   #flow a:hover { text-decoration:underline; }
   /* Above the title, where a back affordance is looked for, and clear of the
      close button in the same corner. */
-  #flowBack { font-size:0.8em; margin:0 0 6px 0; padding-right:20px; }
+  #flowBack { font-size:0.8em; margin:0 0 6px 0; padding-right:20px; display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  /* A link, not a button, so it reads as part of the same breadcrumb line
+     rather than a separate control competing for attention. */
+  #flowExit { color:#7fb8d4; cursor:pointer; text-decoration:none; white-space:nowrap; }
+  #flowExit:hover { text-decoration:underline; }
   #flow ul { margin:4px 0 10px 0; padding-left:18px; }
   #flow li { margin:2px 0; font-size:0.85em; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
@@ -2400,6 +2404,7 @@ String buildMapHtml() {
   <button id="resetBtn" type="button">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
+  <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
@@ -3630,18 +3635,44 @@ function currentFocus() {
   return null;
 }
 
+// Return to the unfiltered whole map in one step, regardless of how many
+// levels deep a click-through session has gone. "Back" only ever undoes one
+// step at a time, which is right for retracing a path but wrong for
+// abandoning it - reported after drilling app -> device -> another app and
+// having to click Back three times just to get out.
+//
+// Shared by the panel's Exit link and the top-right "Show all" button, which
+// did this exact reset already; Exit is the same action, reachable from where
+// the problem actually is instead of from a button that may be off screen.
+function exitToWholeMap() {
+  appSelect.value = '__all__';
+  deviceSelect.value = '__all__';
+  document.getElementById('kindFilter').value = 'all';
+  flowPanel.style.display = 'none';
+  // A deliberate return to the top, not a step back, so the trail a Back
+  // link would otherwise offer is stale by definition.
+  focusTrail = [];
+  renderBackLink();
+  applyFilters();
+}
+
 function renderBackLink() {
   const bar = document.getElementById('flowBack');
   if (!bar) return;
   if (!focusTrail.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
   const prev = focusTrail[focusTrail.length - 1];
-  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + focusLabel(prev) + '</a>';
-  bar.style.display = 'block';
+  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + focusLabel(prev) + '</a>' +
+    '<a href="#" id="flowExit">Exit to whole map</a>';
+  bar.style.display = 'flex';
   document.getElementById('flowBackLink').addEventListener('click', function (ev) {
     ev.preventDefault();
     // Goes through history so the button and browser Back cannot disagree
     // about where the trail is.
     history.back();
+  });
+  document.getElementById('flowExit').addEventListener('click', function (ev) {
+    ev.preventDefault();
+    exitToWholeMap();
   });
 }
 
@@ -3725,15 +3756,14 @@ deviceSelect.addEventListener('change', function () {
 });
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 document.getElementById('resetBtn').addEventListener('click', function () {
-  appSelect.value = '__all__';
-  deviceSelect.value = '__all__';
-  document.getElementById('kindFilter').value = 'all';
-  flowPanel.style.display = 'none';
-  // Show all is a deliberate return to the top, not a step back, so the trail
-  // it would otherwise offer is stale by definition.
-  focusTrail = [];
-  renderBackLink();
-  applyFilters();
+  exitToWholeMap();
+});
+// Leaves the map entirely for this app's own settings page in the hub admin
+// UI - a different action from Exit to whole map, which stays on this page
+// and only resets the filters. app.id is filled in by Groovy at render time,
+// not read from anything the browser sends.
+document.getElementById('exitMapBtn').addEventListener('click', function () {
+  window.location.href = '/installedapp/configure/${app.id}';
 });
 </script>
 </body>
