@@ -548,6 +548,37 @@ Ordering is not the explanation: every other action of rule 1806 matches its pag
 order. Whatever `pvTF` means, it is not straightforwardly "the value set". Three consistent
 samples are not enough to justify rendering `!pvTF`, so the safe move is to show nothing.
 
+**There is a third value.** Every `getSetPrivateBoolean` action on the hub was enumerated on
+2026-08-14, 23 in total across 12 rules. `pvTF` is not a two-valued field: **[strong]**
+
+| `pvTF.<n>` | Count |
+| --- | --- |
+| `true` | 12 |
+| *(empty string)* | 9 |
+| `false` | 2 |
+
+Empty is not a missing setting. The key is present with an empty value, which is how a
+Hubitat `bool` input persists when it has never been switched on. So `''` and `false` are
+most likely the same state, and the field is closer to two-valued-with-a-default than to a
+tri-state.
+
+The population also shows the shape these actions come in. Eleven of the twelve rules hold
+**exactly two**, and in all eleven pairs the values are `true` at the earlier position and
+`''` or `false` at the later one, by `actionList` order. Nine of the eleven sit at position
+0, the very first action. That is the standard re-entry guard: block the rule at the start,
+re-arm it at the end. It is consistent with the inversion above, and it means an apparently
+odd `pvTF` is usually explained by which half of the pair you are looking at. The twelfth
+rule is the hand-built test rule, which holds a single unpaired action.
+
+Not enough to start rendering the value. It does narrow what a confirming test needs to be:
+a single rule page read for a pair whose stored values are `true` and `''`, since the `true`
+/ `false` pair is already covered by rule 1806 in the table above.
+
+**`privateF.<n>` was not observed at all.** All 23 store their target under `privateT.<n>`,
+including the two actions whose `pvTF` is `false`. **[strong]** The alias remains worth
+checking, since checking it costs nothing and missing it drops a link silently, but nothing
+on this hub demonstrates that Rule Machine ever writes it.
+
 ### 9.4 Labels carry hub-injected HTML
 
 An app's label is not clean text. Hubitat appends status markup:
