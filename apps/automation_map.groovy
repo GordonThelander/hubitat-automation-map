@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.7.2'
+@Field static final String APP_VERSION = '1.7.4'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -701,7 +701,12 @@ Map fetchAppRelationships(String appId, Map labels) {
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
 
             Map installedApp = data.installedApp as Map
-            out.label = stripTags((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
+            String rawLabel = (installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String
+            out.label = stripTags(rawLabel)
+            // Kept alongside the full label rather than replacing it: the
+            // status is real information, it just does not belong painted
+            // across the canvas. See nodeEntry for which form goes where.
+            out.drawLabel = stripStatusMarkup(rawLabel)
             out.type = installedApp?.name
 
             // Skip every instance of this app, not just the one doing the
@@ -1146,11 +1151,13 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map ev
         case 'getRuleActions':
             return 'Run Actions'
         case 'getPauseResumeRules':
-            // One action type covers both directions. pR.<n> looks like the
-            // discriminator but is empty on the only example available, which
-            // the rule page shows as a Pause, so which one it is cannot be
-            // read reliably yet. Named for the pair rather than guessing.
-            return 'Pause / Resume Rules'
+            // One action type covers both directions, discriminated by pR.<n>.
+            // Verified on one rule holding both: pR=true against a page reading
+            // "Resume Rules: Back Door Night", pR empty against "Pause Rules:
+            // Kettle button". Unlike pvTF this reads the right way round, so it
+            // is used directly rather than negated. Empty is the default, which
+            // is why an untouched action means Pause.
+            return settingValues["pR.${num}"] == 'true' ? 'Resume Rules' : 'Pause Rules'
         case 'getSetMode':
             return 'Set mode'
         case 'getOCGarage':
@@ -1256,6 +1263,24 @@ String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
+// Removes hub-injected status from an app label, CONTENT AND ALL, where
+// stripTags removes only the markup and keeps the words.
+//
+// Hubitat wraps the status it appends in a span - "Christmas Cheer <span
+// style='color:red'>(Required Expression false)</span>" - so the span is what
+// identifies it, not the English inside it. Keying on the markup rather than on
+// the text is the whole point: it holds for whatever status a future firmware
+// injects, in whatever language, and it can never eat a name the USER wrote.
+// A pattern matching a trailing parenthetical would turn "Front Walkway
+// Announce (Day)" and "(Night)" into the same node.
+String stripStatusMarkup(String s) {
+    if (!s) return s
+    // Non-greedy, so two spans in one label do not collapse into one match
+    // taking everything between them. Removing a span from the middle of a
+    // label leaves a double space behind, hence the squeeze.
+    return stripTags(s.replaceAll('<span[^>]*>.*?</span>', '')).replaceAll(' +', ' ')
+}
+
 // ===================================================================================================================
 // Graph building
 // ===================================================================================================================
@@ -1264,13 +1289,15 @@ String stripTags(String s) {
 // device-driven scan never reached. Failure is not an error - the node is still
 // drawn, just with its id for a name.
 Map fetchAppName(String appId) {
-    Map out = [label: null, type: null, missing: false]
+    Map out = [label: null, type: null, drawLabel: null, missing: false]
     try {
         httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 10]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
             Map installedApp = data.installedApp as Map
             if (installedApp?.label || installedApp?.name) {
-                out.label = stripTags((installedApp?.label ?: installedApp?.name) as String)
+                String rawLabel = (installedApp?.label ?: installedApp?.name) as String
+                out.label = stripTags(rawLabel)
+                out.drawLabel = stripStatusMarkup(rawLabel)
                 out.type = installedApp?.name
             } else {
                 // A deleted app still answers 200 here, with an empty shell
@@ -1302,17 +1329,21 @@ Map linkedRuleName(String targetId, Map appInfo, Map cache) {
     if (cache.containsKey(targetId)) return cache[targetId] as Map
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
+    String draw = target?.drawLabel as String
     boolean missing = false
     if (!label) {
         Map named = fetchAppName(targetId)
         label = named.label as String
+        draw = named.drawLabel as String
         missing = named.missing as boolean
         // Named so the user can act on it. "Rule 2328" invites a hunt for a
         // rule that is not there; saying so turns it into a finding.
         if (!label && missing) label = "Rule ${targetId} - deleted"
     }
     if (!label) label = "Rule ${targetId}"
-    Map result = [label: label, missing: missing]
+    // Falls back to the full label, which is what a scan from before drawLabel
+    // existed will have stored, and what a bare "Rule 2328" needs anyway.
+    Map result = [label: label, draw: draw ?: label, missing: missing]
     cache[targetId] = result
     return result
 }
@@ -1340,11 +1371,36 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
     return flow
 }
 
-Map nodeEntry(String id, String fullLabel, String group, String subtitle = null) {
+// Three label forms, not two, and each is drawn somewhere different:
+//
+//   label  short, drawn on the canvas with nothing focused
+//   draw   full identity, drawn on the canvas with an app focused
+//   title  everything including hub status, shown only on hover
+//
+// draw exists because Hubitat injects live status into an app's label, and on
+// a focused map that status was the widest thing on screen and identical on
+// every node, so long names overwrote each other while carrying no information
+// that told them apart. The status is still one hover away.
+//
+// drawLabel defaults to fullLabel, so a caller with nothing to strip - every
+// device, and any app the hub has not annotated - passes one argument as before
+// and gets identical output.
+Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null) {
     String label = fullLabel ?: id
-    String shortLabel = label
+    String clean = drawLabel ?: label
+    // Truncation runs on the cleaned text, so a name that is short in its own
+    // right survives whole. "Christmas Cheer" was reaching this as "Christmas
+    // Cheer (Required Expression false)" and being cut to "Christmas Cheer
+    // (Requi…", which is longer, uglier and no more informative.
+    String shortLabel = clean
     if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
-    return [id: id, label: shortLabel, title: subtitle ? "${label} (${subtitle})" : label, group: group]
+    return [
+        id: id,
+        label: shortLabel,
+        draw: subtitle ? "${clean} (${subtitle})" : clean,
+        title: subtitle ? "${label} (${subtitle})" : label,
+        group: group,
+    ]
 }
 
 Map buildGraph() {
@@ -1368,7 +1424,12 @@ Map buildGraph() {
 
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
-        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', appMap.type as String)
+        // [paused] is this app's own annotation, not the hub's, so it belongs on
+        // the drawn label too. drawLabel is absent from a scan taken before it
+        // existed, hence the fallback rather than a forced rescan.
+        String appDraw = (appMap.drawLabel ?: appMap.label) as String
+        if (appMap.inactive) appDraw = "${appDraw} [paused]"
+        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', appMap.type as String, appDraw)
         if (appMap.inactive) nodes[appNodeId].inactive = true
         // Flows come from appInfo during a scan, and from the previously built
         // graph on a rebuild - see finishScan, which strips them from appInfo
@@ -1425,7 +1486,7 @@ Map buildGraph() {
                 // to a label that already says deleted. That label is the only
                 // name this node will ever have, so it carries the fact alone.
                 String subtitle = named.missing ? null : (target?.type ?: 'not scanned') as String
-                nodes[toId] = nodeEntry(toId, named.label as String, 'app', subtitle)
+                nodes[toId] = nodeEntry(toId, named.label as String, 'app', subtitle, named.draw as String)
                 if (!target) nodes[toId].unscanned = true
                 // Distinct from unscanned: unscanned is a real app the scan
                 // never reached, missing is an id that no longer resolves to
@@ -2042,7 +2103,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
-  <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses or resumes another rule (not yet distinguishable)</div>
+  <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses or resumes another rule (focus the rule to see which)</div>
   <div class="legend-row"><span class="line ln-pat ln-thick" style="border-color:#cfd8dc; background:repeating-linear-gradient(to right,#cfd8dc 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time</div>
   <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
@@ -2200,10 +2261,19 @@ function styledNode(n, useFullLabel, roleByDevice) {
   if (n.group === 'app') shape = 'square';
   else if (n.group === 'external') shape = 'diamond';
   const styled = {
-    id: n.id, label: useFullLabel ? n.title : n.label, title: n.title, color: color,
+    // n.draw is the full identity without the hub's live status; n.title keeps
+    // the status and is what the hover tooltip shows. The fallback matters: a
+    // graph cached before draw existed has only title, and rendering undefined
+    // would blank every label on the map rather than fail visibly.
+    id: n.id, label: useFullLabel ? (n.draw || n.title) : n.label, title: n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
-    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 }
+    // maxWdt wraps a long label over several lines instead of drawing one wide
+    // ribbon of text. vis.js does no label collision avoidance at all, so width
+    // is the only lever there is: on a crowded sector three long names were
+    // painting straight through each other. 160px is a little under the arc
+    // spacing sectorLayout uses at its tightest.
+    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4, maxWdt: 160 }
   };
   // Heavier, so an external system shared by several apps holds its position
   // instead of being dragged about by whichever app pulls hardest.

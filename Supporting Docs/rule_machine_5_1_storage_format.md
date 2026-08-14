@@ -660,12 +660,28 @@ rather than evidence of absence: a discriminator may well exist in a field not e
 In practice this does not matter for reading the link, since the target id resolves either
 way. It matters if you want to label the two differently.
 
-### 10.2 Pause/Resume discriminator not established
+### 10.2 Pause/Resume discriminator: `pR.<n>`
 
-Both use `getPauseResumeRules`. A setting `pR.<n>` looks like the discriminator but was
-empty on the only available example, which the rule page displayed as a Pause. **[single]**
+**Settled 2026-08-14.** Both use `getPauseResumeRules`, discriminated by `pR.<n>`:
+**[strong]**
 
-One rule containing a Resume action would settle it.
+| `pR.<n>` | Rule page shows |
+| --- | --- |
+| `true` | **Resume** Rules |
+| *(empty)* | **Pause** Rules |
+
+Measured on one rule holding both, so engine version, firmware and rule are all held
+constant across the pair. Rule 2972 action 8 stores `pR=true` against a page reading
+"Resume Rules: Back Door Night", and action 6 stores an empty string against "Pause Rules:
+Kettle button".
+
+Note that this reads the right way round, unlike `pvTF` in 9.3, which is inverted. Two
+booleans on the same family of actions, stored with opposite polarity. Do not assume one
+from the other.
+
+Empty behaves as the default here too, as it does for `pvTF`: it is a present key with an
+empty value rather than a missing key, which is how a Hubitat `bool` input persists when it
+has never been switched on. So an action left untouched is a Pause.
 
 ### 10.3 `eventSubscriptions` is a snapshot, not a definition
 
