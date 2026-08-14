@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.6'
+@Field static final String APP_VERSION = '1.8.7'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -270,7 +270,10 @@ function amStartScan() {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' from the hub - the access token may be invalid or OAuth disabled for this app.');
       return r.json();
     })
-    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
+    .then(function (d) {
+      if (d && d.ok === false) throw new Error(d.error || 'the hub reported a failure with no detail.');
+      m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000);
+    })
     .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
 }
 ${autoScanScript()}
@@ -2270,8 +2273,23 @@ String externalsJson() {
 
 // Starting a scan from a URL rather than only from the page button, so a stalled
 // scan can be restarted (and diagnosed) without sitting in the app UI.
+//
+// startScan() ran unguarded here. Hubitat's own OAuth mapping layer renders an
+// UNCAUGHT exception as an HTML error page - sometimes with a 200 status, which
+// is what let this slip past the client-side r.ok check added for the same bug:
+// the browser correctly parsed the response as "successful", then choked trying
+// to read HTML as JSON, and the resulting SyntaxError was indistinguishable from
+// the original report. Whatever throws inside startScan() on a given hub, this
+// mapping must always answer with real JSON so the client has something to show
+// instead of a raw parser error.
 Map scanMapping() {
-    startScan()
+    try {
+        startScan()
+    } catch (Exception ex) {
+        log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
+        return render(status: 200, contentType: 'application/json',
+            data: [ok: false, error: "${ex.message}"])
+    }
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
