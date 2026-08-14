@@ -2901,7 +2901,9 @@ const network = new vis.Network(document.getElementById('network'), { nodes: nod
 let shelfDivider = null;
 
 function shelveInertNodes() {
-  const inertIds = ALL_NODES.filter(function (n) { return n.inert; }).map(function (n) { return n.id; });
+  const inertIds = ALL_NODES.filter(function (n) { return n.inert; })
+    .sort(function (a, b) { return a.title.localeCompare(b.title); })
+    .map(function (n) { return n.id; });
   if (!inertIds.length) return;
 
   const positions = network.getPositions();
