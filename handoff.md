@@ -729,3 +729,87 @@ platform incompatible
 ```
 
 The current P1 defects still collapse some of the last three states into an apparently valid absence. Fix those before promotion. The P2 items can then be addressed according to whether the next target is a public 1.8.x release or further private dev testing.
+
+---
+
+## JimB scan-start failure reassessment - 2026-08-15
+
+### Evidence now available
+
+JimB reproduced the same scan-start failure on a C-8 running Hubitat 2.5.1.152 after installing Dev 1.8.7. He reports the same result in Edge and is running the hub UI on a Pixel Tablet. The browser still reports:
+
+```text
+Could not start the scan: Unexpected token '<', "<!DOCTYPE" ... is not valid JSON
+```
+
+The unchanged parser error across 1.8.6 and 1.8.7 is now more informative than the original symptom. Dev 1.8.7 wraps `startScan()` in `scanMapping()` and is intended to return JSON even when scan startup throws. If the browser were reaching that handler and receiving the intended response shape, a startup exception should now appear as a real error string rather than the same `<!DOCTYPE` parse failure.
+
+### Re-ranked causes
+
+| Rank | Cause | Assessment |
+|---|---|---|
+| 1 | OAuth/access-token or Hub Login Security path | Highest probability. The scan request deliberately uses `credentials: 'omit'`, so it does not send the Hubitat admin-session cookie. It depends entirely on the app endpoint and access token. A rejected or redirected API request can therefore produce Hubitat HTML instead of JSON |
+| 2 | 1.8.7 catch/render path is not as closed as assumed | Plausible. The failure branch passes a Groovy `Map` to `render(data: ...)`, while the success/status path already passes serialised JSON. If Hubitat does not serialise that map on this path as expected, the catch itself may still escape into a platform-generated HTML error page. Treat this as an implementation risk until tested, not as a proven root cause |
+| 3 | Host/origin/addressing mismatch | Still credible, especially if the hub UI was opened by hostname/HTTPS/remote URL while `fullLocalApiServerUrl` resolves to another origin. The browser is demonstrably receiving a document, so wrong-route/redirect behaviour is more plausible than simple packet loss |
+| 4 | Pixel/Android network environment | Possible but secondary. Edge reproducing the same result reduces the probability of a browser-engine/cache problem. A VPN, Private DNS, content filter or tablet-specific route is still possible |
+| 5 | `startScan()` itself | Now lower probability. If `scanMapping()` is reached and its catch successfully serialises JSON, a `startScan()` exception should be surfaced rather than generating the unchanged `DOCTYPE` error |
+| 6 | General C-8/2.5.1.152 incompatibility | Low on current evidence. The failure signature is at the HTTP/response boundary before there is evidence of scan logic executing |
+
+### Important correction to the 1.8.7 assumption
+
+Do **not** infer from the unchanged 1.8.7 error that `scanMapping()` definitely was never entered. The new catch branch itself has not yet been proven to return JSON on the failing hub. Its current shape is:
+
+```groovy
+return render(status: 200, contentType: 'application/json',
+    data: [ok: false, error: "${ex.message}"])
+```
+
+whereas the normal status path returns an explicit `JsonOutput.toJson(...)` string. The safe hardening is to serialise the failure response explicitly too:
+
+```groovy
+return render(
+    status: 200,
+    contentType: 'application/json',
+    data: JsonOutput.toJson([
+        ok: false,
+        error: "${ex.class.simpleName}: ${ex.message}"
+    ])
+)
+```
+
+This removes one remaining ambiguity from the server side.
+
+### Diagnostic change recommended before more speculative fixes
+
+Temporarily stop calling `r.json()` directly in `amStartScan()`. Read the response as text first and report the transport evidence before attempting JSON parsing:
+
+```text
+HTTP status
+final response URL
+Content-Type
+first ~200 characters of response body
+```
+
+That immediately separates the major cases:
+
+| Body/metadata observed | Likely interpretation |
+|---|---|
+| Hubitat login page | OAuth/token/Hub Login Security |
+| Normal Hubitat admin shell | Wrong endpoint or redirect |
+| Hubitat exception/error page | Handler was reached but failed while executing/rendering |
+| Router/security/filter page | Client/network path issue |
+| Real JSON | Client parser/response handling issue rather than endpoint routing |
+
+This is a better next move than another blind server-side patch because the current error has already survived two versions without changing.
+
+### Minimum test matrix for JimB
+
+1. Confirm whether the Production 1.2 instance still scans successfully **from the same Pixel Tablet**.
+2. Run Dev 1.8.7 from a laptop on the same Wi-Fi.
+3. Capture the response metadata/body prefix from the `/scan` request using the temporary text-first diagnostic.
+4. Check Hubitat logs in a separate tab while triggering the scan.
+5. If the Production instance works on the Pixel while Dev fails, move OAuth/token configuration for the Dev app to the top of the investigation and largely deprioritise the tablet itself.
+
+### Current synthesis
+
+The strongest working model is now an **endpoint/authentication/response-boundary failure**, not a scan-engine failure. The scan button intentionally strips the Hubitat session cookie and relies on an OAuth access token, which makes OAuth/HLS behaviour the first place to look. However, 1.8.7 still contains enough uncertainty in its catch/render path that the identical `DOCTYPE` error cannot yet prove the handler was bypassed. Explicit JSON serialisation plus text-first client diagnostics should be the next change because together they make the next reproduction decisive rather than merely different.
