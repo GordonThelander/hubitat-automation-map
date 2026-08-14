@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.7.1'
+@Field static final String APP_VERSION = '1.7.2'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1114,15 +1114,18 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map ev
             String msg = settingValues["msg.${num}"]
             return msg ? "Notify: ${msg}" : 'Notify'
         case 'getSetPrivateBoolean':
-            // Deliberately does NOT show the true/false value. pvTF.<n> looks
-            // like it holds it, but reads inverted against the rule page: on
-            // rule 1806 action 31 is second in actionList with pvTF=true while
-            // the rule shows "Rule Boolean False" there, and action 33 is last
-            // with pvTF=false against a displayed "Rule Boolean True". Every
-            // other step of that rule matches order exactly, so the ordering is
-            // right and this field means something other than the value set.
-            // Better silent than confidently backwards.
-            return 'Set Private Boolean'
+            // pvTF.<n> holds the INVERSE of the value the rule page shows, and
+            // an empty value counts as false. Verified against four rule pages
+            // covering both stored forms: rule 1806 actions 31/33 (pvTF true
+            // then false) and rule 1999 actions 8/7 (pvTF true then empty), each
+            // displaying False then True in that order.
+            //
+            // The empty case is why this was shown as a bare 'Set Private
+            // Boolean' until now. Nine of the 23 such actions on the test hub
+            // store an empty string rather than 'false', which is how a Hubitat
+            // bool input persists when it has never been switched on, so
+            // defaulting to false here is what makes the negation total.
+            return "Set Private Boolean ${settingValues["pvTF.${num}"] == 'true' ? 'False' : 'True'}"
         case 'getDefinedAction':
             return 'Run defined actions'
         case 'getSetVolume':
@@ -1416,7 +1419,13 @@ Map buildGraph() {
                 // Worth the lookup when the scan missed it: the alternative is
                 // a node reading "Rule 1845", which tells the user nothing.
                 Map named = linkedRuleName(targetId, appInfo, nameCache)
-                nodes[toId] = nodeEntry(toId, named.label as String, 'app', (target?.type ?: 'not scanned') as String)
+                // A deleted target gets no subtitle. Every other node uses it
+                // for the engine, which a deleted rule no longer reports, and
+                // "not scanned" is both redundant and self-contradictory next
+                // to a label that already says deleted. That label is the only
+                // name this node will ever have, so it carries the fact alone.
+                String subtitle = named.missing ? null : (target?.type ?: 'not scanned') as String
+                nodes[toId] = nodeEntry(toId, named.label as String, 'app', subtitle)
                 if (!target) nodes[toId].unscanned = true
                 // Distinct from unscanned: unscanned is a real app the scan
                 // never reached, missing is an id that no longer resolves to

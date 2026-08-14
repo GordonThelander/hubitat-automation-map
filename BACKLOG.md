@@ -237,16 +237,33 @@ auto-detection.
 
 ### Open questions from the delivered work
 
-Both found while building 1.3.3, both currently handled by showing less rather than
-guessing. Neither blocks anything.
+Both found while building 1.3.3, both handled by showing less rather than guessing. Neither
+blocks anything. Both are tracked in full under the Rule Machine 5.1 documentation item
+above, which is the canonical record for anything learned about the storage format.
 
-Both are tracked in full under the Rule Machine 5.1 documentation item above, which is the
-canonical record for anything learned about the storage format. In brief:
+- **`pvTF.<n>` reads inverted.** **Closed 2026-08-14, shipped in dev 1.7.2.** Rule 1999
+  "Barking" supplied the missing case, a pair storing `true` and an empty string, and its
+  page shows False then True. The rendered value is `!pvTF` with empty counting as false.
+  Flow steps now read "Set Private Boolean True" or "... False" instead of a bare
+  "Set Private Boolean".
+- **Pause and Resume cannot be told apart.** Still open. Both use `getPauseResumeRules` and
+  render as "Pause / Resume Rules". `pR.<n>` is the likely discriminator and was empty on
+  the only available example, which its page showed as a Pause. One rule containing a
+  **Resume** action would settle it, and `_Testy` is already set up to be that rule.
 
-- **`pvTF.<n>` reads inverted** against the rule page in all three observed cases, so the
-  value is not shown at all rather than shown backwards.
-- **Pause and Resume cannot be told apart.** Both use `getPauseResumeRules` and render as
-  "Pause / Resume Rules". One rule containing a Resume action would settle it.
+### Focused-view label collision (open, low priority)
+
+Found 2026-08-14 while checking the rule-link work. Focusing an app draws every node's FULL
+title at a fixed position, so two nodes close together overwrite each other's text and
+neither is readable. Seen on `_Testy` with "Barking (Required Expression false) (Rule-5.1)"
+and "Christmas Cheer (Required Expression false) (Rule-5.1)", which are long titles on
+adjacent nodes.
+
+vis.js does no label collision avoidance, so this is a design choice rather than a bug to
+patch. The options are to keep the truncated label in the focused view and put the full
+title in the hover tooltip only, to strip the hub's "(Required Expression false)" suffix
+from the drawn label since it is runtime state rather than identity, or to accept it. Not
+worth a quick coordinate nudge, which would only move the overlap somewhere else.
 
 ### Honest limitation, already documented in the README
 

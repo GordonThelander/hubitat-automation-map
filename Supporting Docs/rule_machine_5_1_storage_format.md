@@ -543,10 +543,29 @@ backwards against the rule page in every observed case:
 | 1806 | 31 | second | `true` | Rule Boolean **False** |
 | 1806 | 33 | last | `false` | Rule Boolean **True** |
 | 2972 | 7 | sixth | `true` | Rule Boolean **False** |
+| 1999 | 8 | third | `true` | Rule Boolean **False** |
+| 1999 | 7 | last | *(empty)* | Rule Boolean **True** |
 
 Ordering is not the explanation: every other action of rule 1806 matches its page exactly in
-order. Whatever `pvTF` means, it is not straightforwardly "the value set". Three consistent
-samples are not enough to justify rendering `!pvTF`, so the safe move is to show nothing.
+order. Whatever `pvTF` means, it is not straightforwardly "the value set".
+
+**Settled 2026-08-14.** The last two rows are rule 1999 "Barking", read off its page
+directly, and they are the case the first three did not cover: a pair storing `true` and an
+empty string. The page shows **False** then **True**, in that order. So: **[strong]**
+
+> The value the rule page shows is the negation of `pvTF`, with an empty value counting as
+> false. `true` renders as False; `false` and `''` both render as True.
+
+That is now verified against four rule pages spanning both stored forms of the pair, which
+is enough to render it. Earlier revisions of this document recommended showing nothing, on
+three samples that all happened to be the `true` half. The remaining doubt was never about
+the inversion, it was about whether the empty string was a third state; it is not.
+
+Worth keeping in mind when reading a rule page to check any of this: the `(true)` printed
+immediately after the words "Private Boolean" is the CURRENT value of the rule's own boolean,
+not the value the action writes. The written value is the bare word at the end of the line.
+Two different things sit on one line, which is most of why this field looked incoherent for
+so long.
 
 **There is a third value.** Every `getSetPrivateBoolean` action on the hub was enumerated on
 2026-08-14, 23 in total across 12 rules. `pvTF` is not a two-valued field: **[strong]**
