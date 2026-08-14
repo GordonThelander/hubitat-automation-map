@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.0'
+@Field static final String APP_VERSION = '1.8.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -312,6 +312,15 @@ String compatibilitySummary() {
         s << " ${listed} of them reference no device and would not have been found by walking devices alone."
     }
 
+    // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
+    // and said nothing about the difference, so the summary, the Focus app list
+    // and the map itself disagreed with each other. They are reconciled here
+    // rather than by quietly reporting the smaller number.
+    int inert = (state.appsInert ?: 0) as Integer
+    if (inert > 0) {
+        s << " ${inert} touch no device and link to no rule; they are drawn apart from the network, each labelled with why."
+    }
+
     int links = (state.ruleLinks ?: 0) as Integer
     if (links > 0) {
         s << " Found ${links} rule-to-rule link(s)."
@@ -365,6 +374,7 @@ void startScan() {
     state.rulesSkipped = 0
     state.ruleLinks = 0
     state.appsFromListing = 0
+    state.appsInert = 0
     state.otherEngines = []
     state.scanQueue = fetchAllDeviceIds()
     state.scanTotal = (state.scanQueue as List).size()
@@ -648,6 +658,15 @@ void finishScan() {
         if (RULE_LINK_KIND_NAMES.contains(kind)) links++
     }
     state.ruleLinks = links
+
+    // Counted off the built graph rather than off appInfo, so the summary can
+    // only ever describe nodes that are really on the map.
+    int inertCount = 0
+    ((graph.nodes ?: []) as List).each { n ->
+        if ((n as Map).inert == true) inertCount++
+    }
+    state.appsInert = inertCount
+
     log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
 }
 
@@ -880,6 +899,33 @@ Map fetchAppRelationships(String appId, Map labels) {
             out.flow = buildRuleFlow(data)
             out.ruleLinks = extractRuleLinks(data, appId)
             out.endpoints = extractRuleEndpoints(data)
+
+            // An app with no devices, no rule links and no endpoints used to be
+            // dropped silently, which was defensible while device-led discovery
+            // meant it was never found in the first place. Now that every
+            // installed app is enumerated, dropping it makes the app report a
+            // count it does not show, so it gets drawn instead - and a square
+            // with nothing attached needs to say why it is empty.
+            //
+            // Captured only for those apps. On this hub that is 13 of 88, so
+            // attaching it unconditionally would put four fields on 75 apps
+            // that will never read them, and state size has killed a scan here
+            // before.
+            //
+            // All four come from the response already in hand. No extra call.
+            if (!roles && !out.ruleLinks && !out.endpoints) {
+                String parentId = installedApp?.parentAppId != null ? "${installedApp.parentAppId}" : null
+                out.inert = [
+                    kids  : (data.childAppCount ?: 0) as Integer,
+                    devs  : (data.childDeviceCount ?: 0) as Integer,
+                    // countOf rather than a cast: scheduledJobs has been seen as
+                    // both a list and a map, and casting the wrong one throws
+                    // inside the scan loop.
+                    sched : countOf(data.scheduledJobs),
+                    subs  : countOf(data.eventSubscriptions),
+                    parent: parentId,
+                ]
+            }
         }
     } catch (Exception ex) {
         out.error = ex.message
@@ -1356,6 +1402,14 @@ String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
+// Size of a hub collection whose shape is not guaranteed. Anything else,
+// including null and a bare value, counts as zero rather than throwing.
+int countOf(def v) {
+    if (v instanceof List) return (v as List).size()
+    if (v instanceof Map) return (v as Map).size()
+    return 0
+}
+
 // Removes hub-injected status from an app label, CONTENT AND ALL, where
 // stripTags removes only the markup and keeps the words.
 //
@@ -1496,6 +1550,41 @@ Map nodeEntry(String id, String fullLabel, String group, String subtitle = null,
     ]
 }
 
+// Why an app with no device, no rule link and no endpoint is on the map anyway.
+//
+// Ordered by how completely each fact explains the emptiness. A container is
+// fully explained by its children and nothing else needs saying. A schedule
+// explains an app that acts on the hub rather than on devices, which is exactly
+// what Rebooter does. Falling all the way through is itself the answer, and the
+// only one of these worth a second look.
+String inertReason(Map inert, Map appInfo) {
+    if (!inert) return 'no relationships found'
+
+    int kids = (inert.kids ?: 0) as Integer
+    if (kids > 0) return "holds ${kids} app${kids == 1 ? '' : 's'}"
+
+    int devs = (inert.devs ?: 0) as Integer
+    if (devs > 0) return "owns ${devs} device${devs == 1 ? '' : 's'}"
+
+    int sched = (inert.sched ?: 0) as Integer
+    if (sched > 0) return "runs on a schedule, ${sched} job${sched == 1 ? '' : 's'}"
+
+    int subs = (inert.subs ?: 0) as Integer
+    if (subs > 0) return "listens to ${subs} event${subs == 1 ? '' : 's'}"
+
+    // Last, because being someone's child explains where an app came from but
+    // not what it does. A button rule under a Button Controller is still an
+    // app that references nothing this map can see.
+    String parent = inert.parent as String
+    if (parent) {
+        Map p = appInfo[parent] as Map
+        String name = (p?.drawLabel ?: p?.label) as String
+        if (name) return "child of ${name}"
+    }
+
+    return 'references nothing'
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
@@ -1513,7 +1602,18 @@ Map buildGraph() {
         Map roles = (appMap.roles ?: [:]) as Map
         // A rule whose only relationship is to another rule has no device roles
         // at all, and used to be dropped here before it could be drawn.
-        if (!roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: [])) return
+        //
+        // An app with nothing at all is no longer dropped either. It used to be,
+        // back when device-led discovery meant such an app was never found - but
+        // once the scan enumerates every installed app, silently dropping 13 of
+        // them makes the summary claim a count the map does not show, and leaves
+        // the Focus app list disagreeing with both. Drawn with a reason instead.
+        boolean inert = !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: [])
+        // This app's own instances are the one exception, and stay hidden. They
+        // are excluded from the graph deliberately, so drawing them as apps that
+        // reference nothing would be actively misleading: they reference the
+        // whole hub.
+        if (inert && "${appMap.type}".startsWith(APP_FAMILY)) return
 
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
@@ -1522,8 +1622,20 @@ Map buildGraph() {
         // existed, hence the fallback rather than a forced rescan.
         String appDraw = (appMap.drawLabel ?: appMap.label) as String
         if (appMap.inactive) appDraw = "${appDraw} [paused]"
-        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', appMap.type as String, appDraw)
+        // An inert app's subtitle carries why it is empty instead of its engine.
+        // The engine is the less useful of the two here: "Rule Machine" on a
+        // square with no edges raises the question, "holds 46 apps" answers it.
+        String subtitle = inert ? inertReason(appMap.inert as Map, appInfo) : (appMap.type as String)
+        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
         if (appMap.inactive) nodes[appNodeId].inactive = true
+        if (inert) {
+            nodes[appNodeId].inert = true
+            // Carried as its own field rather than left for the page to pick
+            // back out of the title. Parsing it out would mean a regex literal
+            // inside the GString that builds the page, which is the single
+            // mistake this file has been killed by three times.
+            nodes[appNodeId].reason = subtitle
+        }
         // Flows come from appInfo during a scan, and from the previously built
         // graph on a rebuild - see finishScan, which strips them from appInfo
         // once they are here, so the same 60KB is not held twice.
@@ -2121,6 +2233,7 @@ String buildMapHtml() {
      rule are different findings, and sharing a style is what made them
      indistinguishable on the map in the first place. */
   .sw-missing { background:#2b2b2b; border:2px solid #d9534f; box-sizing:border-box; }
+  .sw-inert { background:#3d3222; border:2px dashed #e8a33d; box-sizing:border-box; }
   /* Dash patterns drawn to match the canvas. border-top-style has no dash-dot,
      which is why pause/resume used to look identical to stops in the legend.
      These variants take their colour from the row's inline color, not from
@@ -2184,6 +2297,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
   <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
+  <div class="legend-row"><span class="swatch sw-square sw-inert"></span>App with no device or rule relationship - its label says why</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - grey with no app focused</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
   <div class="note" style="margin:2px 0 6px 0">Focus an app and each device instead takes the colour of its role below, shown as both a line and the dot the device itself becomes.</div>
@@ -2348,6 +2462,10 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // rather than orange: it is the same finding Insights reports under "Broken
   // rule references", and it is not an app at all any more.
   if (n.missing) color = { background: '#2b2b2b', border: '#d9534f' };
+  // Installed, scanned, and connected to nothing the map tracks. Still an app,
+  // so it keeps the app colour, but dimmed and dashed so it does not read as a
+  // peer of the apps that actually do something. Its subtitle says why.
+  if (n.inert) color = { background: '#3d3222', border: '#e8a33d' };
   // External systems get their own shape as well as their own colour, because
   // they are the only nodes on the map that nobody measured.
   let shape = 'dot';
@@ -2374,6 +2492,14 @@ function styledNode(n, useFullLabel, roleByDevice) {
     // changed nothing on screen.
     widthConstraint: { maximum: 170 }
   };
+  // Dashed outline as well as the dimmed fill. Two signals rather than one,
+  // because the fill alone is close to the paused colour at a glance and these
+  // mean very different things: paused is an app that would do something, inert
+  // is an app that has nothing to do it to.
+  if (n.inert) {
+    styled.shapeProperties = { borderDashes: [4, 3] };
+    styled.size = 14;
+  }
   // Heavier, so an external system shared by several apps holds its position
   // instead of being dragged about by whichever app pulls hardest.
   if (n.group === 'external') styled.mass = 3;
@@ -2392,9 +2518,58 @@ const network = new vis.Network(document.getElementById('network'), { nodes: nod
   edges: { smooth: { type: 'continuous' } }
 });
 
+// A node with no edges has nothing pulling it in, so barnesHut repulsion alone
+// decides where it goes and it ends up flung to whichever margin was emptiest.
+// Thirteen of those look like debris scattered around the map.
+//
+// So they are not left to the physics. Once everything else has settled they are
+// laid out in a tidy shelf under the graph, which reads as a deliberate group of
+// apps standing apart from the network rather than as bits that drifted off.
+// Done after stabilization rather than by pinning coordinates up front, because
+// the graph's extent is not known until it has settled.
+function shelveInertNodes() {
+  const inertIds = ALL_NODES.filter(function (n) { return n.inert; }).map(function (n) { return n.id; });
+  if (!inertIds.length) return;
+
+  const positions = network.getPositions();
+  let maxY = null;
+  let minX = null;
+  let maxX = null;
+  Object.keys(positions).forEach(function (id) {
+    if (inertIds.indexOf(id) !== -1) return;
+    const p = positions[id];
+    if (maxY === null || p.y > maxY) maxY = p.y;
+    if (minX === null || p.x < minX) minX = p.x;
+    if (maxX === null || p.x > maxX) maxX = p.x;
+  });
+  // Every node on the map is inert, which can only happen on a hub where
+  // nothing references anything. Leave the physics result alone.
+  if (maxY === null) return;
+
+  const COL_W = 260;
+  const ROW_H = 90;
+  const width = Math.max(maxX - minX, COL_W);
+  const perRow = Math.max(1, Math.min(inertIds.length, Math.floor(width / COL_W)));
+  const startX = (minX + maxX) / 2 - ((perRow - 1) * COL_W) / 2;
+  const startY = maxY + 200;
+
+  const updates = inertIds.map(function (id, i) {
+    return {
+      id: id,
+      x: Math.round(startX + (i % perRow) * COL_W),
+      y: Math.round(startY + Math.floor(i / perRow) * ROW_H),
+      // Pinned, so a later drag of a connected node cannot drag the shelf out
+      // of shape, and so re-enabling physics would not scatter them again.
+      fixed: { x: true, y: true }
+    };
+  });
+  nodes.update(updates);
+}
+
 function settle() {
   network.once('stabilizationIterationsDone', function () {
     network.setOptions({ physics: { enabled: false } });
+    shelveInertNodes();
     network.fit({ animation: false });
   });
 }
@@ -2881,6 +3056,36 @@ function buildInsights() {
 
   html += '<h4>Read but never driven (' + readOnly.length + ')</h4>';
   html += '<p class="sub">Referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+
+  // Grouped by the reason rather than listed flat. Eleven containers and two
+  // genuine orphans in one alphabetical list reads as thirteen problems; split
+  // by reason it reads as one problem and twelve explanations.
+  const inertNodes = ALL_NODES.filter(function (n) { return n.inert; });
+  html += '<h4>Apps with no device or rule relationship (' + inertNodes.length + ')</h4>';
+  if (!inertNodes.length) {
+    html += '<p class="sub">Every app on the map references at least one device or rule.</p>';
+  } else {
+    html += '<p class="sub">These are installed and were read, but touch no device, link to no rule and publish no endpoint. Most are containers holding other apps, which is expected. The ones giving no reason at all are the ones worth a look.</p>';
+    const byReason = {};
+    inertNodes.forEach(function (n) {
+      const reason = n.reason || 'no reason recorded';
+      if (!byReason[reason]) byReason[reason] = [];
+      byReason[reason].push(n);
+    });
+    // "references nothing" last: it is the finding, and a finding reads better
+    // after the things that explain themselves.
+    const reasons = Object.keys(byReason).sort(function (a, b) {
+      if (a === 'references nothing') return 1;
+      if (b === 'references nothing') return -1;
+      return a.localeCompare(b);
+    });
+    html += '<ul>';
+    reasons.forEach(function (r) {
+      html += '<li><b>' + r + '</b><br><span class="sub">' +
+        byReason[r].map(function (n) { return nameOf[n.id]; }).join(' &middot; ') + '</span></li>';
+    });
+    html += '</ul>';
+  }
 
   html += '<h4>Broken rule references (' + brokenTargets.length + ')</h4>';
   if (!brokenTargets.length) {
