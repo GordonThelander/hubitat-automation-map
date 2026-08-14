@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.8.7",
+  "version": "1.8.8",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.8.7. Installs alongside the release version; your existing install is untouched.\n\nFIXED (again): the 1.8.6 fix for the raw scan-start error ('Unexpected token <, \"<!DOCTYPE\" is not valid JSON') did not actually cover every case. The endpoint the Scan button calls had no error handling at all - if starting a scan threw for any reason, Hubitat's own platform rendered an HTML error page, sometimes with a success (200) status, which slipped straight past the check added in 1.8.6. That endpoint now always answers with real JSON, success or failure, so a scan that cannot start reports why instead of crashing the page trying to read HTML as data. Reported by JimB, still failing identically on 1.8.6.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.8.8 - DIAGNOSTIC BUILD for the scan-start error reported by JimB. Installs alongside the release version; your existing install is untouched.\n\nThe Scan button no longer hides what actually answered it. Instead of parsing the response as JSON and letting the browser throw 'Unexpected token <', it now reads the raw response and reports the HTTP status, the final URL after any redirects, the content type, and the first 200 characters of the body. Those four things distinguish an expired OAuth token from a Hub Login Security page from a cloud/remote origin from the hub's own exception page - the raw parser error distinguished none of them.\n\nFIXED: the 1.8.7 error handler passed a Map to render() where every other endpoint in this app passes a serialised String. If Hubitat does not coerce that, the handler threw inside its own catch and produced the very HTML error page it existed to prevent - which would make the 1.8.7 fix invisible rather than wrong. Now serialised explicitly, and it reports the exception class as well as its message.\n\nIf you are hitting the scan error, this build should finally say why. Please post the full message.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.8.7"
+      "version": "1.8.8"
     }
   ],
   "drivers": []
