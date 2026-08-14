@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.7.0",
+  "version": "1.8.4",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.7.0. Installs alongside the release version; your existing install is untouched. RESCAN REQUIRED - the rule-link data model changed.\n\nRULE LINKS: recognises two more Rule Machine storage forms seen in community testing - ruleActMain (an alternate Run Actions target) and privateF (an alternate Private Boolean target). A rule using either was previously invisible to the graph.\n\nRENAMED for accuracy: the 'Stops' relationship is now 'Cancel timed actions', matching what the action actually does (cancels a pending Wait/Delay, not a running process). 'Pauses' is now 'Pause/resume', since the two cannot yet be told apart on this hub.\n\nINSIGHTS: a new 'Broken rule references' section lists any rule/action/pause/private-boolean target that no longer resolves to anything, and which apps still reference it.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.8.4. Installs alongside the release version; your existing install is untouched. RESCAN REQUIRED - the graph data model changed.\n\nDISCOVERY: app enumeration now unions /hub2/appsList with the existing device-led scan, so an app that touches no device (a Rule Function, a schedule-only app, a container) is no longer invisible.\n\nSuch apps are drawn instead of dropped, dimmed, and labelled with why they're empty - holds N apps, owns N devices, runs on a schedule, listens to N events, child of X, or references nothing. They sit on a fixed shelf below the main graph so they don't get pulled into the cluster by the layout physics, and can be clicked through to like any other app.\n\nRULE LINKS: recognises two more Rule Machine storage forms seen in community testing - ruleActMain (an alternate Run Actions target) and privateF (an alternate Private Boolean target).\n\nRENAMED for accuracy: 'Stops' is now 'Cancel timed actions'. Pause/Resume now shows which one occurred where the hub records it, rather than always showing both as possible.\n\nINSIGHTS: a new 'Broken rule references' section lists any target that no longer resolves to anything, and which apps still reference it.\n\nFIXED: long device/app labels no longer overwrite each other in the focused view. Added back navigation inside the map and Insights panels.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.7.0"
+      "version": "1.8.4"
     }
   ],
   "drivers": []
