@@ -25,8 +25,13 @@
  * via a self-request to 127.0.0.1 - an established community technique, not a
  * public API:
  *
- *   /device/fullJson/<id>         parentApp + appsUsingForDialog, used only to
+ *   /device/fullJson/<id>         parentApp + appsUsing (NOT appsUsingForDialog,
+ *                                 which the hub caps at five entries per device
+ *                                 with only a count of the remainder), used to
  *                                 DISCOVER which app ids exist
+ *   /hub2/appsList                the complete installed-app tree in one call,
+ *                                 unioned with device-led discovery so an app
+ *                                 that touches no device is not invisible
  *   /installedapp/statusJson/<id> the real relationship data per app:
  *                                 childDevices, eventSubscriptions, and every
  *                                 setting that resolves to devices
@@ -58,9 +63,6 @@
  * the graph; they are counted and reported rather than silently empty.
  *
  * Known limitations:
- *  - Apps are discovered via each scanned device's appsUsingForDialog list,
- *    which the hub truncates when a device is used by many apps, so an app that
- *    only ever appears in a truncated list may be missed.
  *  - Event subscriptions are a snapshot: Rule Machine drops trigger
  *    subscriptions while a Required Expression is false.
  *  - If Hub Login Security is enabled the internal endpoints may not return
@@ -77,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.4'
+@Field static final String APP_VERSION = '1.8.5'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -384,6 +386,14 @@ void startScan() {
     Map compat = probeCompatibility()
     state.compatOk = compat.ok
     state.compatDetail = compat.detail
+    // Recorded but never checked - a hub that cannot return usable statusJson
+    // was still allowed into phases that depend on that exact endpoint,
+    // rather than failing here where the cause is still known.
+    if (!compat.ok) {
+        state.scanError = "${compat.detail}"
+        state.scanRunning = false
+        return
+    }
     state.appsDecoded = 0
     state.appsUnreadable = 0
     state.rulesDecoded = 0
@@ -1686,6 +1696,14 @@ Map buildGraph() {
         String subtitle = unreadable ? 'could not be read' :
             (inert ? inertReason(appMap.inert as Map, appInfo, appMap.parent as String) : (appMap.type as String))
         nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
+        // The raw underlying type, unconditionally - subtitle above is
+        // overwritten with the inert/unreadable reason for those nodes, so it
+        // cannot be used to tell a rule apart from any other app once a node
+        // is in either of those states. Needed so a pivot table can filter to
+        // actual rules rather than "everything typed as an app", which was a
+        // rule reached only as another rule's target counted the same as
+        // LIFX Light Manager.
+        nodes[appNodeId].appType = "${appMap.type}"
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (unreadable) {
             nodes[appNodeId].unreadable = true
@@ -1842,7 +1860,13 @@ Map buildGraph() {
             List appNodeIds = (typeToApps[extType] ?: []) as List
             if (!appNodeIds) return
 
-            String extNodeId = "x${name.toLowerCase().replaceAll('[^a-z0-9]', '')}"
+            // Hex hash of the ORIGINAL name appended, not just its stripped
+            // form - "OpenWeatherMap" and "Open Weather Map" reduce to the
+            // identical stripped string and would otherwise collapse onto one
+            // node, silently merging two different systems' dependencies. The
+            // stripped prefix stays for a readable id in the raw page source;
+            // the hash is what actually guarantees no collision.
+            String extNodeId = "x${name.toLowerCase().replaceAll('[^a-z0-9]', '')}${Integer.toHexString(name.hashCode())}"
             if (!nodes[extNodeId]) {
                 String kindLabel = (EXTERNAL_KINDS["${e.kind}"] ?: 'External system') as String
                 nodes[extNodeId] = nodeEntry(extNodeId, name, 'external', kindLabel)
@@ -1876,7 +1900,11 @@ Map buildGraph() {
             if (!host || host == 'null') return
             boolean loop = (e.loopback == true)
 
-            String nodeId = "x${host.toLowerCase().replaceAll('[^a-z0-9]', '')}"
+            // Same collision-resistant shape as the declared-external-systems
+            // id above, and for the same reason: two different hosts (an IP
+            // with punctuation stripped differently, say) could otherwise
+            // reduce to the same stripped string.
+            String nodeId = "x${host.toLowerCase().replaceAll('[^a-z0-9]', '')}${Integer.toHexString(host.hashCode())}"
             if (!nodes[nodeId]) {
                 // A rule POSTing to the hub itself is worth showing, since one
                 // of them reboots it, but it is not an external system and is
@@ -1973,7 +2001,17 @@ Map buildGraph() {
 // Fields this app can evaluate. It knows an app's TYPE and nothing else about
 // its identity, so a rule on a driver name or a user mapping is not false, it
 // is unanswerable - which is a different thing and must be treated as such.
-@Field static final List<String> REGISTRY_EVALUABLE_FIELDS = ['appName', 'parentAppName']
+//
+// parentAppName is deliberately NOT here despite matching registryRuleMatches'
+// signature. Matching runs once per app TYPE across the whole hub, not per
+// installed instance, and a parent is inherently a per-instance relationship
+// - two instances of the same type can have different parents or none. No
+// single value could be threaded in here that would be correct for both.
+// Previously listed as evaluable while every rule was actually matched
+// against appType regardless of its field, so a parentAppName rule was
+// silently evaluated against the wrong datum rather than being marked
+// unanswerable. Add it back only alongside a genuine per-instance matcher.
+@Field static final List<String> REGISTRY_EVALUABLE_FIELDS = ['appName']
 
 // ===================================================================================================================
 // Endpoints a rule calls directly
@@ -2523,6 +2561,15 @@ if (typeof window.vis === 'undefined') {
 }
 </script>
 <script>
+// Gives the entry the page loaded on a real state object, not just null.
+// popstate on Back all the way to this entry would otherwise arrive with
+// event.state === null, which the popstate handler further down treats as
+// "not one of ours" and ignores - leaving the map showing whatever was last
+// focused while the browser's own position had already moved back to the
+// unfocused base entry. replaceState rather than pushState: this is the
+// entry already open, not a new one.
+try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) { }
+
 const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
@@ -2569,12 +2616,17 @@ const PIVOT_PRESETS = [
   { button: 'Rule → Rules affected', rows: 'app', cols: 'app',
     kinds: ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'],
     rowLabel: 'Rule', colLabel: 'Rules affected' },
+  // ruleRows/ruleCols: without this, "Rule -> Devices" queried every app
+  // typed as an app - LIFX Light Manager or any other integration with a
+  // device edge would show up under a heading that says Rule. appType comes
+  // from buildGraph and is checked against the Rule-<engine> prefix, not
+  // against the display label, which the inert/unreadable states overwrite.
   { button: 'Rule → Devices', rows: 'app', cols: 'device',
     kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
-    rowLabel: 'Rule', colLabel: 'Devices' },
+    rowLabel: 'Rule', colLabel: 'Devices', opts: { ruleRows: true } },
   { button: 'Device → Rules', rows: 'device', cols: 'app',
     kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
-    rowLabel: 'Device', colLabel: 'Rules' },
+    rowLabel: 'Device', colLabel: 'Rules', opts: { ruleCols: true } },
 ];
 
 // The free-form builder (option B): same underlying query, but rows, columns
@@ -2582,7 +2634,16 @@ const PIVOT_PRESETS = [
 // fixed in a preset. Built from ALL_NODES/ALL_EDGES, already fully loaded for
 // this scan - a pivot is a different arrangement of data already in the
 // browser, not a new fetch or a reason to rescan the hub.
-function pivotRows(rowGroup, colGroup, kinds) {
+// A node typed 'app' can be a Rule Machine rule or any other integration -
+// LIFX Light Manager and _System Start are both 'app' nodes. appType carries
+// the real underlying type so the two can be told apart without depending on
+// the display label, which inert/unreadable states overwrite.
+function isRuleNode(n) {
+  return !!(n && n.appType && n.appType.indexOf('Rule-') === 0);
+}
+
+function pivotRows(rowGroup, colGroup, kinds, opts) {
+  opts = opts || {};
   const byId = {};
   ALL_NODES.forEach(function (n) { byId[n.id] = n; });
 
@@ -2591,24 +2652,27 @@ function pivotRows(rowGroup, colGroup, kinds) {
     if (kinds.indexOf(e.kind) === -1) return;
     const fromNode = byId[e.from], toNode = byId[e.to];
     if (!fromNode || !toNode) return;
-    let rowId, colId, colNode;
+    let rowId, colId, rowNode, colNode;
     if (fromNode.group === rowGroup && toNode.group === colGroup) {
-      rowId = e.from; colId = e.to; colNode = toNode;
+      rowId = e.from; colId = e.to; rowNode = fromNode; colNode = toNode;
     } else if (rowGroup !== colGroup && toNode.group === rowGroup && fromNode.group === colGroup) {
       // Only taken when rows and columns differ - when they are the same
       // group (Rule x Rule) this branch would also match every edge the IF
       // above already matched, doubling each relationship into both a row and
       // its own reverse.
-      rowId = e.to; colId = e.from; colNode = fromNode;
+      rowId = e.to; colId = e.from; rowNode = toNode; colNode = fromNode;
     } else {
       return;
     }
+    if (opts.ruleRows && !isRuleNode(rowNode)) return;
+    if (opts.ruleCols && !isRuleNode(colNode)) return;
     if (!groups[rowId]) groups[rowId] = [];
     const already = groups[rowId].some(function (t) { return t.id === colId && t.kind === e.kind; });
     if (!already) groups[rowId].push({ id: colId, title: colNode.title, kind: e.kind });
   });
 
-  const typed = ALL_NODES.filter(function (n) { return n.group === rowGroup; });
+  let typed = ALL_NODES.filter(function (n) { return n.group === rowGroup; });
+  if (opts.ruleRows) typed = typed.filter(isRuleNode);
   const rows = typed.map(function (n) {
     const targets = (groups[n.id] || []).slice().sort(function (a, b) { return a.title.localeCompare(b.title); });
     return { id: n.id, title: n.title, targets: targets };
@@ -3671,7 +3735,7 @@ function pivotOpen() {
     btn.addEventListener('click', function () {
       const p = PIVOT_PRESETS[parseInt(btn.getAttribute('data-preset'), 10)];
       pivotSyncSelects(p.rows, p.cols, '__all__');
-      pivotRenderResult(pivotRows(p.rows, p.cols, p.kinds), p.rowLabel, p.colLabel);
+      pivotRenderResult(pivotRows(p.rows, p.cols, p.kinds, p.opts), p.rowLabel, p.colLabel);
     });
   });
   ['pivotRows', 'pivotCols', 'pivotKind'].forEach(function (id) {
@@ -4004,16 +4068,24 @@ function forceSelect(sel, id, label) {
   sel.value = id;
 }
 
-// Where the view was before the current one. Kept so that stepping down into a
-// container's children, or across from one rule to another, can be undone.
+// Browser Back is wired to the map's own focus changes rather than left
+// alone. Without it, Back from anywhere in the map leaves the map entirely
+// and lands you back on the app page, which is a long way to fall for
+// wanting to undo one click.
 //
-// Browser Back is wired to this rather than left alone. Without it, Back from
-// anywhere in the map leaves the map entirely and lands you back on the app
-// page, which is a long way to fall for wanting to undo one click. Each focus
-// change pushes a history entry, so Back walks the trail first and only leaves
-// the page once the trail is exhausted, which is where leaving is what you
-// actually meant.
-let focusTrail = [];
+// history.state is the ONLY source of truth for this, not a separate JS
+// array. A parallel focusTrail array used to track "where would Back go",
+// but every code path that changes focus had to keep it in perfect lockstep
+// with the browser's own history stack by hand - Exit/Show all cleared the
+// array but never touched the actual history entries, so Back after Exit
+// silently did nothing while the browser's real position kept moving
+// underneath it, and Forward was never reconstructed at all, because
+// popstate always popped the array regardless of which direction the user
+// actually navigated. Reading event.state directly instead means Back and
+// Forward both work by construction, in either direction, because the
+// browser - not a hand-maintained stack - is doing the bookkeeping. Each
+// pushed state carries cameFrom as well as amFocus, so the specific "Back to
+// X" label survives without needing a second data structure to keep in sync.
 let poppingHistory = false;
 
 function focusLabel(id) {
@@ -4042,9 +4114,13 @@ function exitToWholeMap() {
   deviceSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
-  // A deliberate return to the top, not a step back, so the trail a Back
-  // link would otherwise offer is stale by definition.
-  focusTrail = [];
+  // A real history entry, not just a local reset - so Back afterward returns
+  // to wherever Exit was clicked from, correctly, by the same mechanism as
+  // every other focus change rather than a special case that used to leave
+  // the browser's actual position and the map's idea of it disagreeing.
+  if (!poppingHistory) {
+    try { history.pushState({ amFocus: null, cameFrom: null }, ''); } catch (e) { }
+  }
   renderBackLink();
   applyFilters();
 }
@@ -4052,9 +4128,10 @@ function exitToWholeMap() {
 function renderBackLink() {
   const bar = document.getElementById('flowBack');
   if (!bar) return;
-  if (!focusTrail.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-  const prev = focusTrail[focusTrail.length - 1];
-  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + focusLabel(prev) + '</a>' +
+  if (!currentFocus()) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  const st = history.state;
+  const cameFrom = (st && st.cameFrom !== undefined) ? st.cameFrom : null;
+  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + focusLabel(cameFrom) + '</a>' +
     '<a href="#" id="flowExit">Exit to whole map</a>';
   bar.style.display = 'flex';
   document.getElementById('flowBackLink').addEventListener('click', function (ev) {
@@ -4075,8 +4152,7 @@ function focusNode(id) {
   if (!poppingHistory) {
     const from = currentFocus();
     if (from !== id) {
-      focusTrail.push(from);
-      try { history.pushState({ amFocus: id }, ''); } catch (e) { }
+      try { history.pushState({ amFocus: id, cameFrom: from }, ''); } catch (e) { }
     }
   }
   if (node.group === 'app') {
@@ -4107,20 +4183,30 @@ function focusNode(id) {
   return true;
 }
 
-// Restores the previous view instead of leaving the page. Only entries this
-// page pushed are handled; anything else is somebody else's history and Back
-// should do what it normally does.
+// Restores whatever view the browser just navigated to, in either direction
+// - Back and Forward both land here, and both are answered the same way, by
+// reading the state the browser supplies for the entry now current rather
+// than by guessing which direction was pressed. Entries this page never
+// pushed (state has no amFocus and no cameFrom) are somebody else's history,
+// where doing nothing is correct: the browser has already gone there.
 window.addEventListener('popstate', function (ev) {
-  if (!focusTrail.length) return;
-  const prev = focusTrail.pop();
+  const st = ev.state;
+  // amFocus === undefined (the property absent entirely) is what actually
+  // means "not one of ours" - amFocus === null is our own legitimate
+  // whole-map state (the base entry set by replaceState on load) and must
+  // NOT be treated the same way, or Back all the way out of a drill-down
+  // would silently stop working on the last step, right when it matters
+  // most: the browser's position would reach the base entry while the map
+  // kept showing whatever was focused before that click.
+  if (!st || st.amFocus === undefined) return;
   poppingHistory = true;
   try {
-    if (prev) {
-      focusNode(prev);
-      // focusNode re-renders from a trail that has already been popped, so the
-      // link is correct without any extra bookkeeping here.
+    if (st.amFocus) {
+      focusNode(st.amFocus);
+      // focusNode's own renderBackLink call reads history.state, which the
+      // browser has already updated to this entry by the time popstate
+      // fires - no extra bookkeeping needed here for the label to be right.
     } else {
-      // Back to the whole map.
       appSelect.value = '__all__';
       deviceSelect.value = '__all__';
       flowPanel.style.display = 'none';
