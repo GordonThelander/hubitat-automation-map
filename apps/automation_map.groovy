@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.7.4'
+@Field static final String APP_VERSION = '1.7.5'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -2268,12 +2268,18 @@ function styledNode(n, useFullLabel, roleByDevice) {
     id: n.id, label: useFullLabel ? (n.draw || n.title) : n.label, title: n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
-    // maxWdt wraps a long label over several lines instead of drawing one wide
-    // ribbon of text. vis.js does no label collision avoidance at all, so width
-    // is the only lever there is: on a crowded sector three long names were
-    // painting straight through each other. 160px is a little under the arc
-    // spacing sectorLayout uses at its tightest.
-    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4, maxWdt: 160 }
+    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 },
+    // Wraps a long label over several lines instead of drawing one wide ribbon
+    // of text. vis.js does no label collision avoidance at all, so width is the
+    // only lever there is: on a crowded sector three long names were painting
+    // straight through each other. 170px is a little under the arc spacing
+    // sectorLayout uses at its tightest.
+    //
+    // It is widthConstraint that does this, NOT font.maxWdt. maxWdt is the
+    // internal property vis sets FROM widthConstraint, and setting it directly
+    // is silently ignored - the first attempt at this fix did exactly that and
+    // changed nothing on screen.
+    widthConstraint: { maximum: 170 }
   };
   // Heavier, so an external system shared by several apps holds its position
   // instead of being dragged about by whichever app pulls hardest.
