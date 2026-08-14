@@ -698,12 +698,40 @@ legitimately disagree.
 
 ## 11. Finding rules in the first place
 
-**No usable bulk app-list endpoint was found on 2.5.1.142.** `/app/list` and
-`/installedapp/list` return a JavaScript application shell of about 6KB with no app data in
-it; a browser executing the JavaScript renders the list, but plain HTTP does not. An
-undocumented endpoint may exist and simply was not found. **[unknown]**
+**Superseded 2026-08-14: `/hub2/appsList` is the bulk endpoint.** It returns the complete
+installed-app tree as JSON. **[strong]**
 
-Two routes that do work, both **[heuristic]** rather than properties of the format:
+Credit where it is due: this was found by reading Jean P. May Jr.'s *Rule References Rule
+Table*, which calls it directly, not by further probing here. It was then verified against
+this hub on firmware 2.5.1.147 rather than taken on faith.
+
+    GET /hub2/appsList
+
+Top-level keys are `systemAppTypes`, `userAppTypes` and `apps`. Each entry in `apps` has a
+`data` object and a `children` list, and parents nest arbitrarily, so it needs walking
+recursively rather than reading one level. Per app, `data` carries `id`, `appTypeId`,
+`name`, `type`, `disabled`, `user`, `hidden`.
+
+Two things that matter beyond enumeration:
+
+- `appTypeId` arrives **without** a second request per app, which is otherwise only
+  obtainable from `/installedapp/statusJson/<id>`.
+- `disabled` is reported here directly.
+
+Measured on this hub: 89 apps enumerated against 74 found by walking devices. The 15 not
+found by devices were parent containers (Rule Machine, Button Controllers, Groups and
+Scenes, Notifications), device-less utilities (Rebooter, Averaging Master), and, notably,
+**a Rule Function**, which is the case device-led discovery can never reach by design.
+
+The paragraph this replaces said no bulk endpoint had been found. That was accurate about
+`/app/list` and `/installedapp/list`, which really are JavaScript shells of about 6KB under
+plain HTTP, and it is still worth knowing they are dead ends. It was wrong as a general
+conclusion. Worth remembering as a caution about **[unknown]**: absence of evidence had been
+recorded honestly, and the answer still turned up in someone else's source rather than in
+more probing.
+
+Two older routes, both **[heuristic]** rather than properties of the format, and both still
+useful because the bulk endpoint does not report which devices an app touches:
 
 - **From a known id.** `/installedapp/statusJson/<id>` gives you `appTypeId` and everything
   else. Getting that first id usually means reading it out of the URL bar while the app's
@@ -759,10 +787,37 @@ Both are missing from the scan; only one is missing from the hub. A map that ren
 identically is asserting something false about the second, which is what prompted the 1.7.1
 styling split.
 
-### 11.3 Remaining blind spot
+### 11.3 The device-less blind spot, and what closes it
 
 An app referencing no devices is invisible to device-driven discovery entirely, which is the
-normal case for a Rule Function.
+normal case for a Rule Function. `/hub2/appsList` closes it, and the confirming case is
+concrete: **[strong]**
+
+A Rule Function does get its own installed-app id, `type` of `Rule-5.1`, indistinguishable
+in the listing from any other rule. On this hub, `_Testy Function` is installed app 2973. It
+appears in `/hub2/appsList` and does not appear in a device-led scan, which is exactly the
+shape the blind spot predicts.
+
+That also means device-led discovery is not redundant. The bulk endpoint says an app exists;
+it does not say which devices the app touches. Both are needed, and the union is the
+complete set.
+
+One measurement worth recording, because it argues against overstating the gain: on this hub
+every rule that *acts on another rule* was already reached through devices, so the union
+found no rule links that the device-led scan had missed. The endpoint buys a guarantee and
+the device-less apps, not a pile of new edges. Given `appsUsingForDialog` once hid 12 of 74
+apps (11.1), the guarantee is the point.
+
+### 11.4 `valFunction` remains unverified
+
+TheBearMay's parser also matches `valFunction.<n>`, understood to be a rule calling a Rule
+Function that returns a value. **Every rule-typed app on this hub was enumerated via
+`/hub2/appsList` and searched: zero instances.** **[unknown]**
+
+So there is no local fixture, and nothing here either confirms or refutes it. Recorded so
+the next person does not re-run the same search, and so it is not implemented on the
+strength of another project's source alone. `ruleActMain` and `privateF` are in the same
+position: both are handled defensively as aliases, and neither occurs on this hub.
 
 ---
 
