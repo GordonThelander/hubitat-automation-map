@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.1'
+@Field static final String APP_VERSION = '1.8.2'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -820,6 +820,13 @@ Map fetchAppRelationships(String appId, Map labels) {
             // across the canvas. See nodeEntry for which form goes where.
             out.drawLabel = stripStatusMarkup(rawLabel)
             out.type = installedApp?.name
+            // Stored for EVERY app, not only the empty ones, because it is read
+            // in the opposite direction from the one it is written in. A
+            // container needs the names of its children, and a child is the only
+            // record that the relationship exists - childAppCount gives Rule
+            // Machine the number 46 and not one id. One short string per app is
+            // worth it; the four counts above are not, hence the split.
+            if (installedApp?.parentAppId != null) out.parent = "${installedApp.parentAppId}"
 
             // Skip every instance of this app, not just the one doing the
             // scanning. Its device picker references the whole hub, so a second
@@ -914,7 +921,6 @@ Map fetchAppRelationships(String appId, Map labels) {
             //
             // All four come from the response already in hand. No extra call.
             if (!roles && !out.ruleLinks && !out.endpoints) {
-                String parentId = installedApp?.parentAppId != null ? "${installedApp.parentAppId}" : null
                 out.inert = [
                     kids  : (data.childAppCount ?: 0) as Integer,
                     devs  : (data.childDeviceCount ?: 0) as Integer,
@@ -923,7 +929,6 @@ Map fetchAppRelationships(String appId, Map labels) {
                     // inside the scan loop.
                     sched : countOf(data.scheduledJobs),
                     subs  : countOf(data.eventSubscriptions),
-                    parent: parentId,
                 ]
             }
         }
@@ -1557,7 +1562,7 @@ Map nodeEntry(String id, String fullLabel, String group, String subtitle = null,
 // explains an app that acts on the hub rather than on devices, which is exactly
 // what Rebooter does. Falling all the way through is itself the answer, and the
 // only one of these worth a second look.
-String inertReason(Map inert, Map appInfo) {
+String inertReason(Map inert, Map appInfo, String parentId = null) {
     if (!inert) return 'no relationships found'
 
     int kids = (inert.kids ?: 0) as Integer
@@ -1575,7 +1580,7 @@ String inertReason(Map inert, Map appInfo) {
     // Last, because being someone's child explains where an app came from but
     // not what it does. A button rule under a Button Controller is still an
     // app that references nothing this map can see.
-    String parent = inert.parent as String
+    String parent = parentId
     if (parent) {
         Map p = appInfo[parent] as Map
         String name = (p?.drawLabel ?: p?.label) as String
@@ -1625,7 +1630,7 @@ Map buildGraph() {
         // An inert app's subtitle carries why it is empty instead of its engine.
         // The engine is the less useful of the two here: "Rule Machine" on a
         // square with no edges raises the question, "holds 46 apps" answers it.
-        String subtitle = inert ? inertReason(appMap.inert as Map, appInfo) : (appMap.type as String)
+        String subtitle = inert ? inertReason(appMap.inert as Map, appInfo, appMap.parent as String) : (appMap.type as String)
         nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (inert) {
@@ -1635,6 +1640,25 @@ Map buildGraph() {
             // inside the GString that builds the page, which is the single
             // mistake this file has been killed by three times.
             nodes[appNodeId].reason = subtitle
+            // What the click opens. Without these, focusing one of these nodes
+            // blanks the map to a lone square and opens no panel, because it has
+            // no edges to draw and no rule flow to render - it looked like a
+            // dead click rather than like an app with nothing attached.
+            //
+            // Child IDS, not names. Every child is already a node on this map
+            // carrying its own label, so sending names too would ship 46
+            // duplicate strings for Rule Machine alone.
+            List kidIds = []
+            appInfo.each { String otherId, other ->
+                if (!(other instanceof Map)) return
+                if ("${(other as Map).parent}" == appId) kidIds << "a${otherId}"
+            }
+            if (kidIds) nodes[appNodeId].kids = kidIds
+            Map inertFacts = (appMap.inert ?: [:]) as Map
+            if ((inertFacts.sched ?: 0) as Integer) nodes[appNodeId].sched = inertFacts.sched
+            if ((inertFacts.subs ?: 0) as Integer) nodes[appNodeId].subs = inertFacts.subs
+            if ((inertFacts.devs ?: 0) as Integer) nodes[appNodeId].devs = inertFacts.devs
+            if (appMap.parent) nodes[appNodeId].parent = "a${appMap.parent}"
         }
         // Flows come from appInfo during a scan, and from the previously built
         // graph on a rebuild - see finishScan, which strips them from appInfo
@@ -2913,7 +2937,61 @@ function mermaidFor(steps) {
 const flowPanel = document.getElementById('flow') || { style: {} };
 const flowChart = document.getElementById('flowChart') || document.createElement('div');
 
+// An app that references nothing has no flow to draw, but it is not true that
+// there is nothing to say about it. Clicking one used to blank the map to a
+// single square and open no panel at all, which reads as a broken click rather
+// than as an app with nothing attached.
+//
+// So it gets a panel of its own: what the hub says it holds, and a way through
+// to whatever it holds. For a container that turns a dead end into the most
+// direct route to its children on the whole map.
+function showInertPanel(node) {
+  document.getElementById('flowTitle').textContent = node.title;
+  document.getElementById('flowSub').textContent = 'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.';
+
+  let html = '<h3>' + (node.reason || 'References nothing') + '</h3>';
+  const facts = [];
+  if (node.sched) facts.push(node.sched + ' scheduled job' + (node.sched === 1 ? '' : 's'));
+  if (node.subs) facts.push(node.subs + ' event subscription' + (node.subs === 1 ? '' : 's'));
+  if (node.devs) facts.push(node.devs + ' child device' + (node.devs === 1 ? '' : 's'));
+  if (facts.length) html += '<p class="sub">' + facts.join(' &middot; ') + '</p>';
+
+  if (node.parent) {
+    const p = ALL_NODES.filter(function (n) { return n.id === node.parent; })[0];
+    if (p) {
+      html += '<h4>Belongs to</h4><ul><li><a href="#" data-node="' + p.id + '">' + p.title + '</a></li></ul>';
+    }
+  }
+
+  const kids = (node.kids || []).map(function (id) {
+    return ALL_NODES.filter(function (n) { return n.id === id; })[0];
+  }).filter(function (n) { return !!n; });
+
+  if (kids.length) {
+    html += '<h4>Holds ' + kids.length + ' app' + (kids.length === 1 ? '' : 's') + '</h4>';
+    html += '<p class="sub">Each one is on the map in its own right. Click to go there.</p><ul>';
+    kids.slice().sort(function (a, b) { return a.title.localeCompare(b.title); }).forEach(function (k) {
+      html += '<li><a href="#" data-node="' + k.id + '">' + k.title + '</a></li>';
+    });
+    html += '</ul>';
+  } else if (!facts.length && !node.parent) {
+    html += '<p class="sub">Nothing at all: no children, no schedule, no subscriptions. Either it is not configured yet, or it is left over from something that has been removed.</p>';
+  }
+
+  flowChart.innerHTML = html;
+  // Delegated, so the links keep working after the panel is rebuilt.
+  flowChart.querySelectorAll('a[data-node]').forEach(function (a) {
+    a.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      focusNode(a.getAttribute('data-node'));
+    });
+  });
+  flowPanel.style.display = 'block';
+}
+
 function showFlow(appId) {
+  const target = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
+  if (target && target.inert) { showInertPanel(target); return; }
   const steps = FLOWS[appId];
   if (!steps || !steps.length || !window.mermaid) { flowPanel.style.display = 'none'; return; }
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
