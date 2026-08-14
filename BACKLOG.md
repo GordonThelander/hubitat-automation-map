@@ -246,24 +246,37 @@ above, which is the canonical record for anything learned about the storage form
   page shows False then True. The rendered value is `!pvTF` with empty counting as false.
   Flow steps now read "Set Private Boolean True" or "... False" instead of a bare
   "Set Private Boolean".
-- **Pause and Resume cannot be told apart.** Still open. Both use `getPauseResumeRules` and
-  render as "Pause / Resume Rules". `pR.<n>` is the likely discriminator and was empty on
-  the only available example, which its page showed as a Pause. One rule containing a
-  **Resume** action would settle it, and `_Testy` is already set up to be that rule.
+- **Pause and Resume cannot be told apart.** **Closed 2026-08-14, shipped in dev 1.7.4.**
+  `pR.<n>` is the discriminator: `true` is Resume, empty is Pause, verified against a rule
+  holding one of each. It reads the right way round, unlike `pvTF` on the same action
+  family. Flow steps now say "Pause Rules" or "Resume Rules". The map deliberately keeps a
+  single `pauseResume` edge kind: the relationship points the same way either way, and a
+  fifth dash pattern would not be tellable from the four already in use.
 
-### Focused-view label collision (open, low priority)
+Both were closed by one hand-built test rule holding every rule-link action type at once,
+which is worth keeping on the hub. Holding engine, firmware and rule constant across a pair
+of actions is what turned two [single]-evidence guesses into [strong] ones.
 
-Found 2026-08-14 while checking the rule-link work. Focusing an app draws every node's FULL
-title at a fixed position, so two nodes close together overwrite each other's text and
-neither is readable. Seen on `_Testy` with "Barking (Required Expression false) (Rule-5.1)"
-and "Christmas Cheer (Required Expression false) (Rule-5.1)", which are long titles on
-adjacent nodes.
+### Focused-view label collision (closed 2026-08-14, shipped in dev 1.7.4)
 
-vis.js does no label collision avoidance, so this is a design choice rather than a bug to
-patch. The options are to keep the truncated label in the focused view and put the full
-title in the hover tooltip only, to strip the hub's "(Required Expression false)" suffix
-from the drawn label since it is runtime state rather than identity, or to accept it. Not
-worth a quick coordinate nudge, which would only move the overlap somewhere else.
+Focusing an app drew every node's FULL title at a fixed position, so two nodes close
+together overwrote each other's text and neither was readable. Seen on `_Testy` with
+"Barking (Required Expression false) (Rule-5.1)" and "Christmas Cheer (Required Expression
+false) (Rule-5.1)" on adjacent nodes, then three-way once a Resume action was added.
+
+Fixed by attacking width rather than position: labels wrap at 160px, and the hub's injected
+status is no longer drawn on the canvas at all, only in the hover tooltip. vis.js does no
+label collision avoidance, so width was the only real lever.
+
+Two things learned that are worth not relearning:
+
+- **Do not fall back to the truncated label in the focused view.** It was the obvious option
+  and it is wrong. Truncation at 22 characters turns "Front Walkway Announce (Day)" and
+  "(Night)" into the same string. An overlap looks broken; a wrong label looks fine.
+- **Strip on the markup, never on the text.** The status is removed by matching the `<span>`
+  Hubitat wraps it in, not the words "(Required Expression false)". A trailing-parenthetical
+  pattern would have collapsed those same Day/Night rules, and a text match would break on
+  the next firmware that words it differently.
 
 ### Honest limitation, already documented in the README
 
