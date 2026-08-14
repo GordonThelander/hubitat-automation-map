@@ -921,13 +921,18 @@ Map fetchAppRelationships(String appId, Map labels) {
             //
             // All four come from the response already in hand. No extra call.
             if (!roles && !out.ruleLinks && !out.endpoints) {
+                // scheduledJobList rather than a cast: scheduledJobs has been seen
+                // as both a list and a bare single-job map, and casting the wrong
+                // one throws inside the scan loop.
+                List jobs = scheduledJobList(data.scheduledJobs)
                 out.inert = [
                     kids  : (data.childAppCount ?: 0) as Integer,
                     devs  : (data.childDeviceCount ?: 0) as Integer,
-                    // countOf rather than a cast: scheduledJobs has been seen as
-                    // both a list and a map, and casting the wrong one throws
-                    // inside the scan loop.
-                    sched : countOf(data.scheduledJobs),
+                    sched : jobs.size(),
+                    // next/cron only - handler is a Groovy method name meaningful
+                    // to nobody reading the map, and prevRunTime/status are the
+                    // hub's bookkeeping rather than anything a user configured.
+                    schedJobs : jobs.collect { Map j -> [next: "${j.nextRunTime}", cron: "${j.schedule}"] },
                     subs  : countOf(data.eventSubscriptions),
                 ]
             }
@@ -1415,6 +1420,19 @@ int countOf(def v) {
     return 0
 }
 
+// scheduledJobs from statusJson is a List when an app has more than one job,
+// but a single job comes back as a bare Map - one job's own fields (handler,
+// nextRunTime, schedule, status, prevRunTime), not a collection of jobs at
+// all. countOf's Map branch counts THOSE FIELDS, so a one-job app with five
+// fields on its job record was reported as "5 scheduled jobs". Normalising
+// to a list first, always of job maps and never of a job's own keys, is what
+// makes both the count and the per-job detail below correct at once.
+List scheduledJobList(def raw) {
+    if (raw instanceof List) return raw as List
+    if (raw instanceof Map && raw) return [raw as Map]
+    return []
+}
+
 // Removes hub-injected status from an app label, CONTENT AND ALL, where
 // stripTags removes only the markup and keeps the words.
 //
@@ -1660,7 +1678,13 @@ Map buildGraph() {
             // record the ids for", which is every graph built before parent ids
             // were captured.
             if ((inertFacts.kids ?: 0) as Integer) nodes[appNodeId].holds = inertFacts.kids
-            if ((inertFacts.sched ?: 0) as Integer) nodes[appNodeId].sched = inertFacts.sched
+            if ((inertFacts.sched ?: 0) as Integer) {
+                nodes[appNodeId].sched = inertFacts.sched
+                // Absent rather than empty on a graph built before this was
+                // captured, so the panel can tell "no detail recorded" apart
+                // from "recorded, and there is genuinely nothing to add".
+                if (inertFacts.schedJobs) nodes[appNodeId].schedJobs = inertFacts.schedJobs
+            }
             if ((inertFacts.subs ?: 0) as Integer) nodes[appNodeId].subs = inertFacts.subs
             if ((inertFacts.devs ?: 0) as Integer) nodes[appNodeId].devs = inertFacts.devs
             if (appMap.parent) nodes[appNodeId].parent = "a${appMap.parent}"
@@ -2326,6 +2350,24 @@ String buildMapHtml() {
   #ext .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #ext .msg { font-size:0.8em; margin-left:6px; }
   #extClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Its own panel rather than reusing #ext or #flow's markup - a table of
+     links and a small query builder is a different shape of content from
+     either (a settings form, a rule flowchart), and this file's convention
+     throughout is one panel's CSS per panel rather than a shared class. */
+  #pivot { position:absolute; top:10px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+           max-width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #pivot h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #pivot .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
+  #pivot a { color:#7fb6d6; text-decoration:none; }
+  #pivot a:hover { text-decoration:underline; }
+  #pivot table { border-collapse:collapse; width:100%; font-size:0.8em; }
+  #pivot th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #pivot td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
+  #pivot select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:0.85em; font-family:inherit; }
+  #pivot label { font-size:0.8em; display:flex; align-items:center; gap:4px; }
+  #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:0.85em; margin:0 4px 4px 0; }
+  #pivot .rowbtn:hover { border-color:#4a7a94; color:#cfe3ea; }
+  #pivotClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
 </style>
 </head>
 <body>
@@ -2404,10 +2446,12 @@ String buildMapHtml() {
   <button id="resetBtn" type="button">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
+  <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
+<div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -2432,6 +2476,142 @@ const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc' };
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
 const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
+
+// Human-readable form of every edge kind, reused by the legend's own wording
+// so a pivot table and the graph never describe the same relationship two
+// different ways.
+const KIND_LABEL = {
+  trigger: 'Trigger', constraint: 'Constraint', monitor: 'Monitor', action: 'Action',
+  exposed: 'Exposed', owns: 'Owns', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
+  setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on'
+};
+const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system' };
+
+// Which edge kinds actually connect two node groups, keyed order-independently
+// (device|app and app|device are the same relationship read from either end).
+// Every edge on this map has an app in `from` - buildGraph never creates one
+// the other way round - so 'device' and 'external' never appear as a source
+// group here, only as a target. That is a fact about the data, not a design
+// choice made here, and it is what makes every combination this map can
+// produce meaningful: there is no such thing as a Device x External pivot,
+// because no edge on the graph could ever populate one.
+function pivotKindOptions(g1, g2) {
+  const key = [g1, g2].sort().join('|');
+  if (key === 'app|app') return ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
+  if (key === 'app|device') return ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'];
+  if (key === 'app|external') return ['depends'];
+  return [];
+}
+function pivotColOptions(rowGroup) {
+  return rowGroup === 'app' ? ['app', 'device', 'external'] : ['app'];
+}
+
+// The fixed menu (option A from the discussion): each entry is a ready-made
+// query into pivotRows below, phrased the way a person would ask for it
+// rather than in row/column/kind terms.
+const PIVOT_PRESETS = [
+  { button: 'Rule → Rules affected', rows: 'app', cols: 'app',
+    kinds: ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'],
+    rowLabel: 'Rule', colLabel: 'Rules affected' },
+  { button: 'Rule → Devices', rows: 'app', cols: 'device',
+    kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
+    rowLabel: 'Rule', colLabel: 'Devices' },
+  { button: 'Device → Rules', rows: 'device', cols: 'app',
+    kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
+    rowLabel: 'Device', colLabel: 'Rules' },
+];
+
+// The free-form builder (option B): same underlying query, but rows, columns
+// and which relationship counts are chosen from dropdowns instead of being
+// fixed in a preset. Built from ALL_NODES/ALL_EDGES, already fully loaded for
+// this scan - a pivot is a different arrangement of data already in the
+// browser, not a new fetch or a reason to rescan the hub.
+function pivotRows(rowGroup, colGroup, kinds) {
+  const byId = {};
+  ALL_NODES.forEach(function (n) { byId[n.id] = n; });
+
+  const groups = {};
+  ALL_EDGES.forEach(function (e) {
+    if (kinds.indexOf(e.kind) === -1) return;
+    const fromNode = byId[e.from], toNode = byId[e.to];
+    if (!fromNode || !toNode) return;
+    let rowId, colId, colNode;
+    if (fromNode.group === rowGroup && toNode.group === colGroup) {
+      rowId = e.from; colId = e.to; colNode = toNode;
+    } else if (rowGroup !== colGroup && toNode.group === rowGroup && fromNode.group === colGroup) {
+      // Only taken when rows and columns differ - when they are the same
+      // group (Rule x Rule) this branch would also match every edge the IF
+      // above already matched, doubling each relationship into both a row and
+      // its own reverse.
+      rowId = e.to; colId = e.from; colNode = fromNode;
+    } else {
+      return;
+    }
+    if (!groups[rowId]) groups[rowId] = [];
+    const already = groups[rowId].some(function (t) { return t.id === colId && t.kind === e.kind; });
+    if (!already) groups[rowId].push({ id: colId, title: colNode.title, kind: e.kind });
+  });
+
+  const typed = ALL_NODES.filter(function (n) { return n.group === rowGroup; });
+  const rows = typed.map(function (n) {
+    const targets = (groups[n.id] || []).slice().sort(function (a, b) { return a.title.localeCompare(b.title); });
+    return { id: n.id, title: n.title, targets: targets };
+  })
+    // Rows with nothing to show are counted, not listed - the same choice
+    // Insights already makes for "devices nothing references": a number and
+    // a sentence read better than a table that is mostly blank rows.
+    .filter(function (r) { return r.targets.length > 0; })
+    .sort(function (a, b) { return a.title.localeCompare(b.title); });
+
+  return { rows: rows, total: typed.length };
+}
+
+function renderPivotTable(pivot, rowLabel, colLabel) {
+  if (!pivot.rows.length) {
+    return '<p class="sub">None of the ' + pivot.total + ' ' + rowLabel.toLowerCase() +
+      (pivot.total === 1 ? '' : 's') + ' on this map has that relationship.</p>';
+  }
+  let html = '<table><thead><tr><th>' + rowLabel + '</th><th>' + colLabel + '</th></tr></thead><tbody>';
+  pivot.rows.forEach(function (r) {
+    html += '<tr><td><a href="#" data-node="' + r.id + '">' + r.title + '</a></td><td>';
+    html += r.targets.map(function (t) {
+      return '<a href="#" data-node="' + t.id + '">' + t.title + '</a> <span class="sub">(' + (KIND_LABEL[t.kind] || t.kind) + ')</span>';
+    }).join(', ');
+    html += '</td></tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+// CSV of exactly what the table on screen shows - rows with no relationship
+// are excluded from the table for the same reason they are excluded here:
+// a count of things not shown was reported as confusing rather than useful,
+// so this file does not carry a shadow list of them anywhere either.
+function pivotToCSV(pivot, rowLabel, colLabel) {
+  function esc(s) {
+    s = String(s == null ? '' : s);
+    return /[",\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  const lines = [esc(rowLabel) + ',' + esc(colLabel)];
+  pivot.rows.forEach(function (r) {
+    const targets = r.targets.map(function (t) { return t.title + ' (' + (KIND_LABEL[t.kind] || t.kind) + ')'; }).join('; ');
+    lines.push(esc(r.title) + ',' + esc(targets));
+  });
+  return lines.join('\\n');
+}
+
+function pivotDownloadCSV(pivot, rowLabel, colLabel) {
+  const csv = pivotToCSV(pivot, rowLabel, colLabel);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (rowLabel + '_to_' + colLabel).replace(/\\s+/g, '_') + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 // Most-significant role first. Used to colour a device that holds more than one
 // role in the same app - e.g. a motion sensor that is both a rule's trigger and
@@ -3055,6 +3235,22 @@ function showInertPanel(node) {
   if (node.devs) facts.push(node.devs + ' child device' + (node.devs === 1 ? '' : 's'));
   if (facts.length) html += '<p class="sub">' + facts.join(' &middot; ') + '</p>';
 
+  // The bare count used to be the whole story - clicking it did nothing,
+  // because there was nothing behind it to show. next/cron come straight from
+  // the hub's own scheduler. The cron pattern is shown as-is rather than
+  // translated to English: a wrong "every Tuesday" from a mis-parsed field
+  // would be worse than the raw pattern, which is at least never incorrect.
+  if (node.schedJobs && node.schedJobs.length) {
+    html += '<h4>Scheduled job' + (node.schedJobs.length === 1 ? '' : 's') + '</h4><ul>';
+    node.schedJobs.forEach(function (j) {
+      const when = j.next ? new Date(j.next).toLocaleString(undefined,
+        { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'unknown';
+      html += '<li>Next run: ' + when +
+        (j.cron ? '<br><span class="sub">Schedule: <code>' + j.cron + '</code></span>' : '') + '</li>';
+    });
+    html += '</ul>';
+  }
+
   if (node.parent) {
     const p = ALL_NODES.filter(function (n) { return n.id === node.parent; })[0];
     if (p) {
@@ -3307,6 +3503,118 @@ const EXT_URL = '${getLocalURL('externals')}';
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
 let EXT = null;
+
+const pivotPanel = document.getElementById('pivot');
+const pivotBody = document.getElementById('pivotBody');
+
+// Keeps the three selects consistent with each other after any change: the
+// columns list depends on which row type is chosen, and the relationship
+// list depends on both. Called with the values that SHOULD be selected once
+// this returns - a caller does not need to know which combinations are valid,
+// only what they are trying to show.
+function pivotSyncSelects(rowGroup, colGroup, kindVal) {
+  const rowsSel = document.getElementById('pivotRows');
+  const colsSel = document.getElementById('pivotCols');
+  const kindSel = document.getElementById('pivotKind');
+
+  if (!rowsSel.options.length) {
+    ['app', 'device', 'external'].forEach(function (g) {
+      const o = document.createElement('option'); o.value = g; o.textContent = GROUP_LABEL[g]; rowsSel.appendChild(o);
+    });
+  }
+  rowsSel.value = rowGroup;
+
+  const validCols = pivotColOptions(rowGroup);
+  colsSel.innerHTML = '';
+  validCols.forEach(function (g) {
+    const o = document.createElement('option'); o.value = g; o.textContent = GROUP_LABEL[g]; colsSel.appendChild(o);
+  });
+  colsSel.value = validCols.indexOf(colGroup) !== -1 ? colGroup : validCols[0];
+
+  const kinds = pivotKindOptions(rowGroup, colsSel.value);
+  kindSel.innerHTML = '<option value="__all__">All</option>';
+  kinds.forEach(function (k) {
+    const o = document.createElement('option'); o.value = k; o.textContent = KIND_LABEL[k] || k; kindSel.appendChild(o);
+  });
+  kindSel.value = kindVal && kinds.indexOf(kindVal) !== -1 ? kindVal : '__all__';
+}
+
+// Clicking through a pivot result behaves like every other click-through on
+// this map: leave this panel, land on the app or device just clicked.
+function pivotWireLinks() {
+  document.querySelectorAll('#pivotResult a[data-node]').forEach(function (a) {
+    a.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      pivotPanel.style.display = 'none';
+      const lg = document.getElementById('legend'); if (lg) lg.style.visibility = '';
+      const hn = document.getElementById('hint'); if (hn) hn.style.visibility = '';
+      focusNode(a.getAttribute('data-node'));
+    });
+  });
+}
+
+// The one path both a preset click and a builder change render through, so
+// there is exactly one place that knows what is currently on screen - which
+// is what Export CSV downloads. Without this, export would need its own copy
+// of "what was rendered last", kept in step with two separate call sites by
+// hand.
+let CURRENT_PIVOT = null;
+function pivotRenderResult(pivot, rowLabel, colLabel) {
+  CURRENT_PIVOT = { pivot: pivot, rowLabel: rowLabel, colLabel: colLabel };
+  document.getElementById('pivotResult').innerHTML = renderPivotTable(pivot, rowLabel, colLabel);
+  pivotWireLinks();
+  const exportBtn = document.getElementById('pivotExport');
+  if (exportBtn) exportBtn.style.display = pivot.rows.length ? 'inline-block' : 'none';
+}
+
+function pivotRunCustom() {
+  const rowsSel = document.getElementById('pivotRows');
+  const colsSel = document.getElementById('pivotCols');
+  const kindSel = document.getElementById('pivotKind');
+  pivotSyncSelects(rowsSel.value, colsSel.value, kindSel.value);
+  const rowGroup = rowsSel.value, colGroup = colsSel.value, kindVal = kindSel.value;
+  const kinds = kindVal === '__all__' ? pivotKindOptions(rowGroup, colGroup) : [kindVal];
+  pivotRenderResult(pivotRows(rowGroup, colGroup, kinds), GROUP_LABEL[rowGroup], GROUP_LABEL[colGroup]);
+}
+
+// Rebuilt in full on every open rather than kept alive in the background -
+// this panel only reads what is already in ALL_NODES/ALL_EDGES, so there is
+// nothing stale to refresh, and rebuilding is simpler than tracking whether
+// the shell was already there from a previous open this page load.
+function pivotOpen() {
+  pivotBody.innerHTML =
+    '<h3>Pivot tables</h3>' +
+    '<p class="sub">Cross-reference what is already on the map - presets on the left, or build your own on the right. Both read the same relationships already drawn, so nothing here re-scans the hub.</p>' +
+    '<div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px; margin-bottom:14px">' +
+    '<div>' + PIVOT_PRESETS.map(function (p, i) {
+      return '<button type="button" class="rowbtn" data-preset="' + i + '">' + p.button + '</button>';
+    }).join('') + '</div>' +
+    '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">' +
+    '<label>Rows <select id="pivotRows"></select></label>' +
+    '<label>Columns <select id="pivotCols"></select></label>' +
+    '<label>Relationship <select id="pivotKind"></select></label>' +
+    '<button type="button" id="pivotExport" class="rowbtn" style="display:none">Export CSV</button>' +
+    '</div></div>' +
+    '<div id="pivotResult"></div>';
+
+  document.querySelectorAll('#pivotBody button[data-preset]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const p = PIVOT_PRESETS[parseInt(btn.getAttribute('data-preset'), 10)];
+      pivotSyncSelects(p.rows, p.cols, '__all__');
+      pivotRenderResult(pivotRows(p.rows, p.cols, p.kinds), p.rowLabel, p.colLabel);
+    });
+  });
+  ['pivotRows', 'pivotCols', 'pivotKind'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', pivotRunCustom);
+  });
+  document.getElementById('pivotExport').addEventListener('click', function () {
+    if (CURRENT_PIVOT) pivotDownloadCSV(CURRENT_PIVOT.pivot, CURRENT_PIVOT.rowLabel, CURRENT_PIVOT.colLabel);
+  });
+
+  // Opens on the first preset so the panel shows something immediately,
+  // rather than an empty shell the first click has to fill in.
+  document.querySelector('#pivotBody button[data-preset="0"]').click();
+}
 
 function extEsc(s) {
   return String(s === null || s === undefined ? '' : s)
@@ -3577,6 +3885,21 @@ document.getElementById('extClose').addEventListener('click', function () {
   if (lg) lg.style.visibility = '';
   if (hn) hn.style.visibility = '';
   extPanel.style.display = 'none';
+});
+document.getElementById('pivotBtn').addEventListener('click', function () {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  if (lg) lg.style.visibility = 'hidden';
+  if (hn) hn.style.visibility = 'hidden';
+  pivotPanel.style.display = 'block';
+  pivotOpen();
+});
+document.getElementById('pivotClose').addEventListener('click', function () {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  if (lg) lg.style.visibility = '';
+  if (hn) hn.style.visibility = '';
+  pivotPanel.style.display = 'none';
 });
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
