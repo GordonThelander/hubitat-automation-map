@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.8.5. Installs alongside the release version; your existing install is untouched.\n\nSCAN INTEGRITY: a reviewed audit of the scan pipeline found three ways a failed or incomplete scan could still produce a graph that looked complete. All three fixed - a device-enumeration failure is no longer silently overwritten by the next line, a fatal batch failure now stops the scan instead of building a graph from data it never finished collecting, and an app the hub could not read is no longer shown identically to one that genuinely references nothing (it gets its own colour, legend entry, and the actual error). A hub that fails its own compatibility check now stops the scan there rather than continuing into phases that depend on it.\n\nPIVOT TABLES: new panel, presets plus a free-form builder, to cross-reference what is already on the map (Rule to Rules affected, Rule to Devices, Device to Rules), with CSV export. The Rule-scoped presets were querying every app, not just Rule Machine rules - fixed to actually filter by rule type.\n\nFIXED: external-system node ids could collide when two different names or hosts reduced to the same stripped string, silently merging their dependencies. A registry field (parentAppName) was declared evaluable but matched against the wrong data every time - removed until a real per-instance matcher exists.\n\nAlso: an Exit map button and an Exit-to-whole-map link for backing out of a multi-level drill-down in one step, and a seasonal decoration that only appears December 20-25.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.8.6. Installs alongside the release version; your existing install is untouched.\n\nFIXED: a failed scan attempt could show a raw, unreadable error ('Unexpected token <, \"<!DOCTYPE\" is not valid JSON') instead of saying what actually went wrong. The Scan button now checks the hub's response before trying to read it, and reports the real HTTP error if the request itself failed - reported by JimB on the community thread.\n\nFIXED: browser Back and Forward inside the map could disagree with what was on screen after using Exit or Show all, because two separate mechanisms (a JS array and the browser's own history) had to be kept in step by hand. Rewritten so the browser's own history is the only source of truth - Back, Forward and Exit are now all correct in any order, including the specific 'Back to X' label.\n\nThe unconnected-apps shelf at the bottom of the map is now sorted alphabetically.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.8.5"
+      "version": "1.8.6"
     }
   ],
   "drivers": []

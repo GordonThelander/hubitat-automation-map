@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.5'
+@Field static final String APP_VERSION = '1.8.6'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -266,7 +266,10 @@ function amStartScan() {
   // schedule nothing and scanBatch would never execute. Authenticating with the
   // access token alone runs it as an ordinary request, which schedules.
   fetch('${getLocalURL('scan')}', { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from the hub - the access token may be invalid or OAuth disabled for this app.');
+      return r.json();
+    })
     .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
     .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
 }
