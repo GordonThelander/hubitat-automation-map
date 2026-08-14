@@ -675,6 +675,24 @@ whether `installedApp.label` and `installedApp.name` are both absent. This is wo
 detecting rather than ignoring: the action remains in the calling rule and silently does
 nothing, which is the kind of thing a dependency map exists to surface.
 
+Measured again on 2026-08-14, firmware 2.5.1.147, against two ids named as `privateT`
+targets by a live rule: the response body is literally `{}`, two bytes, with no
+`installedApp` key at all. **[strong]** The "empty shell" wording above describes a body
+that still carries the key. Test for the absence of `label` and `name` rather than for the
+shape of the response, since that holds for both forms.
+
+```
+GET /installedapp/statusJson/2328  ->  200  {}
+GET /installedapp/statusJson/1838  ->  200  {}
+GET /installedapp/statusJson/2973  ->  200  {"installedApp":{...,"trueLabel":"_Testy Function",...}}
+```
+
+The third id is the useful control. It answers with a full body despite never being reached
+by device-driven discovery, which is what separates a deleted target from an unscanned one.
+Both are missing from the scan; only one is missing from the hub. A map that renders them
+identically is asserting something false about the second, which is what prompted the 1.7.1
+styling split.
+
 ### 11.3 Remaining blind spot
 
 An app referencing no devices is invisible to device-driven discovery entirely, which is the
