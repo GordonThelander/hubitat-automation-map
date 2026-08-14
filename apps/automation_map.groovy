@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.7.5'
+@Field static final String APP_VERSION = '1.8.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -304,6 +304,14 @@ String compatibilitySummary() {
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} ${SUPPORTED_RULE_ENGINE} flow(s)."
 
+    // Said out loud because the number is usually small and sometimes zero, and
+    // a scan that quietly claims completeness it did not earn is the thing this
+    // whole discovery change exists to prevent.
+    int listed = (state.appsFromListing ?: 0) as Integer
+    if (listed > 0) {
+        s << " ${listed} of them reference no device and would not have been found by walking devices alone."
+    }
+
     int links = (state.ruleLinks ?: 0) as Integer
     if (links > 0) {
         s << " Found ${links} rule-to-rule link(s)."
@@ -356,6 +364,7 @@ void startScan() {
     state.rulesDecoded = 0
     state.rulesSkipped = 0
     state.ruleLinks = 0
+    state.appsFromListing = 0
     state.otherEngines = []
     state.scanQueue = fetchAllDeviceIds()
     state.scanTotal = (state.scanQueue as List).size()
@@ -469,9 +478,28 @@ void scanDeviceBatch() {
 }
 
 void startAppPhase() {
+    // The device walk is finished, so this is the point where the two discovery
+    // channels are merged. Done here rather than before the device phase so a
+    // failure of either one still leaves a usable scan.
+    //
+    // Order matters only for readability of the queue. Device-found ids stay
+    // first, so the apps that will actually be drawn are read first and a scan
+    // interrupted part way through has the useful half.
+    List appIds = state.appIds as List
+    String selfId = "${app.id}"
+    int fromDevices = appIds.size()
+    fetchInstalledAppIds().each { String appId ->
+        if (appId != selfId && !appIds.contains(appId)) appIds << appId
+    }
+    state.appIds = appIds
+    // Kept for the scan summary. The count is the honest way to describe what
+    // this bought: on a hub where every app touches a device it is zero, and
+    // saying so is better than implying the map gained something it did not.
+    state.appsFromListing = appIds.size() - fromDevices
+
     state.scanPhase = 'apps'
-    state.scanQueue = (state.appIds as List)
-    state.scanTotal = (state.appIds as List).size()
+    state.scanQueue = appIds
+    state.scanTotal = appIds.size()
     state.scanDone = 0
     runIn(1, 'scanBatch')
 }
@@ -652,6 +680,71 @@ List fetchAllDeviceIds() {
         state.scanError = "Could not list devices from the hub: ${ex.message}"
     }
     return ids.unique()
+}
+
+// Every installed app on the hub, in one request, whether or not it references
+// a device.
+//
+// Device-led discovery answers "which apps touch a device", which is a
+// different question from "which apps exist" and quietly misses every app that
+// touches none. On the test hub four sibling Button Rule-5.1 rules split two
+// and two on exactly that line: the two naming a device were found, the two
+// naming none were not. Rule Functions are the case that matters most, since
+// having no devices is normal for them rather than unusual.
+//
+// This does NOT replace the device walk. The listing says an app exists; it
+// never says which devices the app touches, so both are needed and the answer
+// is their union.
+//
+// Credit: the endpoint was found by reading Jean P. May Jr.'s Rule References
+// Rule Table, then verified here. This project's own notes had recorded that no
+// bulk app-list endpoint existed, which was wrong.
+//
+// Shape: { apps: [ { data: {id, appTypeId, name, type, disabled, ...},
+//                    children: [ ...same again... ] } ] }
+// Parents nest arbitrarily - Button Controllers holds a Button Controller,
+// which holds four Button Rules - so it has to be walked recursively rather
+// than read one level deep.
+List fetchInstalledAppIds() {
+    List ids = []
+    try {
+        httpGet([uri: 'http://127.0.0.1:8080/hub2/appsList', timeout: 30]) { resp ->
+            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
+            collectAppIds(data.apps, ids)
+        }
+    } catch (Exception ex) {
+        // Deliberately not a scan error. Losing this costs completeness, not
+        // correctness: every app found through a device is still found. An
+        // older firmware without the endpoint should degrade to the previous
+        // behaviour rather than fail the scan.
+        log.warn "${app.label}: could not list installed apps, falling back to device-led discovery only: ${ex.message}"
+    }
+    return ids.unique()
+}
+
+// Iterative rather than recursive on purpose. A self-calling method inside a
+// Hubitat app is a sandbox risk not worth taking for a tree that is three deep,
+// and a stack of pending nodes does the same job with no such question.
+void collectAppIds(def nodes, List ids) {
+    if (!(nodes instanceof List)) return
+    List pending = []
+    pending.addAll(nodes as List)
+    while (pending) {
+        def node = pending.remove(0)
+        if (!(node instanceof Map)) continue
+        Map entry = node as Map
+        Map data = entry.data as Map
+        // Through a String-typed local, never appended straight as a GString. A
+        // list of GStrings looks identical in a log and then fails contains()
+        // and unique() against real Strings. Section 9.5 of the storage-format
+        // notes covers it; this caught the first version of this walker, where
+        // ids.contains('2973') was false against a list that plainly held it.
+        if (data?.id != null) {
+            String id = "${data.id}"
+            ids << id
+        }
+        if (entry.children instanceof List) pending.addAll(entry.children as List)
+    }
 }
 
 // Phase 1: only needs the app ids this device is attached to.
