@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.7'
+@Field static final String APP_VERSION = '1.8.8'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -265,15 +265,29 @@ function amStartScan() {
   // populate the queue and set scanRunning, then runIn() would silently
   // schedule nothing and scanBatch would never execute. Authenticating with the
   // access token alone runs it as an ordinary request, which schedules.
+  // Reads the body as TEXT and parses it here, rather than calling r.json()
+  // and letting the browser throw. A raw "Unexpected token '<'" tells you only
+  // that something answered with HTML - not WHO answered, which is the entire
+  // question when the same symptom can come from an expired token, Hub Login
+  // Security, a cloud/remote origin, or the hub's own exception page. Status,
+  // final URL after redirects, content-type and the first 200 characters of
+  // the body separate all four; the parse error separates none of them.
   fetch('${getLocalURL('scan')}', { cache: 'no-store', credentials: 'omit' })
     .then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status + ' from the hub - the access token may be invalid or OAuth disabled for this app.');
-      return r.json();
+      return r.text().then(function (body) {
+        var ct = r.headers.get('content-type') || 'none';
+        var where = (r.url && r.url !== window.location.href) ? r.url : '(same page URL)';
+        var detail = 'HTTP ' + r.status + ' | type ' + ct + ' | from ' + where +
+                     ' | body starts: ' + body.slice(0, 200).replace(/\\s+/g, ' ');
+        if (!r.ok) throw new Error(detail);
+        var d;
+        try { d = JSON.parse(body); }
+        catch (parseErr) { throw new Error('the hub did not return JSON. ' + detail); }
+        if (d && d.ok === false) throw new Error(d.error || 'the hub reported a failure with no detail.');
+        return d;
+      });
     })
-    .then(function (d) {
-      if (d && d.ok === false) throw new Error(d.error || 'the hub reported a failure with no detail.');
-      m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000);
-    })
+    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
     .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
 }
 ${autoScanScript()}
@@ -2287,8 +2301,14 @@ Map scanMapping() {
         startScan()
     } catch (Exception ex) {
         log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
+        // Serialised to a String, not passed as a Map. Every other render() in
+        // this file passes a String, and this was the only one that did not -
+        // if render() does not coerce a Map, this handler throws inside its own
+        // catch, Hubitat renders its HTML error page, and the caller sees the
+        // exact parser error this handler exists to prevent. Which would make
+        // the 1.8.7 fix invisible rather than wrong. Caught by external review.
         return render(status: 200, contentType: 'application/json',
-            data: [ok: false, error: "${ex.message}"])
+            data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))
     }
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
