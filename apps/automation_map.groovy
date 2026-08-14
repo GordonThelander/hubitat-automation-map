@@ -2583,6 +2583,12 @@ const network = new vis.Network(document.getElementById('network'), { nodes: nod
 // apps standing apart from the network rather than as bits that drifted off.
 // Done after stabilization rather than by pinning coordinates up front, because
 // the graph's extent is not known until it has settled.
+// Set by shelveInertNodes once the shelf's real extent is known, drawn every
+// frame by the afterDrawing hook below. null means no inert nodes exist this
+// scan, so nothing is drawn - a divider with nothing under it would be
+// confusing rather than informative.
+let shelfDivider = null;
+
 function shelveInertNodes() {
   const inertIds = ALL_NODES.filter(function (n) { return n.inert; }).map(function (n) { return n.id; });
   if (!inertIds.length) return;
@@ -2626,7 +2632,49 @@ function shelveInertNodes() {
     };
   });
   nodes.update(updates);
+
+  // Spans the shelf's own width, not the cluster's above it - a handful of
+  // inert apps sit in a narrower row than the network they're parked under,
+  // and a divider stretched to the cluster's width would float free of what
+  // it's supposed to be marking.
+  const shelfXs = inertIds.map(function (id) { return INERT_POS[id].x; });
+  shelfDivider = {
+    x1: Math.min.apply(null, shelfXs) - COL_W / 2,
+    x2: Math.max.apply(null, shelfXs) + COL_W / 2,
+    y: startY - ROW_H / 2
+  };
 }
+
+// Runs on every canvas redraw, in the network's own coordinate space (the
+// same one node.x/node.y live in), which is why the line and label track pan
+// and zoom instead of needing to be repositioned by hand on every frame.
+//
+// That same coordinate space is what makes a fixed font size wrong: vis-
+// network keeps its OWN node labels a constant size on screen regardless of
+// zoom (scaling.label defaults to off), but a raw canvas draw here gets no
+// such treatment - "13px" is 13 units in graph space, and at the zoom level
+// needed to fit a few hundred nodes that renders as a handful of actual
+// screen pixels. Dividing every screen-space size by network.getScale()
+// counteracts the zoom the same way vis-network already does for its labels,
+// so this reads at a constant size next to them rather than shrinking when
+// the view zooms out to fit the whole graph.
+network.on('afterDrawing', function (ctx) {
+  if (!shelfDivider) return;
+  const scale = network.getScale() || 1;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1 / scale;
+  ctx.beginPath();
+  ctx.moveTo(shelfDivider.x1, shelfDivider.y);
+  ctx.lineTo(shelfDivider.x2, shelfDivider.y);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = (13 / scale) + 'px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('Inert Nodes', shelfDivider.x1, shelfDivider.y - 4 / scale);
+  ctx.restore();
+});
 
 function settle() {
   network.once('stabilizationIterationsDone', function () {
@@ -3610,7 +3658,13 @@ function focusNode(id) {
   if (node.group === 'app') {
     forceSelect(appSelect, node.id, node.title);
     deviceSelect.value = '__all__';
-    applyFilters();
+    // An inert app has no edges by definition, so filtering the graph down to
+    // its neighbourhood - what applyFilters does for every other app - leaves
+    // nothing to draw: the whole map collapses to that one square. Nothing is
+    // broken in that state, there is just nothing connected to show. The
+    // panel below already has something worth saying, so it opens without
+    // touching whatever the map currently has on screen.
+    if (!node.inert) applyFilters();
     showFlow(node.id);
   } else {
     forceSelect(deviceSelect, node.id, node.title);
