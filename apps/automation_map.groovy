@@ -77,7 +77,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.2'
+@Field static final String APP_VERSION = '1.8.3'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1655,6 +1655,11 @@ Map buildGraph() {
             }
             if (kidIds) nodes[appNodeId].kids = kidIds
             Map inertFacts = (appMap.inert ?: [:]) as Map
+            // The COUNT, sent alongside the ids. It is what lets the panel tell
+            // "holds nothing" apart from "holds something this scan did not
+            // record the ids for", which is every graph built before parent ids
+            // were captured.
+            if ((inertFacts.kids ?: 0) as Integer) nodes[appNodeId].holds = inertFacts.kids
             if ((inertFacts.sched ?: 0) as Integer) nodes[appNodeId].sched = inertFacts.sched
             if ((inertFacts.subs ?: 0) as Integer) nodes[appNodeId].subs = inertFacts.subs
             if ((inertFacts.devs ?: 0) as Integer) nodes[appNodeId].devs = inertFacts.devs
@@ -2286,6 +2291,13 @@ String buildMapHtml() {
   #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
   #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
+  #flow a { color:#7fb6d6; text-decoration:none; }
+  #flow a:hover { text-decoration:underline; }
+  /* Above the title, where a back affordance is looked for, and clear of the
+     close button in the same corner. */
+  #flowBack { font-size:0.8em; margin:0 0 6px 0; padding-right:20px; }
+  #flow ul { margin:4px 0 10px 0; padding-left:18px; }
+  #flow li { margin:2px 0; font-size:0.85em; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
      through as ghost text across the middle of the table. */
@@ -2389,7 +2401,7 @@ String buildMapHtml() {
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
+<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -2974,6 +2986,13 @@ function showInertPanel(node) {
       html += '<li><a href="#" data-node="' + k.id + '">' + k.title + '</a></li>';
     });
     html += '</ul>';
+  } else if (node.holds) {
+    // Built by a scan from before parent ids were recorded, so it knows it
+    // holds children but not which ones. Saying so is the only honest option:
+    // the alternative is a heading claiming 46 apps above an empty space, which
+    // is exactly what shipping this without the check did.
+    html += '<h4>Holds ' + node.holds + ' app' + (node.holds === 1 ? '' : 's') + '</h4>';
+    html += '<p class="sub">Which ones was not recorded by the scan that built this map. Run a scan to list them here.</p>';
   } else if (!facts.length && !node.parent) {
     html += '<p class="sub">Nothing at all: no children, no schedule, no subscriptions. Either it is not configured yet, or it is left over from something that has been removed.</p>';
   }
@@ -3505,9 +3524,55 @@ function forceSelect(sel, id, label) {
   sel.value = id;
 }
 
+// Where the view was before the current one. Kept so that stepping down into a
+// container's children, or across from one rule to another, can be undone.
+//
+// Browser Back is wired to this rather than left alone. Without it, Back from
+// anywhere in the map leaves the map entirely and lands you back on the app
+// page, which is a long way to fall for wanting to undo one click. Each focus
+// change pushes a history entry, so Back walks the trail first and only leaves
+// the page once the trail is exhausted, which is where leaving is what you
+// actually meant.
+let focusTrail = [];
+let poppingHistory = false;
+
+function focusLabel(id) {
+  if (!id) return 'the whole map';
+  const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
+  return n ? n.title : 'the whole map';
+}
+
+function currentFocus() {
+  if (appSelect.value !== '__all__') return appSelect.value;
+  if (deviceSelect.value !== '__all__') return deviceSelect.value;
+  return null;
+}
+
+function renderBackLink() {
+  const bar = document.getElementById('flowBack');
+  if (!bar) return;
+  if (!focusTrail.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  const prev = focusTrail[focusTrail.length - 1];
+  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + focusLabel(prev) + '</a>';
+  bar.style.display = 'block';
+  document.getElementById('flowBackLink').addEventListener('click', function (ev) {
+    ev.preventDefault();
+    // Goes through history so the button and browser Back cannot disagree
+    // about where the trail is.
+    history.back();
+  });
+}
+
 function focusNode(id) {
   const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
   if (!node) return false;
+  if (!poppingHistory) {
+    const from = currentFocus();
+    if (from !== id) {
+      focusTrail.push(from);
+      try { history.pushState({ amFocus: id }, ''); } catch (e) { }
+    }
+  }
   if (node.group === 'app') {
     forceSelect(appSelect, node.id, node.title);
     deviceSelect.value = '__all__';
@@ -3521,8 +3586,34 @@ function focusNode(id) {
   }
   const hint = document.getElementById('hint');
   if (hint) hint.style.display = 'none';
+  renderBackLink();
   return true;
 }
+
+// Restores the previous view instead of leaving the page. Only entries this
+// page pushed are handled; anything else is somebody else's history and Back
+// should do what it normally does.
+window.addEventListener('popstate', function (ev) {
+  if (!focusTrail.length) return;
+  const prev = focusTrail.pop();
+  poppingHistory = true;
+  try {
+    if (prev) {
+      focusNode(prev);
+      // focusNode re-renders from a trail that has already been popped, so the
+      // link is correct without any extra bookkeeping here.
+    } else {
+      // Back to the whole map.
+      appSelect.value = '__all__';
+      deviceSelect.value = '__all__';
+      flowPanel.style.display = 'none';
+      applyFilters();
+      renderBackLink();
+    }
+  } finally {
+    poppingHistory = false;
+  }
+});
 
 network.on('click', function (params) {
   if (params.nodes && params.nodes.length) focusNode(params.nodes[0]);
@@ -3550,6 +3641,10 @@ document.getElementById('resetBtn').addEventListener('click', function () {
   deviceSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
+  // Show all is a deliberate return to the top, not a step back, so the trail
+  // it would otherwise offer is stale by definition.
+  focusTrail = [];
+  renderBackLink();
   applyFilters();
 });
 </script>
