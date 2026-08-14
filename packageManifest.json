@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-14",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Test build 1.8.4. Installs alongside the release version; your existing install is untouched. RESCAN REQUIRED - the graph data model changed.\n\nDISCOVERY: app enumeration now unions /hub2/appsList with the existing device-led scan, so an app that touches no device (a Rule Function, a schedule-only app, a container) is no longer invisible.\n\nSuch apps are drawn instead of dropped, dimmed, and labelled with why they're empty - holds N apps, owns N devices, runs on a schedule, listens to N events, child of X, or references nothing. They sit on a fixed shelf below the main graph so they don't get pulled into the cluster by the layout physics, and can be clicked through to like any other app.\n\nRULE LINKS: recognises two more Rule Machine storage forms seen in community testing - ruleActMain (an alternate Run Actions target) and privateF (an alternate Private Boolean target).\n\nRENAMED for accuracy: 'Stops' is now 'Cancel timed actions'. Pause/Resume now shows which one occurred where the hub records it, rather than always showing both as possible.\n\nINSIGHTS: a new 'Broken rule references' section lists any target that no longer resolves to anything, and which apps still reference it.\n\nFIXED: long device/app labels no longer overwrite each other in the focused view. Added back navigation inside the map and Insights panels.\n\nReports welcome on the community thread.",
+  "releaseNotes": "Test build 1.8.5. Installs alongside the release version; your existing install is untouched.\n\nSCAN INTEGRITY: a reviewed audit of the scan pipeline found three ways a failed or incomplete scan could still produce a graph that looked complete. All three fixed - a device-enumeration failure is no longer silently overwritten by the next line, a fatal batch failure now stops the scan instead of building a graph from data it never finished collecting, and an app the hub could not read is no longer shown identically to one that genuinely references nothing (it gets its own colour, legend entry, and the actual error). A hub that fails its own compatibility check now stops the scan there rather than continuing into phases that depend on it.\n\nPIVOT TABLES: new panel, presets plus a free-form builder, to cross-reference what is already on the map (Rule to Rules affected, Rule to Devices, Device to Rules), with CSV export. The Rule-scoped presets were querying every app, not just Rule Machine rules - fixed to actually filter by rule type.\n\nFIXED: external-system node ids could collide when two different names or hosts reduced to the same stripped string, silently merging their dependencies. A registry field (parentAppName) was declared evaluable but matched against the wrong data every time - removed until a real per-instance matcher exists.\n\nAlso: an Exit map button and an Exit-to-whole-map link for backing out of a multi-level drill-down in one step, and a seasonal decoration that only appears December 20-25.\n\nReports welcome on the community thread.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.8.4"
+      "version": "1.8.5"
     }
   ],
   "drivers": []

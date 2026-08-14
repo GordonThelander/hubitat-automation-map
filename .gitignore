@@ -1,0 +1,4 @@
+# groovyc output. These were previously committed by mistake (83 files at
+# repo root) - generated build artifacts, not source, and stale as soon as
+# the .groovy they came from changes.
+*.class
