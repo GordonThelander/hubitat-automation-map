@@ -2,3 +2,9 @@
 # repo root) - generated build artifacts, not source, and stale as soon as
 # the .groovy they came from changes.
 *.class
+
+# Development scratch files - dev-session notes and cross-session working
+# memory, not project source. Kept locally only from 2026-08-15 on; earlier
+# history remains in git if ever needed.
+handoff.md
+amnesia.md
