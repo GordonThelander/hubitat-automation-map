@@ -587,3 +587,19 @@ The permanent error handler should nevertheless preserve the distinction between
 - a true `fetch()` rejection where no readable response object exists.
 
 That distinction will make future proxy, CORS, DNS and routing failures diagnosable without conflating them with Automation Map application errors.
+
+### Exact 1.8.9 Remote Admin URL confirmed
+
+The exact configuration URL for this v1.8.9 reproduction is:
+
+    https://remoteaccess.aws.hubitat.com/installedapp/configure/2976/main
+
+This establishes the Automation Map app instance as **2976** and confirms the browser origin as `https://remoteaccess.aws.hubitat.com`.
+
+With the current relative-path strategy, a browser-side request for `/apps/api/2976/scan?...` is therefore resolved against the Remote Admin origin, conceptually producing:
+
+    https://remoteaccess.aws.hubitat.com/apps/api/2976/scan
+
+That is the wrong destination: it addresses the Remote Admin web front-end rather than the Automation Map OAuth API endpoint for app instance 2976.
+
+This concrete URL strengthens the diagnosis by removing ambiguity about the page origin and app instance. It also gives a specific acceptance-test instance for the routing fix: when the configuration page is opened through the URL above, pressing Scan must not generate a request to `remoteaccess.aws.hubitat.com/apps/api/2976/...`; it must select the Hubitat cloud OAuth API route for instance 2976.
