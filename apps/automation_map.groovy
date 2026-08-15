@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.9'
+@Field static final String APP_VERSION = '1.9.0'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -88,7 +88,7 @@ import java.util.regex.Pattern
 // otherwise render with edge kinds that no longer match any colour/dash
 // lookup, degrading silently to the '#999' fallback instead of forcing the
 // rescan that already exists for exactly this situation.
-@Field static final String GRAPH_SCHEMA = '3'
+@Field static final String GRAPH_SCHEMA = '5'
 
 // A once-a-year decoration, embedded as a data URI rather than hosted -
 // this app has no other place to serve an asset from, and a ~29KB addition
@@ -932,7 +932,7 @@ Map fetchDeviceApps(String devId) {
 // Phase 2: the real relationship data. Also harvests device labels for devices
 // the user did not select, since settings carry {id: name} maps.
 Map fetchAppRelationships(String appId, Map labels) {
-    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], error: null]
+    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -964,6 +964,8 @@ Map fetchAppRelationships(String appId, Map labels) {
                 out.flow = []
                 out.ruleLinks = []
                 out.endpoints = []
+                out.hubVarWrites = []
+                out.hubVarReads = []
                 return
             }
 
@@ -1031,6 +1033,25 @@ Map fetchAppRelationships(String appId, Map labels) {
             out.flow = buildRuleFlow(data)
             out.ruleLinks = extractRuleLinks(data, appId)
             out.endpoints = extractRuleEndpoints(data)
+            // Gated to Rule Machine, matching the existing engine check at
+            // line ~663 ("${info.type}".startsWith('Rule-')) rather than
+            // SUPPORTED_RULE_ENGINE's exact-version pin - the field names
+            // (xVarV, rCapab_/xVar_, tCapab/xVar) were reverse-engineered
+            // against Rule-5.1 specifically, but nothing about them looks
+            // version-pinned the way flow decoding's layout reconstruction
+            // is, so any Rule Machine engine is allowed rather than only
+            // 5.1. The structured fields would simply find nothing on an
+            // unrelated app type regardless, but the free-text scan is
+            // broader - any text/textarea setting on ANY app - and its
+            // hub-wide confirmation check only looks at the name, not which
+            // app it came from. An unrelated app whose own text happened to
+            // contain a confirmed Hub Variable's name would otherwise pick
+            // up a false read edge. Gating here closes that off entirely
+            // rather than trying to make the confirmation check smarter.
+            if ("${out.type}".startsWith('Rule-')) {
+                out.hubVarWrites = extractHubVariableWrites(data)
+                out.hubVarReads = extractHubVariableReads(data)
+            }
 
             // An app with no devices, no rule links and no endpoints used to be
             // dropped silently, which was defensible while device-led discovery
@@ -1177,6 +1198,162 @@ List extractRuleLinks(Map data, String appId) {
         }
     }
     return out
+}
+
+// Hub Variable WRITE relationships for the graph, not the flow popup - see
+// actionLabel()'s getSetVariable case for the same underlying settings
+// (xVarV.<n> for the target, valStringOp.<n>/customDev.<n>/tCustomAttr.<n> for
+// a device-attribute source) read for the popup's text instead. Kept as a
+// separate pass over the same appSettings/appState data rather than shared
+// with buildRuleFlow, matching how this file already computes roles and flow
+// independently from one scan's data rather than threading one through the
+// other.
+//
+// READ relationships (a rule that consumes a Hub Variable without writing it)
+// are out of scope here - Phase 3 proves the WRITE side only. See handoff.md.
+List extractHubVariableWrites(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { e ->
+        if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
+    }
+    Map actions = (st.actions ?: [:]) as Map
+
+    Map settingValues = [:]
+    Map settingDevices = [:]
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map)) return
+        String n = "${s.name}"
+        Map dl = s.deviceList as Map
+        if (dl) settingDevices[n] = dl.values().collect { stripTags("${it}") }
+        if (s.value != null && "${s.value}") settingValues[n] = "${s.value}"
+    }
+
+    List out = []
+    actions.each { num, actVal ->
+        Map act = (actVal instanceof Map) ? (actVal as Map) : [:]
+        String method = (act.method ?: settingValues["actSubType.${num}"] ?: '') as String
+        if (method != 'getSetVariable') return
+        // Trailing period observed on the one fixture verified so far (rule
+        // 2981, "TestHubUptime.") - not yet confirmed as universal, so strip
+        // rather than assume it is always present. See handoff.md Section 22.
+        String varName = ("${settingValues["xVarV.${num}"] ?: ''}").replaceAll(/\.$/, '')
+        if (!varName) return
+        Map write = [variable: varName]
+        // Only the device-attribute source has been observed. A fixed value or
+        // another variable as the source is unconfirmed, so this is left
+        // absent rather than guessed - the variable node and WRITE edge are
+        // still created either way, only the source detail is conditional.
+        if (settingValues["valStringOp.${num}"] == 'Device attribute') {
+            String attr = settingValues["tCustomAttr.${num}"]
+            List srcDevices = settingDevices["customDev.${num}"] ?: []
+            if (attr && srcDevices) {
+                write.sourceDevice = srcDevices[0]
+                write.sourceAttr = attr
+            }
+        }
+        out << write
+    }
+    return out
+}
+
+// Hub Variable READ relationships - a rule referencing a variable in a
+// condition or Required Expression, without necessarily writing it. The
+// eval-expression counterpart to extractHubVariableWrites' action-based
+// detection, and the same relationship requiredDevices() finds for a device
+// condition (rDev_<n>) - a Variable-typed condition has no device at all, so
+// requiredDevices() correctly returns nothing for one, and this is the
+// function that covers the case it can't.
+//
+// Verified against rule 2984, "_Test Variables Extended" (a clone of the
+// canonical write fixture with an added IF): condition 3 reads as "Variable
+// TestHubUptime is not equal to '0'", stored as rCapab_3=Variable (the
+// condition-side counterpart to tCapab1 on triggers), xVar_3=TestHubUptime.
+// (same trailing-period artifact as xVarV on the write side).
+//
+// Scans every eval group unconditionally rather than only ones reached from
+// an IF/ELSEIF action, so a Required Expression (evalMap['0'], not tied to
+// any action) is covered by the same pass without a second code path.
+List extractHubVariableReads(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { e ->
+        if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
+    }
+    Map evalMap = (st.eval ?: [:]) as Map
+    // buildRuleFlow() only trusts group '0' (Required Expression) when
+    // hasPredicate is true - the same guard applies here, so a rule where
+    // the toggle was switched off again can't have this read a stale
+    // leftover group '0' as if it were still active. Every other group is
+    // tied directly to an action's own presence in actionList, which has no
+    // equivalent toggle to go stale against.
+    boolean hasPredicate = st.hasPredicate == true
+
+    Map settingValues = [:]
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map)) return
+        if (s.value != null && "${s.value}") settingValues["${s.name}"] = "${s.value}"
+    }
+
+    // confirmed=true: a structured field (rCapab_/xVar_ or tCapab/xVar)
+    // named this variable explicitly - there is no ambiguity about what it
+    // refers to. confirmed=false: only a %Name% text pattern matched - see
+    // the free-text block below for why that alone is not proof. A name
+    // seen both ways stays confirmed; structured evidence is never
+    // downgraded by an unconfirmed match on the same name.
+    Map found = [:]
+    evalMap.each { groupId, expr ->
+        if ("${groupId}" == '0' && !hasPredicate) return
+        (expr instanceof List ? expr as List : []).each { item ->
+            String s = "${item}"
+            if (settingValues["rCapab_${s}"] != 'Variable') return
+            String varName = ("${settingValues["xVar_${s}"] ?: ''}").replaceAll(/\.$/, '')
+            if (varName) found[varName] = true
+        }
+    }
+
+    // Trigger-by-variable: a rule that FIRES on a Hub Variable changing, not
+    // just referencing one in a condition. Same picker convention as a
+    // device trigger (tDev<n>/tCustomAttr<n>) but tCapab<n>=='Variable' and
+    // xVar<n> - no underscore, unlike the condition-side xVar_<n> - holds the
+    // name. Verified against rule 2988, "_Test Variables Trigger". This is
+    // READ + TRIGGER per the spec (Section 6.3) - not yet distinguished from
+    // a plain read at the edge-kind level, both land in the same 'read' set.
+    settingValues.keySet().findAll { it ==~ /^tCapab\d+$/ }.each { String capabKey ->
+        if (settingValues[capabKey] != 'Variable') return
+        String num = capabKey.replaceAll('^tCapab', '')
+        String varName = ("${settingValues["xVar${num}"] ?: ''}").replaceAll(/\.$/, '')
+        if (varName) found[varName] = true
+    }
+
+    // Free-text interpolation - lowest priority per the spec's own
+    // extraction order (Section 8.1: structured state first, visible text
+    // only as a bounded fallback), used here because no structured field
+    // captures a variable referenced inside typed text the way xVarV/xVar_
+    // capture a picker selection. %Name% is RM's own reserved substitution
+    // syntax, not something this app invented - verified against rule 2992,
+    // "_ Test Variables Text": valString.1 = '%TestHubUptime%'.
+    //
+    // NOT proof on its own, and marked confirmed=false accordingly: Rule
+    // Machine also reserves %device%/%time%/%date% (and others) as built-in
+    // notification tokens with no relation to Hub Variables at all. Trusting
+    // the pattern alone produced exactly this on Gordon's live hub -
+    // "device"/"time"/"date" reported as Hub Variables read by real
+    // production rules (Barking, Perimeter Closed, Mode Alarm Reminder),
+    // none of which have ever created a variable by those names. buildGraph()
+    // only keeps a candidate if the same name is independently confirmed
+    // somewhere else on the hub via a structured reference - see the
+    // confirmedVarNames pre-pass there.
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map)) return
+        String settingType = "${s.type}"
+        if (!(settingType == 'text' || settingType == 'textarea')) return
+        String val = "${s.value ?: ''}"
+        (val =~ /%([A-Za-z_][A-Za-z0-9_]*)%/).findAll().each { m ->
+            String varName = "${m[1]}"
+            if (varName && !found.containsKey(varName)) found[varName] = false
+        }
+    }
+
+    return found.collect { name, confirmed -> [variable: name, confirmed: confirmed] }
 }
 
 List buildRuleFlow(Map data) {
@@ -1364,15 +1541,33 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         kind: 'action',
         ctrl: ctrl,
         cond: cond,
-        label: actionLabel(method, num, act, settingValues, evalMap, capabs),
+        label: actionLabel(method, num, act, settingValues, settingDevices, evalMap, capabs),
         devices: devices,
         ruleTargets: ruleTargets,
         selfTarget: selfTarget,
     ]
 }
 
-String actionLabel(String method, String num, Map act, Map settingValues, Map evalMap, Map capabs) {
+String actionLabel(String method, String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
     switch (method) {
+        case 'getSetVariable':
+            // xVarV.<n> holds the target Hub Variable name. Verified against
+            // one fixture (rule 2981, "_Test Variables") to carry a trailing
+            // period - "TestHubUptime." - not yet confirmed whether that is
+            // always present or an artifact of this specific picker state, so
+            // it is stripped rather than assumed absent on other rules.
+            String varName = (settingValues["xVarV.${num}"] ?: '').replaceAll(/\.$/, '')
+            if (!varName) return 'Set Hub Variable [unresolved]'
+            // valStringOp.<n> discriminates what the value is being set FROM.
+            // Only the device-attribute source has been observed so far - a
+            // fixed value or another variable as the source is unconfirmed
+            // and falls through to the bare form below rather than guessing.
+            if (settingValues["valStringOp.${num}"] == 'Device attribute') {
+                String attr = settingValues["tCustomAttr.${num}"]
+                List srcDevices = settingDevices["customDev.${num}"] ?: []
+                if (attr && srcDevices) return "Set Hub Variable ${varName} from ${srcDevices[0]}.${attr}"
+            }
+            return "Set Hub Variable ${varName}"
         case 'getOnOffSwitch':
             return settingValues["onOff.${num}"] == 'true' ? 'On' : 'Off'
         case 'getSetColorTemp':
@@ -1744,6 +1939,23 @@ Map buildGraph() {
     Map nameCache = [:]
     Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
 
+    // Every Hub Variable name confirmed anywhere on the hub via a structured
+    // reference (a write, or a condition/trigger read - never free text on
+    // its own). Collected hub-wide, in its own pass, before any edge is
+    // drawn: a free-text candidate found in one app can only be trusted
+    // against structured evidence that might live in a completely different
+    // app's rule. See extractHubVariableReads for why an unconfirmed match
+    // cannot be trusted alone - Rule Machine's own %device%/%time%/%date%
+    // notification tokens match the same pattern as a real Hub Variable
+    // reference and are not one.
+    Set confirmedVarNames = []
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        Map appMap = info as Map
+        (appMap.hubVarWrites ?: []).each { Map w -> if (w.variable) confirmedVarNames << "${w.variable}" }
+        (appMap.hubVarReads ?: []).each { Map r -> if (r.variable && r.confirmed) confirmedVarNames << "${r.variable}" }
+    }
+
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
@@ -1763,7 +1975,18 @@ Map buildGraph() {
         // different findings and must not render the same way, so unreadable
         // is checked and excluded from inert rather than folded into it.
         boolean unreadable = appMap.error != null
-        boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: [])
+        // A rule whose only relationship is to a Hub Variable (e.g. "_Test
+        // Variables Trigger", which touches no device at all) is not inert,
+        // and was being marked so before this - dimmed amber, labelled "no
+        // device or rule relationship", despite drawing a real edge on the
+        // map underneath that label. Checked against what will actually be
+        // drawn, not just whether hubVarReads is non-empty - an unconfirmed
+        // free-text candidate that confirmedVarNames goes on to filter out
+        // must not itself count as a relationship, or an app with only a
+        // false-positive candidate would be wrongly called non-inert too.
+        boolean hasVarRelationship = (appMap.hubVarWrites ?: []) ||
+            (appMap.hubVarReads ?: []).any { Map r -> r.confirmed == true || confirmedVarNames.contains("${r.variable}") }
+        boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         // This app's own instances are the one exception, and stay hidden. They
         // are excluded from the graph deliberately, so drawing them as apps that
         // reference nothing would be actively misleading: they reference the
@@ -1855,6 +2078,46 @@ Map buildGraph() {
                 if (role == 'action' && statefulDevices.contains(devId)) edge.stateful = true
                 edges << edge
             }
+        }
+
+        // Hub Variables: shared, hub-scoped state, not owned by any one app -
+        // so unlike a device the node is identified by name, not by an id the
+        // scan discovered it under.
+        (appMap.hubVarWrites ?: []).each { Map w ->
+            String varName = "${w.variable}"
+            if (!varName) return
+            String varNodeId = "v${varName}"
+            if (!nodes[varNodeId]) nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+            String key = "${appNodeId}|${varNodeId}|write"
+            if (seen.contains(key)) return
+            seen << key
+            Map edge = [from: appNodeId, to: varNodeId, kind: 'write']
+            if (w.sourceDevice && w.sourceAttr) edge.detail = "from ${w.sourceDevice}.${w.sourceAttr}"
+            edges << edge
+        }
+        // Stored from-app-to-variable the same as a write, NOT reversed, even
+        // though a read conceptually flows variable-to-rule - every edge on
+        // this map has an app in `from` (see the comment on pivotKindOptions
+        // in the page template), and other code depends on that holding for
+        // every edge, not just device ones. The visual arrow is corrected
+        // instead, the same way a device trigger already is: 'read' joins
+        // 'trigger'/'constraint'/'monitor' in the JS inbound list so the
+        // arrowhead still points at the app despite `from` being the app.
+        (appMap.hubVarReads ?: []).each { Map r ->
+            String varName = "${r.variable}"
+            if (!varName) return
+            // An unconfirmed (free-text-only) candidate is only drawn if
+            // some app, anywhere on the hub, confirms the same name via a
+            // structured reference. Otherwise it is exactly the RM-token
+            // false positive this pre-pass exists to catch - dropped
+            // silently rather than drawn as a guess.
+            if (r.confirmed != true && !confirmedVarNames.contains(varName)) return
+            String varNodeId = "v${varName}"
+            if (!nodes[varNodeId]) nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+            String key = "${appNodeId}|${varNodeId}|read"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: varNodeId, kind: 'read']
         }
     }
 
@@ -2505,6 +2768,7 @@ String buildMapHtml() {
   .sw-dot { border-radius:50%; }
   .sw-square { border-radius:2px; }
   .sw-diamond { width:10px; height:10px; border-radius:1px; transform:rotate(45deg); margin:1px 9px 1px 1px; }
+  .sw-triangle { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:11px solid currentColor; background:none !important; margin-right:8px; }
   .sw-outline { background:#2b2b2b; border:2px solid #e8a33d; box-sizing:border-box; }
   /* Deliberately not a variant of sw-outline. A deleted target and an unscanned
      rule are different findings, and sharing a style is what made them
@@ -2609,6 +2873,7 @@ ${santaHtml}
   <div class="legend-row"><span class="swatch sw-square sw-unreadable"></span>Could not be read during the scan - rescan to retry</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - grey with no app focused</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
+  <div class="legend-row"><span class="swatch sw-triangle" style="color:#4fb3a9"></span>Hub Variable - shared state a rule writes or reads</div>
   <div class="note" style="margin:2px 0 6px 0">Focus an app and each device instead takes the colour of its role below, shown as both a line and the dot the device itself becomes.</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#9b59b6"></span><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#16a085"></span><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
@@ -2616,6 +2881,8 @@ ${santaHtml}
   <div class="legend-row"><span class="swatch sw-dot" style="background:#7fae42"></span><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
+  <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub Variable's value</div>
+  <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub Variable in a condition or action</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
@@ -2706,8 +2973,8 @@ try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) {
 const GRAPH = ${jsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
-                     depends: '#cfd8dc' };
-const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc' };
+                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc' };
+const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9' };
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
@@ -2719,9 +2986,9 @@ const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
 const KIND_LABEL = {
   trigger: 'Trigger', constraint: 'Constraint', monitor: 'Monitor', action: 'Action',
   exposed: 'Exposed', owns: 'Owns', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
-  setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on'
+  setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read'
 };
-const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system' };
+const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable' };
 
 // Which edge kinds actually connect two node groups, keyed order-independently
 // (device|app and app|device are the same relationship read from either end).
@@ -2736,10 +3003,11 @@ function pivotKindOptions(g1, g2) {
   if (key === 'app|app') return ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
   if (key === 'app|device') return ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'];
   if (key === 'app|external') return ['depends'];
+  if (key === 'app|hubVariable') return ['write', 'read'];
   return [];
 }
 function pivotColOptions(rowGroup) {
-  return rowGroup === 'app' ? ['app', 'device', 'external'] : ['app'];
+  return rowGroup === 'app' ? ['app', 'device', 'external', 'hubVariable'] : ['app'];
 }
 
 // The fixed menu (option A from the discussion): each entry is a ready-made
@@ -2760,6 +3028,12 @@ const PIVOT_PRESETS = [
   { button: 'Device → Rules', rows: 'device', cols: 'app',
     kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
     rowLabel: 'Device', colLabel: 'Rules', opts: { ruleCols: true } },
+  { button: 'Rule → Hub Variables', rows: 'app', cols: 'hubVariable',
+    kinds: ['write', 'read'],
+    rowLabel: 'Rule', colLabel: 'Hub Variables', opts: { ruleRows: true } },
+  { button: 'Hub Variable → Rules', rows: 'hubVariable', cols: 'app',
+    kinds: ['write', 'read'],
+    rowLabel: 'Hub Variable', colLabel: 'Rules', opts: { ruleCols: true } },
 ];
 
 // The free-form builder (option B): same underlying query, but rows, columns
@@ -2883,7 +3157,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   pairSeen[pairKey] = dupIndex;
   // Arrows follow the flow: a trigger or constraint feeds INTO the app, an
   // action or an owned device is driven BY it.
-  const inbound = (e.kind === 'trigger' || e.kind === 'constraint' || e.kind === 'monitor');
+  const inbound = (e.kind === 'trigger' || e.kind === 'constraint' || e.kind === 'monitor' || e.kind === 'read');
   // A rule link always reads caller to target, and is drawn heavier than a
   // device relationship because it is the rarer and more surprising one.
   const isRuleLink = RULE_LINK_KINDS.indexOf(e.kind) !== -1;
@@ -2961,6 +3235,7 @@ function styledNode(n, useFullLabel, roleByDevice) {
   let shape = 'dot';
   if (n.group === 'app') shape = 'square';
   else if (n.group === 'external') shape = 'diamond';
+  else if (n.group === 'hubVariable') shape = 'triangle';
   const styled = {
     // n.draw is the full identity without the hub's live status; n.title keeps
     // the status and is what the hover tooltip shows. The fallback matters: a

@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.8.9",
+  "version": "1.9.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-15",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.8.9 - fixes JimB's scan-start error for real. The 1.8.8 diagnostic build showed the cause: he reaches his hub through Hubitat's Remote Admin (remoteaccess.aws.hubitat.com), and this app was building relative URLs for the Scan button, the External systems panel, and the View Automation Map link. A relative path only resolves correctly when the page is being served from the hub's own local address - through Remote Admin it 404s before the request ever reaches the app.\n\nThe Scan button and the External systems panel now check, at the moment they're used, whether the browser is on the hub's own origin. If so they use the fast local path as before, with no change in behaviour and no internet dependency. If not, they fall back to Hubitat's cloud API address automatically.\n\nThe View Automation Map link can't be corrected the same way - it's rendered by Hubitat's own settings-page framework, which doesn't expose which origin the request came in on. So there are now two links: the existing fast local one, and a second explicit 'via Hubitat cloud' link for anyone reaching the hub remotely.\n\nReports still welcome on the community thread.",
+  "releaseNotes": "1.9.0 - Hub Variables now appear on the map. A rule that sets or reads a Hub Variable draws a line to it - a new triangular node, distinct from devices and apps - so two rules quietly talking to each other through shared state are finally visible instead of invisible. Detected from a condition, a trigger, a Required Expression, or a variable referenced in free text (e.g. a Notification message), each confirmed against real Rule Machine fixtures rather than guessed. Two new pivot-table presets, 'Rule -> Hub Variables' and 'Hub Variable -> Rules'.\n\nStill checkpointed locally against JimB's own hub testing of 1.8.9 - see the community thread before this goes further.\n\nJim Becker (JimB) credited in the README as primary tester and functional requirements contributor - this feature exists because he asked for it.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",

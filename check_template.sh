@@ -17,6 +17,12 @@
 #                         same reasoning as the line above
 #   /\([^)]*\)/          condition-cleanup regexes (Groovy source, not template)
 #   /\s+/                    "  (Groovy-side use, via replaceAll)
+#   /\.$/                    Groovy-side use, via replaceAll - strips a
+#                             trailing period from a Hub Variable name
+#   /^tCapab\d+$/            Groovy-side use, via ==~ - matches a numbered
+#                             trigger setting name
+#   /%([A-Za-z_]...          Groovy-side use, via =~ - finds %Variable%
+#                             interpolation syntax in free text
 #   <\\/script>          escaping a closing script tag inside the JSON blob
 #   """\                 an opening line continuation
 #   join('\\n')          an intentionally double-escaped newline
@@ -36,6 +42,8 @@ BAD=$(grep -n '\\' "$FILE" \
   | grep -v 'Pattern ORIGIN_PATTERN' \
   | grep -v "replaceAll(/\\\\(\[^)\]\*\\\\)/" \
   | grep -v "replaceAll(/\\\\s+/" \
+  | grep -v "replaceAll(/\\\\.\\$/" \
+  | grep -v "==~ /\\^tCapab\\\\d+\\$/" \
   | grep -v '<\\\\/script>' \
   | grep -v '"""\\$' \
   | grep -v "join('\\\\\\\\n')" \
