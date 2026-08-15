@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.8.8'
+@Field static final String APP_VERSION = '1.8.9'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -111,6 +111,12 @@ boolean showSanta() {
 // rather than silently producing an empty flow.
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
+// Origin only (scheme+host), for the browser to compare against its own
+// window.location.hostname at fetch time. Kept as its own pattern rather than
+// reworking URL_PATTERN's grouping - that one is proven correct in production
+// and touching its group indices to add a second capture risks breaking the
+// local-path case for every user to fix a case that only affects some.
+@Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
 @Field static final Integer APP_BATCH_SIZE = 3
 
@@ -214,6 +220,16 @@ Map main() {
                             url: getLocalURL('automation-map.html'),
                             style: 'embedded', state: 'complete', required: false,
                         )
+                        // The href above is a relative path, native to Hubitat's own
+                        // href/embedded mechanism - there is no request object available
+                        // here to detect which origin this settings page itself was
+                        // requested through, unlike the fetches above which can check
+                        // window.location at click time. So this page is reached through
+                        // Hubitat Remote Admin, that link 404s before any of our code
+                        // runs. This second link is the explicit escape hatch: an
+                        // absolute cloud URL that works from any origin, offered
+                        // alongside rather than in place of the fast local one.
+                        paragraph "<a href='${getCloudURL('automation-map.html')}' target='_blank'>Open Automation Map (via Hubitat cloud - use this if the link above shows a blank or missing page, e.g. when accessing your hub through Remote Admin)</a>"
                     }
                 }
             }
@@ -254,6 +270,19 @@ String scanButtonHtml() {
 <button type="button" id="amScanBtn" class="${cls}"${disabled} onclick="amStartScan()" aria-label="${label}" data-pc-name="button" data-pc-section="root" data-pd-ripple="true">${label}</button>
 <span id="amScanMsg" style="margin-left:10px"></span>
 <script type="text/javascript">
+// Picks the local relative path when the browser is on the hub's own origin
+// (the common case: fast, no internet dependency) and falls back to the
+// absolute cloud URL otherwise - Remote Admin, or anything else that isn't
+// the hub's own LAN address. Checked at click time against the real current
+// origin, not guessed once at page-render time on the server, because the
+// server has no reliable way to know which origin THIS page request came in
+// on for a native Hubitat-rendered page.
+function amPickURL(localPath, cloudUrl) {
+  try {
+    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+  } catch (ignore) { }
+  return cloudUrl;
+}
 function amStartScan() {
   var b = document.getElementById('amScanBtn');
   var m = document.getElementById('amScanMsg');
@@ -272,7 +301,30 @@ function amStartScan() {
   // Security, a cloud/remote origin, or the hub's own exception page. Status,
   // final URL after redirects, content-type and the first 200 characters of
   // the body separate all four; the parse error separates none of them.
-  fetch('${getLocalURL('scan')}', { cache: 'no-store', credentials: 'omit' })
+  var scanUrl = amPickURL('${getLocalURL('scan')}', '${getCloudURL('scan')}');
+  // Confirmed live against a real Remote Admin session: the cloud URL builds
+  // correctly, but fetch() rejects with "Failed to fetch" - a CORS failure,
+  // not a bad URL. Hubitat's cloud API does not send the headers a
+  // cross-origin fetch() needs to read its response, and that is not
+  // something either side of this app can configure around.
+  //
+  // CORS only restricts reading a cross-origin response - it does not stop
+  // the request from being sent, and it does not apply to navigation at all.
+  // So the cloud case fires the same URL as a hidden iframe navigation
+  // instead of fetch(): scanMapping() still runs and still starts the scan,
+  // this code just cannot see what it returned. The reload below then shows
+  // the truth via the page's own state, the same way the success path
+  // already relies on a reload rather than reading the response.
+  if (scanUrl.indexOf('http') === 0) {
+    m.textContent = 'Starting via Hubitat cloud - this page will reload in a few seconds to show the result.';
+    var f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = scanUrl;
+    document.body.appendChild(f);
+    setTimeout(function () { location.reload(); }, 4000);
+    return;
+  }
+  fetch(scanUrl, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) {
       return r.text().then(function (body) {
         var ct = r.headers.get('content-type') || 'none';
@@ -298,7 +350,12 @@ function amStartScan() {
       });
     })
     .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
-    .catch(function (e) { b.disabled = false; m.textContent = 'Could not start the scan: ' + e.message; });
+    .catch(function (e) {
+      b.disabled = false;
+      var where = '(could not parse the attempted URL)';
+      try { var u = new URL(scanUrl, window.location.href); where = u.origin + u.pathname; } catch (ignore) { }
+      m.textContent = 'Could not start the scan: ' + e.message + ' | tried: ' + where;
+    });
 }
 ${autoScanScript()}
 </script>"""
@@ -2216,6 +2273,21 @@ String getLocalURL(String fileName) {
     return (fullURL =~ URL_PATTERN).findAll()[0][1]
 }
 
+// The Remote Admin fix. getLocalURL() above returns a path with no scheme or
+// host, which only resolves correctly when the browser is already on the hub's
+// own origin. A page loaded through remoteaccess.aws.hubitat.com has a
+// different origin, so that relative path 404s against the remote portal
+// instead of ever reaching the hub - this is JimB's scan-start failure.
+// These two give the browser both an absolute fallback and the origin to
+// decide with; see amPickURL() in the two templates that call them.
+String getLocalOrigin() {
+    return (fullLocalApiServerUrl =~ ORIGIN_PATTERN).findAll()[0][1]
+}
+
+String getCloudURL(String fileName) {
+    return "${fullApiServerUrl}/${fileName}?access_token=${state.accessToken}"
+}
+
 // ===================================================================================================================
 // Map page
 // ===================================================================================================================
@@ -3696,7 +3768,16 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
 // is as much in correcting a wrong classification as in filling a gap - Kasa
 // and Tapo can each be local or cloud depending on how they were set up.
 // ---------------------------------------------------------------------------
-const EXT_URL = '${getLocalURL('externals')}';
+// Same reasoning as amPickURL() on the config page's Scan button: a relative
+// path only resolves correctly when this page itself is being served from
+// the hub's own origin, which is not true through Remote Admin.
+function amPickURL(localPath, cloudUrl) {
+  try {
+    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+  } catch (ignore) { }
+  return cloudUrl;
+}
+const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
 let EXT = null;

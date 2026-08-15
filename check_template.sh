@@ -13,6 +13,8 @@
 #
 # Legitimate backslashes, whitelisted below:
 #   ~/^https?:\/\/.../   the URL pattern constant (a Groovy slashy regex)
+#   ~/^(https?:\/\/...   the origin pattern constant (a Groovy slashy regex),
+#                         same reasoning as the line above
 #   /\([^)]*\)/          condition-cleanup regexes (Groovy source, not template)
 #   /\s+/                    "  (Groovy-side use, via replaceAll)
 #   <\\/script>          escaping a closing script tag inside the JSON blob
@@ -31,6 +33,7 @@ FILE="${1:-apps/automation_map.groovy}"
 
 BAD=$(grep -n '\\' "$FILE" \
   | grep -v 'Pattern URL_PATTERN' \
+  | grep -v 'Pattern ORIGIN_PATTERN' \
   | grep -v "replaceAll(/\\\\(\[^)\]\*\\\\)/" \
   | grep -v "replaceAll(/\\\\s+/" \
   | grep -v '<\\\\/script>' \
