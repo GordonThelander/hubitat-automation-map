@@ -922,4 +922,478 @@ from Hub Information.formattedUptime
 
 This requirement is complete when Automation Map can correctly reconstruct a Hub Variable as shared state between automations, preserve the direction and role of each relationship, retain the existing custom-attribute detail, and do so without exposing variable values or creating misleading graph noise.
 
+---
+
+## 22. Phase 1 findings - raw Rule Machine state for `_Test Variables`, 2026-08-15
+
+Captured from `http://10.0.0.125/installedapp/statusJson/2981` (app instance `2981`,
+`_Test Variables`, Rule-5.1, `appTypeId 190`). Local access, read-only, no code
+changes yet - this satisfies Section 8.2's requirement to document the observed
+structure before generalising the parser.
+
+The rule has one trigger (index `1`) and one action (index `2`); indices are not
+contiguous because Rule Machine numbers triggers and actions from shared, reused
+counters as items are added and removed in the UI, not from a fresh count per rule.
+
+### Trigger (index 1) - already correctly decoded, included for contrast
+
+| Setting name | Value | Meaning |
+|---|---|---|
+| `tCapab1` | `"Custom Attribute"` | Capability picker choice |
+| `tDev1` | *(value null; device carried in `deviceIdsForDeviceList`/`deviceList`)* | Device id `3574` = "Hub Information" |
+| `tCustomAttr1` | `"formattedUptime"` | Which attribute |
+| `tstate1` | `"*changed*"` | Match condition - RM's shorthand for "any change" |
+
+Confirmed by `appState.trigCustoms = ["formattedUptime"]`,
+`appState.trigDevs = {"3574:Custom Attribute": ["1"]}`, and the live
+`eventSubscriptions` entry subscribing to device `3574`'s `formattedUptime`.
+
+### Action (index 2) - the gap the spec identifies
+
+| Setting name | Value | Meaning |
+|---|---|---|
+| `actSubType.2` | `"getSetVariable"` | Action subtype - matches `appState.actions["2"].method` |
+| `xVarV.2` | `"TestHubUptime."` | **The target Hub Variable name.** Not read anywhere in the current parser - this is the missing piece. Note the trailing period; unconfirmed whether that's a fixed artifact of how RM's variable-picker enum stores its value or specific to this fixture. Strip it, but verify against a second variable before assuming it's always present. |
+| `valStringOp.2` | `"Device attribute"` | Discriminates the value SOURCE type (device attribute, vs. presumably a fixed value or another variable on other fixtures - not yet observed) |
+| `customDev.2` | *(value null; device carried in `deviceIdsForDeviceList`/`deviceList`)* | Source device id `3574` = "Hub Information" |
+| `tCustomAttr.2` | `"formattedUptime"` | Source attribute |
+| `actType.2` | `"modeActs"` | Unclear - did not vary with anything else observed here, not assumed meaningful for this action |
+| `delayAct.2` | `"none"` | No delay on this action |
+
+Naming pattern: trigger settings are `<name><index>` (`tDev1`), action settings are
+`<name>.<index>` (`customDev.2`) - the dot before the index is only present on the
+action side.
+
+### Confirms the spec's core distinction
+
+`appState.allLocalVars = {}` - empty. `TestHubUptime` does not appear anywhere in
+this rule's own local-variable bookkeeping, which is exactly the spec's claim:
+it's hub-scoped shared state, not a rule-local variable, and the two must not be
+merged (Section 19, constraint 6).
+
+### What Phase 2 needs to change
+
+`actionLabel()`'s `getSetVariable` case (currently absent - it falls through to
+the `default: prettyMethod(method)` branch, producing the generic "Set Variable"
+seen in the screenshot) needs to read `xVarV.<num>` for the target and,  when
+`valStringOp.<num> == 'Device attribute'`, `customDev.<num>` + `tCustomAttr.<num>`
+for the source, to produce the spec's required:
+
+    Set Hub Variable TestHubUptime
+    from Hub Information.formattedUptime
+
+Not yet implemented - Gordon asked for Phase 1 (this investigation) only, local
+development, starting the version line at 1.9.0. `APP_VERSION` bumped locally;
+not pushed to hub or git.
+
 The canonical `_Test Variables` fixture must pass first, followed by at least one separate consumer rule proving cross-rule lineage through `TestHubUptime`.
+
+---
+
+## 23. Phase 2 - execution decoder fix, 2026-08-15
+
+Added a `getSetVariable` case to `actionLabel()`, reading `xVarV.<n>` for the
+target (trailing period stripped) and, when `valStringOp.<n> == 'Device
+attribute'`, `customDev.<n>` + `tCustomAttr.<n>` for the source. Needed
+`settingDevices` threaded into `actionLabel()`, which it didn't previously
+receive (device-picker settings store `null` in `value`, with the real device
+name only in `deviceList`, so `settingValues` alone can't resolve one).
+
+Confirmed live: the flow-decode popup for `_Test Variables` now reads
+`Set Hub Variable TestHubUptime from Hub Information.formattedUptime`,
+matching the spec's Section 11 requirement exactly.
+
+This only fixes the popup. The whole-map graph is built by a separate
+function (`buildGraph`) that had no concept of a Hub Variable at all, so
+`TestHubUptime` did not appear as a node anywhere - confirmed by Gordon
+re-checking the map after this push. Expected: `actionLabel()` only feeds
+`buildRuleFlow()`, not the graph.
+
+## 24. Phase 3 - Hub Variable graph entity, 2026-08-15
+
+Added the WRITE side only, per the spec's own Phase 3 scope (READ is Phase 4,
+needs a second consumer-rule fixture that doesn't exist yet).
+
+- `extractHubVariableWrites(Map data)` - a new function, independent of
+  `actionLabel()`/`buildRuleFlow()` by design (matching how this file already
+  computes `roles` and `flow` as separate passes over the same scan data
+  rather than threading one through the other). Re-derives `xVarV`/
+  `valStringOp`/`customDev`/`tCustomAttr` from `data.appSettings`/
+  `data.appState` directly. Returns `[{variable, sourceDevice?, sourceAttr?}]`.
+- `fetchAppRelationships()` calls it and stores the result as
+  `out.hubVarWrites`, alongside the existing `roles`/`flow`/`ruleLinks`.
+- `buildGraph()` creates a `hubVariable`-group node per unique variable name
+  (id `v<name>` - identity is the name itself, since Hub Variables are
+  hub-scoped shared state, not owned by the app that happens to write them,
+  unlike a device id) and a `write` edge from the writing app to it, with an
+  optional `detail` field ("from Hub Information.formattedUptime") carried on
+  the edge for anything that wants it later.
+- `GRAPH_SCHEMA` bumped `3` -> `4` so an existing stored graph is marked stale
+  and forces a rescan, via the mechanism already built for exactly this
+  (`graphIsStale()`) - the comment already sitting on that constant describes
+  precisely this situation (an edge kind added with no colour/dash lookup).
+- JS: `groupColors`/`roleColors`/`KIND_LABEL`/`GROUP_LABEL` all get a
+  `hubVariable`/`write` entry (`#4fb3a9`, teal - distinct from app orange,
+  device blue-grey, external light-grey). Node shape is `triangle` (new,
+  alongside the existing dot/square/diamond). Legend gets one node-colour row
+  and one edge-kind row, matching the existing rows' format exactly.
+
+### Deliberately not done in this pass
+
+- **Pivot table.** `pivotKindOptions`/`pivotColOptions`/`PIVOT_PRESETS` still
+  only know about `app|app`, `app|device`, `app|external`. An `app|
+  hubVariable` combination is not wired in - it degrades gracefully (empty
+  option list, not a crash) rather than being unavailable due to a bug, but a
+  "Rule -> Hub Variables" preset is a real gap, not just polish. Matches the
+  spec's own Phase 6 ("regression and UI hardening"), not Phase 3.
+- No filter checkbox to hide Hub Variables independently - matches spec
+  Section 10.4's explicit fallback ("may initially follow the automation/
+  dependency visibility state"), since one wasn't found to already exist for
+  device/app either.
+- Consumer-rule fixture (Phase 4) not created - needs a second Rule Machine
+  rule on Gordon's hub, not just code.
+
+### Next step
+
+Rescan is required to see this - `GRAPH_SCHEMA` bumping means the currently
+stored graph is stale, and `graphIsStale()` shows a message rather than
+auto-rescanning. Pressing Scan again should draw `TestHubUptime` as a new
+triangular node connected to `_Test Variables` by a teal `write` edge.
+
+Pushed to hub (dev app instance 2976, revision 45). Not pushed to git.
+
+---
+
+## 25. Phase 4 - Hub Variable READ relationships, 2026-08-15
+
+Gordon built the consumer fixture himself: app `2984`, `_Test Variables
+Extended`, a clone of the canonical rule with the original write action
+wrapped in a new `IF (Variable TestHubUptime is not equal to '0') THEN Set
+Private Boolean True`. This rule both reads and writes `TestHubUptime` -
+Section 6.5's hardest case ("do not collapse this into an ambiguous
+undirected dependency") arrived as the actual fixture rather than a separate
+one, since Gordon cloned rather than built from scratch.
+
+### Raw structure - condition side
+
+Pulled `/installedapp/statusJson/2984` before writing any code, same
+discipline as Phase 1. A Variable-typed condition encodes as:
+
+| Setting name | Value | Meaning |
+|---|---|---|
+| `rCapab_3` | `"Variable"` | Condition 3's left side is a Hub Variable - the condition-side counterpart to `tCapab1` on triggers |
+| `xVar_3` | `"TestHubUptime."` | Which variable (same trailing-period artifact as `xVarV` on the write side) |
+| `RelrDev_3` | `"≠"` | Comparison operator |
+| `state_3` | `"0"` | Compare value |
+
+`3` here is a condition-expression id from a separate counter than action ids
+(`ruleNdx` vs `ndx` in `appState`) - coincidentally the same number as the IF
+action's own id in this fixture, not the same id space. `eval` maps a group id
+to a list of these atomic condition ids (`{"2":[3]}` here); `evalMap['0']`
+would be the top-level Required Expression if the rule used one - this rule
+doesn't, but the extraction covers that case for free by scanning every group
+in `eval` rather than only ones reached from an IF action.
+
+No `rDev_3` exists for this condition at all - `requiredDevices()` correctly
+returns nothing for a Variable-typed condition, which is exactly why it
+needed a counterpart rather than an extension: it looks for a device that
+was never going to be there.
+
+### What was built
+
+- `extractHubVariableReads(Map data)` - scans every `eval` group, keeps atomic
+  condition ids where `rCapab_<n> == 'Variable'`, reads the name from
+  `xVar_<n>`. Returns `[{variable}]`, wired into `fetchAppRelationships()` as
+  `out.hubVarReads`, same pattern as the write side.
+- `buildGraph()` gets a second loop alongside the write one. Important
+  decision: the READ edge is stored `from: appNodeId, to: varNodeId` - **not**
+  reversed to `from: variable, to: app` despite reading conceptually flowing
+  variable-to-rule. The page template has an explicit existing invariant
+  (see the comment on `pivotKindOptions`: "every edge on this map has an app
+  in `from`... that is a fact about the data") that other code depends on.
+  Breaking it for read edges only would have made hub-variable edges a
+  special case silently incompatible with code that assumes `edge.from`
+  resolves to an app. The visual direction is corrected the same way a
+  device trigger already is instead: `read` joins `trigger`/`constraint`/
+  `monitor` in the JS `inbound` list, so the arrowhead still lands on the app
+  even though `from` is the app.
+- Same `from`/`to` pair as a write edge between the same rule and variable
+  produces two parallel curved arcs rather than one edge overwriting the
+  other - confirmed by reading the existing `pairSeen`/`dupIndex` curving
+  logic rather than assuming it, since this was exactly the ambiguous-
+  collapse failure Section 6.5 warns about.
+- Colours: `read: '#8fd6cc'`, a lighter shade of the write teal (`#4fb3a9`) -
+  deliberately related rather than a wholly new colour family, so both read
+  and grouped visually as "Hub Variable relationship" while still being
+  distinguishable from each other and from every existing role colour.
+- `GRAPH_SCHEMA` bumped `4` -> `5` - `read` is a new edge kind the version-4
+  graph (scanned for Phase 3) has never seen, same reasoning as the Phase 3
+  bump.
+
+### Coverage note
+
+This fixture exercises READ-via-condition (part of the spec's Phase 5,
+"Hub Variable comparison condition") and READ+WRITE-of-the-same-variable
+(Section 6.5) simultaneously, ahead of the plain Phase 4 "consumes without
+modifying" case and ahead of schedule for Phase 5. Not yet covered by any
+fixture: a rule whose TRIGGER is itself a Hub Variable change (Fixture C),
+and a Required Expression specifically rather than an IF condition (both
+should already work given the implementation scans every `eval` group
+uniformly, but neither has been observed against real hub data).
+
+### Next step
+
+Rescan required again (schema bump). Expect: `_Test Variables Extended` shows
+on the map with both a teal `write` edge and a lighter-teal `read` edge to
+`TestHubUptime`, curved apart rather than overlapping.
+
+Confirmed live, both edges render correctly with the curved-parallel-edge
+handling already in the page template, arrows pointing opposite directions
+as intended - no code changes needed beyond what Phase 4 already built.
+
+---
+
+## 26. Phase 6 (partial) - pivot table, regression check, 2026-08-15
+
+Gordon said to keep going. Phase 5's remaining items (variable-triggered
+rule, dedicated Required Expression fixture, variable-in-action-text) all
+need new fixtures only Gordon can build - per the established division of
+labour this session (he builds Rule Machine fixtures, code follows from
+real hub data, never from guessing an undocumented structure). Moved to
+Phase 6 instead, which has concrete work not gated on new fixtures.
+
+### Pivot table wired up
+
+`pivotKindOptions`/`pivotColOptions` gain an `app|hubVariable` entry
+(`['write', 'read']`). Two new `PIVOT_PRESETS`: "Rule -> Hub Variables" and
+"Hub Variable -> Rules", mirroring the existing Device presets exactly
+(`ruleRows`/`ruleCols` respectively).
+
+No changes needed to `pivotRows()` itself - it already branches generically
+on whichever of `fromNode.group`/`toNode.group` matches the requested
+row/column group, in either order. This is a second, independent
+confirmation that keeping every hub-variable edge stored `from: app` (see
+Section 25) was the right call: the exact same invariant that made the
+legend/colour code simple also made this fall out for free.
+
+### Regression check against live hub data, not just the two test rules
+
+Read `state.graph` directly from `/installedapp/statusJson/2976` (Automation
+Map's own stored state) rather than eyeballing the rendered map:
+
+    307 nodes, 1045 edges (was 303/1038 before this work began)
+    2 hubVariable nodes: TestHubUptime, Overloadcount
+    3 write edges, 2 read edges
+
+**`Overloadcount` was not created for this work.** It's a Hub Variable
+already in use on Gordon's live hub, written and read by app `2100` - a
+real pre-existing cross-rule dependency the map had never been able to show
+before, surfaced without any special-casing. Stronger evidence the feature
+works than either deliberately-built fixture: it holds up against data it
+was never designed around.
+
+Node/edge growth (+4 nodes, +7 edges) is consistent with what was added
+(app 2984, two hubVariable nodes, five hub-variable edges, plus 2984's own
+ordinary trigger edge) - no runaway growth, no evidence of the "graphs do
+not explode into per-attribute nodes" failure mode Phase 6's checklist warns
+about.
+
+### Still open from Phase 6's checklist
+
+Not independently re-verified this pass (no reason to suspect a problem,
+but not specifically checked either): variable values not leaked anywhere
+in the new code paths (true by construction - neither extraction function
+reads a Hub Variable's actual value, only its name), and readability at a
+much larger Hub Variable count than the two seen so far.
+
+Pushed to hub (revision 47, pivot table only, no schema bump - existing
+graph data is fully compatible with the new UI). Not pushed to git.
+
+---
+
+## 27. Phase 5 - trigger and free-text reads, 2026-08-15
+
+Gordon built all three remaining fixtures and exported them directly via
+Rule Machine's own Export/Import/Clone feature rather than me pulling
+`statusJson` - faster, and the export matched the reverse-engineered
+structure exactly, an independent confirmation of everything built so far.
+
+### `_Test Variables Required` (app 2990) did not test what it was meant to
+
+`eval` is empty, no `rCapab_`/`xVar_`/`hasPredicate` anywhere - structurally
+identical to the Trigger fixture (2988), just renamed. The Required
+Expression toggle did not end up configured with a variable condition.
+Not rebuilt this pass - `extractHubVariableReads()` already scans every
+`eval` group including `'0'` (Required Expression's own group, alongside
+whatever numbered groups individual IF actions use), so this case is very
+likely already covered by the same code path proven for IF conditions -
+but that is an inference from the code's own structure, not something
+observed against real data. Flagged, not fixed. Rebuild properly if this
+specific case needs to move from "very likely" to "confirmed."
+
+### Trigger-by-variable - confirmed, implemented
+
+Rule 2988, "_Test Variables Trigger": a rule that fires when `TestHubUptime`
+itself changes, not on a device attribute.
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `tCapab1` | `"Variable"` | Same slot a device trigger puts "Custom Attribute" in |
+| `xVar1` | `"TestHubUptime."` | The variable - no underscore, unlike the condition-side `xVar_<n>` |
+
+Event subscription differs from every device trigger seen so far:
+`type: "LOCATION"`, `name: "variable:TestHubUptime."`, `typeId: 1` (the
+location itself) - not `type: "DEVICE"`. Not currently read by this app
+(subscriptions aren't part of how any of this is detected), but worth
+knowing if that ever needs to change.
+
+Added to `extractHubVariableReads()`: scans every `tCapab<n>` setting,
+treats `== 'Variable'` the same as a condition's `rCapab_<n>`, reads the
+name from `xVar<n>`. Lands in the same `names` list as condition-based
+reads - a variable trigger and a variable condition both currently produce
+the same generic `read` edge. Per the spec (Section 6.3) a trigger is
+technically `READ + TRIGGER`, a distinct semantic from plain `READ` - not
+yet split into a separate edge kind. Same gap already logged for
+condition-vs-plain-read.
+
+### Free text - confirmed, implemented
+
+Rule 2992, "_ Test Variables Text": `Set Variable` action, `valStringOp.1
+= "Set string"`, `valString.1 = "%TestHubUptime%"` - Rule Machine's own
+reserved substitution syntax, typed directly into a text field rather than
+picked from a structured dropdown.
+
+Added a third scan to `extractHubVariableReads()`: every `text`/`textarea`
+setting value is checked for `%Name%` against a regex, any match is a read.
+Deliberately the lowest-priority extraction in the function, matching the
+spec's own stated preference (Section 8.1: structured state first, visible
+text only as a bounded fallback) - it exists because nothing else can catch
+a variable reference embedded in typed text the way `xVarV`/`xVar_` catch
+a picker selection. Scoped to `text`/`textarea` setting types specifically,
+not every setting, since RM's own bookkeeping fields are almost entirely
+enums and buttons that could never legitimately contain this syntax.
+
+### Trailing period, revised understanding
+
+Comparing this batch's fixtures resolved something left open in Section 22.
+`TestConcat` (created fresh this session, never renamed) carries no trailing
+period anywhere it appears - `xVarV.1 = "TestConcat"`, clean. `TestHubUptime`
+carries one everywhere, including a `p.TestHubUptime.` state key and a
+`formerState` field. The period is not a general artifact of Rule Machine's
+variable picker - it is specific to `TestHubUptime`'s own internal record,
+most likely a leftover from being renamed at some point during earlier
+testing. The strip-trailing-period code in every extraction function stays
+correct regardless (a no-op when absent), but the reasoning in Section 22
+calling it a "picker artifact" was an overclaim - corrected here rather than
+left standing.
+
+### Status
+
+Pushed to hub (revision 48). No `GRAPH_SCHEMA` bump - `read` already existed
+as an edge kind, this only expands which rules get detected as producing
+one, not the shape of the data itself. Not pushed to git.
+
+Remaining from the original spec: condition/trigger vs. plain-read not
+distinguished as separate edge kinds, and Phase 6's scale/removal checks
+still not empirically tested.
+
+---
+
+## 28. Required Expression - confirmed, 2026-08-15
+
+Gordon rebuilt `_ Test Variables Required` (app 2990) correctly this time -
+the Required Expression section now actually holds the variable condition,
+confirmed both by the settings page screenshot (a distinct "Define Required
+Expression" block, separate from Trigger and Actions) and the export.
+
+`hasPredicate: true`, `eval: {"0": [2]}`, `rCapab_2 = "Variable"`,
+`xVar_2 = "TestHubUptime."` - identical shape to the IF condition already
+verified in Section 25, just in group `'0'` instead of an action-numbered
+group. This is exactly what Section 27 predicted from the code's own
+structure ("very likely already covered... not something observed against
+real data") - now it is observed. No code change was needed for the
+detection itself.
+
+One real gap this data surfaced, fixed while confirming it: the existing
+`buildRuleFlow()` only trusts group `'0'` when `hasPredicate == true` (so a
+rule where the toggle was switched back off can't have a stale leftover
+Required Expression rendered as if still active). `extractHubVariableReads()`
+had no equivalent guard - it would have trusted `eval['0']` unconditionally.
+Added the same check for consistency. Every other eval group is tied
+directly to an action's presence in `actionList`, which has no equivalent
+toggle to go stale against, so only group `'0'` needed it.
+
+This rule has no `getSetVariable` action at all (only `getSetPrivateBoolean`),
+so it also serves as the first clean READ-only fixture - no write edge
+should appear for it, only read, contributed by both its trigger and its
+Required Expression referencing the same variable, deduplicated to one edge
+per the existing per-rule dedup.
+
+### Status
+
+Pushed to hub (revision 49). Not pushed to git. Every Phase 5 fixture the
+spec asked for (condition, trigger, free text, Required Expression) is now
+confirmed against real data, not inferred from code structure.
+
+---
+
+## 29. Fabricated lineage from free-text false positives - found and fixed, 2026-08-15
+
+Gordon rescanned and pivoted the whole hub, not just the test fixtures. That
+surfaced a real bug: `time`, `date`, and `device` showed up as "Hub
+Variables" read by actual production rules - `Barking`, `Perimeter Closed`,
+`Front Door Lights (Night)`, `Mode Alarm Reminder`, `Suitcase Access
+Detected`, none of which have ever created a Hub Variable by any of those
+names.
+
+### Cause
+
+Rule Machine reserves `%device%`, `%time%`, `%date%` (and presumably others)
+as built-in notification-message tokens, unrelated to user Hub Variables.
+The free-text scan added in Phase 5 matched `%Name%` syntax alone, with no
+way to tell RM's own reserved tokens apart from a genuine variable
+reference - exactly the "must not fabricate lineage" failure the spec warns
+about (Section 9), now demonstrated on live production data rather than a
+hypothetical.
+
+### Fix
+
+`extractHubVariableReads()` now tags every result `confirmed: true` (a
+structured field - `rCapab_`/`xVar_` or `tCapab`/`xVar` - named it
+explicitly, no ambiguity) or `confirmed: false` (only a `%Name%` text
+pattern matched). `buildGraph()` gained a pre-pass, `confirmedVarNames`,
+collecting every name confirmed anywhere on the hub - not just within the
+same app, since a free-text candidate in one rule can only be validated
+against structured evidence that might live in a completely different
+rule - before any edge is drawn. An unconfirmed candidate is only kept if
+its name independently appears in that set; otherwise it is dropped
+silently, not drawn as a guess.
+
+This means a genuine Hub Variable actually named `time` or `device` would
+still be correctly detected (via its own structured write/read somewhere),
+while RM's reserved tokens - which by definition never get a structured
+reference, since nothing ever creates a Hub Variable called `device` - are
+excluded. The free-text case (`TestHubUptime` read inside `_ Test Variables
+Text`) still passes, since `TestHubUptime` is independently confirmed via
+multiple structured references elsewhere on the hub.
+
+### Second bug, found while fixing the first
+
+`_Test Variables Trigger`'s focus panel showed the "no device or rule
+relationship" inert-app text, despite having a real, drawn edge to
+`TestHubUptime`. The `inert` boolean never checked `hubVarWrites`/
+`hubVarReads` at all - a rule whose only relationship is to a Hub Variable
+was being misclassified as having none. Fixed by adding a
+`hasVarRelationship` check, itself checked against the same confirmed/
+`confirmedVarNames` logic as the edges themselves - not just "is
+hubVarReads non-empty", since an app whose only entry is an unconfirmed
+candidate that gets filtered out must not count as having a relationship
+either, or the two fixes would have quietly contradicted each other.
+
+### Status
+
+Pushed to hub (revision 51). Not pushed to git. Rescan needed to clear the
+false-positive edges already sitting in the stored graph from the previous
+scan - no `GRAPH_SCHEMA` bump this time (edge kinds/node shapes are
+unchanged, this is a data-correctness fix, not a schema change), so the app
+won't prompt for a rescan on its own; it has to be requested.
