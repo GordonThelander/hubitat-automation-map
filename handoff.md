@@ -539,3 +539,51 @@ Before writing the full routing change, answer one question empirically:
 If yes, implement normal local/cloud endpoint selection.
 
 If the request reaches the hub but response access is blocked by CORS, test the opaque-request + page-refresh fallback for `/scan` and determine separately how the map page and read endpoints should be exposed remotely.
+
+---
+
+## 19. 1.8.9 Remote Admin reproduction - Firefox/Android NetworkError
+
+A further reproduction on Dev v1.8.9 confirms the same Remote Admin routing defect with a different browser-level symptom.
+
+The Automation Map configuration page was visibly being served from:
+
+    remoteaccess.aws.hubitat.com
+
+Pressing **Scan relationships now** produced:
+
+    Could not start the scan: NetworkError when attempting to fetch resource.
+
+The existing graph remained available and showed the previous successful scan (`88 of 88 apps`, `301 nodes`, `1036 relationships`), which is consistent with the scan engine and stored graph being healthy. The failure occurs only when the browser attempts to initiate a new scan.
+
+### Interpretation
+
+This does not weaken the confirmed routing diagnosis. It shows that the exact user-facing error depends on the browser/network stack.
+
+Earlier Remote Admin testing reached the wrong `remoteaccess.aws.hubitat.com/apps/api/...` destination and received an HTML response, which produced the `Unexpected token '<'` family of errors when parsed as JSON. In this Firefox/Android reproduction, `fetch()` fails before JavaScript receives a usable HTTP `Response`, so the promise rejects directly with the browser-generated `NetworkError when attempting to fetch resource` message.
+
+Both symptoms are compatible with the same architectural fault:
+
+```text
+Remote Admin page origin
+        |
+        | relative /apps/api/... URL
+        v
+remoteaccess.aws.hubitat.com
+        |
+        X wrong API destination / browser fetch failure
+```
+
+The screenshot therefore provides additional evidence that the defect is not Hub Login Security, a failed OAuth installation, or a scan-engine exception. The browser request is being routed incorrectly before Automation Map's `/scan` mapping can become the relevant execution path.
+
+### Engineering consequence
+
+Do not add special handling for `NetworkError` as though it were a separate defect. The fix remains the endpoint-routing change specified above: browser requests made through Remote Admin must target Hubitat's cloud-facing OAuth API endpoint, while direct LAN administration must retain the local API route.
+
+The permanent error handler should nevertheless preserve the distinction between:
+
+- an HTTP response containing non-JSON content;
+- an HTTP error response;
+- a true `fetch()` rejection where no readable response object exists.
+
+That distinction will make future proxy, CORS, DNS and routing failures diagnosable without conflating them with Automation Map application errors.
