@@ -173,3 +173,136 @@ A response that might not be JSON must never reach a JSON parser without
 something capturing what it actually was. The parser's error message is the
 least informative artefact in the entire failure path, and it is the one the
 user ends up reading.
+
+---
+
+## 2026-08-15 review corrections before asking JimB to test 1.8.8
+
+These points supersede two statements above and tighten the forum diagnosis.
+
+### The successful first scan is stronger evidence than first described
+
+Calling it an "auto-scan" is imprecise. On a normal new installation the first
+successful scan is started directly by `installed() -> startScan()`. It does
+**not** go through the browser `/scan` endpoint. The page auto-scan is only a
+fallback for a completed installation that still has no graph.
+
+That means JimB's completed 302-node / 1022-relationship / 111-app map is good
+evidence that the **scan engine itself works on his hub**. The fault is much more
+narrowly associated with starting a later scan through the browser-facing
+`/scan` OAuth mapping.
+
+Forum wording should therefore say "initial installation scan" rather than
+"auto-scan".
+
+### Chrome + Edge does not literally eliminate the browser layer
+
+Both are Chromium-based on Android and share much of the same OS networking
+stack. The repeated result makes a browser-specific quirk unlikely, but the
+accurate statement is:
+
+> Unlikely to be browser-specific - same result in Chrome and Edge.
+
+### The current log test is not yet truly binary
+
+The existing 1.8.8 `scanMapping()` only logs when `startScan()` throws. The
+success-side `scanStatusJson()` and `render()` occur after that catch. If one of
+those throws, the endpoint has definitely been reached but Hubitat could still
+return an HTML exception page **without the warning appearing**.
+
+So the earlier statement "silent log means the request never reached the app"
+is too strong with the code as currently committed.
+
+Make the test actually binary by logging immediately on entry, for example:
+
+    log.warn "${app.label}: 1.8.8 diagnostic - /scan endpoint reached"
+
+and keep the success render inside the same try/catch. Then:
+
+- entry log present -> Hubitat dispatched `/scan` into Automation Map
+- entry log absent -> request was rejected/routed elsewhere before app dispatch
+
+This is a stronger discriminator than waiting for the catch warning.
+
+### Important security defect in the 1.8.8 diagnostic
+
+`getLocalURL()` constructs the request with:
+
+    ?access_token=${state.accessToken}
+
+The 1.8.8 client diagnostic currently includes `r.url` verbatim in the message,
+and the forum draft asks JimB to post the **full error text**. That can expose
+his live Automation Map OAuth token publicly on the Hubitat forum.
+
+**Do not ask JimB to test the current diagnostic until this is fixed.**
+
+The response URL should be reduced to origin + pathname, or the query string
+should at minimum have `access_token` redacted. The body preview should also be
+sanitised before display in case a Hubitat error/login page echoes the requested
+URL.
+
+Safe client pattern:
+
+```javascript
+var where = '(no response URL)';
+try {
+  var u = new URL(r.url);
+  where = u.origin + u.pathname;
+} catch (ignore) {}
+```
+
+The diagnostic still reveals whether the responder was the local hub, a hub
+hostname, or a cloud/remote host, without leaking credentials.
+
+### The map link is useful, but it is not the same authentication path
+
+The earlier table says that a working map link isolates the token because it is
+the "same auth path". That is not strictly true.
+
+`amStartScan()` deliberately uses `credentials: 'omit'`, so the `/scan` request
+must authenticate with the access token alone. Clicking **View Automation Map**
+is normal browser navigation and can carry the Hubitat login session cookie as
+well as the token in the URL.
+
+Therefore:
+
+- if **View Automation Map also fails**, OAuth/token handling becomes much more
+  likely;
+- if the map opens but Scan fails, that is useful evidence but does **not**
+  completely clear OAuth/HLS interaction, because Scan intentionally removes
+  the session cookie.
+
+Forum question 4 should reflect that distinction.
+
+### Production v1.2 remains one of the best controls
+
+The production build uses the same browser `/scan` mechanism with
+`credentials: 'omit'`. If Production can manually rescan successfully from the
+same Pixel, on the same Wi-Fi, against the same C-8 while Dev 1.8.8 cannot, that
+removes most of the tablet/network/HLS/firmware explanations and focuses the
+investigation on the Dev installation, its OAuth token/state, or a Dev-specific
+code path.
+
+### Revised decisive-test table
+
+| Test | What it actually tells us |
+|---|---|
+| Explicit `/scan endpoint reached` entry log | Whether Hubitat dispatched the request into the app |
+| Sanitised 1.8.8 status/type/final-host/body-prefix diagnostic | Which layer actually answered |
+| View Automation Map on the same tablet | Corroborates token/auth problems, but does not fully clear them if it works |
+| Production v1.2 manual rescan on the same tablet | Separates Dev-instance behaviour from tablet/network/platform behaviour |
+| Hub Login Security on/off | Tests the interaction with `credentials: 'omit'` directly |
+| Full address-bar URL/host | Tests local-hub versus cloud/remote-origin resolution |
+
+### Immediate action before JimB tests again
+
+1. Redact the access token from the 1.8.8 displayed diagnostic.
+2. Add an unconditional entry log at the first line of `scanMapping()`.
+3. Put the successful `scanStatusJson()` / `render()` path inside the same
+   try/catch.
+4. Update the forum wording from "auto-scan" to "initial installation scan".
+5. Soften "not your browser" to "unlikely to be browser-specific".
+6. Correct the map-link question so it does not claim identical auth context.
+
+After those changes, the next report from JimB should finally be discriminating
+rather than another variation of the same parser symptom.
