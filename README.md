@@ -134,6 +134,10 @@ The app exposes two endpoints, using the same access token as the map link, usef
 
 `check_template.sh` is a maintainer tool. The map page is built inside a Groovy string, so a stray backslash is consumed before the browser sees it and silently breaks the page script. Run it before committing changes to the page.
 
+## Credits
+
+**Jim Becker (JimB)** - primary tester and functional requirements contributor. Reported the scan-start failure that led to the Remote Admin routing fix, and tested through every diagnostic build until it was found.
+
 ## Branches
 
 `main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.
