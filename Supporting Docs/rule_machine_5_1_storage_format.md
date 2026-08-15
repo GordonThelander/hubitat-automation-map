@@ -7,6 +7,11 @@ each rule's own page in the Rule Machine UI. The sample was one hub with 38 Rule
 so some findings rest on a single example. Each claim carries an evidence marker; see
 "How confident is each finding" below.
 
+**Section 13 added 2026-08-15**, covering Hub Variables (reading, writing, triggers,
+Required Expression, free-text interpolation). That section rests on a handful of
+deliberately-constructed fixtures on one hub, not a corpus survey - its evidence markers are
+correspondingly weaker than sections 1-11's, and should be read as such.
+
 **Design principle, if you take only one thing from this:** do not manufacture meaning from
 undocumented fields. Retain what you do not recognise, flag it, and refuse to guess. Section
 9.1 exists because guessing what one field meant produced 28 confident and entirely
@@ -115,6 +120,9 @@ If you read nothing else, read these:
 - `indent` does not reliably describe nesting. Do not build a tree from it (section 9.2). **[strong]**
 - `eventSubscriptions` is a snapshot that changes with Required Expression state, so a
   rule's triggers can appear to vanish (section 10.3). **[strong]**
+- `%device%`, `%time%`, `%date%` are Rule Machine's own reserved notification tokens, not
+  Hub Variables, and match the exact same `%Name%` syntax a real variable reference uses
+  (section 13.7). **[strong]**
 
 ### A note on reading settings
 
@@ -927,3 +935,121 @@ for a mode-and-time expression is location events alone.
 Anything inferring this rule's triggers from `eventSubscriptions` would conclude it has no
 device triggers whatsoever. Reading `tDev1` gives the right answer regardless of when you
 look.
+
+---
+
+## 13. Hub Variables
+
+Hub Variables are hub-scoped shared state - visible to every rule, not owned by any one of
+them - distinct from a rule's own Private Boolean or local variables (`allLocalVars`, always
+empty for a rule that only touches Hub Variables). A rule can write one, read one via a
+condition, read one via a trigger, or reference one inside free text, and all four use
+different storage conventions.
+
+Everything below rests on a handful of deliberately-constructed test fixtures on one hub
+(2026-08-15), not a corpus survey like sections 1-11. Evidence markers here are
+correspondingly weaker - read `[single]` and `[limited]` as literal, not as this document's
+usual conservative hedge.
+
+### 13.1 Writing a variable
+
+A `getSetVariable` action's target is not in the action object. Same `.<n>`-suffixed
+settings convention as every other action:
+
+    actSubType.2 = getSetVariable
+    xVarV.2      = TestHubUptime.
+
+The value SOURCE is discriminated by `valStringOp.<n>`. Two source types observed:
+
+| `valStringOp.<n>` | Source | Companion settings |
+| --- | --- | --- |
+| `Device attribute` | a device's attribute | `customDev.<n>` (device), `tCustomAttr.<n>` (attribute name) |
+| `Set string` | literal typed text, itself possibly containing `%OtherVariable%` (13.6) | `valString.<n>` |
+
+**[single/limited]** Rule Machine's "Select string operation" menu offers many more options
+(Remove string, Replace string, Token, URL Encode/Decode, Set from HTTP GET/POST response,
+Set from local file, LowerCase string, Format DateTime, Copy variable, Rule Function) - none
+of these tested, storage shape **[unknown]**.
+
+### 13.2 Reading a variable in a condition
+
+Same slot a device condition uses, typed `Variable` instead of a capability name:
+
+    rCapab_3  = Variable         the condition-side counterpart to tCapab1 on triggers
+    xVar_3    = TestHubUptime.
+    RelrDev_3 = ≠                comparison operator
+    state_3   = 0                compare value
+
+The underscore convention documented in section 6 for device conditions (`rDev_<n>` vs.
+`tDev<n>`) applies identically: condition-side variable settings carry the underscore
+(`rCapab_`, `xVar_`), trigger-side do not (13.3). **[single]**
+
+### 13.3 Reading a variable via a trigger
+
+A rule can fire when a Hub Variable itself changes, not just reference one after the fact:
+
+    tCapab1 = Variable
+    xVar1   = TestHubUptime.     no underscore - trigger-side, not condition-side
+
+The event subscription this produces is a genuinely different shape from every device
+trigger elsewhere in this document:
+
+    { "type": "LOCATION", "name": "variable:TestHubUptime.", "typeId": 1, "typeName": "<hub name>" }
+
+against a device trigger's `{ "type": "DEVICE", "typeId": <deviceId>, "name": <attribute> }`.
+**[single]**
+
+### 13.4 Required Expression referencing a variable
+
+Structurally identical to 13.2 - same `rCapab_`/`xVar_` pair - just filed under `eval['0']`
+instead of a numbered group tied to an action, per section 5.2's existing note that
+`eval['0']` is the Required Expression, valid only while `hasPredicate` is true. No new field
+shape; worth recording only because it confirms the same convention holds in that slot too,
+rather than assuming it. **[single]**
+
+### 13.5 The trailing period is not a picker artifact
+
+`TestHubUptime.` carries a trailing period everywhere a setting refers to it - `xVarV`,
+`xVar_`, `xVar`, and a `p.TestHubUptime.` state-cache key. A second variable created fresh in
+the same session, `TestConcat`, carries no such artifact anywhere it appears.
+
+Best explanation available: the period belongs to that one variable's own internal record - a
+`formerState` field alongside it suggests a rename at some point - not a general property of
+how the variable picker stores a selection. **[single, and corrects an earlier assumption in
+this project's own working notes that had it backwards]**
+
+Practical consequence: strip a trailing period defensively wherever a variable name comes
+from one of these enum settings, but do not assume every variable will have one, and do not
+build logic that depends on the period meaning anything in particular.
+
+### 13.6 Free text: `%Name%` interpolation
+
+A "Set string" value can embed another variable's live value inline:
+
+    valStringOp.1 = Set string
+    valString.1   = %TestHubUptime%
+
+No trailing period here, unlike 13.1-13.4, even though it names the same variable - the
+period is a property of the enum-picker settings specifically (13.5), not of the name.
+
+### 13.7 Trap: `%device%`/`%time%`/`%date%` are not Hub Variables
+
+Rule Machine reserves `%device%`, `%time%`, `%date%` (at least - not enumerated further) as
+built-in notification-message tokens, unrelated to user-created Hub Variables and matching
+the identical `%Name%` syntax a real variable reference uses (13.6). Nothing in the stored
+text distinguishes a reserved token from a genuine variable reference.
+
+**Confirmed live, at real cost.** Scanning every text/textarea setting hub-wide for `%Name%`
+produced `time`, `date` and `device` reported as Hub Variables read by several real
+production rules, none of which had ever created a variable by any of those names. **[strong
+that the collision happens - reproduced across multiple real rules, not a single instance]**
+
+No authoritative list of Rule Machine's reserved tokens was found or searched for. The
+mitigation applied by the one consuming app built against this format: treat a free-text
+`%Name%` match as unconfirmed unless the same name is independently confirmed by a
+structured reference (13.1-13.4) somewhere else on the hub. That correctly excludes the
+reserved tokens - nothing ever creates a real Hub Variable literally called `device` - while
+still allowing a genuine variable that happens to share a common word. This is a mitigation
+applied by the consuming app, not a fact about the storage format itself, recorded here
+because the trap belongs with the format notes even though the fix is necessarily app-side.
+**[heuristic]**
