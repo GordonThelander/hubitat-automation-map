@@ -276,9 +276,19 @@ function amStartScan() {
     .then(function (r) {
       return r.text().then(function (body) {
         var ct = r.headers.get('content-type') || 'none';
-        var where = (r.url && r.url !== window.location.href) ? r.url : '(same page URL)';
+        // Origin + path ONLY, never the query string. getLocalURL() puts the
+        // live OAuth access token in the URL, r.url carries it verbatim, and
+        // this text is written to be pasted into a public forum thread. The
+        // HOST is the whole diagnostic value here (local hub vs cloud vs
+        // something else); the token adds nothing and leaks everything.
+        var where = '(no response URL)';
+        try { var u = new URL(r.url); where = u.origin + u.pathname; } catch (ignore) { }
+        // Same reason: a Hubitat login or error page can echo the requested
+        // URL back inside its own body.
+        var safeBody = body.slice(0, 200).replace(/\\s+/g, ' ')
+                           .replace(/access_token=[^&\\s]*/g, 'access_token=REDACTED');
         var detail = 'HTTP ' + r.status + ' | type ' + ct + ' | from ' + where +
-                     ' | body starts: ' + body.slice(0, 200).replace(/\\s+/g, ' ');
+                     ' | body starts: ' + safeBody;
         if (!r.ok) throw new Error(detail);
         var d;
         try { d = JSON.parse(body); }
@@ -2297,8 +2307,19 @@ String externalsJson() {
 // mapping must always answer with real JSON so the client has something to show
 // instead of a raw parser error.
 Map scanMapping() {
+    // Unconditional, and FIRST. This is what makes the log test binary: if this
+    // line does not appear when the user presses Scan, Hubitat never dispatched
+    // the request into this app at all, and no handler here can be at fault.
+    // Logging only from the catch below could not prove that - a throw in the
+    // success path (scanStatusJson/render) would also leave the log silent while
+    // Hubitat returned its HTML error page.
+    log.warn "${app.label}: /scan endpoint reached"
     try {
         startScan()
+        // Inside the try, not after it. Left outside, an exception in
+        // scanStatusJson() or render() escaped this handler entirely and
+        // produced the same unexplained HTML page the handler exists to stop.
+        return render(status: 200, contentType: 'application/json', data: scanStatusJson())
     } catch (Exception ex) {
         log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
         // Serialised to a String, not passed as a Map. Every other render() in
@@ -2310,7 +2331,6 @@ Map scanMapping() {
         return render(status: 200, contentType: 'application/json',
             data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))
     }
-    return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
 Map scanStatusMapping() {
