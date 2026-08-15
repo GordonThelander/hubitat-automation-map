@@ -22,6 +22,8 @@
 #                         same reasoning as join('\\n'), different call site
 #   replace(/\\s+/g,     JS-side whitespace regex (CSV filename sanitising) -
 #                         \s+ alone here would be Groovy's, not the browser's
+#   [^&\\s]*             JS-side token-redaction regex in the scan diagnostic,
+#                         same double-escape reasoning as the line above
 #
 # Usage: ./check_template.sh apps/automation_map.groovy
 set -euo pipefail
@@ -36,6 +38,7 @@ BAD=$(grep -n '\\' "$FILE" \
   | grep -v "join('\\\\\\\\n')" \
   | grep -v '\[",\\\\n\]' \
   | grep -v 'replace(/\\\\s+/g' \
+  | grep -v 'access_token=\[^&\\\\s\]' \
   || true)
 
 if [ -n "$BAD" ]; then
