@@ -110,6 +110,10 @@ boolean showSanta() {
 // in the graph with their device relationships; they are counted and reported
 // rather than silently producing an empty flow.
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
+// Named once here, not repeated as a literal in compatibilitySummary(),
+// so a future engine addition needs one edit rather than finding every
+// place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
+@Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0 (in Beta)'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 // Origin only (scheme+host), for the browser to compare against its own
 // window.location.hostname at fetch time. Kept as its own pattern rather than
@@ -485,7 +489,7 @@ String compatibilitySummary() {
     }
     s << "Read ${decoded} app(s)"
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
-    s << ". Decoded ${rules} ${SUPPORTED_RULE_ENGINE} flow(s)."
+    s << ". Decoded ${rules} flow(s)."
 
     // Said out loud because the number is usually small and sometimes zero, and
     // a scan that quietly claims completeness it did not earn is the thing this
@@ -514,9 +518,9 @@ String compatibilitySummary() {
     int skipped = (state.rulesSkipped ?: 0) as Integer
     if (skipped > 0) {
         List engines = (state.otherEngines ?: []) as List
-        s << "<br><b style='color:#b9770e'>${skipped} rule(s) on ${engines.join(', ')} were not decoded</b> - flow decoding supports ${SUPPORTED_RULE_ENGINE} only. They still appear in the map with their device relationships."
+        s << "<br><b style='color:#b9770e'>${skipped} rule(s) on ${engines.join(', ')} were not decoded</b> - flow decoding supports ${DECODED_ENGINES_TEXT} only. They still appear in the map with their device relationships."
     } else {
-        s << "<br><span style='opacity:0.75'>Flow decoding supports ${SUPPORTED_RULE_ENGINE}. Apps that are not rules appear in the map with their device relationships.</span>"
+        s << "<br><span style='opacity:0.75'>Flow decoding supports ${DECODED_ENGINES_TEXT}. Apps that are not rules appear in the map with their device relationships.</span>"
     }
     return s.toString()
 }
