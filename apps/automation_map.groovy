@@ -387,6 +387,31 @@ void clearAbandonedScan() {
     if (!state.scanRunning) return
     Long beat = (state.scanHeartbeat ?: 0) as Long
     if (beat > 0 && (now() - beat) < 90000) return
+
+    // The batch-reading work itself can finish - queue empty, every app
+    // already read into appInfo - while the scheduled finalization
+    // (fetchRegistry -> finishScan, or its 45-second watchdog) never runs at
+    // all. runIn() is already known to be unreliable on this platform - see
+    // the Scan button's own comment on why it does not use
+    // appButtonHandler - and this is the same failure class landing on a
+    // different scheduled call. Confirmed live: a 98-app scan reached
+    // scanDone == scanTotal with an empty scanQueue, sat past the 90-second
+    // heartbeat timeout, and state.graph was still empty - nothing left to
+    // read, nothing running, just never finished.
+    //
+    // finishScan() itself makes no HTTP calls - it is buildGraph() over data
+    // this app already collected, plus bookkeeping - so calling it directly
+    // here, synchronously, cannot fail the same way a scheduled job can.
+    // Previously this branch discarded a fully-read scan and told the user
+    // to start over from zero; now it finishes the one step that never got
+    // the chance to run.
+    List queue = (state.scanQueue ?: []) as List
+    if (!queue && state.scanPhase == 'apps') {
+        log.warn "${app.label}: scan batches finished but finalization never ran - finishing now instead of discarding it"
+        finishScan()
+        return
+    }
+
     state.scanRunning = false
     state.scanError = 'The previous scan stopped before it finished. Press Scan to run it again.'
     log.warn "${app.label}: clearing an abandoned scan"
