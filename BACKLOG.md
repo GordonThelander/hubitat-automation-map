@@ -4,6 +4,61 @@ Not shipped with the HPM package. Items here are agreed ideas awaiting a decisio
 
 ---
 
+## Proposed
+
+### Scheduled full scan (e.g. daily at 03:00)
+
+The map is "a snapshot taken when you scan, not a live view" (README, Re-scanning) - it goes
+stale the moment you add or reconfigure an app or device and don't remember to press Scan.
+A scheduled rescan would close that gap without relying on the user's memory.
+
+Open questions before building:
+
+- **Opt-in, not on by default.** The app is read-only and deliberately low-footprint; adding
+  unattended background activity without an explicit toggle would be a quiet change to that
+  posture. A settings toggle, off by default, with the schedule only when enabled.
+- **Configurable time, not hardcoded to 03:00.** 03:00 is a reasonable default (most hubs are
+  idle then) but shouldn't be assumed universal - a time-of-day preference, defaulting to
+  03:00.
+- **Respect the existing scan guards.** `state.scanRunning` / `clearAbandonedScan()` already
+  prevent a second scan starting while one is in progress or stuck; a scheduled trigger must
+  go through the same path as the button, not a parallel one that could race it.
+- **Hub load during a scan is untested.** A ~200-device, 60-app scan takes about two minutes
+  (README). Whether that's noticeable to other automations running at the same time has never
+  been measured. Worth checking before defaulting anyone into unattended nightly scans.
+- **Schedule survival across hub reboots.** Hubitat's own scheduler generally
+  re-establishes a `schedule()` cron on `installed()`/`updated()`, but worth confirming rather
+  than assuming, given how much of this project's own history is "assumed, then found
+  otherwise."
+
+### Export map output for an AI model to consume
+
+The map already builds a structured picture of a hub's automations - devices, apps, rules,
+roles, rule-to-rule links, Hub Variable lineage - that could be useful as input to an AI
+model: natural-language questions about the automation set, anomaly spotting beyond the
+existing Insights, drafting documentation, that kind of thing.
+
+The first decision, before any design: **what actually calls the AI.**
+
+- **User-driven export (low risk).** The app produces a structured file (JSON, or an
+  extension of the existing pivot CSV export) that the user copies out and pastes into
+  whatever AI tool they already use. No new credentials, no outbound calls from the app, no
+  ongoing cost - closest to the app's existing "read-only, low-footprint" posture.
+- **App-integrated AI call (bigger scope, real questions).** The app itself calls an AI API
+  with hub data. This is a materially different kind of feature - API keys stored on the hub,
+  an ongoing outbound dependency, data leaving the hub automatically rather than only when a
+  user chooses to export it. Not something to build without treating it as its own design,
+  not an extension of this one.
+
+Whichever direction: the map's raw data is not automatically safe to export wholesale.
+`Supporting Docs/rule_machine_5_1_storage_format.md` already warns that `appSettings` can
+carry other apps' tokens and credentials, and the same caution applies here - device names,
+home layout, and routine timing are also more personal than a generic dependency graph
+implies. An export format needs a considered answer to "what's actually in this file",
+not just "everything the scan already has."
+
+---
+
 ## Rule Machine 5.1 documentation (written, awaiting publication)
 
 **"Reverse-engineering the Rule Machine 5.1 storage format"**,

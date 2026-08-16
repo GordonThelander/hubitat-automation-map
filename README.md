@@ -138,6 +138,8 @@ The app exposes two endpoints, using the same access token as the map link, usef
 
 **Jim Becker (JimB)** - primary tester and functional requirements contributor. Reported the scan-start failure that led to the Remote Admin routing fix, and tested through every diagnostic build until it was found.
 
+**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
+
 ## Branches
 
 `main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.
