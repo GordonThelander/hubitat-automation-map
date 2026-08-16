@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-16",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.1 - three things. A real bug fixed: a scan could finish reading every app and then hang instead of finishing, because the scheduled job that builds the final map sometimes silently failed to run (the same kind of platform scheduling flakiness already worked around elsewhere in this app). The app now notices and recovers automatically instead of forcing a full rescan from zero.\n\nFlow decoding now covers Hubitat's new Visual Rule Builder 2.0 (beta) alongside Rule Machine 5.1 and Notifier - triggers, branching, waits, notifications and Run Rule Actions all render as a flowchart, tested against a real complex fixture on the first try.\n\nAnd an optional automatic daily scan - off by default, a settings toggle turns it on with a configurable time (00:30 if left blank) - so the map can stay fresh without remembering to press Scan.",
+  "releaseNotes": "1.9.2 - devices on the map now draw with an icon guessed from their capabilities (light, door, water sensor, motion, lock, siren, speaker, switch...) instead of a plain dot. A new Device icons panel lists every device with its detected icon and lets you override any that guessed wrong, per device, surviving future rescans.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.1"
+      "version": "1.9.2"
     }
   ],
   "drivers": []

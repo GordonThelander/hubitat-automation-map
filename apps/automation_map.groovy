@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.1'
+@Field static final String APP_VERSION = '1.9.2'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -585,6 +585,11 @@ void startScan() {
     // a single batch still has a timestamp for clearAbandonedScan to age out.
     state.scanHeartbeat = now()
     state.deviceLabels = [:]
+    // NOT state.deviceIconOverrides - that is the user's own correction to the
+    // auto-detected icon, same category as state.userRegistry for external
+    // systems, and must survive a rescan the same way those declarations do.
+    state.deviceCapabilities = [:]
+    state.deviceRooms = [:]
     state.appIds = []
     state.appInfo = [:]
     state.graphVersion = null
@@ -673,6 +678,8 @@ void scanBatch() {
 void scanDeviceBatch() {
     List queue = state.scanQueue as List
     Map labels = state.deviceLabels as Map
+    Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
+    Map roomsByDev = (state.deviceRooms ?: [:]) as Map
     List appIds = state.appIds as List
     int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
 
@@ -683,12 +690,16 @@ void scanDeviceBatch() {
     queue.take(size).each { String devId ->
         Map info = fetchDeviceApps(devId)
         if (info.label) labels[devId] = info.label
+        capsByDev[devId] = info.capabilities
+        if (info.room) roomsByDev[devId] = info.room
         (info.appIds as List).each { String appId ->
             if (appId != selfId && !appIds.contains(appId)) appIds << appId
         }
     }
 
     state.deviceLabels = labels
+    state.deviceCapabilities = capsByDev
+    state.deviceRooms = roomsByDev
     state.appIds = appIds
     state.scanQueue = queue.drop(size)
     state.scanDone = (state.scanDone ?: 0) + size
@@ -973,14 +984,23 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
-// Phase 1: only needs the app ids this device is attached to.
+// Phase 1: only needs the app ids this device is attached to. Also harvests
+// capabilities and room from the same response for the device icon feature -
+// this is a field already sitting in a request this function was making
+// anyway, not a new HTTP call.
 Map fetchDeviceApps(String devId) {
-    Map out = [label: null, appIds: []]
+    Map out = [label: null, appIds: [], capabilities: [], room: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 10]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
             String breadcrumb = data.extraBreadcrumb as String
             if (breadcrumb) out.label = stripTags(breadcrumb)
+
+            Map dev = data.device as Map
+            if (dev) {
+                out.capabilities = (dev.capabilities ?: []) as List
+                if (dev.roomName) out.room = dev.roomName as String
+            }
 
             List ids = []
             Map parentApp = data.parentApp as Map
@@ -1986,6 +2006,67 @@ String prettyMethod(String method) {
     'capability.holdableButton', 'capability.doubleTapableButton', 'capability.releasableButton',
 ]
 
+// Device icon auto-detection, from a device's own RAW capability list (the
+// /device/fullJson shape - PascalCase, e.g. "WaterSensor" - a different
+// naming convention from the "capability.xxx" setting-type strings above, and
+// not to be confused with them).
+//
+// Ordered, first match wins. Two-tier by design, worked out against a real
+// device: Kitchen Water Sensor reports Battery, Configuration, Refresh,
+// Sensor, TemperatureMeasurement, WaterSensor - six capabilities, one of them
+// its actual reason for existing. Administrative/generic markers
+// (Configuration, Refresh, Battery, the bare Sensor/Actuator markers) never
+// appear in this table at all, so they can never win. Among what remains, a
+// capability only a purpose-built device would declare (WaterSensor,
+// ContactSensor, GarageDoorControl...) is checked before a capability that
+// commonly rides along on a device whose real purpose is something else
+// (TemperatureMeasurement, IlluminanceMeasurement...), so a water sensor that
+// also reports temperature still resolves to a water drop, not a thermometer.
+@Field static final List ICON_RULES = [
+    [key: 'door',    label: 'Garage door',    caps: ['GarageDoorControl']],
+    [key: 'lock',    label: 'Lock',           caps: ['Lock']],
+    [key: 'contact', label: 'Contact/window', caps: ['ContactSensor']],
+    [key: 'water',   label: 'Water sensor',   caps: ['WaterSensor']],
+    [key: 'motion',  label: 'Motion',         caps: ['MotionSensor']],
+    [key: 'smoke',   label: 'Smoke/CO',       caps: ['SmokeDetector', 'CarbonMonoxideDetector']],
+    [key: 'light',   label: 'Light',          caps: ['Light', 'ColorControl', 'ColorTemperature', 'SwitchLevel']],
+    [key: 'siren',   label: 'Siren/chime',    caps: ['Alarm', 'Chime', 'Tone']],
+    [key: 'speaker', label: 'Speaker',        caps: ['AudioVolume', 'SpeechSynthesis', 'MediaTransport', 'MusicPlayer']],
+    // Switch checked last among the "defining" tier, not alongside light -
+    // found live: Garage Dome Siren carries Switch alongside Alarm/Chime/Tone
+    // (its own on/off baseline) and was resolving to 'switch' before this was
+    // reordered. Switch is the single most common baseline capability on any
+    // actuator, so it must be the tier of last resort before the generic
+    // measurement-capability fallback, not a peer of the capabilities that
+    // are actually specific to a device's purpose.
+    [key: 'switch',  label: 'Switch',         caps: ['Switch', 'Outlet']],
+    [key: 'sensor',  label: 'Sensor (other)', caps: ['TemperatureMeasurement', 'IlluminanceMeasurement',
+                                                       'RelativeHumidityMeasurement', 'PowerMeter', 'EnergyMeter',
+                                                       'PresenceSensor', 'Sensor']],
+]
+
+// The keys a manual override may pick from - ICON_RULES' own keys plus
+// 'unknown' and 'auto', the two states outside the table itself (nothing
+// matched, and no override set). Written literally rather than derived from
+// ICON_RULES to avoid relying on static-initializer ordering between two
+// @Field constants.
+@Field static final List<String> ICON_KEYS = [
+    'door', 'lock', 'contact', 'water', 'motion', 'smoke', 'light', 'switch',
+    'siren', 'speaker', 'sensor', 'unknown',
+]
+
+// Nothing in ICON_RULES matched - not a guess, an honest "this app does not
+// know what kind of device this is", drawn as a "?" rather than defaulting to
+// some other icon that would claim more than is true.
+String autoDetectIconKey(List capabilities) {
+    List caps = (capabilities ?: []) as List
+    for (rule in ICON_RULES) {
+        Map r = rule as Map
+        if ((r.caps as List).any { caps.contains(it) }) return r.key as String
+    }
+    return 'unknown'
+}
+
 // Commands that leave the device in a lasting state, so two apps driving the
 // same device really can fight. Sending two notifications or two chimes is not
 // a conflict, which is why Mobile Proxy topping a "contested" list by 20 apps
@@ -2230,6 +2311,8 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
 
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
+    Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
+    Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
 
     Map<String, Map> nodes = [:]
@@ -2368,6 +2451,9 @@ Map buildGraph() {
             String devNodeId = "d${devId}"
             if (!nodes[devNodeId]) {
                 nodes[devNodeId] = nodeEntry(devNodeId, (labels[devId] ?: "Device ${devId}") as String, 'device')
+                // The user's own correction wins outright when one exists; only
+                // otherwise is it worth asking what the device's capabilities say.
+                nodes[devNodeId].icon = (iconOverrides[devId] as String) ?: autoDetectIconKey(deviceCaps[devId] as List)
             }
             List statefulDevices = (appMap.stateful ?: []) as List
             (devRoles as List).each { String role ->
@@ -2860,6 +2946,7 @@ mappings {
     path('/scan') { action: [ GET: 'scanMapping' ] }
     path('/scan-status') { action: [ GET: 'scanStatusMapping' ] }
     path('/externals') { action: [ GET: 'externalsGetMapping', POST: 'externalsSaveMapping' ] }
+    path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
 }
 
 // The map page was read-only until this. It now accepts one write: the user's
@@ -2926,6 +3013,72 @@ String externalsJson() {
         entries: userRegistry(),
         registry: reg,
         registryMeta: (state.registryMeta ?: [:]),
+    ]
+    return groovy.json.JsonOutput.toJson(out)
+}
+
+// Device icons. Same exception as /externals above: read-only everywhere
+// else, one write accepted here, guarded by the same access token as the map
+// itself, and touching nothing but this app's own state - no device, no
+// other app.
+Map iconOverridesGetMapping() {
+    return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
+}
+
+Map iconOverridesSaveMapping() {
+    Map incoming = [:]
+    try {
+        def body = request?.JSON
+        Map overrides = (body instanceof Map) ? ((body as Map).overrides as Map) : null
+        (overrides ?: [:]).each { k, v ->
+            String devId = "${k}"
+            String iconKey = "${v}"
+            // 'auto' means the user cleared their override, not that they chose
+            // an icon key called "auto" - dropping it here is what lets
+            // autoDetectIconKey take over again on the next graph build.
+            if (ICON_KEYS.contains(iconKey)) incoming[devId] = iconKey
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not read icon override payload: ${ex.message}"
+        return render(status: 400, contentType: 'application/json',
+                      data: '{"ok":false,"error":"could not read payload"}')
+    }
+
+    state.deviceIconOverrides = incoming
+    // Same reasoning as externalsSaveMapping: rebuilt from stored scan data,
+    // not a rescan - the overrides changed, the hub did not.
+    state.graph = buildGraph()
+    state.graphVersion = GRAPH_SCHEMA
+    log.info "${app.label}: saved ${incoming.size()} device icon override(s)"
+    return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
+}
+
+String iconOverridesJson() {
+    Map labels = (state.deviceLabels ?: [:]) as Map
+    Map rooms = (state.deviceRooms ?: [:]) as Map
+    Map caps = (state.deviceCapabilities ?: [:]) as Map
+    Map overrides = (state.deviceIconOverrides ?: [:]) as Map
+
+    List devices = labels.collect { String devId, label ->
+        [
+            id: devId,
+            name: label,
+            room: rooms[devId] ?: '',
+            detected: autoDetectIconKey(caps[devId] as List),
+            override: overrides[devId] ?: 'auto',
+        ]
+    }
+    devices.sort { a, b -> (a.name as String).compareToIgnoreCase(b.name as String) }
+
+    Map labelsByKey = [:]
+    ICON_RULES.each { rule -> Map r = rule as Map; labelsByKey[r.key] = r.label }
+    labelsByKey.unknown = 'Unknown'
+
+    Map out = [
+        ok: true,
+        iconKeys: ICON_KEYS,
+        iconLabels: labelsByKey,
+        devices: devices,
     ]
     return groovy.json.JsonOutput.toJson(out)
 }
@@ -3042,6 +3195,22 @@ String buildMapHtml() {
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
+  /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
+     weight, loaded directly as its own font-family rather than pulling in
+     FontAwesome's full CSS - vis-network draws icon nodes on a canvas with a
+     plain "<size>px <face>" string and no way to ask for a font-weight, and
+     FontAwesome 6 Free's Solid glyphs (nearly this whole set) live only at
+     weight 900, so requesting the family at the browser's default normal
+     weight through FontAwesome's own CSS would silently render blank boxes.
+     Re-declaring the same Solid file under its own family name at normal
+     weight sidesteps the mismatch entirely - a known pattern for exactly
+     this vis-network + FontAwesome combination. */
+  @font-face {
+    font-family: 'AMIcons';
+    src: url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/webfonts/fa-solid-900.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+  }
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
   #legend { position:absolute; bottom:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; max-width:340px; }
@@ -3157,6 +3326,22 @@ String buildMapHtml() {
   #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:0.85em; margin:0 4px 4px 0; }
   #pivot .rowbtn:hover { border-color:#4a7a94; color:#cfe3ea; }
   #pivotClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Its own panel rather than reusing #ext's markup, same "one panel's CSS
+     per panel" convention, even though the table shape is similar - this one
+     needs a search box and can run to ~200 rows, #ext's does not. */
+  #icons { position:absolute; top:10px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+           max-width:min(74vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #icons h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #icons .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
+  #icons input[type=search] { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:4px 7px; font-size:0.9em; font-family:inherit; width:240px; margin-bottom:10px; }
+  #icons table { border-collapse:collapse; width:100%; font-size:0.8em; }
+  #icons th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #icons td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
+  #icons tr.overridden td { background:rgba(79,179,169,0.09); }
+  #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
+  #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #icons .msg { font-size:0.8em; margin-left:6px; }
+  #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
 </style>
 </head>
 <body>
@@ -3171,7 +3356,7 @@ ${santaHtml}
   <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
   <div class="legend-row"><span class="swatch sw-square sw-inert"></span>App with no device or rule relationship - its label says why</div>
   <div class="legend-row"><span class="swatch sw-square sw-unreadable"></span>Could not be read during the scan - rescan to retry</div>
-  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - grey with no app focused</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - icon by type (light, door, sensor...), grey with no app focused. Wrong? Device icons panel.</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
   <div class="legend-row"><span class="swatch sw-triangle" style="color:#4fb3a9"></span>Hub Variable - shared state a rule writes or reads</div>
   <div class="note" style="margin:2px 0 6px 0">Focus an app and each device instead takes the colour of its role below, shown as both a line and the dot the device itself becomes.</div>
@@ -3241,11 +3426,13 @@ ${santaHtml}
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
   <button id="pivotBtn" type="button">Pivot tables</button>
+  <button id="iconsBtn" type="button">Device icons</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
+<div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -3275,6 +3462,18 @@ const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9' };
+
+// Device icon glyphs, keyed by n.icon (see ICON_RULES/autoDetectIconKey in the
+// Groovy source - the Groovy side decides WHICH key a device gets, this side
+// only decides what that key looks like). FontAwesome 6 Free Solid codepoints,
+// verified against the shipped CSS rather than guessed - a wrong codepoint
+// fails silently as a blank glyph, which would be a bad first impression of
+// this feature. Rendered through the 'AMIcons' face declared in <style>.
+const ICON_GLYPHS = {
+  door: '\uf494', lock: '\uf023', contact: '\uf52b', water: '\uf043',
+  motion: '\uf554', smoke: '\uf06d', light: '\uf0eb', switch: '\uf205',
+  siren: '\uf0f3', speaker: '\uf028', sensor: '\uf2c9', unknown: '\uf059',
+};
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
@@ -3532,10 +3731,18 @@ function styledNode(n, useFullLabel, roleByDevice) {
   if (n.unreadable) color = { background: '#4a1f1f', border: '#d9534f' };
   // External systems get their own shape as well as their own colour, because
   // they are the only nodes on the map that nobody measured.
+  //
+  // Devices are 'icon' rather than the plain 'dot' this shape variable name
+  // still suggests - a light, a door and a water sensor get their own
+  // glyph (n.icon, set server-side by autoDetectIconKey or a manual
+  // override) instead of all rendering as identical circles. color above is
+  // unchanged and still tints the glyph, so "colour means role" on a focused
+  // view survives; only the marker's shape is new.
   let shape = 'dot';
   if (n.group === 'app') shape = 'square';
   else if (n.group === 'external') shape = 'diamond';
   else if (n.group === 'hubVariable') shape = 'triangle';
+  else if (n.group === 'device') shape = 'icon';
   const styled = {
     // n.draw is the full identity without the hub's live status; n.title keeps
     // the status and is what the hover tooltip shows. The fallback matters: a
@@ -3557,6 +3764,15 @@ function styledNode(n, useFullLabel, roleByDevice) {
     // changed nothing on screen.
     widthConstraint: { maximum: 170 }
   };
+  // vis-network's icon shape reads its glyph from icon.{face,code,size,color}
+  // rather than from the top-level color/size above - those two stay set
+  // regardless (color still drives the tooltip-adjacent legend swatches
+  // elsewhere, size still sets the node's interaction radius), this just
+  // hands the glyph its own copy of the same color so type and role are
+  // both visible on one marker.
+  if (shape === 'icon') {
+    styled.icon = { face: 'AMIcons', code: ICON_GLYPHS[n.icon] || ICON_GLYPHS.unknown, size: 22, color: color };
+  }
   // Dashed outline as well as the dimmed fill. Two signals rather than one,
   // because the fill alone is close to the paused colour at a glance and these
   // mean very different things: paused is an app that would do something, inert
@@ -4718,6 +4934,109 @@ function extImport(evt) {
   evt.target.value = '';
 }
 
+// Device icons panel.
+//
+// Icons are auto-detected from capability (ICON_RULES/autoDetectIconKey in
+// the Groovy source), and a heuristic run over ~200 devices of wildly
+// different drivers will occasionally pick the wrong one for a specific
+// device. This is where that gets corrected - one override per device,
+// saved here, applied the next time the graph is built.
+const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
+const iconsPanel = document.getElementById('icons');
+const iconsBody = document.getElementById('iconsBody');
+let ICONS = null;
+
+function iconsLoad() {
+  iconsBody.innerHTML = '<h3>Device icons</h3><p class="sub">Loading...</p>';
+  fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { ICONS = d; iconsRender(''); })
+    .catch(function (e) {
+      iconsBody.innerHTML = '<h3>Device icons</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
+    });
+}
+
+function iconsRender(message, filter) {
+  const labels = ICONS.iconLabels || {};
+  const term = (filter || '').toLowerCase();
+
+  let h = '<h3>Device icons</h3>';
+  h += '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
+       'light, an unrecognised one gets a "?". Wrong for a particular device? Pick the right one below and Save. ' +
+       'Reload the map page afterwards to see it redrawn.</p>';
+  h += '<input type="search" id="iconsSearch" placeholder="Search devices or rooms..." value="' + extEsc(filter || '') + '">';
+  h += '<table><thead><tr><th>Device</th><th>Room</th><th>Detected</th><th>Icon</th></tr></thead><tbody>';
+
+  const devices = (ICONS.devices || []).filter(function (d) {
+    if (!term) return true;
+    return (d.name || '').toLowerCase().indexOf(term) !== -1 || (d.room || '').toLowerCase().indexOf(term) !== -1;
+  });
+
+  devices.forEach(function (d) {
+    const isOverridden = d.override && d.override !== 'auto';
+    h += '<tr' + (isOverridden ? ' class="overridden"' : '') + '>';
+    h += '<td>' + extEsc(d.name) + '</td>';
+    h += '<td>' + extEsc(d.room) + '</td>';
+    h += '<td>' + extEsc(labels[d.detected] || d.detected) + '</td>';
+    h += '<td><select data-dev="' + extEsc(d.id) + '">';
+    h += '<option value="auto"' + (!isOverridden ? ' selected' : '') + '>Auto (' + extEsc(labels[d.detected] || d.detected) + ')</option>';
+    (ICONS.iconKeys || []).forEach(function (k) {
+      h += '<option value="' + k + '"' + (d.override === k ? ' selected' : '') + '>' + extEsc(labels[k] || k) + '</option>';
+    });
+    h += '</select></td></tr>';
+  });
+
+  h += '</tbody></table>';
+  h += '<div class="bar"><button id="iconsSave" type="button">Save</button>' +
+       '<span class="msg" id="iconsMsg">' + extEsc(message || '') + '</span></div>';
+
+  iconsBody.innerHTML = h;
+  iconsWire();
+}
+
+function iconsWire() {
+  const search = document.getElementById('iconsSearch');
+  search.addEventListener('input', function () { iconsRender('', search.value); });
+  // Restores focus and cursor position after the re-render typing itself
+  // triggers - without this every keystroke reset focus to the top of the
+  // panel, making the search box unusable.
+  search.focus();
+  search.setSelectionRange(search.value.length, search.value.length);
+
+  iconsBody.querySelectorAll('select[data-dev]').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      const dev = (ICONS.devices || []).find(function (d) { return d.id === sel.getAttribute('data-dev'); });
+      if (dev) dev.override = sel.value;
+      const row = sel.closest('tr');
+      if (row) row.classList.toggle('overridden', sel.value !== 'auto');
+    });
+  });
+
+  document.getElementById('iconsSave').addEventListener('click', iconsSave);
+}
+
+function iconsSave() {
+  // Only the actual corrections are sent - a device left on "Auto" carries no
+  // entry at all, so autoDetectIconKey keeps deciding it as capabilities
+  // change on a future rescan rather than freezing it at today's guess.
+  const overrides = {};
+  (ICONS.devices || []).forEach(function (d) {
+    if (d.override && d.override !== 'auto') overrides[d.id] = d.override;
+  });
+  const msg = document.getElementById('iconsMsg');
+  msg.textContent = 'Saving...';
+  fetch(ICONS_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overrides: overrides })
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      ICONS = d;
+      iconsRender('Saved. Reload the page to redraw the map.');
+    })
+    .catch(function (e) { msg.textContent = 'Save failed: ' + e; });
+}
+
 // The legend is hidden while this panel is open rather than relied on to sit
 // underneath it. It was showing through as ghost text across the table even
 // with an opaque background and a higher z-index, and chasing that was not
@@ -4738,6 +5057,21 @@ document.getElementById('extClose').addEventListener('click', function () {
   if (lg) lg.style.visibility = '';
   if (hn) hn.style.visibility = '';
   extPanel.style.display = 'none';
+});
+document.getElementById('iconsBtn').addEventListener('click', function () {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  if (lg) lg.style.visibility = 'hidden';
+  if (hn) hn.style.visibility = 'hidden';
+  iconsPanel.style.display = 'block';
+  iconsLoad();
+});
+document.getElementById('iconsClose').addEventListener('click', function () {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  if (lg) lg.style.visibility = '';
+  if (hn) hn.style.visibility = '';
+  iconsPanel.style.display = 'none';
 });
 document.getElementById('pivotBtn').addEventListener('click', function () {
   const lg = document.getElementById('legend');
