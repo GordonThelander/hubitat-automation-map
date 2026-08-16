@@ -76,7 +76,7 @@ Roles are decided in this order:
 
 Child devices, event subscriptions and capability types are platform-level facts, so the graph covers apps it was never specifically written for, including integrations.
 
-Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1** and **Notifier** are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
+Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1**, **Notifier**, and **Visual Rule Builder 2.0** (Hubitat's newer visual/AI-prompt rule builder, still in beta - decoding covers a single trigger/decision/action graph shape, tested against one fixture so far) are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
 
 ## Requirements and limitations
 
