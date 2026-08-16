@@ -72,9 +72,11 @@ future finding might close.
 
 ### Current state
 
-663+ lines, complete and internally consistent, and kept current as new findings land
-(most recently the December 2026 four-term precedence test and the right-associative
-evaluation-order conclusion). Contains:
+1055+ lines, complete and internally consistent, and kept current as new findings land
+(most recently section 13, added 2026-08-15: writing, reading via condition/trigger/Required
+Expression, the trailing-period artifact, free-text `%Name%` interpolation, and the
+`%device%`/`%time%`/`%date%` reserved-token trap that produced real false positives on live
+rules). Contains:
 
 - A method section: rule page as ground truth, differential reading, corpus-wide checks
   across all rules, building a working decoder so misreadings render as visibly wrong
@@ -82,7 +84,8 @@ evaluation-order conclusion). Contains:
   before claiming novelty. Also states what was *not* done.
 - Evidence markers on every claim: `[invariant]` `[strong]` `[limited]` `[single]`
   `[heuristic]` `[unknown]`, so a finding holding across the corpus is distinguishable from
-  one resting on a single sample.
+  one resting on a single sample. Section 13's Hub Variable findings are marked lighter than
+  sections 1-11's - a handful of deliberately-built fixtures, not the 38-rule corpus.
 - A framing boundary: the stored representation holds enough to **reconstruct** a rule, but
   not necessarily enough to **execute or reason about** one. Reconstruction is checkable
   against the rule page; evaluation is not.
