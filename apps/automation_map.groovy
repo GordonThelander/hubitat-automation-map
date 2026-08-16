@@ -1507,6 +1507,12 @@ List buildRuleFlow(Map data) {
 // walk rather than guessing, per this project's own rule against
 // manufacturing meaning from an unconfirmed field (see the storage-format
 // doc's design principle).
+//
+// The single-decision assumption is not a gap - confirmed live 2026-08-16
+// that the builder itself rejects a prompt describing a nested decision
+// with "Rule must contain exactly one decision node". Multiple/nested
+// decisions are not a shape this format can currently produce at all, at
+// least via the AI-prompt path, so the walker does not need to handle them.
 List buildVisualRuleBuilderFlow(Map st) {
     Map graphDoc = (st.graphDocument instanceof Map) ? (st.graphDocument as Map) : [:]
     List nodes = (graphDoc.nodes ?: []) as List
@@ -1579,6 +1585,46 @@ List buildVisualRuleBuilderFlow(Map st) {
         }
     }
 
+    // A decision node's own type ("all"/"any") is the AND/OR toggle, not the
+    // condition itself - the real condition(s) sit nested in
+    // config.conditions, each its own object with its own type/config,
+    // exactly like a top-level node. This is what the earlier version of
+    // this function missed: it called labelForNode on the decision node
+    // directly, which only ever saw "all"/"any" and never the nested
+    // condition - confirmed live, a diamond reading bare "all" instead of
+    // "Illuminance is below 50 lux on Garage Motion Sensor".
+    // The device name is baked directly into the returned text, not left to
+    // a separate devices field - confirmed live that the diamond shape only
+    // ever displays s.cond, never s.devices (that field only renders for
+    // the plain box/trigger shapes elsewhere in the same function). Rule
+    // Machine's own condition text already has this problem solved by
+    // embedding the device name in the text itself (capabstrue/capabsfalse,
+    // e.g. "Illuminance of X is < 200") - VRB's illuminanceSensorState is a
+    // generic template ("Illuminance is below...") with the sensor stored
+    // separately, so it needs the same treatment done explicitly here.
+    Closure decisionText = { Map decisionNode ->
+        Map dConfig = (decisionNode.config instanceof Map) ? (decisionNode.config as Map) : [:]
+        List conditions = (dConfig.conditions ?: []) as List
+        if (!conditions) return prettyMethod("${decisionNode.type}")
+        String joiner = "${decisionNode.type}" == 'any' ? ' OR ' : ' AND '
+        return conditions.collect { c ->
+            Map cond = (c instanceof Map) ? (c as Map) : [:]
+            String text = labelForNode(cond)
+            List devs = resolveDevices(cond.config as Map)
+            return devs ? "${text} on ${devs.join(', ')}" : text
+        }.join(joiner)
+    }
+    Closure decisionDevices = { Map decisionNode ->
+        Map dConfig = (decisionNode.config instanceof Map) ? (decisionNode.config as Map) : [:]
+        List conditions = (dConfig.conditions ?: []) as List
+        List names = []
+        conditions.each { c ->
+            Map cond = (c instanceof Map) ? (c as Map) : [:]
+            resolveDevices(cond.config as Map).each { nm -> if (!names.contains(nm)) names << nm }
+        }
+        return names
+    }
+
     List steps = []
 
     // One step per trigger-kind node, same convention as Rule Machine's
@@ -1614,7 +1660,7 @@ List buildVisualRuleBuilderFlow(Map st) {
         }
 
         if (kind == 'decision') {
-            steps << [kind: 'action', ctrl: 'if', cond: labelForNode(node), label: '', devices: []]
+            steps << [kind: 'action', ctrl: 'if', cond: decisionText(node), label: '', devices: decisionDevices(node)]
             Map trueEdge = out.find { "${(it as Map).port}" == 'true' } as Map
             Map falseEdge = out.find { "${(it as Map).port}" == 'false' } as Map
             String joinId = null
