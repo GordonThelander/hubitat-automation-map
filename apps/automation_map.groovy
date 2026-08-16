@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.0'
+@Field static final String APP_VERSION = '1.9.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -144,10 +144,52 @@ void installed() {
     // though the install did not take.
     log.info "${app.label}: starting first scan"
     startScan()
+    scheduleAutoScan()
 }
 
 void updated() {
     log.info "${app.label} updated"
+    // Rescheduled on every updated(), which is also how this survives a hub
+    // reboot - Hubitat re-runs updated() for every installed app on boot, so
+    // the schedule() call here re-establishes the cron rather than relying
+    // on it having persisted through the restart. Not directly confirmed on
+    // this hub; standard platform behaviour, worth a real reboot test if
+    // this schedule is ever reported as silently not firing.
+    scheduleAutoScan()
+}
+
+// Off by default - this app is publicly installed, and adding unattended
+// background scanning without an explicit opt-in would be a quiet change to
+// its otherwise read-only, low-footprint posture. Rescheduled (not just
+// scheduled once) every time this runs, so turning the toggle off actually
+// cancels a previously-running schedule rather than leaving it firing.
+void scheduleAutoScan() {
+    unschedule('scheduledScanHandler')
+    if (!settings.autoScanEnabled) return
+    if (settings.autoScanTime) {
+        // schedule() accepts the exact string a Hubitat "time" input stores
+        // and reschedules it daily - standard, documented platform pattern,
+        // not yet confirmed live against this specific input on this hub.
+        schedule(settings.autoScanTime as String, 'scheduledScanHandler')
+    } else {
+        // Cron default: 00:30:00 every day (sec min hour day month weekday).
+        schedule('0 30 0 * * ?', 'scheduledScanHandler')
+    }
+    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: '00:30 (default)'}"
+}
+
+// Guarded against overlapping a scan already in progress - a manual press
+// via the Scan button, or a previous scheduled run that is still going on a
+// large hub - rather than racing it. Skipping silently here is correct: the
+// next scheduled run, or a manual press, covers it, and clearAbandonedScan()
+// already handles a scan that genuinely got stuck.
+void scheduledScanHandler() {
+    if (state.scanRunning) {
+        log.info "${app.label}: scheduled scan skipped, one is already running"
+        return
+    }
+    log.info "${app.label}: starting scheduled overnight scan"
+    startScan()
 }
 
 Map main() {
@@ -231,6 +273,17 @@ Map main() {
                         // alongside rather than in place of the fast local one.
                         paragraph "<a href='${getCloudURL('automation-map.html')}' target='_blank'>Open Automation Map (via Hubitat cloud - use this if the link above shows a blank or missing page, e.g. when accessing your hub through Remote Admin)</a>"
                     }
+                }
+            }
+            section {
+                input name: 'autoScanEnabled', type: 'bool',
+                    title: 'Scan automatically every day',
+                    description: 'Off by default. Turn on to keep the map fresh without pressing Scan yourself.',
+                    defaultValue: false, submitOnChange: true
+                if (settings.autoScanEnabled) {
+                    input name: 'autoScanTime', type: 'time',
+                        title: 'Time to run the scan',
+                        description: 'Leave blank for 00:30.', required: false
                 }
             }
         }
@@ -1389,6 +1442,10 @@ List buildRuleFlow(Map data) {
 
     List actionList = (st.actionList ?: []) as List
     if (!actionList) {
+        // Visual Rule Builder 2.0 stores an explicit node/edge graph
+        // (graphDocument) rather than Rule Machine's numbered actionList - a
+        // different shape entirely, decoded by its own function.
+        if (st.graphDocument) return buildVisualRuleBuilderFlow(st)
         // Built-in apps have no retrievable source - they are compiled classes,
         // and /app/ajax/code returns an empty body for them. Their runtime state
         // is still readable though, which is how Rule Machine was decoded too,
@@ -1432,6 +1489,174 @@ List buildRuleFlow(Map data) {
     actionList.each { a ->
         steps << actionStep("${a}", (actions["${a}"] ?: [:]) as Map, settingValues, settingDevices, evalMap, capabs)
     }
+    return steps
+}
+
+// Visual Rule Builder 2.0 (appTypeId 1084) stores an explicit node/edge graph
+// in graphDocument - already a native Map/List once deserialized, not a
+// string to parse - rather than Rule Machine's numbered-settings scheme.
+// Decoded from one fixture (2026-08-16, "_Test Complex Visualisation Rule"):
+// two triggers merging into one path, a single decision with true/false
+// branches reconverging at one merge node, and turnOn/turnOff/wait/
+// sendNotification/runRule actions. Handles that shape. A node, edge, or
+// config field this has not seen degrades to a generic label or stops the
+// walk rather than guessing, per this project's own rule against
+// manufacturing meaning from an unconfirmed field (see the storage-format
+// doc's design principle).
+List buildVisualRuleBuilderFlow(Map st) {
+    Map graphDoc = (st.graphDocument instanceof Map) ? (st.graphDocument as Map) : [:]
+    List nodes = (graphDoc.nodes ?: []) as List
+    List edges = (graphDoc.edges ?: []) as List
+    if (!nodes) return []
+
+    Map deviceLabels = (state.deviceLabels ?: [:]) as Map
+    Map nodesById = [:]
+    nodes.each { n -> if (n instanceof Map) nodesById["${(n as Map).id}"] = n as Map }
+
+    // Keyed by from-id. Only a decision node has more than one outgoing
+    // edge (true/false); every other kind has exactly one, or none.
+    Map outgoing = [:]
+    edges.each { e ->
+        if (!(e instanceof Map)) return
+        Map edge = e as Map
+        String from = "${edge.from}"
+        List list = (outgoing[from] ?: []) as List
+        list << [port: "${edge.port}", to: "${edge.to}"]
+        outgoing[from] = list
+    }
+
+    // Device ids live under config keys following one naming pattern in
+    // every node examined so far: switches, or anything ending Sensors/
+    // Devices. A heuristic over that pattern, not a schema.
+    Closure resolveDevices = { Map config ->
+        List names = []
+        (config ?: [:]).each { k, v ->
+            String key = "${k}".toLowerCase()
+            boolean looksLikeDevices = key == 'switches' || key.endsWith('sensors') || key.endsWith('devices')
+            if (looksLikeDevices && v instanceof List) {
+                (v as List).each { id ->
+                    String nm = (deviceLabels["${id}"] ?: "Device ${id}") as String
+                    if (!names.contains(nm)) names << nm
+                }
+            }
+        }
+        return names
+    }
+
+    Closure labelForNode = { Map node ->
+        String type = "${node.type}"
+        Map config = (node.config instanceof Map) ? (node.config as Map) : [:]
+        switch (type) {
+            case 'contact':
+            case 'motion':
+            case 'illuminanceCondition':
+                // Every trigger/condition config seen so far carries its own
+                // human-readable state text in a key ending Event or State -
+                // reused rather than reconstructed from raw thresholds,
+                // which would need its own case per condition type not yet
+                // observed.
+                String stateText = null
+                config.each { k, v -> if ("${k}".endsWith('Event') || "${k}".endsWith('State')) stateText = "${v}" }
+                return stateText ?: prettyMethod(type)
+            case 'turnOn': return 'On'
+            case 'turnOff': return 'Off'
+            case 'wait':
+                Integer mins = (config.minutes ?: 0) as Integer
+                Integer secs = (config.seconds ?: 0) as Integer
+                List parts = []
+                if (mins) parts << "${mins}m"
+                if (secs) parts << "${secs}s"
+                return "Wait ${parts ? parts.join(' ') : '0s'}"
+            case 'sendNotification':
+                String msg = "${config.notificationMessage ?: ''}"
+                return msg ? "Notify: ${msg}" : 'Notify'
+            case 'runRule': return 'Run Rule Actions'
+            default: return prettyMethod(type)
+        }
+    }
+
+    List steps = []
+
+    // One step per trigger-kind node, same convention as Rule Machine's
+    // one-row-per-tDev.
+    List triggerNodes = nodes.findAll { it instanceof Map && "${(it as Map).kind}" == 'trigger' }
+    triggerNodes.each { Map t ->
+        steps << [kind: 'trigger', label: labelForNode(t), devices: resolveDevices(t.config as Map)]
+    }
+    if (!triggerNodes) return steps
+
+    // All triggers are expected to converge on one merge node before the
+    // first real step - true in the one fixture examined. If that is not
+    // the shape found, stop here rather than guess at a different one; the
+    // triggers above are still shown even if nothing past them is.
+    Set nextIds = [] as Set
+    triggerNodes.each { Map t -> (outgoing["${t.id}"] ?: []).each { nextIds << "${it.to}" } }
+    if (nextIds.size() != 1) return steps
+    String cursor = nextIds.iterator().next()
+
+    // Bounded so a graph shape this walker does not understand - a cycle,
+    // or branching outside the single-decision/single-join case handled
+    // below - cannot hang page generation.
+    int guard = 0
+    while (cursor && guard++ < 200) {
+        Map node = nodesById["${cursor}"]
+        if (!node) break
+        String kind = "${node.kind}"
+        List out = (outgoing["${cursor}"] ?: []) as List
+
+        if (kind == 'merge') {
+            cursor = out ? "${(out[0] as Map).to}" : null
+            continue
+        }
+
+        if (kind == 'decision') {
+            steps << [kind: 'action', ctrl: 'if', cond: labelForNode(node), label: '', devices: []]
+            Map trueEdge = out.find { "${(it as Map).port}" == 'true' } as Map
+            Map falseEdge = out.find { "${(it as Map).port}" == 'false' } as Map
+            String joinId = null
+
+            if (trueEdge) {
+                String c = "${trueEdge.to}"
+                int g2 = 0
+                while (c && g2++ < 200) {
+                    Map n2 = nodesById["${c}"]
+                    if (!n2 || "${n2.kind}" == 'merge') { joinId = c; break }
+                    List rt = (n2.type == 'runRule' && n2.config instanceof Map && (n2.config as Map).appId != null) ?
+                        ["${(n2.config as Map).appId}"] : []
+                    steps << [kind: 'action', label: labelForNode(n2), devices: resolveDevices(n2.config as Map), ruleTargets: rt]
+                    List o2 = (outgoing["${c}"] ?: []) as List
+                    c = o2 ? "${(o2[0] as Map).to}" : null
+                }
+            }
+
+            if (falseEdge) {
+                steps << [kind: 'action', ctrl: 'else', cond: '', label: '', devices: []]
+                String c = "${falseEdge.to}"
+                int g3 = 0
+                while (c && c != joinId && g3++ < 200) {
+                    Map n3 = nodesById["${c}"]
+                    if (!n3 || "${n3.kind}" == 'merge') { joinId = joinId ?: c; break }
+                    List rt = (n3.type == 'runRule' && n3.config instanceof Map && (n3.config as Map).appId != null) ?
+                        ["${(n3.config as Map).appId}"] : []
+                    steps << [kind: 'action', label: labelForNode(n3), devices: resolveDevices(n3.config as Map), ruleTargets: rt]
+                    List o3 = (outgoing["${c}"] ?: []) as List
+                    c = o3 ? "${(o3[0] as Map).to}" : null
+                }
+            }
+
+            steps << [kind: 'action', ctrl: 'endif', cond: '', label: '', devices: []]
+            List joinOut = joinId ? ((outgoing[joinId] ?: []) as List) : []
+            cursor = joinOut ? "${(joinOut[0] as Map).to}" : null
+            continue
+        }
+
+        // Plain action node.
+        List ruleTargets = (node.type == 'runRule' && node.config instanceof Map && (node.config as Map).appId != null) ?
+            ["${(node.config as Map).appId}"] : []
+        steps << [kind: 'action', label: labelForNode(node), devices: resolveDevices(node.config as Map), ruleTargets: ruleTargets]
+        cursor = out ? "${(out[0] as Map).to}" : null
+    }
+
     return steps
 }
 
