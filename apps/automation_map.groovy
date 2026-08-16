@@ -3435,9 +3435,17 @@ String buildMapHtml() {
   .ln-thick { height:3px; }
   .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
   .note { opacity:0.75; font-size:0.9em; margin-top:6px; line-height:1.35; }
-  #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:rgba(4,20,27,0.96); padding:14px 18px; border-radius:6px;
-          max-width:320px; font-size:0.82em; line-height:1.45; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
-  #hint button { cursor:pointer; padding:4px 10px; }
+  /* Was easy to miss entirely - same dark background as the page itself,
+     no border, tucked in a corner. A first-time visitor's eye has nowhere
+     else to land on page load but the graph, so this needs to actually
+     compete for attention rather than blend in. The accent border reuses
+     the app-node amber already established elsewhere on the page rather
+     than introducing a new colour. */
+  #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:#0a2530; padding:14px 18px; border-radius:6px;
+          max-width:320px; font-size:0.85em; line-height:1.5; border:2px solid #e8a33d;
+          box-shadow:0 4px 28px rgba(0,0,0,0.6), 0 0 0 4px rgba(232,163,61,0.12); }
+  #hint b:first-child { display:block; font-size:1.25em; color:#e8a33d; margin-bottom:6px; }
+  #hint button { cursor:pointer; padding:5px 14px; font-weight:600; }
   /* Deliberately not made to work on a phone. A few hundred nodes, a filter
      panel and a flowchart need room and a pointer; a shrunken version would be
      frustrating rather than useful, so small screens get told plainly. */
@@ -5430,9 +5438,9 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   hint.id = 'hint';
   hint.innerHTML = '<b>Start here</b><br>' +
     'This is every app and device on your hub at once, so it looks busy - that is expected.<br><br>' +
-    '<b>Click any node</b> to drill into it. Click an app to see what it uses - if it is a rule you also get a flowchart of how it works. Then click one of its devices to see everything else touching that device.<br><br>' +
-    'The dropdowns top right do the same thing, and have search boxes.<br><br>' +
-    'Or press <b>Insights</b> for devices controlled by several apps at once.' +
+    '<b>Click any node</b> to drill in, or use the dropdowns above to search by app or device instead. Click a rule and you also get a flowchart of how it works. Click one of its devices to see everything else touching that device.<br><br>' +
+    '<b>Other panels:</b> Insights (devices several apps share), External systems, Pivot tables, Device icons.<br><br>' +
+    'Take your time to explore.' +
     '<div style="margin-top:12px"><button id="hintClose" type="button">Got it</button></div>';
   document.body.appendChild(hint);
   document.getElementById('hintClose').addEventListener('click', function () { hint.style.display = 'none'; });
