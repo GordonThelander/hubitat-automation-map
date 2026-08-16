@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.2'
+@Field static final String APP_VERSION = '1.9.3'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -585,9 +585,11 @@ void startScan() {
     // a single batch still has a timestamp for clearAbandonedScan to age out.
     state.scanHeartbeat = now()
     state.deviceLabels = [:]
-    // NOT state.deviceIconOverrides - that is the user's own correction to the
-    // auto-detected icon, same category as state.userRegistry for external
-    // systems, and must survive a rescan the same way those declarations do.
+    // NOT state.deviceIconOverrides or state.deviceIconNotes - both are the
+    // user's own input (a correction, and a freeform note on an
+    // unrecognised device), same category as state.userRegistry for
+    // external systems, and must survive a rescan the same way those
+    // declarations do.
     state.deviceCapabilities = [:]
     state.deviceRooms = [:]
     state.appIds = []
@@ -2011,39 +2013,108 @@ String prettyMethod(String method) {
 // naming convention from the "capability.xxx" setting-type strings above, and
 // not to be confused with them).
 //
-// Ordered, first match wins. Two-tier by design, worked out against a real
-// device: Kitchen Water Sensor reports Battery, Configuration, Refresh,
-// Sensor, TemperatureMeasurement, WaterSensor - six capabilities, one of them
-// its actual reason for existing. Administrative/generic markers
-// (Configuration, Refresh, Battery, the bare Sensor/Actuator markers) never
-// appear in this table at all, so they can never win. Among what remains, a
-// capability only a purpose-built device would declare (WaterSensor,
-// ContactSensor, GarageDoorControl...) is checked before a capability that
-// commonly rides along on a device whose real purpose is something else
-// (TemperatureMeasurement, IlluminanceMeasurement...), so a water sensor that
-// also reports temperature still resolves to a water drop, not a thermometer.
+// Ordered, first match wins. Built against a 24-category taxonomy Gordon
+// supplied (lighting, switches, dimmers, doors & windows, locks, motion,
+// climate, environmental, safety, water, security, cameras, shades, energy,
+// appliances, cleaning, media, buttons, presence, outdoor, vehicles,
+// infrastructure, virtual, generic sensor, unknown), mapped onto what
+// Hubitat's own capability model can actually tell them apart by - six of
+// those categories cannot be, and are deliberately left uncaptured rather
+// than faked; see the note below the table.
+//
+// Administrative/generic markers (Configuration, Refresh, Battery, the bare
+// Sensor/Actuator markers) never appear in this table at all, so they can
+// never win. Among what remains, a capability only a purpose-built device
+// would declare (WaterSensor, GarageDoorControl, Thermostat...) is checked
+// before a capability that commonly rides along on a device whose real
+// purpose is something else (TemperatureMeasurement, Switch...), so a device
+// with several capabilities resolves to the one that is actually its reason
+// for existing.
 @Field static final List ICON_RULES = [
-    [key: 'door',    label: 'Garage door',    caps: ['GarageDoorControl']],
-    [key: 'lock',    label: 'Lock',           caps: ['Lock']],
-    [key: 'contact', label: 'Contact/window', caps: ['ContactSensor']],
-    [key: 'water',   label: 'Water sensor',   caps: ['WaterSensor']],
-    [key: 'motion',  label: 'Motion',         caps: ['MotionSensor']],
-    [key: 'smoke',   label: 'Smoke/CO',       caps: ['SmokeDetector', 'CarbonMonoxideDetector']],
-    [key: 'light',   label: 'Light',          caps: ['Light', 'ColorControl', 'ColorTemperature', 'SwitchLevel']],
-    [key: 'siren',   label: 'Siren/chime',    caps: ['Alarm', 'Chime', 'Tone']],
-    [key: 'speaker', label: 'Speaker',        caps: ['AudioVolume', 'SpeechSynthesis', 'MediaTransport', 'MusicPlayer']],
-    // Switch checked last among the "defining" tier, not alongside light -
+    [key: 'locks',     label: 'Locks & access',       caps: ['Lock', 'LockCodes']],
+    // Presence checked ahead of doors/motion on purpose - found live:
+    // "Presence Manager Main Status" declares MotionSensor, ContactSensor AND
+    // PresenceSensor together on one virtual status device. Its own name and
+    // driver type ("Presence Manager Output") say what it is actually for;
+    // PresenceSensor is never an incidental rider the way a contact/motion
+    // marker can be on a multi-purpose virtual device, so it wins here.
+    [key: 'presence',  label: 'Location & presence',  caps: ['PresenceSensor']],
+    // Gordon's own taxonomy groups contact sensors, garage doors and gates
+    // as one "Doors & windows" category rather than splitting garage doors
+    // out - DoorControl is the generic (non-garage) door-actuator capability,
+    // included for completeness even though no device on this hub uses it.
+    [key: 'doors',     label: 'Doors & windows',      caps: ['ContactSensor', 'GarageDoorControl', 'DoorControl']],
+    [key: 'water',     label: 'Water',                caps: ['WaterSensor', 'Valve']],
+    [key: 'motion',    label: 'Motion & occupancy',   caps: ['MotionSensor']],
+    [key: 'safety',    label: 'Safety',               caps: ['SmokeDetector', 'CarbonMonoxideDetector']],
+    [key: 'buttons',   label: 'Buttons & remotes',    caps: ['PushableButton', 'HoldableButton',
+                                                              'DoubleTapableButton', 'ReleasableButton']],
+    [key: 'cameras',   label: 'Cameras & doorbells',  caps: ['ImageCapture']],
+    [key: 'shades',    label: 'Shades & coverings',   caps: ['WindowShade']],
+    // Climate checked ahead of switch/lighting - found live: all three
+    // Sensibo Pods carry Switch alongside Thermostat (their own on/off
+    // baseline, same shape of problem as the Garage Dome Siren/security case
+    // below) and were resolving to plain switches before this was added.
+    // Fans are grouped into climate control per Gordon's own taxonomy
+    // ("Thermostats, HVAC, air conditioners, fans"), not split out alone.
+    [key: 'climate',   label: 'Climate control',      caps: ['Thermostat', 'ThermostatMode', 'ThermostatSetpoint',
+                                                              'ThermostatCoolingSetpoint', 'ThermostatHeatingSetpoint',
+                                                              'ThermostatOperatingState', 'ThermostatFanMode',
+                                                              'FanControl']],
+    [key: 'lighting',  label: 'Lighting',             caps: ['Light', 'ColorControl', 'ColorTemperature',
+                                                              'ColorMode', 'SwitchLevel', 'LightEffects']],
+    [key: 'security',  label: 'Security & alarms',    caps: ['Alarm', 'Chime', 'Tone']],
+    [key: 'media',     label: 'Media & audio',        caps: ['AudioVolume', 'SpeechSynthesis', 'MediaTransport',
+                                                              'MusicPlayer']],
+    // Switch checked last among the "defining" tier, not alongside lighting -
     // found live: Garage Dome Siren carries Switch alongside Alarm/Chime/Tone
     // (its own on/off baseline) and was resolving to 'switch' before this was
     // reordered. Switch is the single most common baseline capability on any
     // actuator, so it must be the tier of last resort before the generic
     // measurement-capability fallback, not a peer of the capabilities that
     // are actually specific to a device's purpose.
-    [key: 'switch',  label: 'Switch',         caps: ['Switch', 'Outlet']],
-    [key: 'sensor',  label: 'Sensor (other)', caps: ['TemperatureMeasurement', 'IlluminanceMeasurement',
-                                                       'RelativeHumidityMeasurement', 'PowerMeter', 'EnergyMeter',
-                                                       'PresenceSensor', 'Sensor']],
+    [key: 'switches',  label: 'Switches & outlets',   caps: ['Switch', 'Outlet']],
+    // Checked AFTER switches on purpose: a smart plug used to power something
+    // (Towel Rail, Patio Camera Charger) also reports PowerMeter/EnergyMeter
+    // as a bonus, and should still read as what it is used for - a switch -
+    // not as an energy monitor. This tier only wins for a device that meters
+    // power with no on/off control of its own to be classified by first.
+    [key: 'energy',    label: 'Energy',               caps: ['PowerMeter', 'EnergyMeter', 'VoltageMeasurement']],
+    [key: 'environmental', label: 'Environmental sensors', caps: ['TemperatureMeasurement', 'IlluminanceMeasurement',
+                                                              'RelativeHumidityMeasurement', 'PressureMeasurement',
+                                                              'CarbonDioxideMeasurement', 'UltravioletIndex']],
+    [key: 'sensor',    label: 'Generic sensor',       caps: ['Sensor']],
 ]
+//
+// Six of Gordon's 24 categories are deliberately not in the table above,
+// checked directly against real devices before giving up on them rather
+// than assumed:
+// - Dimmers: not separable from Lighting. A dimmer module and a dimmable
+//   bulb both declare plain SwitchLevel; nothing distinguishes "this is a
+//   dimmer for an unknown fixture" from "this is a dimmable light."
+// - Appliances (washers, ovens, fridges) and Cleaning (robot vacuums):
+//   Hubitat has no base capability for either. Community drivers for both
+//   typically expose nothing beyond Switch/Outlet, identical to any other
+//   smart plug.
+// - Outdoor (weather stations, pools/spas) and Vehicles (EV chargers,
+//   vehicle presence): not a distinct capability grouping - a weather
+//   station reads as Environmental sensors, an EV charger as Switch or
+//   Energy, vehicle presence as Location & presence. Correct by capability,
+//   just not separately labelled "outdoor" or "vehicle".
+// - Hub & infrastructure (bridges, repeaters, network monitors): the one
+//   capability that looks relevant, NetworkDevice, is also carried by
+//   ordinary media devices (the Chromecast speakers all declare it), so
+//   using it here would misclassify them. No safe signal found.
+// - Virtual & coordination: device.virtual is a real, separate field, but
+//   deliberately not used to override the table above - a virtual light
+//   switch is still functionally a light switch on this map, and losing
+//   that in favour of a generic "virtual" icon would make the map less
+//   useful, not more. Also Heater/dehumidifier and Display-vs-speaker,
+//   found while testing the table against real devices, not part of
+//   Gordon's list but the same shape of gap: Gordon's Gas Heater and
+//   Dehumidifyer report only [Switch, Refresh], and a Chromecast "display"
+//   reports the exact same capabilities as a Chromecast speaker - identical
+//   in both cases, nothing to key off without reading the device name.
 
 // The keys a manual override may pick from - ICON_RULES' own keys plus
 // 'unknown' and 'auto', the two states outside the table itself (nothing
@@ -2051,8 +2122,9 @@ String prettyMethod(String method) {
 // ICON_RULES to avoid relying on static-initializer ordering between two
 // @Field constants.
 @Field static final List<String> ICON_KEYS = [
-    'door', 'lock', 'contact', 'water', 'motion', 'smoke', 'light', 'switch',
-    'siren', 'speaker', 'sensor', 'unknown',
+    'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
+    'cameras', 'shades', 'climate', 'lighting', 'security', 'media',
+    'switches', 'energy', 'environmental', 'sensor', 'unknown',
 ]
 
 // Nothing in ICON_RULES matched - not a guess, an honest "this app does not
@@ -2313,6 +2385,7 @@ Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
+    Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
 
     Map<String, Map> nodes = [:]
@@ -2454,6 +2527,11 @@ Map buildGraph() {
                 // The user's own correction wins outright when one exists; only
                 // otherwise is it worth asking what the device's capabilities say.
                 nodes[devNodeId].icon = (iconOverrides[devId] as String) ?: autoDetectIconKey(deviceCaps[devId] as List)
+                // A freeform note on an unrecognised device surfaces in the
+                // tooltip, not just the icon panel - otherwise the only place
+                // that context exists is a table the user has to go find.
+                String note = (iconNotes[devId] as String)?.trim()
+                if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
             }
             List statefulDevices = (appMap.stateful ?: []) as List
             (devRoles as List).each { String role ->
@@ -3027,9 +3105,11 @@ Map iconOverridesGetMapping() {
 
 Map iconOverridesSaveMapping() {
     Map incoming = [:]
+    Map incomingNotes = [:]
     try {
         def body = request?.JSON
-        Map overrides = (body instanceof Map) ? ((body as Map).overrides as Map) : null
+        Map payload = (body instanceof Map) ? (body as Map) : [:]
+        Map overrides = payload.overrides as Map
         (overrides ?: [:]).each { k, v ->
             String devId = "${k}"
             String iconKey = "${v}"
@@ -3038,6 +3118,16 @@ Map iconOverridesSaveMapping() {
             // autoDetectIconKey take over again on the next graph build.
             if (ICON_KEYS.contains(iconKey)) incoming[devId] = iconKey
         }
+        Map notes = payload.notes as Map
+        (notes ?: [:]).each { k, v ->
+            String devId = "${k}"
+            // Capped rather than rejected outright - a pasted paragraph is
+            // still worth keeping the first bit of, and this is a tooltip
+            // annotation, not a document.
+            String note = "${v}".trim()
+            if (note.length() > 200) note = note.substring(0, 200)
+            if (note) incomingNotes[devId] = note
+        }
     } catch (Exception ex) {
         log.warn "${app.label}: could not read icon override payload: ${ex.message}"
         return render(status: 400, contentType: 'application/json',
@@ -3045,11 +3135,12 @@ Map iconOverridesSaveMapping() {
     }
 
     state.deviceIconOverrides = incoming
+    state.deviceIconNotes = incomingNotes
     // Same reasoning as externalsSaveMapping: rebuilt from stored scan data,
     // not a rescan - the overrides changed, the hub did not.
     state.graph = buildGraph()
     state.graphVersion = GRAPH_SCHEMA
-    log.info "${app.label}: saved ${incoming.size()} device icon override(s)"
+    log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
 
@@ -3058,6 +3149,7 @@ String iconOverridesJson() {
     Map rooms = (state.deviceRooms ?: [:]) as Map
     Map caps = (state.deviceCapabilities ?: [:]) as Map
     Map overrides = (state.deviceIconOverrides ?: [:]) as Map
+    Map notes = (state.deviceIconNotes ?: [:]) as Map
 
     List devices = labels.collect { String devId, label ->
         [
@@ -3066,6 +3158,7 @@ String iconOverridesJson() {
             room: rooms[devId] ?: '',
             detected: autoDetectIconKey(caps[devId] as List),
             override: overrides[devId] ?: 'auto',
+            note: notes[devId] ?: '',
         ]
     }
     devices.sort { a, b -> (a.name as String).compareToIgnoreCase(b.name as String) }
@@ -3470,9 +3563,11 @@ const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hu
 // fails silently as a blank glyph, which would be a bad first impression of
 // this feature. Rendered through the 'AMIcons' face declared in <style>.
 const ICON_GLYPHS = {
-  door: '\uf494', lock: '\uf023', contact: '\uf52b', water: '\uf043',
-  motion: '\uf554', smoke: '\uf06d', light: '\uf0eb', switch: '\uf205',
-  siren: '\uf0f3', speaker: '\uf028', sensor: '\uf2c9', unknown: '\uf059',
+  locks: '\uf023', presence: '\uf007', doors: '\uf52b', water: '\uf043',
+  motion: '\uf554', safety: '\uf06d', buttons: '\uf25a', cameras: '\uf030',
+  shades: '\uf2d0', climate: '\uf863', lighting: '\uf0eb', security: '\uf0f3',
+  media: '\uf028', switches: '\uf205', energy: '\ue0b7', environmental: '\uf2c9',
+  sensor: '\uf2db', unknown: '\uf059',
 };
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
@@ -4956,6 +5051,10 @@ function iconsLoad() {
     });
 }
 
+function iconsEffectiveKey(d) {
+  return (d.override && d.override !== 'auto') ? d.override : d.detected;
+}
+
 function iconsRender(message, filter) {
   const labels = ICONS.iconLabels || {};
   const term = (filter || '').toLowerCase();
@@ -4963,9 +5062,10 @@ function iconsRender(message, filter) {
   let h = '<h3>Device icons</h3>';
   h += '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
        'light, an unrecognised one gets a "?". Wrong for a particular device? Pick the right one below and Save. ' +
-       'Reload the map page afterwards to see it redrawn.</p>';
+       'Left as "?"? Add a note so you remember what it actually is - it also appears in the tooltip for that ' +
+       'device on the map. Reload the map page afterwards to see it redrawn.</p>';
   h += '<input type="search" id="iconsSearch" placeholder="Search devices or rooms..." value="' + extEsc(filter || '') + '">';
-  h += '<table><thead><tr><th>Device</th><th>Room</th><th>Detected</th><th>Icon</th></tr></thead><tbody>';
+  h += '<table><thead><tr><th>Device</th><th>Room</th><th>Detected</th><th>Icon</th><th>Note (if unknown)</th></tr></thead><tbody>';
 
   const devices = (ICONS.devices || []).filter(function (d) {
     if (!term) return true;
@@ -4974,6 +5074,7 @@ function iconsRender(message, filter) {
 
   devices.forEach(function (d) {
     const isOverridden = d.override && d.override !== 'auto';
+    const isUnknown = iconsEffectiveKey(d) === 'unknown';
     h += '<tr' + (isOverridden ? ' class="overridden"' : '') + '>';
     h += '<td>' + extEsc(d.name) + '</td>';
     h += '<td>' + extEsc(d.room) + '</td>';
@@ -4983,12 +5084,23 @@ function iconsRender(message, filter) {
     (ICONS.iconKeys || []).forEach(function (k) {
       h += '<option value="' + k + '"' + (d.override === k ? ' selected' : '') + '>' + extEsc(labels[k] || k) + '</option>';
     });
-    h += '</select></td></tr>';
+    h += '</select></td>';
+    // The input always exists (so a note typed just before switching a
+    // device to "unknown" is not lost), just hidden when not relevant -
+    // matches how the override dropdown itself is always present.
+    h += '<td><input type="text" maxlength="200" data-note="' + extEsc(d.id) + '" placeholder="What is this?" ' +
+         'value="' + extEsc(d.note || '') + '" style="' + (isUnknown ? '' : 'display:none') + '"></td>';
+    h += '</tr>';
   });
 
   h += '</tbody></table>';
   h += '<div class="bar"><button id="iconsSave" type="button">Save</button>' +
+       '<button id="iconsExport" type="button">Download backup</button>' +
+       '<button id="iconsImport" type="button">Restore from file</button>' +
+       '<input type="file" id="iconsFile" accept="application/json" style="display:none">' +
        '<span class="msg" id="iconsMsg">' + extEsc(message || '') + '</span></div>';
+  h += '<p class="sub" style="margin-top:10px">Your overrides and notes live with this app. Removing the app ' +
+       'removes them, so download a backup before you do.</p>';
 
   iconsBody.innerHTML = h;
   iconsWire();
@@ -5006,35 +5118,110 @@ function iconsWire() {
   iconsBody.querySelectorAll('select[data-dev]').forEach(function (sel) {
     sel.addEventListener('change', function () {
       const dev = (ICONS.devices || []).find(function (d) { return d.id === sel.getAttribute('data-dev'); });
-      if (dev) dev.override = sel.value;
+      if (!dev) return;
+      dev.override = sel.value;
       const row = sel.closest('tr');
-      if (row) row.classList.toggle('overridden', sel.value !== 'auto');
+      if (row) {
+        row.classList.toggle('overridden', sel.value !== 'auto');
+        const noteInput = row.querySelector('input[data-note]');
+        if (noteInput) noteInput.style.display = (iconsEffectiveKey(dev) === 'unknown') ? '' : 'none';
+      }
+    });
+  });
+
+  iconsBody.querySelectorAll('input[data-note]').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      const dev = (ICONS.devices || []).find(function (d) { return d.id === inp.getAttribute('data-note'); });
+      if (dev) dev.note = inp.value;
     });
   });
 
   document.getElementById('iconsSave').addEventListener('click', iconsSave);
+  document.getElementById('iconsExport').addEventListener('click', iconsExport);
+  document.getElementById('iconsImport').addEventListener('click', function () {
+    document.getElementById('iconsFile').click();
+  });
+  document.getElementById('iconsFile').addEventListener('change', iconsImportFile);
 }
 
 function iconsSave() {
-  // Only the actual corrections are sent - a device left on "Auto" carries no
-  // entry at all, so autoDetectIconKey keeps deciding it as capabilities
-  // change on a future rescan rather than freezing it at today's guess.
+  // Only the actual corrections/notes are sent - a device left on "Auto"
+  // with no note carries no entry at all, so autoDetectIconKey keeps
+  // deciding it as capabilities change on a future rescan rather than
+  // freezing it at today's guess.
   const overrides = {};
+  const notes = {};
   (ICONS.devices || []).forEach(function (d) {
     if (d.override && d.override !== 'auto') overrides[d.id] = d.override;
+    if (d.note && d.note.trim()) notes[d.id] = d.note.trim();
   });
   const msg = document.getElementById('iconsMsg');
   msg.textContent = 'Saving...';
   fetch(ICONS_URL, {
     method: 'POST', cache: 'no-store', credentials: 'omit',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ overrides: overrides })
+    body: JSON.stringify({ overrides: overrides, notes: notes })
   }).then(function (r) { return r.json(); })
     .then(function (d) {
       ICONS = d;
       iconsRender('Saved. Reload the page to redraw the map.');
     })
     .catch(function (e) { msg.textContent = 'Save failed: ' + e; });
+}
+
+// Same local-file pattern as the External systems panel's backup/restore -
+// no hub involvement, so nothing to go wrong on an older platform.
+function iconsExport() {
+  const overrides = {};
+  (ICONS.devices || []).forEach(function (d) {
+    if ((d.override && d.override !== 'auto') || (d.note && d.note.trim())) {
+      const entry = { name: d.name };
+      if (d.override && d.override !== 'auto') entry.icon = d.override;
+      if (d.note && d.note.trim()) entry.note = d.note.trim();
+      overrides[d.id] = entry;
+    }
+  });
+  const payload = {
+    kind: 'automation-map-device-icons',
+    version: 1,
+    exported: new Date().toISOString(),
+    overrides: overrides
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'automation-map-device-icons.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  document.getElementById('iconsMsg').textContent = 'Downloaded.';
+}
+
+function iconsImportFile(evt) {
+  const file = evt.target.files && evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    let parsed = null;
+    try { parsed = JSON.parse(reader.result); }
+    catch (e) { document.getElementById('iconsMsg').textContent = 'That file is not valid JSON.'; return; }
+    const overrides = parsed && parsed.overrides ? parsed.overrides : null;
+    if (!overrides) { document.getElementById('iconsMsg').textContent = 'No overrides found in that file.'; return; }
+    // Matched by device id, same as the rest of this app keys devices - an
+    // id from a device since removed is silently skipped rather than erroring.
+    let applied = 0;
+    (ICONS.devices || []).forEach(function (d) {
+      const entry = overrides[d.id];
+      if (!entry) return;
+      if (entry.icon && (ICONS.iconKeys || []).indexOf(entry.icon) !== -1) { d.override = entry.icon; applied++; }
+      if (entry.note) { d.note = String(entry.note).substring(0, 200); applied++; }
+    });
+    iconsRender('Loaded ' + applied + ' entr' + (applied === 1 ? 'y' : 'ies') + ' from the file. Press Save to keep them.');
+  };
+  reader.readAsText(file);
+  evt.target.value = '';
 }
 
 // The legend is hidden while this panel is open rather than relied on to sit

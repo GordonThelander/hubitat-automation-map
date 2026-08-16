@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-16",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.2 - devices on the map now draw with an icon guessed from their capabilities (light, door, water sensor, motion, lock, siren, speaker, switch...) instead of a plain dot. A new Device icons panel lists every device with its detected icon and lets you override any that guessed wrong, per device, surviving future rescans.",
+  "releaseNotes": "1.9.3 - the device icon table (1.9.2) now covers 17 categories instead of 11: locks, presence, doors/windows, water, motion, safety, buttons, cameras, shades, climate/HVAC, lighting, security, media, switches, energy, environmental and generic sensors. A device left as unrecognised (\"?\") can now carry a short freeform note in the Device icons panel, so you can record what it actually is - the note also shows up on that device's map tooltip. The panel also gained Download backup / Restore from file, the same local-file backup already available for External systems declarations.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.2"
+      "version": "1.9.3"
     }
   ],
   "drivers": []
