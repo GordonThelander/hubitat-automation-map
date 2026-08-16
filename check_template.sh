@@ -32,6 +32,12 @@
 #                         \s+ alone here would be Groovy's, not the browser's
 #   [^&\\s]*             JS-side token-redaction regex in the scan diagnostic,
 #                         same double-escape reasoning as the line above
+#   key: '\uXXXX'        ICON_GLYPHS entries (device icon font codepoints) -
+#                         Groovy consuming \uXXXX and emitting the raw glyph
+#                         character is the INTENDED behaviour here, not a bug:
+#                         a JS string literal containing that one raw
+#                         character is exactly equivalent to one containing
+#                         the escape, so either way is correct in the browser.
 #
 # Usage: ./check_template.sh apps/automation_map.groovy
 set -euo pipefail
@@ -50,6 +56,7 @@ BAD=$(grep -n '\\' "$FILE" \
   | grep -v '\[",\\\\n\]' \
   | grep -v 'replace(/\\\\s+/g' \
   | grep -v 'access_token=\[^&\\\\s\]' \
+  | grep -vE "[a-z]+: '.u[0-9a-f]{4}'" \
   || true)
 
 if [ -n "$BAD" ]; then
