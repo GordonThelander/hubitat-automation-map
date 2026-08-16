@@ -840,9 +840,9 @@ List fetchAllDeviceIds() {
 // never says which devices the app touches, so both are needed and the answer
 // is their union.
 //
-// Credit: the endpoint was found by reading Jean P. May Jr.'s Rule References
-// Rule Table, then verified here. This project's own notes had recorded that no
-// bulk app-list endpoint existed, which was wrong.
+// Credit: the endpoint was found by reading Jean P. May Jr.'s (TheBearMay) Rule
+// References Rule Table, then verified here. This project's own notes had
+// recorded that no bulk app-list endpoint existed, which was wrong.
 //
 // Shape: { apps: [ { data: {id, appTypeId, name, type, disabled, ...},
 //                    children: [ ...same again... ] } ] }
