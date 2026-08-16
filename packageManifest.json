@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-16",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.3 - the device icon table (1.9.2) now covers 17 categories instead of 11: locks, presence, doors/windows, water, motion, safety, buttons, cameras, shades, climate/HVAC, lighting, security, media, switches, energy, environmental and generic sensors. A device left as unrecognised (\"?\") can now carry a short freeform note in the Device icons panel, so you can record what it actually is - the note also shows up on that device's map tooltip. The panel also gained Download backup / Restore from file, the same local-file backup already available for External systems declarations.",
+  "releaseNotes": "1.9.4 - device icons (1.9.3) now also check the device's own name before falling back to capability, for the many virtual switches/plugs whose capability alone can't say what they are - a device named Tuya Kettle, Festoon Lights, Internet Down or Gas Heater now reads as an appliance, a light, network/internet, or climate instead of a plain switch. Three more categories - Notification gateway (auto-detected), Hub & infrastructure, and AI node (both manual-only, no reliable capability or name signal exists yet) - are also selectable in the Device icons panel. And the icons themselves are far easier to actually see on the map: each one now sits on a solid coloured circle instead of a bare glyph on the dark background, which was hard to spot without zooming in.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.3"
+      "version": "1.9.4"
     }
   ],
   "drivers": []

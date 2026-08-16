@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.3'
+@Field static final String APP_VERSION = '1.9.4'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -2051,6 +2051,14 @@ String prettyMethod(String method) {
                                                               'DoubleTapableButton', 'ReleasableButton']],
     [key: 'cameras',   label: 'Cameras & doorbells',  caps: ['ImageCapture']],
     [key: 'shades',    label: 'Shades & coverings',   caps: ['WindowShade']],
+    // Found live: Gmail Broker (a notification-gateway integration device)
+    // declares Notification alongside the same generic Actuator/Refresh
+    // every device has - the only real signal it carries. Checked after
+    // presence on purpose: Mobile Proxy and the phone devices also declare
+    // Notification alongside PresenceSensor, and their actual purpose is
+    // presence tracking, not notification delivery, so presence must win
+    // for them.
+    [key: 'broker',    label: 'Notification gateway', caps: ['Notification']],
     // Climate checked ahead of switch/lighting - found live: all three
     // Sensibo Pods carry Switch alongside Thermostat (their own on/off
     // baseline, same shape of problem as the Garage Dome Siren/security case
@@ -2084,7 +2092,75 @@ String prettyMethod(String method) {
                                                               'RelativeHumidityMeasurement', 'PressureMeasurement',
                                                               'CarbonDioxideMeasurement', 'UltravioletIndex']],
     [key: 'sensor',    label: 'Generic sensor',       caps: ['Sensor']],
+    // Override-only, on purpose: an empty caps list can never match in
+    // autoDetectIconKey (.any{} on an empty list is always false), so
+    // these two never win a scan. They exist so Gordon can manually tag a
+    // device as Hub or AI in the Device icons panel even though nothing on
+    // the hub currently justifies auto-detecting either - see the note
+    // below the table for why CoCoHue Bridge and a hypothetical AI-node
+    // device can't be told apart from an ordinary integration device by
+    // capability alone. Kept in this table, not a separate list, so they
+    // share the same label-building and ICON_KEYS-derivation code as every
+    // real rule.
+    [key: 'hub',       label: 'Hub & infrastructure', caps: []],
+    [key: 'ai',        label: 'AI node',              caps: []],
+    // These three also have an empty caps list - not override-only like
+    // hub/ai above, but driven entirely by ICON_NAME_HINTS below rather
+    // than capability. Appliance, Network and Display have no distinguishing
+    // Hubitat capability at all (see the note further down), but their name
+    // alone is usually unambiguous - Tuya Kettle, Internet Down, and the
+    // Google Nest Hub "display" devices are all bare Virtual Switches or
+    // Chromecast integration devices with nothing capability-wise to tell
+    // them apart from any other switch or speaker.
+    [key: 'appliance', label: 'Appliance',            caps: []],
+    [key: 'network',   label: 'Internet/network',     caps: []],
+    [key: 'display',   label: 'Display',              caps: []],
 ]
+
+// Name-based hints, checked BEFORE capability - added at Gordon's explicit
+// request after real misclassifications capability alone cannot fix:
+// Festoon Lights, Tuya Kettle, Internet Down and the Google Nest Hub
+// "display" devices are all either bare Virtual Switches or share a
+// capability set with an unrelated device type, so nothing in ICON_RULES
+// can tell them apart from a generic switch or speaker - but the device's
+// own name already says exactly what it is.
+//
+// Ordered like ICON_RULES: more specific/unambiguous words checked first,
+// so "Kitchen Downlight Button" matches "button" before this ever reaches
+// the substring "light" inside "Downlight". Matched as whole words only
+// (the name is split on anything that is not a letter or digit), not
+// substrings - "highlight" and "flashlight" do not become lighting.
+@Field static final List ICON_NAME_HINTS = [
+    [key: 'buttons',   words: ['button', 'remote']],
+    [key: 'appliance', words: ['kettle', 'oven', 'fridge', 'refrigerator', 'dishwasher',
+                                'washer', 'dryer', 'microwave', 'toaster']],
+    [key: 'network',   words: ['internet', 'wifi', 'router', 'modem']],
+    // 'nest' rather than 'hub' for the Google Nest Hub devices - 'hub' alone
+    // is too generic a word to risk matching against unrelated devices.
+    [key: 'display',   words: ['display', 'monitor', 'tablet', 'nest']],
+    // Both spellings kept - Gordon's own "Dehumidifyer" device is spelled
+    // without the second i, and word-matching is exact, not fuzzy.
+    [key: 'climate',   words: ['heater', 'dehumidifier', 'dehumidifyer', 'humidifier', 'aircon']],
+    [key: 'lighting',  words: ['light', 'lights', 'lamp', 'bulb']],
+]
+
+// Splits a device name into lowercase whole words for ICON_NAME_HINTS -
+// deliberately not a capability, this reads the label the user gave the
+// device, which this project otherwise avoids doing anywhere else. Kept to
+// a small, curated word list rather than fuzzy/partial matching so a false
+// positive stays rare and easy to reason about.
+List nameWords(String name) {
+    return (name ?: '').toLowerCase().split('[^a-z0-9]+') as List
+}
+
+String autoDetectIconKeyForDevice(String name, List capabilities) {
+    List words = nameWords(name)
+    for (hint in ICON_NAME_HINTS) {
+        Map h = hint as Map
+        if ((h.words as List).any { words.contains(it) }) return h.key as String
+    }
+    return autoDetectIconKey(capabilities)
+}
 //
 // Six of Gordon's 24 categories are deliberately not in the table above,
 // checked directly against real devices before giving up on them rather
@@ -2104,7 +2180,16 @@ String prettyMethod(String method) {
 // - Hub & infrastructure (bridges, repeaters, network monitors): the one
 //   capability that looks relevant, NetworkDevice, is also carried by
 //   ordinary media devices (the Chromecast speakers all declare it), so
-//   using it here would misclassify them. No safe signal found.
+//   using it here would misclassify them. No safe signal found. Checked
+//   again directly against CoCoHue Bridge and Hub Information Driver when
+//   Gordon asked for a "Hub" category specifically: CoCoHue Bridge reports
+//   only [Actuator, Refresh, Initialize] - no capability distinguishes a
+//   bridge/hub device from any other integration-managed actuator.
+// - Voice assistants (Google Home Mini, Google Nest Hub): also checked
+//   directly when Gordon asked for an "Assistant" category. These report
+//   the exact same capabilities as a plain Chromecast speaker (AudioVolume,
+//   MediaTransport, SpeechSynthesis, NetworkDevice) - nothing marks a
+//   device as an assistant rather than a speaker.
 // - Virtual & coordination: device.virtual is a real, separate field, but
 //   deliberately not used to override the table above - a virtual light
 //   switch is still functionally a light switch on this map, and losing
@@ -2123,8 +2208,9 @@ String prettyMethod(String method) {
 // @Field constants.
 @Field static final List<String> ICON_KEYS = [
     'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
-    'cameras', 'shades', 'climate', 'lighting', 'security', 'media',
-    'switches', 'energy', 'environmental', 'sensor', 'unknown',
+    'cameras', 'shades', 'broker', 'climate', 'lighting', 'security', 'media',
+    'switches', 'energy', 'environmental', 'sensor', 'hub', 'ai', 'appliance',
+    'network', 'display', 'unknown',
 ]
 
 // Nothing in ICON_RULES matched - not a guess, an honest "this app does not
@@ -2524,9 +2610,11 @@ Map buildGraph() {
             String devNodeId = "d${devId}"
             if (!nodes[devNodeId]) {
                 nodes[devNodeId] = nodeEntry(devNodeId, (labels[devId] ?: "Device ${devId}") as String, 'device')
-                // The user's own correction wins outright when one exists; only
-                // otherwise is it worth asking what the device's capabilities say.
-                nodes[devNodeId].icon = (iconOverrides[devId] as String) ?: autoDetectIconKey(deviceCaps[devId] as List)
+                // The user's own correction wins outright when one exists;
+                // only otherwise is it worth asking the name/capability
+                // fallback what this device is.
+                nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
+                    autoDetectIconKeyForDevice((labels[devId] ?: '') as String, deviceCaps[devId] as List)
                 // A freeform note on an unrecognised device surfaces in the
                 // tooltip, not just the icon panel - otherwise the only place
                 // that context exists is a table the user has to go find.
@@ -3156,7 +3244,7 @@ String iconOverridesJson() {
             id: devId,
             name: label,
             room: rooms[devId] ?: '',
-            detected: autoDetectIconKey(caps[devId] as List),
+            detected: autoDetectIconKeyForDevice(label as String, caps[devId] as List),
             override: overrides[devId] ?: 'auto',
             note: notes[devId] ?: '',
         ]
@@ -3565,10 +3653,42 @@ const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hu
 const ICON_GLYPHS = {
   locks: '\uf023', presence: '\uf007', doors: '\uf52b', water: '\uf043',
   motion: '\uf554', safety: '\uf06d', buttons: '\uf25a', cameras: '\uf030',
-  shades: '\uf2d0', climate: '\uf863', lighting: '\uf0eb', security: '\uf0f3',
-  media: '\uf028', switches: '\uf205', energy: '\ue0b7', environmental: '\uf2c9',
-  sensor: '\uf2db', unknown: '\uf059',
+  shades: '\uf2d0', broker: '\uf0e0', climate: '\uf863', lighting: '\uf0eb',
+  security: '\uf0f3', media: '\uf028', switches: '\uf205', energy: '\ue0b7',
+  environmental: '\uf2c9', sensor: '\uf2db', hub: '\uf0e8', ai: '\uf544',
+  appliance: '\ue51a', network: '\uf0ac', display: '\ue163',
+  unknown: '\uf059',
 };
+
+// Renders one icon+colour combination to a small PNG data URL, once, on an
+// offscreen canvas - see the comment in styledNode for why this exists
+// instead of a native "icon on a filled circle" shape. Cached by key so a
+// role colour shared by many devices (the common case) only pays the
+// render cost once.
+const ICON_IMAGE_CACHE = {};
+function iconImageDataURL(iconKey, fillColor) {
+  const cacheKey = iconKey + '|' + fillColor;
+  if (ICON_IMAGE_CACHE[cacheKey]) return ICON_IMAGE_CACHE[cacheKey];
+  const size = 44;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2 - 2, 0, 2 * Math.PI);
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.font = Math.round(size * 0.52) + 'px AMIcons';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Dark glyph on every fill colour rather than choosing per-colour
+  // contrast - every role/group colour in this file is light-to-mid
+  // toned, never dark enough that a dark glyph would disappear.
+  ctx.fillStyle = '#062733';
+  ctx.fillText(ICON_GLYPHS[iconKey] || ICON_GLYPHS.unknown, size / 2, size / 2 + 1);
+  const url = c.toDataURL('image/png');
+  ICON_IMAGE_CACHE[cacheKey] = url;
+  return url;
+}
 
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
@@ -3859,14 +3979,22 @@ function styledNode(n, useFullLabel, roleByDevice) {
     // changed nothing on screen.
     widthConstraint: { maximum: 170 }
   };
-  // vis-network's icon shape reads its glyph from icon.{face,code,size,color}
-  // rather than from the top-level color/size above - those two stay set
-  // regardless (color still drives the tooltip-adjacent legend swatches
-  // elsewhere, size still sets the node's interaction radius), this just
-  // hands the glyph its own copy of the same color so type and role are
-  // both visible on one marker.
+  // A bare icon glyph on the dark page background was hard to spot at
+  // normal zoom - found live, screenshots of Garage Motion Sensor and
+  // Guest Room 1 Button both needed zooming in 3x before the glyph read at
+  // all. vis-network has no built-in "icon on a filled circle" shape, and
+  // its ctxRenderer custom-drawing hook (which would let one be drawn
+  // directly) was tested live against this exact page and does nothing -
+  // 0 pixels changed where it should have painted a test circle, so this
+  // build of vis-network does not support it. circularImage does the same
+  // job a different way: iconImageDataURL below pre-renders the circle and
+  // the glyph together on an offscreen canvas once per (icon, colour) pair
+  // and hands vis-network a plain image, which is a shape it reliably
+  // supports.
   if (shape === 'icon') {
-    styled.icon = { face: 'AMIcons', code: ICON_GLYPHS[n.icon] || ICON_GLYPHS.unknown, size: 22, color: color };
+    styled.shape = 'circularImage';
+    styled.image = iconImageDataURL(n.icon, typeof color === 'string' ? color : groupColors.device);
+    styled.size = 15;
   }
   // Dashed outline as well as the dimmed fill. Two signals rather than one,
   // because the fill alone is close to the paused colour at a glance and these
@@ -3902,6 +4030,25 @@ const network = new vis.Network(document.getElementById('network'), { nodes: nod
   },
   interaction: { hover: true, tooltipDelay: 100 },
   edges: { smooth: { type: 'continuous' } }
+});
+
+// The very first device icons can be drawn before the AMIcons webfont has
+// actually finished downloading - @font-face loads asynchronously, but the
+// DataSet above is built synchronously on page load. A glyph drawn to
+// canvas before its font is ready silently falls back to the browser
+// default font and bakes that wrong render into the cached data URL
+// forever, since canvas text is a bitmap, not live text that reflows when
+// the real font arrives. Once the font is confirmed ready, the cache is
+// thrown away and every device node is re-rendered - a no-op if the icons
+// were already correct, a real fix on the run where they were not.
+document.fonts.ready.then(function () {
+  Object.keys(ICON_IMAGE_CACHE).forEach(function (k) { delete ICON_IMAGE_CACHE[k]; });
+  // Only nodes currently in the DataSet - update() upserts, so including an
+  // id that a filter change has since removed would silently add it back.
+  const presentIds = {};
+  nodes.getIds().forEach(function (id) { presentIds[id] = true; });
+  nodes.update(ALL_NODES.filter(function (n) { return n.group === 'device' && presentIds[n.id]; })
+    .map(function (n) { return styledNode(n, false, null); }));
 });
 
 // A node with no edges has nothing pulling it in, so barnesHut repulsion alone
