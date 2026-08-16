@@ -709,9 +709,9 @@ legitimately disagree.
 **Superseded 2026-08-14: `/hub2/appsList` is the bulk endpoint.** It returns the complete
 installed-app tree as JSON. **[strong]**
 
-Credit where it is due: this was found by reading Jean P. May Jr.'s *Rule References Rule
-Table*, which calls it directly, not by further probing here. It was then verified against
-this hub on firmware 2.5.1.147 rather than taken on faith.
+Credit where it is due: this was found by reading Jean P. May Jr.'s (TheBearMay) *Rule
+References Rule Table*, which calls it directly, not by further probing here. It was then
+verified against this hub on firmware 2.5.1.147 rather than taken on faith.
 
     GET /hub2/appsList
 
