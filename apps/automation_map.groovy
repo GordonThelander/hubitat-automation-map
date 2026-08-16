@@ -5213,6 +5213,13 @@ function iconsEffectiveKey(d) {
 function iconsRender(message, filter) {
   const labels = ICONS.iconLabels || {};
   const term = (filter || '').toLowerCase();
+  // ICONS.iconKeys is in detection-priority order (most specific capability
+  // checked first) - correct for autoDetectIconKey, meaningless for a
+  // human scanning a dropdown by eye. Sorted once here, by label, for
+  // every row's <select> below.
+  const sortedIconKeys = (ICONS.iconKeys || []).slice().sort(function (a, b) {
+    return (labels[a] || a).localeCompare(labels[b] || b);
+  });
 
   let h = '<h3>Device icons</h3>';
   h += '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
@@ -5236,7 +5243,7 @@ function iconsRender(message, filter) {
     h += '<td>' + extEsc(labels[d.detected] || d.detected) + '</td>';
     h += '<td><select data-dev="' + extEsc(d.id) + '">';
     h += '<option value="auto"' + (!isOverridden ? ' selected' : '') + '>Auto (' + extEsc(labels[d.detected] || d.detected) + ')</option>';
-    (ICONS.iconKeys || []).forEach(function (k) {
+    sortedIconKeys.forEach(function (k) {
       h += '<option value="' + k + '"' + (d.override === k ? ' selected' : '') + '>' + extEsc(labels[k] || k) + '</option>';
     });
     h += '</select></td>';
