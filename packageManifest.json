@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.4",
+  "version": "1.9.5",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-16",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.4 - device icons (1.9.3) now also check the device's own name before falling back to capability, for the many virtual switches/plugs whose capability alone can't say what they are - a device named Tuya Kettle, Festoon Lights, Internet Down or Gas Heater now reads as an appliance, a light, network/internet, or climate instead of a plain switch. Three more categories - Notification gateway (auto-detected), Hub & infrastructure, and AI node (both manual-only, no reliable capability or name signal exists yet) - are also selectable in the Device icons panel. And the icons themselves are far easier to actually see on the map: each one now sits on a solid coloured circle instead of a bare glyph on the dark background, which was hard to spot without zooming in.",
+  "releaseNotes": "1.9.5 - a new Export JSON button (next to Device icons) downloads the whole map as one structured, self-describing JSON file - every device, app, relationship, external system, Hub Variable and decoded rule flowchart, an orientation block explaining the schema up front, and precomputed findings (contested devices, unreferenced devices, inert apps, broken rule references). Built for an AI or other external tool to read: relationships join on stable ids, not display names (this hub has real duplicate app names, which would otherwise make some relationships ambiguous or, for rule flows, silently overwrite one another). Fixed a real, longstanding bug surfaced while building this: a non-inert child app's own parent-app id was never recorded, only a container's list of its children - app hierarchy now reads correctly both directions. Also: automatic daily scan is on by default now (00:30, still easily turned off); the legend moved to the top of the screen and no longer overlaps the device/app counter; and the four floating panels (Insights, External systems, Pivot tables, Device icons) now always bring whichever was opened most recently to the front, instead of whichever happened to load later in the page.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.4"
+      "version": "1.9.5"
     }
   ],
   "drivers": []

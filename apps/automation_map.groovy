@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.4'
+@Field static final String APP_VERSION = '1.9.5'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -282,8 +282,8 @@ Map main() {
             section {
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    description: 'Off by default. Turn on to keep the map fresh without pressing Scan yourself.',
-                    defaultValue: false, submitOnChange: true
+                    description: 'On by default at 00:30. Turn off if you would rather press Scan yourself.',
+                    defaultValue: true, submitOnChange: true
                 if (settings.autoScanEnabled) {
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
@@ -2598,8 +2598,21 @@ Map buildGraph() {
             }
             if ((inertFacts.subs ?: 0) as Integer) nodes[appNodeId].subs = inertFacts.subs
             if ((inertFacts.devs ?: 0) as Integer) nodes[appNodeId].devs = inertFacts.devs
-            if (appMap.parent) nodes[appNodeId].parent = "a${appMap.parent}"
         }
+        // Deliberately outside the if (inert) block above, unlike kids/sched/
+        // subs/devs which exist specifically to give an EMPTY container node
+        // something to show when focused. parent is a plain structural fact
+        // true of the app whether or not it happens to be inert - a real
+        // Button Rule child with its own actions is not inert, but still has
+        // a parent Button Controller. Gating this the same way the inert-only
+        // fields are gated left every non-inert child's own node with no
+        // parent at all, an asymmetry an external export caught: 64 apps
+        // appeared in a container's kids list but had parent: null
+        // themselves, because kids is computed by scanning ALL of appInfo
+        // for children regardless of the child's own inert status, while
+        // parent was only ever set on a node already being built for the
+        // inert-focus-panel reason.
+        if (appMap.parent) nodes[appNodeId].parent = "a${appMap.parent}"
         // Flows come from appInfo during a scan, and from the previously built
         // graph on a rebuild - see finishScan, which strips them from appInfo
         // once they are here, so the same 60KB is not held twice.
@@ -3247,6 +3260,7 @@ String iconOverridesJson() {
             detected: autoDetectIconKeyForDevice(label as String, caps[devId] as List),
             override: overrides[devId] ?: 'auto',
             note: notes[devId] ?: '',
+            capabilities: caps[devId] ?: [],
         ]
     }
     devices.sort { a, b -> (a.name as String).compareToIgnoreCase(b.name as String) }
@@ -3350,6 +3364,17 @@ String buildMapHtml() {
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
     String jsonStr = JsonOutput.toJson(graph).replace('</script>', '<\\/script>')
+    // For the Export JSON feature - scan provenance the client-side GRAPH
+    // blob above does not carry on its own. Built the same safe way GRAPH
+    // is (JsonOutput, not manual string splicing) so an exception message
+    // in scanError can never break out of the embedding script tag.
+    Map scanMeta = [
+        exportSchemaVersion: 2,
+        graphSchemaVersion: GRAPH_SCHEMA,
+        scanHeartbeatMs: state.scanHeartbeat,
+        scanError: state.scanError,
+    ]
+    String scanMetaJsonStr = JsonOutput.toJson(scanMeta).replace('</script>', '<\\/script>')
     // Positioned in the empty gap between the status box and the controls
     // panel, where Gordon pointed at it - not overlapping either.
     String santaHtml = showSanta() ?
@@ -3394,7 +3419,7 @@ String buildMapHtml() {
   }
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
-  #legend { position:absolute; bottom:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; max-width:340px; }
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; max-width:340px; }
   #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; display:flex; flex-direction:column; gap:6px; width:230px; }
   #controls label { display:block; margin-bottom:2px; }
   #controls select { width:100%; box-sizing:border-box; }
@@ -3616,6 +3641,7 @@ ${santaHtml}
   <button id="extBtn" type="button">External systems</button>
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
+  <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">Export JSON</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
@@ -3647,6 +3673,7 @@ if (typeof window.vis === 'undefined') {
 try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) { }
 
 const GRAPH = ${jsonStr};
+const SCAN_META = ${scanMetaJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc' };
@@ -4518,6 +4545,21 @@ function mermaidFor(steps) {
 const flowPanel = document.getElementById('flow') || { style: {} };
 const flowChart = document.getElementById('flowChart') || document.createElement('div');
 
+// The four floating panels (flow/Insights, External systems, Pivot tables,
+// Device icons) started with fixed CSS z-index values, so whichever one
+// happened to sit later in the page's own HTML always rendered on top
+// regardless of which was actually opened most recently - found live,
+// Pivot tables opened after Device icons still rendered behind it. Every
+// panel-open call site now runs its show through this instead of a bare
+// `.style.display = 'block'`, so the panel most recently brought up is
+// always the one on top.
+let panelTopZ = 30;
+function bringToFront(panel) {
+  panelTopZ += 1;
+  panel.style.zIndex = panelTopZ;
+  panel.style.display = 'block';
+}
+
 // An app that references nothing has no flow to draw, but it is not true that
 // there is nothing to say about it. Clicking one used to blank the map to a
 // single square and open no panel at all, which reads as a broken click rather
@@ -4598,7 +4640,7 @@ function showInertPanel(node) {
       focusNode(a.getAttribute('data-node'));
     });
   });
-  flowPanel.style.display = 'block';
+  bringToFront(flowPanel);
 }
 
 function showFlow(appId) {
@@ -4616,10 +4658,10 @@ function showFlow(appId) {
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
     flowChart.innerHTML = res.svg;
-    flowPanel.style.display = 'block';
+    bringToFront(flowPanel);
   }).catch(function (err) {
     flowChart.textContent = 'Could not render this rule: ' + err.message;
-    flowPanel.style.display = 'block';
+    bringToFront(flowPanel);
   });
 }
 
@@ -4796,7 +4838,7 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   document.getElementById('flowTitle').textContent = '';
   document.getElementById('flowSub').textContent = '';
   flowChart.innerHTML = buildInsights();
-  flowPanel.style.display = 'block';
+  bringToFront(flowPanel);
 });
 
 // ---------------------------------------------------------------------------
@@ -5386,6 +5428,269 @@ function iconsImportFile(evt) {
   evt.target.value = '';
 }
 
+// Whole-hub export as one JSON file, for an AI or other external tool to
+// read - not a panel, a direct download, same pattern as the backup
+// buttons elsewhere on this page. External systems and Device icon data
+// are fetched fresh here (cheap GETs, the same endpoints those panels
+// already use) rather than relying on whichever panel the user happens to
+// have already opened this session.
+function exportJSON() {
+  const btn = document.getElementById('exportBtn');
+  const original = btn.textContent;
+  btn.textContent = 'Exporting...';
+  btn.disabled = true;
+
+  Promise.all([
+    fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { return null; }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { return null; })
+  ]).then(function (results) {
+    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1]), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'automation-map-export-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }).catch(function (e) {
+    alert('Export failed: ' + e);
+  }).finally(function () {
+    btn.textContent = original;
+    btn.disabled = false;
+  });
+}
+
+// A ref is {id, name} everywhere in this export, never a bare name and
+// never a bare id - v1 used display names alone to link records together
+// and that turned out to be a real, not theoretical, ambiguity: this hub
+// has two apps both named "_Testy import (Rule-5.1)" (one is a clone of
+// the other) and two named "Rule-5.1 (child of Rule Machine)". A name-only
+// edge or a ruleFlows object keyed by name cannot tell those apart, and
+// for ruleFlows it is worse than ambiguous - a second same-named rule's
+// flow silently overwrites the first's, because a JS object can only hold
+// one property of a given key. v2 fixes both: every edge carries fromId/
+// toId alongside the display names, and ruleFlows is an array of
+// {appId, appName, ...} records instead of an object keyed by name.
+function ref(id, nameOf) { return { id: id, name: nameOf[id] || id }; }
+
+// Same underlying facts as buildInsights() above, computed independently
+// as plain data rather than reusing it directly - buildInsights() returns
+// a rendered HTML string for the panel, which is the wrong shape to
+// embed in a JSON file meant to be parsed, not displayed.
+function buildExportPayload(ext, icons) {
+  const nodeById = {};
+  ALL_NODES.forEach(function (n) { nodeById[n.id] = n; });
+  // n.draw is the stable identity with no live-status suffix baked in
+  // (n.title is "Mode Alarm Reminder (Required Expression false) (Rule-5.1)",
+  // n.draw is "Mode Alarm Reminder (Rule-5.1)" - the status is exposed
+  // separately as apps[].status instead). Falls back to title for any
+  // graph cached before draw existed.
+  const nameOf = {};
+  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.draw || n.title; });
+
+  const flowIds = {};
+  Object.keys(GRAPH.flows || {}).forEach(function (id) { flowIds[id] = true; });
+
+  // Keyed with the same 'd' prefix the graph itself uses (n.id is "d533",
+  // not "533") - the icon-overrides endpoint returns bare Hubitat device
+  // ids, a different convention from the graph node ids used everywhere
+  // else in this export. Found live: without this, every device's room/
+  // capabilities came back null, silently, because the lookup key never
+  // matched anything.
+  const iconById = {};
+  (icons && icons.devices || []).forEach(function (d) { iconById['d' + d.id] = d; });
+
+  const missingIds = {};
+  ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
+  const referencesTo = {};
+  ALL_EDGES.forEach(function (e) {
+    if (!missingIds[e.to]) return;
+    if (!referencesTo[e.to]) referencesTo[e.to] = [];
+    if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
+  });
+
+  const commanders = {};
+  const touched = {};
+  ALL_EDGES.forEach(function (e) {
+    touched[e.to] = true;
+    if (e.kind === 'action' && e.stateful) {
+      if (!commanders[e.to]) commanders[e.to] = [];
+      if (commanders[e.to].indexOf(e.from) < 0) commanders[e.to].push(e.from);
+    }
+  });
+  const contested = Object.keys(commanders).filter(function (d) { return commanders[d].length > 1; })
+    .sort(function (a, b) { return commanders[b].length - commanders[a].length; })
+    .map(function (d) {
+      return { device: ref(d, nameOf), commandedBy: commanders[d].map(function (a) { return ref(a, nameOf); }) };
+    });
+  const unreferencedDevices = ALL_NODES.filter(function (n) { return n.group === 'device' && !touched[n.id]; })
+    .map(function (n) { return ref(n.id, nameOf); });
+  const inertApps = ALL_NODES.filter(function (n) { return n.inert; })
+    .map(function (n) { return { app: ref(n.id, nameOf), reason: n.reason || 'no reason recorded' }; });
+  const brokenRuleReferences = Object.keys(missingIds).map(function (id) {
+    return { target: ref(id, nameOf), referencedBy: (referencesTo[id] || []).map(function (a) { return ref(a, nameOf); }) };
+  });
+
+  const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; }).map(function (n) {
+    const ic = iconById[n.id];
+    return {
+      id: n.id, name: nameOf[n.id],
+      room: ic ? ic.room : null,
+      iconCategory: n.icon || 'unknown',
+      capabilities: ic ? ic.capabilities : null
+    };
+  });
+  const apps = ALL_NODES.filter(function (n) { return n.group === 'app'; }).map(function (n) {
+    return {
+      id: n.id, name: nameOf[n.id], appType: n.appType || null,
+      status: n.missing ? 'deleted-but-referenced' : n.unreadable ? 'unreadable' : n.inactive ? 'paused-or-disabled' :
+        n.unscanned ? 'unscanned' : n.inert ? 'inert' : 'active',
+      parentId: n.parent || null,
+      childIds: n.kids || [],
+      hasDecodedFlow: !!flowIds[n.id]
+    };
+  });
+  const externalSystems = ALL_NODES.filter(function (n) { return n.group === 'external'; }).map(function (n) {
+    return { id: n.id, name: nameOf[n.id], kind: n.kindKey || null };
+  });
+  const hubVariables = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) {
+    return { id: n.id, name: nameOf[n.id] };
+  });
+  const edges = ALL_EDGES.map(function (e) {
+    return {
+      fromId: e.from, fromName: nameOf[e.from] || e.from,
+      toId: e.to, toName: nameOf[e.to] || e.to,
+      relationship: e.kind,
+      // Only meaningful for 'action' edges (can this app leave the device in
+      // a lasting state, versus a momentary command) - null rather than
+      // false everywhere else, so it does not look like a real "no" for a
+      // relationship kind the field was never about.
+      stateful: e.kind === 'action' ? !!e.stateful : null
+    };
+  });
+  // Flow steps' own "devices" field is really a display list, not always
+  // literally devices - a Cancel Timed Actions/Run Rule Actions step
+  // carries the target RULE's name in the same field, and VRB's "This
+  // Rule" self-reference sentinel can appear too. Resolving all of it
+  // against one combined device+app name index, rather than assuming
+  // "devices" only ever contains devices, is what the flow-decoder itself
+  // already effectively does for display; this does the same resolution
+  // explicitly, as data, name collisions included - a name matching more
+  // than one node comes back "ambiguous" rather than silently picking one,
+  // the same discipline this app already applies to every other name-based
+  // decision.
+  const deviceIdsByName = {};
+  const appIdsByName = {};
+  ALL_NODES.forEach(function (n) {
+    const nm = nameOf[n.id];
+    const bucket = n.group === 'device' ? deviceIdsByName : (n.group === 'app' ? appIdsByName : null);
+    if (!bucket) return;
+    if (!bucket[nm]) bucket[nm] = [];
+    bucket[nm].push(n.id);
+  });
+  function resolveFlowReference(name, ownerAppId) {
+    if (name === 'This Rule') return { type: 'self', id: ownerAppId, name: nameOf[ownerAppId] || 'This Rule' };
+    const devIds = deviceIdsByName[name] || [];
+    const appIds = appIdsByName[name] || [];
+    if (devIds.length === 1 && appIds.length === 0) return { type: 'device', id: devIds[0], name: name };
+    if (appIds.length === 1 && devIds.length === 0) return { type: 'app', id: appIds[0], name: name };
+    if (devIds.length + appIds.length > 1) {
+      return { type: 'ambiguous', id: null, name: name, candidateIds: devIds.concat(appIds) };
+    }
+    return { type: 'unresolved', id: null, name: name };
+  }
+
+  const ruleFlows = Object.keys(GRAPH.flows || {}).map(function (appId) {
+    const n = nodeById[appId];
+    const steps = (GRAPH.flows[appId] || []).map(function (step) {
+      const out = {};
+      Object.keys(step).forEach(function (k) { if (k !== 'devices') out[k] = step[k]; });
+      out.references = Array.isArray(step.devices)
+        ? step.devices.map(function (nm) { return resolveFlowReference(nm, appId); }) : [];
+      // ruleTargets are Rule Machine's own app-id-only setting values (no
+      // "a" prefix stored at that layer) - always resolvable, never
+      // ambiguous, so these get a plain {id,name} rather than the
+      // device/app/self/ambiguous/unresolved typing references above need.
+      if (Array.isArray(step.ruleTargets)) {
+        out.ruleTargets = step.ruleTargets.map(function (t) {
+          const targetId = 'a' + t;
+          return { id: targetId, name: nameOf[targetId] || null };
+        });
+      }
+      return out;
+    });
+    return { appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps };
+  });
+
+  const scanComplete = !SCAN_META.scanError;
+  const summary = {
+    deviceCount: devices.length,
+    appCount: apps.length,
+    externalSystemCount: externalSystems.length,
+    hubVariableCount: hubVariables.length,
+    edgeCount: edges.length,
+    decodedRuleFlowCount: ruleFlows.length,
+    contestedDeviceCount: contested.length,
+    unreferencedDeviceCount: unreferencedDevices.length,
+    inertAppCount: inertApps.length,
+    brokenRuleReferenceCount: brokenRuleReferences.length
+  };
+  // What "apps[].hasDecodedFlow: false" can mean beyond "not a rule at
+  // all" - named once here rather than only in the schema prose, so a
+  // consumer can check membership programmatically instead of parsing
+  // English out of the schema block.
+  const limitations = [
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
+    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
+    'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.'
+  ];
+
+  return {
+    about: 'Automation Map export - a structured snapshot of every app and device on one Hubitat home automation hub, and how they relate to each other. Generated for an AI or other external tool to read, not for a human to read raw.',
+    generatedAt: new Date().toISOString(),
+    generatedBy: 'Automation Map v${APP_VERSION}',
+    exportSchemaVersion: SCAN_META.exportSchemaVersion,
+    graphSchemaVersion: SCAN_META.graphSchemaVersion,
+    scan: {
+      lastScanCompletedAt: SCAN_META.scanHeartbeatMs ? new Date(SCAN_META.scanHeartbeatMs).toISOString() : null,
+      lastScanError: SCAN_META.scanError
+    },
+    scanComplete: scanComplete,
+    summary: summary,
+    limitations: limitations,
+    privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
+    schema: {
+      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export).',
+      apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
+      externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
+      hubVariables: 'Hub-wide variables one or more rules read or write.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and two apps both doing this to the same device is a real conflict (see insights.contested); null on every other relationship kind, where the concept does not apply.',
+      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state - the usual cause of automations fighting each other. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing.',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything; null means the last scan reported no error, not that every app was necessarily read successfully (see apps[].status for per-app gaps). scanComplete at the top level is simply "lastScanError was null" restated as a boolean, for a consumer that would rather check a flag than a nullable string.',
+      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves.',
+      limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.'
+    },
+    devices: devices,
+    apps: apps,
+    externalSystems: externalSystems,
+    hubVariables: hubVariables,
+    edges: edges,
+    ruleFlows: ruleFlows,
+    insights: {
+      contested: contested,
+      unreferencedDevices: unreferencedDevices,
+      inertApps: inertApps,
+      brokenRuleReferences: brokenRuleReferences
+    },
+    externalSystemDeclarations: ext ? (ext.entries || []) : null,
+    deviceIconOverrides: icons ? (icons.devices || [])
+      .filter(function (d) { return d.override !== 'auto' || d.note; })
+      .map(function (d) { return { deviceId: 'd' + d.id, deviceName: d.name, override: d.override, note: d.note }; }) : null
+  };
+}
+
 // The legend is hidden while this panel is open rather than relied on to sit
 // underneath it. It was showing through as ghost text across the table even
 // with an opaque background and a higher z-index, and chasing that was not
@@ -5395,7 +5700,7 @@ document.getElementById('extBtn').addEventListener('click', function () {
   const hn = document.getElementById('hint');
   if (lg) lg.style.visibility = 'hidden';
   if (hn) hn.style.visibility = 'hidden';
-  extPanel.style.display = 'block';
+  bringToFront(extPanel);
   extLoad();
 });
 document.getElementById('extClose').addEventListener('click', function () {
@@ -5412,7 +5717,7 @@ document.getElementById('iconsBtn').addEventListener('click', function () {
   const hn = document.getElementById('hint');
   if (lg) lg.style.visibility = 'hidden';
   if (hn) hn.style.visibility = 'hidden';
-  iconsPanel.style.display = 'block';
+  bringToFront(iconsPanel);
   iconsLoad();
 });
 document.getElementById('iconsClose').addEventListener('click', function () {
@@ -5422,12 +5727,13 @@ document.getElementById('iconsClose').addEventListener('click', function () {
   if (hn) hn.style.visibility = '';
   iconsPanel.style.display = 'none';
 });
+document.getElementById('exportBtn').addEventListener('click', exportJSON);
 document.getElementById('pivotBtn').addEventListener('click', function () {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
   if (lg) lg.style.visibility = 'hidden';
   if (hn) hn.style.visibility = 'hidden';
-  pivotPanel.style.display = 'block';
+  bringToFront(pivotPanel);
   pivotOpen();
 });
 document.getElementById('pivotClose').addEventListener('click', function () {
