@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-08-16",
+  "dateReleased": "2026-08-17",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.5 - a new Export JSON button (next to Device icons) downloads the whole map as one structured, self-describing JSON file - every device, app, relationship, external system, Hub Variable and decoded rule flowchart, an orientation block explaining the schema up front, and precomputed findings (contested devices, unreferenced devices, inert apps, broken rule references). Built for an AI or other external tool to read: relationships join on stable ids, not display names (this hub has real duplicate app names, which would otherwise make some relationships ambiguous or, for rule flows, silently overwrite one another). Fixed a real, longstanding bug surfaced while building this: a non-inert child app's own parent-app id was never recorded, only a container's list of its children - app hierarchy now reads correctly both directions. Also: automatic daily scan is on by default now (00:30, still easily turned off); the legend moved to the top of the screen and no longer overlaps the device/app counter; and the four floating panels (Insights, External systems, Pivot tables, Device icons) now always bring whichever was opened most recently to the front, instead of whichever happened to load later in the page.",
+  "releaseNotes": "1.9.6 - release-readiness hardening ahead of v2.0.0, prompted by an external review of the 1.9.5 build, then a second pass on this build that caught two things the first fix missed. A failed device enumeration at the very start of a scan now aborts cleanly instead of continuing against an empty device list, and the unreadable-device count is now reset before that enumeration runs rather than after, so a failed attempt can no longer report a stale count left over from an earlier scan. Export JSON's scan status now distinguishes a genuinely complete scan from one that finished with gaps. Device and app names (free text the hub owner controls) are now HTML-escaped everywhere they render into a panel - Pivot tables, Insights, the inert-app panel, and the Back-to link - closing a gap those four had that External systems and Device icons already closed. The JSON blob embedded in the page now encodes every '<' character rather than pattern-matching closing-tag spellings, closing a bypass a device name with unusual spacing or capitalisation in a closing tag could otherwise exploit. Export JSON now says so explicitly if it could not reach the hub for external system or device icon data when generated, instead of silently exporting null as though nothing were declared. Exit map now falls back to the hub's local/LAN address when the page was opened through Hubitat's cloud endpoint - works for anyone with LAN access to the hub, though not for a genuinely remote user with no other route to it. vis-network and mermaid are now pinned to exact versions instead of latest/a major-only tag, so a library update elsewhere can no longer change this app's behaviour with no corresponding release here. And closing one floating panel while another is still open behind it no longer pops the legend back into view on top of it.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.5"
+      "version": "1.9.6"
     }
   ],
   "drivers": []
