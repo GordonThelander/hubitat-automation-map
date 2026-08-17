@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.5'
+@Field static final String APP_VERSION = '1.9.6'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -162,9 +162,10 @@ void updated() {
     scheduleAutoScan()
 }
 
-// Off by default - this app is publicly installed, and adding unattended
-// background scanning without an explicit opt-in would be a quiet change to
-// its otherwise read-only, low-footprint posture. Rescheduled (not just
+// On by default (00:30) - the app-wide scan-first-then-explore experience
+// this app is built around is better served by a map that keeps itself
+// current than by one that goes stale until someone remembers to press Scan.
+// The toggle below is still there to opt out entirely. Rescheduled (not just
 // scheduled once) every time this runs, so turning the toggle off actually
 // cancels a previously-running schedule rather than leaving it firing.
 void scheduleAutoScan() {
@@ -266,16 +267,7 @@ Map main() {
                             url: getLocalURL('automation-map.html'),
                             style: 'embedded', state: 'complete', required: false,
                         )
-                        // The href above is a relative path, native to Hubitat's own
-                        // href/embedded mechanism - there is no request object available
-                        // here to detect which origin this settings page itself was
-                        // requested through, unlike the fetches above which can check
-                        // window.location at click time. So this page is reached through
-                        // Hubitat Remote Admin, that link 404s before any of our code
-                        // runs. This second link is the explicit escape hatch: an
-                        // absolute cloud URL that works from any origin, offered
-                        // alongside rather than in place of the fast local one.
-                        paragraph "<a href='${getCloudURL('automation-map.html')}' target='_blank'>Open Automation Map (via Hubitat cloud - use this if the link above shows a blank or missing page, e.g. when accessing your hub through Remote Admin)</a>"
+                        paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'>Automation Map community thread</a> for setup advice, known issues, and support."
                     }
                 }
             }
@@ -487,6 +479,10 @@ String compatibilitySummary() {
     if (state.compatOk == false) {
         s << "<b style='color:#c0392b'>${state.compatDetail}</b><br>"
     }
+    int devUnreadable = ((state.deviceIdsUnreadable ?: []) as List).size()
+    if (devUnreadable > 0) {
+        s << "<b style='color:#c0392b'>${devUnreadable} device(s) could not be read</b> and are missing from this map, along with any app only discoverable through them. "
+    }
     s << "Read ${decoded} app(s)"
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} flow(s)."
@@ -576,7 +572,26 @@ void startScan() {
     // the one error a user most needed to see, the enumeration that made
     // the whole scan pointless before a single app was even queued.
     state.scanError = null
+    // Also cleared here, not down with the rest of the reset block below -
+    // that block sits after the scanError abort check, so on a failed
+    // enumeration it never runs and this count would otherwise still be
+    // whatever an unrelated earlier scan left behind, read back out through
+    // compatibilitySummary/scanStatusJson/Export JSON as if it described
+    // the scan that just failed to even start.
+    state.deviceIdsUnreadable = []
     state.scanQueue = fetchAllDeviceIds()
+    // fetchAllDeviceIds sets scanError itself and returns [] on failure -
+    // checked here, not assumed handled downstream. Before this check, a
+    // failed enumeration still fell through into a full scan with zero
+    // devices queued: scanRunning went true, the app phase ran anyway, and
+    // a graph with no devices and no device relationships could be stamped
+    // as a normal, complete result, with the one error a user needed to
+    // see left to be found only by reading scanError separately rather
+    // than the scan visibly having stopped.
+    if (state.scanError) {
+        state.scanRunning = false
+        return
+    }
     state.scanTotal = (state.scanQueue as List).size()
     state.scanDone = 0
     state.scanPhase = 'devices'
@@ -689,19 +704,33 @@ void scanDeviceBatch() {
     // otherwise draw ~200 meaningless "acts on" edges from Automation Map itself.
     String selfId = "${app.id}"
 
+    // Same distinction already drawn for apps below: only a genuine fetch
+    // failure counts as unreadable, tracked by id so the export/UI can name
+    // which devices were missed, not just how many. Before this, a failed
+    // device.fullJson call was indistinguishable from a device that simply
+    // had nothing to report - the device silently dropped out of the scan
+    // (no label, no capabilities, no room, and any app only discoverable
+    // through it could be missed too) with the finished scan still able to
+    // report no top-level error at all.
+    List unreadable = (state.deviceIdsUnreadable ?: []) as List
     queue.take(size).each { String devId ->
         Map info = fetchDeviceApps(devId)
-        if (info.label) labels[devId] = info.label
-        capsByDev[devId] = info.capabilities
-        if (info.room) roomsByDev[devId] = info.room
-        (info.appIds as List).each { String appId ->
-            if (appId != selfId && !appIds.contains(appId)) appIds << appId
+        if (info.error) {
+            if (!unreadable.contains(devId)) unreadable << devId
+        } else {
+            if (info.label) labels[devId] = info.label
+            capsByDev[devId] = info.capabilities
+            if (info.room) roomsByDev[devId] = info.room
+            (info.appIds as List).each { String appId ->
+                if (appId != selfId && !appIds.contains(appId)) appIds << appId
+            }
         }
     }
 
     state.deviceLabels = labels
     state.deviceCapabilities = capsByDev
     state.deviceRooms = roomsByDev
+    state.deviceIdsUnreadable = unreadable
     state.appIds = appIds
     state.scanQueue = queue.drop(size)
     state.scanDone = (state.scanDone ?: 0) + size
@@ -991,7 +1020,7 @@ void collectAppIds(def nodes, List ids) {
 // this is a field already sitting in a request this function was making
 // anyway, not a new HTTP call.
 Map fetchDeviceApps(String devId) {
-    Map out = [label: null, appIds: [], capabilities: [], room: null]
+    Map out = [label: null, appIds: [], capabilities: [], room: null, error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 10]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -1029,6 +1058,7 @@ Map fetchDeviceApps(String devId) {
         }
     } catch (Exception ex) {
         log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
+        out.error = "${ex.message}"
     }
     return out
 }
@@ -3334,6 +3364,7 @@ String scanStatusJson() {
         compatDetail: state.compatDetail,
         appsDecoded: state.appsDecoded,
         appsUnreadable: state.appsUnreadable,
+        devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
         rulesDecoded: state.rulesDecoded,
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
@@ -3359,22 +3390,38 @@ Relationship types have changed since then, so the graph would render without ro
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
 
+// A device or app name is free text the hub owner controls, and it ends up
+// inside a JSON blob embedded straight into a <script> block. Pattern-matching
+// closing-tag spellings ('</script>', case-insensitively) is fragile: HTML
+// also tolerates whitespace before the '>' ('</script >'), which slips past a
+// pattern for the exact string, and there is no guarantee that is the last
+// variant a browser accepts. Escaping every '<' as \u003c sidesteps
+// enumerating tag spellings entirely - '<' never appears outside a JSON
+// string value in the first place, so this changes nothing about how the
+// JSON parses, and with no literal '<' left anywhere in the output there is
+// nothing left for the browser's tag scanner to match, spelled any way at all.
+String jsonForScriptEmbed(Object obj) {
+    return JsonOutput.toJson(obj).replace('<', '\\u003c')
+}
+
 String buildMapHtml() {
     Map graph = (state.graph ?: [nodes: [], edges: []]) as Map
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
-    String jsonStr = JsonOutput.toJson(graph).replace('</script>', '<\\/script>')
+    String jsonStr = jsonForScriptEmbed(graph)
     // For the Export JSON feature - scan provenance the client-side GRAPH
     // blob above does not carry on its own. Built the same safe way GRAPH
     // is (JsonOutput, not manual string splicing) so an exception message
     // in scanError can never break out of the embedding script tag.
     Map scanMeta = [
-        exportSchemaVersion: 2,
+        exportSchemaVersion: 3,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
+        appsUnreadable: state.appsUnreadable ?: 0,
+        devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
     ]
-    String scanMetaJsonStr = JsonOutput.toJson(scanMeta).replace('</script>', '<\\/script>')
+    String scanMetaJsonStr = jsonForScriptEmbed(scanMeta)
     // Positioned in the empty gap between the status box and the controls
     // panel, where Gordon pointed at it - not overlapping either.
     String santaHtml = showSanta() ?
@@ -3398,8 +3445,12 @@ String buildMapHtml() {
      instead of showing the desktop-only notice. -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Automation Map</title>
-<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<!-- Pinned to exact versions, not 'latest'/'@10' - an upstream release could
+     otherwise change behaviour under this app with no corresponding commit
+     here to explain why the map suddenly looks or acts differently. Bump
+     deliberately, not by whatever the CDN resolves to on a given day. -->
+<script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
@@ -3849,9 +3900,9 @@ function renderPivotTable(pivot, rowLabel, colLabel) {
   }
   let html = '<table><thead><tr><th>' + rowLabel + '</th><th>' + colLabel + '</th></tr></thead><tbody>';
   pivot.rows.forEach(function (r) {
-    html += '<tr><td><a href="#" data-node="' + r.id + '">' + r.title + '</a></td><td>';
+    html += '<tr><td><a href="#" data-node="' + r.id + '">' + extEsc(r.title) + '</a></td><td>';
     html += r.targets.map(function (t) {
-      return '<a href="#" data-node="' + t.id + '">' + t.title + '</a> <span class="sub">(' + (KIND_LABEL[t.kind] || t.kind) + ')</span>';
+      return '<a href="#" data-node="' + t.id + '">' + extEsc(t.title) + '</a> <span class="sub">(' + (KIND_LABEL[t.kind] || t.kind) + ')</span>';
     }).join(', ');
     html += '</td></tr>';
   });
@@ -4579,8 +4630,8 @@ function showInertPanel(node) {
     'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.';
 
   let html = node.unreadable ?
-    '<h3>Could not be read</h3><p class="sub">' + (node.errorDetail || 'No further detail was recorded.') + '</p>' :
-    '<h3>' + (node.reason || 'References nothing') + '</h3>';
+    '<h3>Could not be read</h3><p class="sub">' + extEsc(node.errorDetail || 'No further detail was recorded.') + '</p>' :
+    '<h3>' + extEsc(node.reason || 'References nothing') + '</h3>';
   const facts = [];
   if (node.sched) facts.push(node.sched + ' scheduled job' + (node.sched === 1 ? '' : 's'));
   if (node.subs) facts.push(node.subs + ' event subscription' + (node.subs === 1 ? '' : 's'));
@@ -4606,7 +4657,7 @@ function showInertPanel(node) {
   if (node.parent) {
     const p = ALL_NODES.filter(function (n) { return n.id === node.parent; })[0];
     if (p) {
-      html += '<h4>Belongs to</h4><ul><li><a href="#" data-node="' + p.id + '">' + p.title + '</a></li></ul>';
+      html += '<h4>Belongs to</h4><ul><li><a href="#" data-node="' + p.id + '">' + extEsc(p.title) + '</a></li></ul>';
     }
   }
 
@@ -4618,7 +4669,7 @@ function showInertPanel(node) {
     html += '<h4>Holds ' + kids.length + ' app' + (kids.length === 1 ? '' : 's') + '</h4>';
     html += '<p class="sub">Each one is on the map in its own right. Click to go there.</p><ul>';
     kids.slice().sort(function (a, b) { return a.title.localeCompare(b.title); }).forEach(function (k) {
-      html += '<li><a href="#" data-node="' + k.id + '">' + k.title + '</a></li>';
+      html += '<li><a href="#" data-node="' + k.id + '">' + extEsc(k.title) + '</a></li>';
     });
     html += '</ul>';
   } else if (node.holds) {
@@ -4771,8 +4822,8 @@ function buildInsights() {
   } else {
     html += '<p class="sub">More than one app can leave these in a lasting state. Where two disagree, the last to run wins. Notifications and chimes are excluded - repeating those is not a conflict.</p><ul>';
     contested.slice(0, 40).forEach(function (d) {
-      html += '<li><b>' + nameOf[d] + '</b> &mdash; ' + commanders[d].length + ' apps<br><span class="sub">' +
-        commanders[d].map(function (a) { return nameOf[a]; }).join(' &middot; ') + '</span></li>';
+      html += '<li><b>' + extEsc(nameOf[d]) + '</b> &mdash; ' + commanders[d].length + ' apps<br><span class="sub">' +
+        commanders[d].map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
     });
     html += '</ul>';
   }
@@ -4782,7 +4833,7 @@ function buildInsights() {
     html += '<p class="sub">Every device in the map is referenced by at least one app.</p>';
   } else {
     html += '<p class="sub">No app owns, watches or drives these. Candidates for removal, or gaps in automation.</p><ul>';
-    untouched.slice(0, 60).forEach(function (d) { html += '<li>' + nameOf[d] + '</li>'; });
+    untouched.slice(0, 60).forEach(function (d) { html += '<li>' + extEsc(nameOf[d]) + '</li>'; });
     html += '</ul>';
   }
 
@@ -4813,8 +4864,8 @@ function buildInsights() {
     });
     html += '<ul>';
     reasons.forEach(function (r) {
-      html += '<li><b>' + r + '</b><br><span class="sub">' +
-        byReason[r].map(function (n) { return nameOf[n.id]; }).join(' &middot; ') + '</span></li>';
+      html += '<li><b>' + extEsc(r) + '</b><br><span class="sub">' +
+        byReason[r].map(function (n) { return extEsc(nameOf[n.id]); }).join(' &middot; ') + '</span></li>';
     });
     html += '</ul>';
   }
@@ -4825,8 +4876,8 @@ function buildInsights() {
   } else {
     html += '<p class="sub">These rule/action/pause/private-boolean targets no longer resolve to anything. The referencing action still runs and silently does nothing.</p><ul>';
     brokenTargets.forEach(function (id) {
-      html += '<li><b>' + nameOf[id] + '</b><br><span class="sub">Referenced by ' +
-        (referencesTo[id] || []).map(function (a) { return nameOf[a]; }).join(' &middot; ') + '</span></li>';
+      html += '<li><b>' + extEsc(nameOf[id]) + '</b><br><span class="sub">Referenced by ' +
+        (referencesTo[id] || []).map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
     });
     html += '</ul>';
   }
@@ -4907,8 +4958,7 @@ function pivotWireLinks() {
     a.addEventListener('click', function (ev) {
       ev.preventDefault();
       pivotPanel.style.display = 'none';
-      const lg = document.getElementById('legend'); if (lg) lg.style.visibility = '';
-      const hn = document.getElementById('hint'); if (hn) hn.style.visibility = '';
+      restoreLegendIfNothingElseOpen();
       focusNode(a.getAttribute('data-node'));
     });
   });
@@ -5440,11 +5490,16 @@ function exportJSON() {
   btn.textContent = 'Exporting...';
   btn.disabled = true;
 
+  // null is ambiguous on its own - it is what a genuinely empty response and
+  // a failed fetch both collapse to. failedFetches keeps the two apart so
+  // the exported file can say outright that a piece of it may be missing,
+  // rather than a consumer wrongly reading null as "nothing declared".
+  const failedFetches = [];
   Promise.all([
-    fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { return null; }),
-    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { return null; })
+    fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('externalSystemDeclarations'); return null; }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; })
   ]).then(function (results) {
-    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1]), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -5478,7 +5533,7 @@ function ref(id, nameOf) { return { id: id, name: nameOf[id] || id }; }
 // as plain data rather than reusing it directly - buildInsights() returns
 // a rendered HTML string for the panel, which is the wrong shape to
 // embed in a JSON file meant to be parsed, not displayed.
-function buildExportPayload(ext, icons) {
+function buildExportPayload(ext, icons, failedFetches) {
   const nodeById = {};
   ALL_NODES.forEach(function (n) { nodeById[n.id] = n; });
   // n.draw is the stable identity with no live-status suffix baked in
@@ -5623,7 +5678,15 @@ function buildExportPayload(ext, icons) {
     return { appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps };
   });
 
-  const scanComplete = !SCAN_META.scanError;
+  // Was a plain boolean, !scanError - technically correct but misleadingly
+  // narrow: a scan with no top-level error can still have silently dropped
+  // individual devices or apps that failed to read (see
+  // deviceIdsUnreadable/appsUnreadable tracking added server-side).
+  // "complete" now specifically means neither happened, not just that
+  // nothing threw at the top level.
+  const scanStatus = SCAN_META.scanError ? 'failed'
+    : (SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0) ? 'complete-with-gaps'
+    : 'complete';
   const summary = {
     deviceCount: devices.length,
     appCount: apps.length,
@@ -5645,6 +5708,13 @@ function buildExportPayload(ext, icons) {
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.'
   ];
+  // A failed fetch and a genuinely empty response both collapse to the same
+  // null/[] shape below - this is the only place that distinction survives,
+  // so a consumer reading externalSystemDeclarations/deviceIconOverrides in
+  // isolation is told outright rather than misreading empty as confirmed-empty.
+  (failedFetches || []).forEach(function (field) {
+    limitations.push('Could not reach the hub for ' + field + ' when this file was generated - it is null below, not confirmed empty. Re-run Export JSON to try again.');
+  });
 
   return {
     about: 'Automation Map export - a structured snapshot of every app and device on one Hubitat home automation hub, and how they relate to each other. Generated for an AI or other external tool to read, not for a human to read raw.',
@@ -5654,9 +5724,11 @@ function buildExportPayload(ext, icons) {
     graphSchemaVersion: SCAN_META.graphSchemaVersion,
     scan: {
       lastScanCompletedAt: SCAN_META.scanHeartbeatMs ? new Date(SCAN_META.scanHeartbeatMs).toISOString() : null,
-      lastScanError: SCAN_META.scanError
+      lastScanError: SCAN_META.scanError,
+      status: scanStatus,
+      appsUnreadable: SCAN_META.appsUnreadable || 0,
+      devicesUnreadable: SCAN_META.devicesUnreadable || 0
     },
-    scanComplete: scanComplete,
     summary: summary,
     limitations: limitations,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
@@ -5668,7 +5740,7 @@ function buildExportPayload(ext, icons) {
       edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and two apps both doing this to the same device is a real conflict (see insights.contested); null on every other relationship kind, where the concept does not apply.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state - the usual cause of automations fighting each other. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing.',
-      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything; null means the last scan reported no error, not that every app was necessarily read successfully (see apps[].status for per-app gaps). scanComplete at the top level is simply "lastScanError was null" restated as a boolean, for a consumer that would rather check a flag than a nullable string.',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.'
     },
@@ -5691,10 +5763,34 @@ function buildExportPayload(ext, icons) {
   };
 }
 
-// The legend is hidden while this panel is open rather than relied on to sit
-// underneath it. It was showing through as ghost text across the table even
-// with an opaque background and a higher z-index, and chasing that was not
-// worth it when a colour key is useless while editing a table anyway.
+// The legend is hidden while any of these three panels is open rather than
+// relied on to sit underneath them. It was showing through as ghost text
+// across the table even with an opaque background and a higher z-index, and
+// chasing that was not worth it when a colour key is useless while editing a
+// table anyway.
+//
+// Restoring it is not simply the mirror of hiding it, though: these panels
+// can be opened over one another (Pivot tables opened while Device icons was
+// already up, say), and closing whichever one is on top used to restore the
+// legend unconditionally - it would pop back into view still overlapping
+// whichever panel was left open underneath. Each Close handler now hides its
+// own panel first, then this checks whether either of the other two is still
+// open before bringing the legend back.
+function restoreLegendIfNothingElseOpen() {
+  // Computed style, not the inline .style.display property: a panel never
+  // opened this page load has no inline display at all (its CSS starts it
+  // hidden via the stylesheet, not an inline style), so its .style.display
+  // reads as '' rather than 'none' - checking the inline property directly
+  // read that panel as "still open" and left the legend hidden permanently.
+  const stillOpen = [extPanel, iconsPanel, pivotPanel].some(function (p) { return p && getComputedStyle(p).display !== 'none'; });
+  if (stillOpen) return;
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  // visibility rather than display, so a hint the user already dismissed
+  // stays dismissed instead of reappearing.
+  if (lg) lg.style.visibility = '';
+  if (hn) hn.style.visibility = '';
+}
 document.getElementById('extBtn').addEventListener('click', function () {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
@@ -5704,13 +5800,8 @@ document.getElementById('extBtn').addEventListener('click', function () {
   extLoad();
 });
 document.getElementById('extClose').addEventListener('click', function () {
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  // visibility rather than display, so a hint the user already dismissed
-  // stays dismissed instead of reappearing.
-  if (lg) lg.style.visibility = '';
-  if (hn) hn.style.visibility = '';
   extPanel.style.display = 'none';
+  restoreLegendIfNothingElseOpen();
 });
 document.getElementById('iconsBtn').addEventListener('click', function () {
   const lg = document.getElementById('legend');
@@ -5721,11 +5812,8 @@ document.getElementById('iconsBtn').addEventListener('click', function () {
   iconsLoad();
 });
 document.getElementById('iconsClose').addEventListener('click', function () {
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  if (lg) lg.style.visibility = '';
-  if (hn) hn.style.visibility = '';
   iconsPanel.style.display = 'none';
+  restoreLegendIfNothingElseOpen();
 });
 document.getElementById('exportBtn').addEventListener('click', exportJSON);
 document.getElementById('pivotBtn').addEventListener('click', function () {
@@ -5737,11 +5825,8 @@ document.getElementById('pivotBtn').addEventListener('click', function () {
   pivotOpen();
 });
 document.getElementById('pivotClose').addEventListener('click', function () {
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  if (lg) lg.style.visibility = '';
-  if (hn) hn.style.visibility = '';
   pivotPanel.style.display = 'none';
+  restoreLegendIfNothingElseOpen();
 });
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
@@ -5839,7 +5924,7 @@ function renderBackLink() {
   if (!currentFocus()) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
   const st = history.state;
   const cameFrom = (st && st.cameFrom !== undefined) ? st.cameFrom : null;
-  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + focusLabel(cameFrom) + '</a>' +
+  bar.innerHTML = '<a href="#" id="flowBackLink">&larr; Back to ' + extEsc(focusLabel(cameFrom)) + '</a>' +
     '<a href="#" id="flowExit">Exit to whole map</a>';
   bar.style.display = 'flex';
   document.getElementById('flowBackLink').addEventListener('click', function (ev) {
@@ -5954,8 +6039,21 @@ document.getElementById('resetBtn').addEventListener('click', function () {
 // UI - a different action from Exit to whole map, which stays on this page
 // and only resets the filters. app.id is filled in by Groovy at render time,
 // not read from anything the browser sends.
+//
+// Same bug class as the scan-start fix above: a bare '/installedapp/...'
+// path resolves against whatever origin the browser currently has this page
+// loaded from. When that origin is the local hub itself this is correct,
+// but when the map was opened through the OAuth cloud endpoint, that origin
+// serves only this app's own mapped endpoints (scan/externals/icon-overrides),
+// not the general hub admin UI - '/installedapp/configure' does not exist
+// there. Sending the browser to the local hub's own origin instead at least
+// works for anyone with LAN access to it, which a cloud-opened link does not
+// rule out, rather than guaranteed-wrong navigation on the relay's own host.
 document.getElementById('exitMapBtn').addEventListener('click', function () {
-  window.location.href = '/installedapp/configure/${app.id}';
+  var localOrigin = '${getLocalOrigin()}';
+  var onLocalOrigin = false;
+  try { onLocalOrigin = (new URL(localOrigin).hostname === window.location.hostname); } catch (ignore) { }
+  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${app.id}';
 });
 </script>
 </body>

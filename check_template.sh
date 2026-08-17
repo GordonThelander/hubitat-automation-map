@@ -23,7 +23,11 @@
 #                             trigger setting name
 #   /%([A-Za-z_]...          Groovy-side use, via =~ - finds %Variable%
 #                             interpolation syntax in free text
-#   <\\/script>          escaping a closing script tag inside the JSON blob
+#   u003c                 encoding every '<' in the embedded JSON blobs as
+#                         the escape \u003c, so no literal '<' survives for a
+#                         browser's HTML tag scanner to match regardless of
+#                         how a closing tag is spelled or spaced - see
+#                         jsonForScriptEmbed()
 #   """\                 an opening line continuation
 #   join('\\n')          an intentionally double-escaped newline
 #   [",\\n]              a CSV-escaping regex's own double-escaped newline -
@@ -50,13 +54,13 @@ BAD=$(grep -n '\\' "$FILE" \
   | grep -v "replaceAll(/\\\\s+/" \
   | grep -v "replaceAll(/\\\\.\\$/" \
   | grep -v "==~ /\\^tCapab\\\\d+\\$/" \
-  | grep -v '<\\\\/script>' \
   | grep -v '"""\\$' \
   | grep -v "join('\\\\\\\\n')" \
   | grep -v '\[",\\\\n\]' \
   | grep -v 'replace(/\\\\s+/g' \
   | grep -v 'access_token=\[^&\\\\s\]' \
   | grep -vE "[a-z]+: '.u[0-9a-f]{4}'" \
+  | grep -v 'u003c' \
   || true)
 
 if [ -n "$BAD" ]; then
