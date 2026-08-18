@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.7'
+@Field static final String APP_VERSION = '1.9.8'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -3461,9 +3461,6 @@ String buildMapHtml() {
      deliberately, not by whatever the CDN resolves to on a given day. -->
 <script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
-<!-- Cloudflare Web Analytics - anonymous page-visit counting only, no cookies, no
-     personal or device data. Disclosed in README under "Aggregate site analytics". -->
-<script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6d20774808564b518c513222b3bea041"}'></script>
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
@@ -3706,6 +3703,7 @@ ${santaHtml}
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
   <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">Export JSON</button>
+  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community Utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
@@ -4262,6 +4260,40 @@ function settle() {
   });
 }
 settle();
+
+// Gordon's own fix for the "no visible jiggle on first open" request, after
+// the earlier attempt to rebuild this by changing the physics/stabilization
+// mechanism itself broke the inert-node shelf live: just run the exact same
+// Show all a user would click by hand, once, shortly after the page's own
+// first (invisible, hidden-batch) settle finishes. No physics/stabilization
+// option is touched by this at all - exitToWholeMap() is unchanged, already
+// proven correct, and confirmed live to give the visible jiggle-then-settle
+// on its own.
+//
+// A second, independent listener on the same event settle() already
+// listens for, not something chained inside settle()'s own callback -
+// settle() is shared with every other caller (e.g. the real Show all
+// button), and must stay untouched so nothing here can affect it.
+//
+// setTimeout, not called directly from this listener: doing two full
+// nodes.clear()/nodes.add() DataSet rebuilds back to back with no event-loop
+// tick in between was confirmed live earlier this session to be unreliable
+// (vis-network's internal sync did not consistently pick up the second one).
+// exitToWholeMap() itself now does exactly one rebuild via applyFilters(),
+// same as always, but only after this page's own initial settle has fully
+// finished and yielded, not layered on top of it in the same tick.
+//
+// poppingHistory suppresses exitToWholeMap()'s own history.pushState() for
+// this one programmatic call - without it, opening the map would silently
+// push a second, identical history entry right after the page's own base
+// entry, so the first Back press after opening would appear to do nothing.
+network.once('stabilizationIterationsDone', function () {
+  setTimeout(function () {
+    poppingHistory = true;
+    exitToWholeMap();
+    poppingHistory = false;
+  }, 0);
+});
 
 // fit() is calculated for the size the canvas had at the time, so without this
 // the graph stays at the old zoom after the window changes size and can end up
@@ -6047,6 +6079,13 @@ deviceSelect.addEventListener('change', function () {
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 document.getElementById('resetBtn').addEventListener('click', function () {
   exitToWholeMap();
+});
+// A separate site Automation Map does not control, so it opens in a new tab
+// rather than replacing this one - the map is mid-session state (whatever is
+// currently focused/filtered) that a plain navigation would lose. noopener
+// keeps the new tab from holding a reference back to this one.
+document.getElementById('communityUtilitiesBtn').addEventListener('click', function () {
+  window.open('https://gordonthelander.github.io/HPM_Manifest_Crawl/', '_blank', 'noopener');
 });
 // Leaves the map entirely for this app's own settings page in the hub admin
 // UI - a different action from Exit to whole map, which stays on this page

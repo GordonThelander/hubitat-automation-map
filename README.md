@@ -96,7 +96,6 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **OAuth must be enabled on the app**, since the map is served as a web page from your hub. See Install below.
 - **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN. The hub itself does not need internet.
-- **Aggregate site analytics.** This app uses [Cloudflare Web Analytics](https://www.cloudflare.com/web-analytics/) to measure anonymous visits to the map page. It sets no cookies and stores no personal or device data - Cloudflare's own design goal is that it can't track individuals or identify who opened the page, only that the page was opened.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
 - **Every installed app is discovered, whether or not it touches a device.** Device-led discovery is unioned with the complete app list from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
