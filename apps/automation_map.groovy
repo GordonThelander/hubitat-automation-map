@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.8'
+@Field static final String APP_VERSION = '1.9.9'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -6079,6 +6079,20 @@ deviceSelect.addEventListener('change', function () {
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 document.getElementById('resetBtn').addEventListener('click', function () {
   exitToWholeMap();
+  // Re-frame the whole map, the same fit() the opening view is built from.
+  //
+  // exitToWholeMap() restores every node, but the zoom stays wherever the
+  // focused view left it, so returning from a drilled-in app or device landed
+  // on the whole map at a close-in zoom showing labels instead of the wide
+  // opening view. settle() is supposed to fit() once physics comes to rest,
+  // but the event it waits on does not fire on this path, so that fit never
+  // happens and the zoom is simply left alone.
+  //
+  // Deliberately here in the button's own handler rather than inside
+  // exitToWholeMap() or settle(): both of those are shared with the map's
+  // opening sequence, and changing either one is what broke the opening
+  // animation twice. Nothing outside this click is affected.
+  network.fit({ animation: false });
 });
 // A separate site Automation Map does not control, so it opens in a new tab
 // rather than replacing this one - the map is mid-session state (whatever is

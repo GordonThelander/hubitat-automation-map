@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.8",
+  "version": "1.9.9",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-08-18",
+  "dateReleased": "2026-08-19",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.8 - the map page opens with a visible settle now instead of jumping straight from an unstyled knot to its final layout: shortly after the page's own first layout pass finishes, it runs the same Show all action a user would click by hand, which was already confirmed to animate visibly rather than snap. Also added: a Community Utilities button in the main button bar, linking to the companion Hubitat Community Utilities site (opens in a new tab, the map's own state is left alone). Cloudflare Web Analytics, added in 1.9.7, has been removed again at Gordon's request.",
+  "releaseNotes": "1.9.9 - Show all now returns to the same wide, whole-map zoom the page opens with, instead of leaving the view at whatever zoom a focused app or device had left it at. Fixed with a single explicit re-fit in the Show all button's own click handler, not by changing the shared opening-view or physics code.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.8"
+      "version": "1.9.9"
     }
   ],
   "drivers": []
