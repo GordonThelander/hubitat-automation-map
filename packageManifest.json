@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.9",
+  "version": "1.9.10",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-19",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.9 - Show all now returns to the same wide, whole-map zoom the page opens with, instead of leaving the view at whatever zoom a focused app or device had left it at. Fixed with a single explicit re-fit in the Show all button's own click handler, not by changing the shared opening-view or physics code.",
+  "releaseNotes": "1.9.10 - the four floating panels (Insights, External systems, Pivot tables, Device icons) could previously be opened on top of one another, left looking like several messy overlapping tabs. Opening any one now closes the others, and all four now sit below the legend instead of overlapping its top-left corner. The legend itself, while collapsed, now stays visible even while a panel is open - it only hides when expanded, since only the full legend is tall enough to run behind a panel's content the way the collapsed one-line version cannot.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.9"
+      "version": "1.9.10"
     }
   ],
   "drivers": []
