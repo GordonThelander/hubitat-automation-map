@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "1.9.7",
+  "version": "1.9.8",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-18",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "1.9.7 - a scan can finish reading every app and device and still schedule one more background step to build the finished map; that scheduled call occasionally fails to fire (a known Hubitat scheduler flakiness this app has hit before), which can make a finished scan look stuck for several minutes with nothing telling it to wrap up. A recovery for this already existed, but it only ran when the app's own settings page happened to reload - watching the map page instead, or a backgrounded browser tab, meant nothing triggered it until the settings page was reopened by hand, exactly what two independent testers hit this week. The /scan-status endpoint (already documented as the stuck-scan troubleshooting check) now runs that same recovery before responding, so any status check can un-stick a scan, not only a settings-page reload. Also added: the map page now uses Cloudflare Web Analytics to count anonymous visits, disclosed under Requirements and limitations in the README - no cookies, no personal or device data, by Cloudflare's own design it cannot identify who opened the page, only that it was opened.",
+  "releaseNotes": "1.9.8 - the map page opens with a visible settle now instead of jumping straight from an unstyled knot to its final layout: shortly after the page's own first layout pass finishes, it runs the same Show all action a user would click by hand, which was already confirmed to animate visibly rather than snap. Also added: a Community Utilities button in the main button bar, linking to the companion Hubitat Community Utilities site (opens in a new tab, the map's own state is left alone). Cloudflare Web Analytics, added in 1.9.7, has been removed again at Gordon's request.",
   "apps": [
     {
       "id": "42cf37df-8a8d-4041-a235-d76c9610e57e",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "1.9.7"
+      "version": "1.9.8"
     }
   ],
   "drivers": []
