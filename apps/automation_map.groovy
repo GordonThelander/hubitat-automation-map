@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.9'
+@Field static final String APP_VERSION = '1.9.10'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -3540,7 +3540,7 @@ String buildMapHtml() {
     #controls, #legend, #hint, #network, #flow { display:none !important; }
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
-  #flow { position:absolute; top:10px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
+  #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
           max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
@@ -3562,7 +3562,7 @@ String buildMapHtml() {
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
      through as ghost text across the middle of the table. */
-  #ext { position:absolute; top:10px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+  #ext { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
          max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
   #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
@@ -3587,7 +3587,7 @@ String buildMapHtml() {
      links and a small query builder is a different shape of content from
      either (a settings form, a rule flowchart), and this file's convention
      throughout is one panel's CSS per panel rather than a shared class. */
-  #pivot { position:absolute; top:10px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+  #pivot { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
            max-width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #pivot h3 { margin:0 0 4px 0; font-size:0.95em; }
   #pivot .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
@@ -3604,7 +3604,7 @@ String buildMapHtml() {
   /* Its own panel rather than reusing #ext's markup, same "one panel's CSS
      per panel" convention, even though the table shape is similar - this one
      needs a search box and can run to ~200 rows, #ext's does not. */
-  #icons { position:absolute; top:10px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+  #icons { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
            max-width:min(74vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #icons h3 { margin:0 0 4px 0; font-size:0.95em; }
   #icons .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
@@ -3675,7 +3675,17 @@ ${santaHtml}
     var saved = '0';
     try { saved = localStorage.getItem('amLegendCollapsed') || '0'; } catch (e) { }
     apply(saved === '1');
-    hd.addEventListener('click', function () { apply(!lg.classList.contains('collapsed')); });
+    // syncLegendVisibility is declared later in the file (with bringToFront)
+    // but this only runs on a later click, by which point it exists - same
+    // forward-reference as everywhere else in this file. Needed here because
+    // expanding the legend while a panel is open makes it tall enough to run
+    // behind that panel's content again, the same overlap collapsing this
+    // panel-open exemption was for in the first place - and collapsing it
+    // back while a panel is still open should bring it back into view.
+    hd.addEventListener('click', function () {
+      apply(!lg.classList.contains('collapsed'));
+      if (typeof syncLegendVisibility === 'function') syncLegendVisibility();
+    });
   })();
 </script>
 <div id="smallscreen">
@@ -4649,11 +4659,48 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // panel-open call site now runs its show through this instead of a bare
 // `.style.display = 'block'`, so the panel most recently brought up is
 // always the one on top.
+//
+// They also used to be able to stack: opening Insights while Pivot tables
+// was already up left both visible at once, reported as a "messy, multiple
+// tabs open" look. Every panel-open call site already runs through here, so
+// this is the one place that can hide the other three before showing this
+// one, without touching any of the four buttons' own handlers.
+//
+// extPanel/pivotPanel/iconsPanel/hint are declared further down the file,
+// but this function's body only runs on a later click, by which point the
+// whole script has already finished its first pass and all of them exist -
+// same as every other forward reference in this file.
+//
+// The collapsed legend is one line sitting entirely above where these panels
+// start (top:100px, well below its own ~93px bottom edge), so it no longer
+// needs to hide for a panel the way it used to - only the expanded legend is
+// still tall enough to run behind panel content (the original "ghost text
+// across the table" problem this hiding was built for). Hint has no
+// collapsed form, so it keeps hiding for any open panel same as before.
+function syncLegendVisibility() {
+  const lg = document.getElementById('legend');
+  const hn = document.getElementById('hint');
+  const panelOpen = [flowPanel, extPanel, pivotPanel, iconsPanel].some(function (p) {
+    return p && getComputedStyle(p).display !== 'none';
+  });
+  if (lg) lg.style.visibility = (panelOpen && !lg.classList.contains('collapsed')) ? 'hidden' : '';
+  if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
+}
+
+// Legend/hint syncing used to be left to three of the four buttons to do for
+// themselves (extBtn/iconsBtn/pivotBtn each set visibility:hidden before
+// calling this) - Insights and a node click never did, so the legend could
+// sit visibly behind those. Doing it here instead covers all four the same
+// way, and only in one place.
 let panelTopZ = 30;
 function bringToFront(panel) {
+  [flowPanel, extPanel, pivotPanel, iconsPanel].forEach(function (p) {
+    if (p && p !== panel) p.style.display = 'none';
+  });
   panelTopZ += 1;
   panel.style.zIndex = panelTopZ;
   panel.style.display = 'block';
+  syncLegendVisibility();
 }
 
 // An app that references nothing has no flow to draw, but it is not true that
@@ -4743,7 +4790,11 @@ function showFlow(appId) {
   const target = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   if (target && (target.inert || target.unreadable)) { showInertPanel(target); return; }
   const steps = FLOWS[appId];
-  if (!steps || !steps.length || !window.mermaid) { flowPanel.style.display = 'none'; return; }
+  if (!steps || !steps.length || !window.mermaid) {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    return;
+  }
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
@@ -4763,7 +4814,10 @@ function showFlow(appId) {
 
 const flowCloseBtn = document.getElementById('flowClose');
 if (flowCloseBtn) {
-  flowCloseBtn.addEventListener('click', function () { flowPanel.style.display = 'none'; });
+  flowCloseBtn.addEventListener('click', function () {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+  });
 }
 
 // With 194 devices a plain dropdown is unusable, so each one gets a search box
@@ -5003,7 +5057,7 @@ function pivotWireLinks() {
     a.addEventListener('click', function (ev) {
       ev.preventDefault();
       pivotPanel.style.display = 'none';
-      restoreLegendIfNothingElseOpen();
+      syncLegendVisibility();
       focusNode(a.getAttribute('data-node'));
     });
   });
@@ -5808,70 +5862,34 @@ function buildExportPayload(ext, icons, failedFetches) {
   };
 }
 
-// The legend is hidden while any of these three panels is open rather than
-// relied on to sit underneath them. It was showing through as ghost text
-// across the table even with an opaque background and a higher z-index, and
-// chasing that was not worth it when a colour key is useless while editing a
-// table anyway.
-//
-// Restoring it is not simply the mirror of hiding it, though: these panels
-// can be opened over one another (Pivot tables opened while Device icons was
-// already up, say), and closing whichever one is on top used to restore the
-// legend unconditionally - it would pop back into view still overlapping
-// whichever panel was left open underneath. Each Close handler now hides its
-// own panel first, then this checks whether either of the other two is still
-// open before bringing the legend back.
-function restoreLegendIfNothingElseOpen() {
-  // Computed style, not the inline .style.display property: a panel never
-  // opened this page load has no inline display at all (its CSS starts it
-  // hidden via the stylesheet, not an inline style), so its .style.display
-  // reads as '' rather than 'none' - checking the inline property directly
-  // read that panel as "still open" and left the legend hidden permanently.
-  const stillOpen = [extPanel, iconsPanel, pivotPanel].some(function (p) { return p && getComputedStyle(p).display !== 'none'; });
-  if (stillOpen) return;
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  // visibility rather than display, so a hint the user already dismissed
-  // stays dismissed instead of reappearing.
-  if (lg) lg.style.visibility = '';
-  if (hn) hn.style.visibility = '';
-}
+// Legend/hint visibility for these panels is entirely syncLegendVisibility()'s
+// job now (see its definition alongside bringToFront) - every button below
+// just shows or hides its own panel and lets that call work out what the
+// legend and hint should do.
 document.getElementById('extBtn').addEventListener('click', function () {
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  if (lg) lg.style.visibility = 'hidden';
-  if (hn) hn.style.visibility = 'hidden';
   bringToFront(extPanel);
   extLoad();
 });
 document.getElementById('extClose').addEventListener('click', function () {
   extPanel.style.display = 'none';
-  restoreLegendIfNothingElseOpen();
+  syncLegendVisibility();
 });
 document.getElementById('iconsBtn').addEventListener('click', function () {
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  if (lg) lg.style.visibility = 'hidden';
-  if (hn) hn.style.visibility = 'hidden';
   bringToFront(iconsPanel);
   iconsLoad();
 });
 document.getElementById('iconsClose').addEventListener('click', function () {
   iconsPanel.style.display = 'none';
-  restoreLegendIfNothingElseOpen();
+  syncLegendVisibility();
 });
 document.getElementById('exportBtn').addEventListener('click', exportJSON);
 document.getElementById('pivotBtn').addEventListener('click', function () {
-  const lg = document.getElementById('legend');
-  const hn = document.getElementById('hint');
-  if (lg) lg.style.visibility = 'hidden';
-  if (hn) hn.style.visibility = 'hidden';
   bringToFront(pivotPanel);
   pivotOpen();
 });
 document.getElementById('pivotClose').addEventListener('click', function () {
   pivotPanel.style.display = 'none';
-  restoreLegendIfNothingElseOpen();
+  syncLegendVisibility();
 });
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
@@ -5952,6 +5970,7 @@ function exitToWholeMap() {
   deviceSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
+  syncLegendVisibility();
   // A real history entry, not just a local reset - so Back afterward returns
   // to wherever Exit was clicked from, correctly, by the same mechanism as
   // every other focus change rather than a special case that used to leave
@@ -6013,6 +6032,7 @@ function focusNode(id) {
     forceSelect(deviceSelect, node.id, node.title);
     appSelect.value = '__all__';
     flowPanel.style.display = 'none';
+    syncLegendVisibility();
     applyFilters();
   }
   const hint = document.getElementById('hint');
@@ -6048,6 +6068,7 @@ window.addEventListener('popstate', function (ev) {
       appSelect.value = '__all__';
       deviceSelect.value = '__all__';
       flowPanel.style.display = 'none';
+      syncLegendVisibility();
       applyFilters();
       renderBackLink();
     }
@@ -6069,11 +6090,17 @@ network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') deviceSelect.value = '__all__';
   applyFilters();
-  if (appSelect.value === '__all__') flowPanel.style.display = 'none'; else showFlow(appSelect.value);
+  if (appSelect.value === '__all__') {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+  } else {
+    showFlow(appSelect.value);
+  }
 });
 deviceSelect.addEventListener('change', function () {
   if (deviceSelect.value !== '__all__') appSelect.value = '__all__';
   flowPanel.style.display = 'none';
+  syncLegendVisibility();
   applyFilters();
 });
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
