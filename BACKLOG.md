@@ -34,6 +34,32 @@ Acceptance criteria:
 - A rescan may legitimately create a new layout; ordinary navigation may not.
 - Verify on a large live map, not only a small fixture.
 
+**Attempted and reverted, 2026-08-18.** A working version shipped to the hub (within-session
+position restore, cross-session persistence via a new `/map-layout` endpoint, and a follow-on
+"Reset Physics" button Gordon asked for once a layout could get stuck). Reverted at Gordon's
+request after the Reset Physics addition turned into repeated live debugging with no working
+result - not because the underlying idea is bad, but because it burned real time without
+landing. Whoever picks this up again should read `vis-network.js` (unminified) directly before
+touching physics/stabilization code, not experiment against the live page first:
+`network.stabilize()` calls `_blockRedraw` at the start and only `_allowRedraw` once every
+iteration is done, so it is architecturally incapable of ever showing a visible settle no
+matter how `stabilization.updateInterval` is tuned - it renders the final result once, nothing
+in between. A visible animated settle needs the normal continuous simulation path
+(`network.startSimulation()`, which drives the real per-frame render loop) instead, listening
+for the `'stabilized'` event it fires on natural convergence - confirmed by reading
+`PhysicsEngine.startSimulation`/`simulationStep`/`_emitStabilized` in the source, not assumed.
+Revisit only with that groundwork already done.
+
+**Closing note, 2026-08-18: no separate button needed.** The existing "Show all" button already
+does this. `exitToWholeMap()` -> `applyFilters()`'s unfocused branch calls `settle()`, which
+only ever does `network.setOptions({physics:{enabled:true}})` and waits - it never calls
+`network.stabilize()`. That means it was always running the visible continuous-simulation path
+described above, not the hidden batch one, the whole time. Gordon confirmed live that "Show
+all" already gives the jiggle-then-settle behaviour this item and the reverted Reset Physics
+button were both trying to build. The remaining, narrower ask above (return to the *same*
+layout rather than a freshly re-settled one) is still open, but a dedicated reset-to-fresh-
+layout button is not - "Show all" already is one.
+
 ### P1 - Make the legend accurate and usable on smaller tablets
 
 **Source:** JimB functional review, 2026-08-16.
