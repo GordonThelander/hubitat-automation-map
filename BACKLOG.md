@@ -209,6 +209,32 @@ Design questions:
 - Is this a reversible view operation, and how is hidden state disclosed?
 - How does it interact with exclusion, multi-select and one-level extension?
 
+### P3 - Export as a warm-start cache, not a portable full rebuild
+
+**Source:** Gordon, 2026-08-19, discussing whether the AI export could be extended into a full
+system backup that another instance of the app could read to rebuild the map with no
+discovery/scan at all.
+
+Discussed and postponed rather than scoped - real product decisions needed first:
+
+- The `d`/`a` node IDs in the export are almost certainly Hubitat's own numeric device/app IDs,
+  which are specific to the hub that issued them. That means an export can only ever warm-start
+  *the same hub's* Automation Map instance (skip a rescan after a reinstall/corruption), not
+  rebuild the map on a genuinely different hub - a fresh hub's recreated apps/devices get new
+  Hubitat-assigned IDs, breaking the mapping. True portability would need Hubitat's own hub
+  backup/restore to recreate the apps and devices first; that is out of this app's scope.
+- The current export deliberately excludes raw `appSettings` and executable config (see the
+  Rejected section below and `Supporting Docs/ai_export_spec.md` section 2) - that is what
+  makes it safe to hand to an AI. A restore capable of a genuine rebuild would want enough raw
+  state to re-decode with a *future*, improved decoder, not be frozen at whatever the decoder
+  understood on export day. That is a different, more sensitive tier of data than the
+  AI-facing export, and probably a separate artifact/mode rather than one expanded document.
+- Recommended framing if this is ever picked up: import an export as a *starting cache*, then
+  run the normal scan as a diff/verify pass rather than promising zero discovery ever - self-
+  heals drift between the backup and the live hub, and avoids silently trusting a stale decode.
+
+Not scoped further than this; revisit only with those three questions actually decided.
+
 ### P3 - Associate Hub Variables with Variable Connector devices
 
 **Source:** JimB functional review, 2026-08-16; Hub Variable lineage specification section 12;
