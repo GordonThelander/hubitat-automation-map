@@ -4,58 +4,217 @@ Not shipped with the HPM package. Items here are agreed ideas awaiting a decisio
 
 ---
 
-## Proposed
+## Urgent - v2.0.0 release blockers
 
-### Scheduled full scan (e.g. daily at 03:00)
+Genuine defects affecting the v2.0.0 release, not feature requests. These jump the queue ahead
+of the prioritised candidates below.
 
-The map is "a snapshot taken when you scan, not a live view" (README, Re-scanning) - it goes
-stale the moment you add or reconfigure an app or device and don't remember to press Scan.
-A scheduled rescan would close that gap without relying on the user's memory.
+None open currently.
 
-Open questions before building:
+---
 
-- **Opt-in, not on by default.** The app is read-only and deliberately low-footprint; adding
-  unattended background activity without an explicit toggle would be a quiet change to that
-  posture. A settings toggle, off by default, with the schedule only when enabled.
-- **Configurable time, not hardcoded to 03:00.** 03:00 is a reasonable default (most hubs are
-  idle then) but shouldn't be assumed universal - a time-of-day preference, defaulting to
-  03:00.
-- **Respect the existing scan guards.** `state.scanRunning` / `clearAbandonedScan()` already
-  prevent a second scan starting while one is in progress or stuck; a scheduled trigger must
-  go through the same path as the button, not a parallel one that could race it.
-- **Hub load during a scan is untested.** A ~200-device, 60-app scan takes about two minutes
-  (README). Whether that's noticeable to other automations running at the same time has never
-  been measured. Worth checking before defaulting anyone into unattended nightly scans.
-- **Schedule survival across hub reboots.** Hubitat's own scheduler generally
-  re-establishes a `schedule()` cron on `installed()`/`updated()`, but worth confirming rather
-  than assuming, given how much of this project's own history is "assumed, then found
-  otherwise."
+## Prioritised post-v2 candidates
 
-### Export map output for an AI model to consume
+Priority means ordering for investigation and delivery, not a commitment. P1 items have the
+clearest user value and smallest unresolved design questions. P2 items are useful but larger
+or dependent on P1 foundations. P3 items need product or data-model decisions before code.
 
-The map already builds a structured picture of a hub's automations - devices, apps, rules,
-roles, rule-to-rule links, Hub Variable lineage - that could be useful as input to an AI
-model: natural-language questions about the automation set, anomaly spotting beyond the
-existing Insights, drafting documentation, that kind of thing.
+### P1 - Preserve the map layout when returning to the full map
 
-The first decision, before any design: **what actually calls the AI.**
+**Source:** JimB functional review, 2026-08-16.
 
-- **User-driven export (low risk).** The app produces a structured file (JSON, or an
-  extension of the existing pivot CSV export) that the user copies out and pastes into
-  whatever AI tool they already use. No new credentials, no outbound calls from the app, no
-  ongoing cost - closest to the app's existing "read-only, low-footprint" posture.
-- **App-integrated AI call (bigger scope, real questions).** The app itself calls an AI API
-  with hub data. This is a materially different kind of feature - API keys stored on the hub,
-  an ongoing outbound dependency, data leaving the hub automatically rather than only when a
-  user chooses to export it. Not something to build without treating it as its own design,
-  not an extension of this one.
+The unconnected-app shelf at the bottom has shipped and should remain. The remaining request
+is that drilling into an app/device and returning to the full map restores the same node
+layout, without physics moving everything into a new arrangement.
 
-Whichever direction: the map's raw data is not automatically safe to export wholesale.
-`Supporting Docs/rule_machine_5_1_storage_format.md` already warns that `appSettings` can
-carry other apps' tokens and credentials, and the same caution applies here - device names,
-home layout, and routine timing are also more personal than a generic dependency graph
-implies. An export format needs a considered answer to "what's actually in this file",
-not just "everything the scan already has."
+Acceptance criteria:
+
+- Capture the full-map node positions after layout settles.
+- Restore those positions after drill-down/filter navigation and Exit to whole map.
+- A rescan may legitimately create a new layout; ordinary navigation may not.
+- Verify on a large live map, not only a small fixture.
+
+### P1 - Make the legend accurate and usable on smaller tablets
+
+**Source:** JimB functional review, 2026-08-16.
+
+The legend must not claim that a device's colour is determined by how it connects to an app;
+one device can have different roles in different apps. Device identity is now represented by
+icons and relationship meaning by edge colour/style. Rewrite the legend around that model.
+
+Acceptance criteria:
+
+- Audit every legend sentence against the actual node/icon/edge rendering rules.
+- On smaller tablets, either use a shorter legend or give it a bounded scroll area.
+- Ensure the legend does not obscure the controls, map, or open panels.
+- Confirm the result at desktop and tablet widths.
+
+### P1 - Picklist exclusion controls
+
+**Source:** JimB functional review, 2026-08-16.
+
+Provide a practical way to remove noisy apps/devices (Maker API was the example) from the
+display without changing the underlying scan. Start with all relevant items included and let
+the user uncheck individual entries.
+
+This is deliberately narrower than the multi-selection subgraph request below: exclusion is
+useful on its own and can establish the selection-state model without committing to the more
+complex graph semantics in one pass.
+
+Acceptance criteria:
+
+- Each listed app/device has a clear included/excluded state; all begin included.
+- Excluding an item updates the visible graph but never deletes scan data.
+- Reset restores all entries.
+- Search/filtering the picklist does not lose selections outside the current search result.
+- Decide explicitly whether selections persist only for the page session or across reloads.
+
+### P2 - "Community Utilities" button on the map page
+
+**Source:** Gordon, 2026-08-18, following review of the HPM Manifest Crawl Community Utilities
+context in `handoff.md`. Screenshots supplied: the site's green "Open the project repository"
+button as the colour reference, and the button bar (Insights / External systems / Pivot tables
+/ Device icons / Export JSON / Exit map) with the new button's position marked between Export
+JSON and Exit map.
+
+Would link to <https://gordonthelander.github.io/HPM_Manifest_Crawl/>, styled in the site's
+green, `target="_blank"` (confirmed with Gordon - opens in a new tab, the map page is
+mid-session state that should not be lost).
+
+Open design question before building: link to the bare homepage as shown, or to something more
+specific and contextual - the Identity Resolver for an unmatched identity, or the Package Feed
+- per the "Optional future integration posture" already on record in `handoff.md`, which
+proposed targeted links over a homepage link. Does not conflict with that note's registry
+guardrails (a navigation link creates no registry/matcher dependency), but is a genuine
+product-framing decision worth making deliberately: every other button in that row is
+self-contained (opens a panel, or acts on data already loaded in the page); this would be the
+first to take the user off the Hubitat-served map entirely, to a separate site Automation Map
+does not control. Not a functional risk, the app works identically without it - just a
+different kind of button than anything else currently in that row.
+
+### P2 - Multi-select an interconnected subgraph
+
+**Source:** JimB functional review, 2026-08-16.
+
+Allow several apps and/or devices to be selected together and show the relationships between
+the selected items. Do not assume that "between" includes every neighbour: define whether
+the result is the induced subgraph (selected nodes and edges whose two endpoints are selected)
+or also includes connector nodes required to make a path intelligible.
+
+Acceptance criteria:
+
+- App and device selections can coexist.
+- The displayed graph has a documented, predictable inclusion rule.
+- Empty, disconnected, and very large selections have understandable feedback.
+- Existing single-item drill-down and browser Back behaviour continue to work.
+
+### P2 - Group and identify items in the picklists
+
+**Source:** JimB functional review, 2026-08-16.
+
+Make long lists easier to scan. Show a device/app icon where the browser control permits it;
+if native option elements cannot render icons consistently, use an accessible custom list or
+retain text rather than a browser-specific trick.
+
+Grouping proposal to validate with Jim before implementation:
+
+- Apps: parent app or integration first, then its children alphabetically.
+- Devices: group by the app/device category Jim intended; clarify whether this means room,
+  icon category, owning app, or a separate Apps/Devices split before coding.
+- Preserve search across groups and expose group names to assistive technology.
+
+### P2 - Extend the displayed map by one level
+
+**Source:** JimB functional review, 2026-08-16.
+
+From a reduced map, let the user select a node at the visible edge and add its directly
+connected neighbours. An **Extend one level** action is preferable to silently expanding on
+selection because it makes the scope change deliberate and reversible.
+
+Acceptance criteria:
+
+- One action adds only immediate neighbours and their connecting edges.
+- Repeating the action extends one additional hop.
+- Newly added nodes are visually distinguishable long enough for the user to understand what
+  changed.
+- Back/undo restores the preceding scope without rebuilding the full layout.
+
+### P2 - Local Variables are drawn as Hub Variables
+
+**Source:** JimB testing, 2026-08-17. "Local Variables are identified as Hub Variables. Not
+sure that we need to see Local Variables."
+
+Investigation needed before deciding the fix: confirm whether the scanner is genuinely
+conflating Hubitat's Local Variables with Hub Variables (a labelling bug), or whether Local
+Variables are correctly detected but there is no case for showing them on the map at all (a
+scope decision - Local Variables are private to one app, so a graph about cross-app
+relationships may have nothing useful to say about them). Resolve which before touching code.
+
+### P2 - A single icon per Hub Variable, so all of its connections are visible at once
+
+**Source:** JimB testing, 2026-08-17. "Hub Variables should be identified by a single icon so
+all connections for each Hub Variable can be seen."
+
+Underspecified - needs clarification with Jim before design: is this about visually
+distinguishing Hub Variable nodes from other node types at a glance (an icon convention, like
+device icons), or about being able to select one Hub Variable and see every rule that reads or
+writes it highlighted together (a selection/highlight behaviour)? The acceptance criteria differ
+substantially between the two readings.
+
+### P3 - Search Hub Variables
+
+**Source:** JimB testing, 2026-08-17, offered as "a future idea", not a request against
+v2.0.0. Add a search box to whatever Hub Variable listing/panel exists, matching the
+search-box pattern already used for the app/device filter dropdowns.
+
+### P3 - Hide a branch or everything downstream
+
+**Source:** JimB functional review, 2026-08-16.
+
+This needs a definition before implementation. The graph is not a simple tree: cycles,
+shared devices, rule-to-rule links, Hub Variables, ownership edges and direction-dependent
+roles make "downstream" ambiguous. Hiding a branch must never imply that shared nodes have no
+other relationships.
+
+Design questions:
+
+- Which relationship kinds and directions count as downstream?
+- Does a shared node remain when another visible path reaches it?
+- Is this a reversible view operation, and how is hidden state disclosed?
+- How does it interact with exclusion, multi-select and one-level extension?
+
+### P3 - Associate Hub Variables with Variable Connector devices
+
+**Source:** JimB functional review, 2026-08-16; Hub Variable lineage specification section 12;
+reconfirmed in JimB's 2026-08-17 testing pass (connector devices still shown unconnected).
+
+Named, unique Hub Variable nodes and rule read/write edges have shipped. The remaining request
+is to connect each Hub Variable to its associated Variable Connector device without drawing
+two independent logical lineages for the same value.
+
+Investigation required before implementation:
+
+- Determine the authoritative Hubitat data linking a connector device to a Hub Variable.
+- Define a distinct relationship kind and direction.
+- Test renamed, deleted and duplicated/stale connectors.
+- Decide whether the connector remains a normal device node, becomes an alias, or is visually
+  grouped with the variable. Native Hub Variable support must not be blocked by this work.
+
+---
+
+## Recently shipped (removed from Proposed)
+
+- **Scheduled full scan:** shipped in 1.9.5. Runs daily by default at 00:30, is configurable,
+  can be disabled, and uses the existing scan guards.
+- **AI-friendly Export JSON:** shipped in 1.9.5 and hardened in 1.9.6. The user-driven file
+  export is structured, self-describing and privacy-labelled. Direct in-app AI/API or future
+  MCP integration remains a separate product decision, not an extension silently implied by
+  the export.
+- **Scan-status self-heal:** shipped in 1.9.7. A scan that finished reading every app/device
+  but never finalized (a scheduled Hubitat call silently failing to fire - hit live by JimB and
+  Gordon, 2026-08-17) could look stuck for minutes until the settings page was manually
+  reopened. `/scan-status` now runs the same recovery on every poll, so any status check can
+  un-stick it, not only a settings-page reload.
 
 ---
 
