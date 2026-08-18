@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '1.9.6'
+@Field static final String APP_VERSION = '1.9.7'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -3347,6 +3347,16 @@ Map scanMapping() {
 }
 
 Map scanStatusMapping() {
+    // Same self-heal main() already runs on every settings-page load. That path
+    // only fires while the settings page specifically is open, in the
+    // foreground, with its refreshInterval auto-refresh not throttled by a
+    // backgrounded tab - confirmed live to leave a scan looking stuck for
+    // several minutes when a user is instead watching the map page, or has
+    // switched away, even though the scan itself finished reading every app.
+    // This endpoint is already the documented "scan appears stuck" check
+    // (README Troubleshooting), so running the same recovery here means any
+    // status poll can un-stick a scan, not only a settings-page reload.
+    clearAbandonedScan()
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
@@ -3451,6 +3461,9 @@ String buildMapHtml() {
      deliberately, not by whatever the CDN resolves to on a given day. -->
 <script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
+<!-- Cloudflare Web Analytics - anonymous page-visit counting only, no cookies, no
+     personal or device data. Disclosed in README under "Aggregate site analytics". -->
+<script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6d20774808564b518c513222b3bea041"}'></script>
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
