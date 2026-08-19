@@ -187,32 +187,6 @@ device icons), or about being able to select one Hub Variable and see every rule
 writes it highlighted together (a selection/highlight behaviour)? The acceptance criteria differ
 substantially between the two readings.
 
-### P3 - Find where a built-in app's own name gets corrupted in the exported file
-
-**Source:** Gordon, 2026-08-19, spotted via the app-type tagging work below - a real downloaded
-AI friendly export had "Hubitat Dashboard" with its registered-trademark symbol replaced by the
-Unicode replacement character. Always evidence of a decode mismatch somewhere, never a character
-a real name would contain.
-
-A defensive fetch-layer patch shipped (`stripReplacementChar()`, applied where label/type first
-come off the wire in `fetchAppRelationships`) but turned out **not to be where the corruption
-happens** - checked live: the in-memory client-side data for that exact app, from the exact same
-scan the corrupted export came from (same `scan.lastScanCompletedAt`), has the genuine character
-(codepoint `ae`, real (R)), not the replacement character. So the scan fetch is clean. The
-export/download code (`exportJSON()`'s `Blob`+`JSON.stringify`) also reads as standards-correct
-on inspection - `Blob` always UTF-8-encodes a JS string regardless of the declared MIME type, and
-`JSON.stringify` does not touch Unicode characters. Yet the actual downloaded file had the
-replacement character in it. Where the corruption is genuinely introduced is not yet located -
-somewhere between confirmed-clean in-memory data and the file landing on disk, or it may not be
-reproducible at all (possibly transient/environmental on that one earlier download).
-
-The fetch-layer patch stays regardless - harmless defensive hygiene - but it is not confirmed to
-be *the* fix. Next step, cheap and conclusive: export fresh from the current (confirmed-clean)
-in-memory state and check whether the new file still corrupts. If it does not, this may already
-be resolved or was never reliably reproducible. If it does, the search narrows to whatever sits
-between `JSON.stringify`/`Blob` and the file actually reaching disk. Needs that live test to
-settle, not guessed further.
-
 ### P3 - Search Hub Variables
 
 **Source:** JimB testing, 2026-08-17, offered as "a future idea", not a request against
@@ -479,3 +453,25 @@ fallback - has shipped. It lives in the app as the External systems panel
 built and maintained in `GordonThelander/HPM_Manifest_Crawl`. Removed from backlog because
 it is no longer proposed work; the code and that repo's own history are the record of it
 now, not this file.
+
+### Corrupted character in an exported app name (closed 2026-08-19 - not reproducible)
+
+**Source:** Gordon, 2026-08-19, spotted via the app-type tagging work above - a real downloaded
+AI friendly export had "Hubitat Dashboard" with its registered-trademark symbol replaced by the
+Unicode replacement character.
+
+Investigated rather than guessed: the in-memory client-side data for that exact app, from the
+exact same scan the corrupted export came from, had the genuine character (codepoint `ae`, real
+(R)), not the replacement character - so the scan fetch was clean. The export/download code
+(`exportJSON()`'s `Blob`+`JSON.stringify`) also reads as standards-correct - `Blob` always UTF-8-
+encodes a JS string regardless of declared MIME type, and `JSON.stringify` does not touch Unicode
+characters. A second export, generated fresh from the identical underlying scan through the
+identical code path, came back clean (verified by codepoint, not just by eye). Same data, same
+code, different result - rules out a deterministic bug in Automation Map's own logic. Whatever
+caused the original corruption was a one-off, most likely transient/environmental on that
+specific earlier download, not something in this app to keep chasing without new evidence.
+
+A defensive fetch-layer patch shipped anyway (`stripReplacementChar()`, applied where label/type
+first come off the wire in `fetchAppRelationships`) - harmless hygiene, kept in case something
+like this recurs, not because it was confirmed to be the actual fix. Re-open only if this is
+seen again with something to actually investigate (a reproducible trigger, not just the symptom).
