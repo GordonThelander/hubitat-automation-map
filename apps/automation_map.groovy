@@ -1072,13 +1072,13 @@ Map fetchAppRelationships(String appId, Map labels) {
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
 
             Map installedApp = data.installedApp as Map
-            String rawLabel = (installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String
+            String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.label = stripTags(rawLabel)
             // Kept alongside the full label rather than replacing it: the
             // status is real information, it just does not belong painted
             // across the canvas. See nodeEntry for which form goes where.
             out.drawLabel = stripStatusMarkup(rawLabel)
-            out.type = installedApp?.name
+            out.type = stripReplacementChar(installedApp?.name as String)
             // Stored for EVERY app, not only the empty ones, because it is read
             // in the opposite direction from the one it is written in. A
             // container needs the names of its children, and a child is the only
@@ -2299,6 +2299,20 @@ void addRole(Map roles, String devId, String role) {
 
 String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
+}
+
+// Found live: a built-in app's own name ("Hubitat(R) Dashboards") came back
+// from /installedapp/statusJson with its registered-trademark symbol replaced
+// by the Unicode replacement character - always evidence of a decode mismatch
+// somewhere in the fetch, never a character any real name would intentionally
+// contain. Root cause not chased down (cosmetic, low priority - see
+// BACKLOG.md); this just keeps the artifact from propagating any further than
+// it already has. Written as a numeric codepoint rather than a unicode escape
+// literal in this file's source, since an escape literal here is Groovy's own
+// string syntax and would be consumed at parse time rather than reach this
+// method - the same trap check_template.sh below exists to catch.
+String stripReplacementChar(String s) {
+    return s ? s.replace(new String(Character.toChars(0xFFFD)), '') : s
 }
 
 // Size of a hub collection whose shape is not guaranteed. Anything else,
@@ -4820,6 +4834,41 @@ if (flowCloseBtn) {
   });
 }
 
+// Short prefix tag for an app's building engine or origin, agreed with
+// Gordon 2026-08-19 - purely a display label, sort order is untouched (the
+// list below is already sorted on the real title before this ever runs).
+// CUS is the deliberate catch-all: every app not specifically recognised
+// gets it, so nothing is ever left with no tag, and nothing here has to be
+// certain whether an unrecognised app is Gordon's own, a community app, or
+// something else - only the HUB row needs that confidence.
+const APP_TYPE_TAGS = {
+  'Rule-5.1': 'RM5',
+  'Visual Rule Builder 2.0': 'VRB',
+  'Visual Rules Builder': 'VRB',
+  'Basic Rule-1.0': 'BR1',
+  'Basic Rules': 'BR1',
+  'Notifier': 'NTF',
+  'Button Rule-5.1': 'BTN',
+  'Button Controller-5.1': 'BTN',
+  'Button Controllers': 'BTN',
+  'Chromecast Integration': 'INT',
+  'CoCoHue - Hue Bridge Integration': 'INT',
+  'Google Home': 'INT',
+  'Kasa Integration': 'INT',
+  'LIFX Light Manager': 'INT',
+  'Meross MSG100 Garage Door Setup': 'INT',
+  'Sensibo Integration': 'INT',
+  'Tapo Integration': 'INT',
+  'BOM Weather Alerts': 'INT',
+  'Rule Machine': 'HUB',
+  'Groups and Scenes': 'HUB',
+  'Maker API': 'HUB',
+  'Hubitat® Dashboard': 'HUB'
+};
+function appOptionText(n) {
+  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + n.title;
+}
+
 // With 194 devices a plain dropdown is unusable, so each one gets a search box
 // that filters its options as you type. Rebuilt rather than hidden, because
 // hidden <option> elements are not reliably honoured across browsers.
@@ -4840,7 +4889,7 @@ function fillSelect(selectId, searchId, group, allLabel) {
     items.forEach(function (n) {
       if (q && n.title.toLowerCase().indexOf(q) < 0) return;
       const opt = document.createElement('option');
-      opt.value = n.id; opt.textContent = n.title;
+      opt.value = n.id; opt.textContent = group === 'app' ? appOptionText(n) : n.title;
       sel.appendChild(opt);
       shown++;
     });
@@ -4850,7 +4899,7 @@ function fillSelect(selectId, searchId, group, allLabel) {
       const cur = items.filter(function (n) { return n.id === keep; })[0];
       if (cur) {
         const opt = document.createElement('option');
-        opt.value = cur.id; opt.textContent = cur.title;
+        opt.value = cur.id; opt.textContent = group === 'app' ? appOptionText(cur) : cur.title;
         sel.appendChild(opt);
       }
     }
