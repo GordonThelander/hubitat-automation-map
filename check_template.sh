@@ -13,11 +13,35 @@
 #
 # Legitimate backslashes, whitelisted below:
 #   ~/^https?:\/\/.../   the URL pattern constant (a Groovy slashy regex)
+#   ~/^(https?:\/\/...   the origin pattern constant (a Groovy slashy regex),
+#                         same reasoning as the line above
 #   /\([^)]*\)/          condition-cleanup regexes (Groovy source, not template)
-#   /\s+/                    "
-#   <\\/script>          escaping a closing script tag inside the JSON blob
+#   /\s+/                    "  (Groovy-side use, via replaceAll)
+#   /\.$/                    Groovy-side use, via replaceAll - strips a
+#                             trailing period from a Hub Variable name
+#   /^tCapab\d+$/            Groovy-side use, via ==~ - matches a numbered
+#                             trigger setting name
+#   /%([A-Za-z_]...          Groovy-side use, via =~ - finds %Variable%
+#                             interpolation syntax in free text
+#   u003c                 encoding every '<' in the embedded JSON blobs as
+#                         the escape \u003c, so no literal '<' survives for a
+#                         browser's HTML tag scanner to match regardless of
+#                         how a closing tag is spelled or spaced - see
+#                         jsonForScriptEmbed()
 #   """\                 an opening line continuation
 #   join('\\n')          an intentionally double-escaped newline
+#   [",\\n]              a CSV-escaping regex's own double-escaped newline -
+#                         same reasoning as join('\\n'), different call site
+#   replace(/\\s+/g,     JS-side whitespace regex (CSV filename sanitising) -
+#                         \s+ alone here would be Groovy's, not the browser's
+#   [^&\\s]*             JS-side token-redaction regex in the scan diagnostic,
+#                         same double-escape reasoning as the line above
+#   key: '\uXXXX'        ICON_GLYPHS entries (device icon font codepoints) -
+#                         Groovy consuming \uXXXX and emitting the raw glyph
+#                         character is the INTENDED behaviour here, not a bug:
+#                         a JS string literal containing that one raw
+#                         character is exactly equivalent to one containing
+#                         the escape, so either way is correct in the browser.
 #
 # Usage: ./check_template.sh apps/automation_map.groovy
 set -euo pipefail
@@ -25,11 +49,18 @@ FILE="${1:-apps/automation_map.groovy}"
 
 BAD=$(grep -n '\\' "$FILE" \
   | grep -v 'Pattern URL_PATTERN' \
+  | grep -v 'Pattern ORIGIN_PATTERN' \
   | grep -v "replaceAll(/\\\\(\[^)\]\*\\\\)/" \
   | grep -v "replaceAll(/\\\\s+/" \
-  | grep -v '<\\\\/script>' \
+  | grep -v "replaceAll(/\\\\.\\$/" \
+  | grep -v "==~ /\\^tCapab\\\\d+\\$/" \
   | grep -v '"""\\$' \
   | grep -v "join('\\\\\\\\n')" \
+  | grep -v '\[",\\\\n\]' \
+  | grep -v 'replace(/\\\\s+/g' \
+  | grep -v 'access_token=\[^&\\\\s\]' \
+  | grep -vE "[a-z]+: '.u[0-9a-f]{4}'" \
+  | grep -v 'u003c' \
   || true)
 
 if [ -n "$BAD" ]; then

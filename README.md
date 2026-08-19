@@ -4,7 +4,7 @@ Draws every installed app and device on your hub as an interactive graph, colour
 
 It answers questions the hub itself makes tedious: what does this rule really touch, which app keeps turning that light on, and what is this device even used for.
 
-**Read-only.** It never commands a device or changes an app. It reads and draws.
+**Read-only where it matters.** It never commands a device or changes another app. The only things you can edit are its own notes about your setup - device icon corrections and external system declarations - never anything on the hub itself.
 
 ## What you get
 
@@ -21,14 +21,38 @@ It answers questions the hub itself makes tedious: what does this rule really to
 
 A device can hold different roles in different apps: a motion sensor may trigger one rule and be switched by another. Roles therefore belong to the connection, not the device.
 
+**Rule to rule.** Rules do not only touch devices, they act on each other, and that is invisible everywhere else on the hub. Three relationships are drawn directly between two rules:
+
+| Link | Meaning |
+| --- | --- |
+| **Runs** | the rule runs another rule's actions |
+| **Stops** | the rule stops another rule's actions |
+| **Private Boolean** | the rule sets another rule's Private Boolean |
+
+Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden.
+
+A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped. If a rule still names another rule that has since been deleted, that is shown too - labelled `deleted`, so the action silently doing nothing is something you can actually see rather than only discover the hard way.
+
+**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them.
+
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
 **Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step.
 
-**Insights.** Two lists the hub cannot give you:
+**Device icons.** Every device is drawn with an icon representing what it actually is - a light looks like a light, a door like a door, a water sensor like a water sensor - guessed automatically from the device's own capabilities and, where that alone is not specific enough, its name. Wrong for a particular device? The Device icons panel lists every device with its guessed icon, lets you pick the right one by hand, and lets you leave yourself a short note on anything left unrecognised. Overrides and notes survive future rescans, and can be backed up to a file and restored later.
+
+**Insights.** Findings the hub cannot give you directly:
 
 - **Contested devices** - more than one app can leave the device in a lasting state, the usual cause of automations fighting each other. Notifications and chimes are excluded, since repeating those is not a conflict.
 - **Devices nothing references** - no app owns, watches or drives them.
+- **Apps with no device or rule relationship** - installed and readable, but touch nothing, grouped by why (holds other apps, runs on a schedule, references nothing at all).
+- **Broken rule references** - a rule still names another rule, action, pause target or Private Boolean that no longer exists.
+
+**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Declare it yourself in the External systems panel and it is drawn as its own diamond-shaped node, dashed edge back to the app that depends on it - so you can see what breaks if that outside service goes down. A shared community registry pre-fills the common ones; your own declarations always win over it.
+
+**Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
+
+**AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
 
 ## What "app" means here
 
@@ -48,6 +72,7 @@ Hubitat has no API for "list every app and what devices it uses, and how". Autom
 | Endpoint | Used for |
 | --- | --- |
 | `/device/fullJson/<id>` | discovering which apps exist, by asking each device which apps use it |
+| `/hub2/appsList` | the complete installed-app tree in one call, so an app that touches no device at all - a Rule Function, a schedule-only app, a container - is not invisible |
 | `/installedapp/statusJson/<id>` | the relationship data per app: child devices, event subscriptions, and every setting that resolves to devices |
 
 Roles are decided in this order:
@@ -64,7 +89,7 @@ Roles are decided in this order:
 
 Child devices, event subscriptions and capability types are platform-level facts, so the graph covers apps it was never specifically written for, including integrations.
 
-Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1** and **Notifier** are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
+Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1**, **Notifier**, and **Visual Rule Builder 2.0** (Hubitat's newer visual/AI-prompt rule builder, still in beta on Hubitat's side - VRB itself currently allows only one decision node per rule, no nesting, which this decoder matches rather than works around) are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
 
 ## Requirements and limitations
 
@@ -73,8 +98,9 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
-- **Only apps that reference at least one device appear.** Apps are discovered by asking devices which apps use them, so an app using no devices is invisible. There is no bulk app-list endpoint to cross-check against.
-- **Very heavily shared devices may be missed.** The hub truncates a device's app list when many apps use it, so an app appearing only in truncated lists can be missed. Selecting all devices makes this unlikely.
+- **Every installed app is discovered, whether or not it touches a device.** Device-led discovery is unioned with the complete app list from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
+- **Rule-to-rule links and Hub Variable read/write edges are read from Rule Machine 5.1 only.** A rule on another engine is not analysed for them, so it will show no links rather than showing that it has none. Room Lighting, Basic Rules, Simple Automation and webCoRE are not read this way.
+- **Device icons are a best guess, not a certainty.** Capability and name-based detection cover most devices well, but a handful of categories (appliances, robot vacuums, and a few others) have no reliable Hubitat signal to detect from at all - see the Device icons panel to correct any of these by hand.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
 - A scan of roughly 200 devices and 60 apps takes about two minutes.
@@ -98,13 +124,15 @@ Then continue from step 3.
 1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> **Save**.
 2. Still in Apps Code, click **OAuth** -> **Enable OAuth in App** -> **Update**.
 3. **Apps** -> **Add User App** -> **Automation Map**.
-4. Select the devices to scan - **Select All** is the normal choice - then **Scan relationships now**.
+4. Press **Done**. The first scan starts by itself; there is nothing to configure.
 5. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
 6. **View Automation Map**.
 
 The map link contains an access token unique to your installation. Open the map from the app rather than bookmarking the URL, since reinstalling the app issues a new token and the old link stops working.
 
-Devices referenced by an app are added to the map automatically even if you did not select them. The selection only decides which devices are used to discover apps.
+Every device on the hub is scanned. There is no device picker: apps are found by asking each device which apps use it, and the hub supplies the device list.
+
+A daily scan runs automatically by default (00:30, changeable in the app's own settings page, or turn it off entirely to only ever scan by hand).
 
 ## Re-scanning
 
@@ -120,6 +148,16 @@ The app exposes two endpoints, using the same access token as the map link, usef
 - `.../scan` - starts a scan without opening the app
 
 `check_template.sh` is a maintainer tool. The map page is built inside a Groovy string, so a stray backslash is consumed before the browser sees it and silently breaks the page script. Run it before committing changes to the page.
+
+## Credits
+
+**Jim Becker (JimB)** - primary tester and functional requirements contributor. Reported the scan-start failure that led to the Remote Admin routing fix, and tested through every diagnostic build until it was found.
+
+**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
+
+**"Frying Pan Hit" sound effect** by Mike Koenig, via [SoundBible.com](https://soundbible.com/1004-Frying-Pan-Hit.html), licensed under [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/). Plays on the Show all button.
+
+**"Woman Excited Cheers And Phrases Says Yes 1" sound effect** by Floraphonic, via [Pixabay](https://pixabay.com/sound-effects/people-woman-excited-cheers-and-phrases-says-yes-1-186748/), used under the [Pixabay Content License](https://pixabay.com/service/license-summary/). Plays on the Community utilities button.
 
 ## Branches
 
