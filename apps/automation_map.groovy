@@ -6284,6 +6284,25 @@ function playShowAllSound() {
   } catch (e) { playSynthesizedFallback(); }
 }
 
+// "Woman Excited Cheers And Phrases Says Yes 1" by Floraphonic, via Pixabay
+// (Pixabay Content License - free for this use, attribution not required,
+// credited in README anyway). Same lazy-load/branch-aware/fallback pattern
+// as playShowAllSound() above.
+const COMMUNITY_UTILITIES_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/assets/community-utilities-sound.mp3';
+let communityUtilitiesAudio = null;
+function playCommunityUtilitiesSound() {
+  try {
+    if (!communityUtilitiesAudio) {
+      communityUtilitiesAudio = new Audio(COMMUNITY_UTILITIES_SOUND_URL);
+      communityUtilitiesAudio.volume = 0.6;
+      communityUtilitiesAudio.addEventListener('error', playSynthesizedFallback, { once: true });
+    }
+    communityUtilitiesAudio.currentTime = 0;
+    const p = communityUtilitiesAudio.play();
+    if (p && p.catch) p.catch(playSynthesizedFallback);
+  } catch (e) { playSynthesizedFallback(); }
+}
+
 document.getElementById('resetBtn').addEventListener('click', function () {
   playShowAllSound();
   // Deliberately NOT a real click on the legend's own toggle header - found
@@ -6342,6 +6361,7 @@ document.getElementById('resetBtn').addEventListener('click', function () {
 // currently focused/filtered) that a plain navigation would lose. noopener
 // keeps the new tab from holding a reference back to this one.
 document.getElementById('communityUtilitiesBtn').addEventListener('click', function () {
+  playCommunityUtilitiesSound();
   window.open('https://gordonthelander.github.io/HPM_Manifest_Crawl/', '_blank', 'noopener');
 });
 // Leaves the map entirely for this app's own settings page in the hub admin
