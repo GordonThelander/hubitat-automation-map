@@ -346,6 +346,26 @@ An AI consuming the file should:
 - highlight broken references and contested devices as findings, not automatically as errors;
 - never invent a missing link solely because two names look similar.
 
+### Tone
+
+Found live, on a real export: a receiving AI turned `contestedDeviceCount: 30` into a menu
+item reading as "devices multiple automations can leave in conflicting states" - technically
+compliant with the bullet above (a finding, not an outright claim of error) but still alarming
+enough that the user's actual reaction was that the hub sounded like it was in a bad state. On
+that same hub, the contested devices were mostly lights with four to six perfectly ordinary
+rules each (motion, time-of-day, manual override) - ordinary automation design at that scale,
+not evidence of anything wrong. "Not automatically an error" was not a strong enough
+instruction on its own to prevent that framing:
+
+- **A hub with dozens of rules and hundreds of devices will always show some contested
+  devices and inert apps, as a normal by-product of scale.** Do not present a raw count as
+  evidence the hub is in a bad state.
+- **Avoid adversarial words - fighting, broken as an unqualified judgment, conflict - for
+  anything the export itself does not use that word for.** State the plain mechanism instead
+  (the last app to run decides the outcome) and let the user judge whether it is intentional.
+- **State a count in proportion to the whole** - "30 of 194 devices", not a bare "30 devices"
+  - so the user can judge scale themselves rather than be primed by an isolated number.
+
 ### Response shape
 
 The above governs what the AI may claim. This governs how it should structure a response,
