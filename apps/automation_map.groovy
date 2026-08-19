@@ -6075,19 +6075,40 @@ function currentFocus() {
 // Shared by the panel's Exit link and the top-right "Show all" button, which
 // did this exact reset already; Exit is the same action, reachable from where
 // the problem actually is instead of from a button that may be off screen.
+// External systems/Pivot tables/Device icons are unrelated to whatever was
+// just chosen (Focus app/device dropdowns, a node click, browser Back/
+// Forward restoring one, a link-through from Pivot tables) and would
+// otherwise sit open over it. flowPanel is deliberately NOT touched here -
+// it may be the panel this same selection is about to open itself
+// (showFlow, for an app with a decoded rule) or bringToFront() already
+// handles it when that happens, so closing it here too would just be
+// redundant with, or race, that.
+//
+// Also force-expands the legend if collapsed, not just leaves it visible
+// the way syncLegendVisibility() alone does - visual only, the same
+// non-persisting approach as Show all's own legend handling (a real click
+// on the toggle would overwrite the saved amLegendCollapsed preference,
+// found live to be the wrong behaviour there and equally wrong here).
+function closeSecondaryPanels() {
+  [extPanel, pivotPanel, iconsPanel].forEach(function (p) { if (p) p.style.display = 'none'; });
+  const legendEl = document.getElementById('legend');
+  if (legendEl && legendEl.classList.contains('collapsed')) {
+    legendEl.classList.remove('collapsed');
+    const legendToggle = document.getElementById('legend-toggle');
+    if (legendToggle) {
+      legendToggle.innerHTML = '&#9662;';
+      legendToggle.setAttribute('aria-expanded', 'true');
+    }
+  }
+  syncLegendVisibility();
+}
+
 function exitToWholeMap() {
   appSelect.value = '__all__';
   deviceSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
-  // All four floating panels, not just flowPanel - this only ever closed
-  // Insights/flow, so External systems, Pivot tables or Device icons could be
-  // left open through a Show all/Exit. Went unnoticed while the legend stayed
-  // fully hidden whenever any panel was open; once the collapsed legend was
-  // fixed to stay visible through that, the leftover open panel became
-  // visible alongside it - reported as "legend expands", but the actual
-  // cause is this, not the legend logic itself.
-  [flowPanel, extPanel, pivotPanel, iconsPanel].forEach(function (p) { if (p) p.style.display = 'none'; });
-  syncLegendVisibility();
+  flowPanel.style.display = 'none';
+  closeSecondaryPanels();
   // A real history entry, not just a local reset - so Back afterward returns
   // to wherever Exit was clicked from, correctly, by the same mechanism as
   // every other focus change rather than a special case that used to leave
@@ -6129,6 +6150,13 @@ function focusNode(id) {
       try { history.pushState({ amFocus: id, cameFrom: from }, ''); } catch (e) { }
     }
   }
+  // Unconditional, ahead of the app/device branching below: a device
+  // selection never touches these panels otherwise, and for an app with a
+  // decoded rule, showFlow()'s own bringToFront(flowPanel) closes them again
+  // a moment later anyway - redundant there, but harmless, and it means
+  // this one call is correct for every path through this function rather
+  // than needing to be threaded into each branch separately.
+  closeSecondaryPanels();
   if (node.group === 'app') {
     forceSelect(appSelect, node.id, node.title);
     deviceSelect.value = '__all__';
@@ -6205,7 +6233,10 @@ network.on('hoverNode', function () { canvasEl.style.cursor = 'pointer'; });
 network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 
 appSelect.addEventListener('change', function () {
-  if (appSelect.value !== '__all__') deviceSelect.value = '__all__';
+  if (appSelect.value !== '__all__') {
+    deviceSelect.value = '__all__';
+    closeSecondaryPanels();
+  }
   applyFilters();
   if (appSelect.value === '__all__') {
     flowPanel.style.display = 'none';
@@ -6215,7 +6246,10 @@ appSelect.addEventListener('change', function () {
   }
 });
 deviceSelect.addEventListener('change', function () {
-  if (deviceSelect.value !== '__all__') appSelect.value = '__all__';
+  if (deviceSelect.value !== '__all__') {
+    appSelect.value = '__all__';
+    closeSecondaryPanels();
+  }
   flowPanel.style.display = 'none';
   syncLegendVisibility();
   applyFilters();
@@ -6305,22 +6339,9 @@ function playCommunityUtilitiesSound() {
 
 document.getElementById('resetBtn').addEventListener('click', function () {
   playShowAllSound();
-  // Deliberately NOT a real click on the legend's own toggle header - found
-  // live that reusing it also overwrote the saved amLegendCollapsed
-  // preference, so a normally-collapsed legend stayed force-expanded on
-  // every later page load too, not just this one view. This updates the
-  // same two things a click does (the CSS class, the arrow glyph/aria-state)
-  // without the localStorage write, so the expand is visual-only for this
-  // Show all and the user's own saved preference survives untouched.
-  const legendEl = document.getElementById('legend');
-  if (legendEl && legendEl.classList.contains('collapsed')) {
-    legendEl.classList.remove('collapsed');
-    const legendToggle = document.getElementById('legend-toggle');
-    if (legendToggle) {
-      legendToggle.innerHTML = '&#9662;';
-      legendToggle.setAttribute('aria-expanded', 'true');
-    }
-  }
+  // Panel-closing and the legend force-expand both now live inside
+  // exitToWholeMap() itself (via closeSecondaryPanels()), shared with every
+  // other place a selection changes - no longer duplicated here.
   exitToWholeMap();
   // Re-frame the whole map, the same fit() the opening view is built from.
   //
