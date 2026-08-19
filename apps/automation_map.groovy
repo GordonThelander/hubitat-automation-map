@@ -4869,6 +4869,41 @@ function appOptionText(n) {
   return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + n.title;
 }
 
+// Same purely-decorative prefix for devices, reusing n.icon - the existing
+// auto-detected/user-overridden classification the Device icons panel
+// already maintains, not a new scheme invented for this picklist. Every one
+// of the 17 known categories maps to a fixed three-letter code, agreed with
+// Gordon 2026-08-19; 'unknown' (n.icon's own fallback for anything neither
+// capability nor name detection recognised) gets UNK rather than being left
+// blank, same reasoning as CUS above - nothing in the list goes untagged.
+const DEVICE_ICON_TAGS = {
+  lighting: 'LGT',
+  switches: 'SWT',
+  buttons: 'BTN',
+  motion: 'MOT',
+  media: 'MED',
+  presence: 'PRE',
+  doors: 'DOR',
+  climate: 'CLI',
+  energy: 'NRG',
+  appliance: 'APP',
+  display: 'DIS',
+  environmental: 'ENV',
+  security: 'SEC',
+  water: 'WTR',
+  broker: 'BRK',
+  hub: 'HUB',
+  network: 'NET'
+};
+function deviceOptionText(n) {
+  return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
+}
+function pickOptionText(n, group) {
+  if (group === 'app') return appOptionText(n);
+  if (group === 'device') return deviceOptionText(n);
+  return n.title;
+}
+
 // With 194 devices a plain dropdown is unusable, so each one gets a search box
 // that filters its options as you type. Rebuilt rather than hidden, because
 // hidden <option> elements are not reliably honoured across browsers.
@@ -4889,7 +4924,7 @@ function fillSelect(selectId, searchId, group, allLabel) {
     items.forEach(function (n) {
       if (q && n.title.toLowerCase().indexOf(q) < 0) return;
       const opt = document.createElement('option');
-      opt.value = n.id; opt.textContent = group === 'app' ? appOptionText(n) : n.title;
+      opt.value = n.id; opt.textContent = pickOptionText(n, group);
       sel.appendChild(opt);
       shown++;
     });
@@ -4899,7 +4934,7 @@ function fillSelect(selectId, searchId, group, allLabel) {
       const cur = items.filter(function (n) { return n.id === keep; })[0];
       if (cur) {
         const opt = document.createElement('option');
-        opt.value = cur.id; opt.textContent = group === 'app' ? appOptionText(cur) : cur.title;
+        opt.value = cur.id; opt.textContent = pickOptionText(cur, group);
         sel.appendChild(opt);
       }
     }
