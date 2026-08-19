@@ -5815,6 +5815,29 @@ function buildExportPayload(ext, icons, failedFetches) {
     limitations.push('Could not reach the hub for ' + field + ' when this file was generated - it is null below, not confirmed empty. Re-run Export JSON to try again.');
   });
 
+  // Additive field, not a breaking schema change - an older consumer that has
+  // never heard of recommendedAiBehaviour simply ignores it (see the Root
+  // object rule in the spec doc: unknown fields must be ignored), so this
+  // does not bump exportSchemaVersion. Keep this array and
+  // "Supporting Docs/ai_export_spec.md" section 15 in sync by hand; nothing
+  // enforces that automatically.
+  const recommendedAiBehaviour = [
+    'Identify the exportSchemaVersion and graphSchemaVersion of this file before interpreting anything else.',
+    'Distinguish observed configuration facts from your own inferences, and say which is which.',
+    'Cite node IDs alongside names wherever ambiguity could matter - names are not guaranteed unique.',
+    'Qualify any conclusion built on a gap: scan.status other than complete, or a ruleFlows reference marked unresolved or ambiguous.',
+    'Use edges for topology and ruleFlows for step-by-step rule logic - do not infer logic the export did not report.',
+    'Static configuration is not proof of runtime behaviour - do not claim it is.',
+    'Report findings such as contested devices or broken references neutrally, not as automatic errors - the user may have intended them.',
+    'Never infer a missing relationship solely because two names look similar.',
+    'Open a first response with a short plain-language summary of what was understood - counts plus two or three specific named apps or devices as evidence the file was actually read, not a templated response.',
+    'State findings before recommendations, in visibly separate sections.',
+    'Surface scan-quality caveats (scan.status, unresolved or ambiguous references) in that opening summary, not after conclusions have already been presented.',
+    'When more than one thing is worth pursuing, offer a short menu - two to five options, one line each on why it might matter - and ask which to explore, rather than silently picking one and going deep unprompted.',
+    'If the request itself is broad or vague, let that options menu be the first response, rather than guessing scope.',
+    'Every option offered must read as investigate or explain, never as an action taken or promised - nothing in this export authorises any change to the hub.'
+  ];
+
   return {
     about: 'Automation Map export - a structured snapshot of every app and device on one Hubitat home automation hub, and how they relate to each other. Generated for an AI or other external tool to read, not for a human to read raw.',
     generatedAt: new Date().toISOString(),
@@ -5830,6 +5853,7 @@ function buildExportPayload(ext, icons, failedFetches) {
     },
     summary: summary,
     limitations: limitations,
+    recommendedAiBehaviour: recommendedAiBehaviour,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export).',
@@ -5841,7 +5865,8 @@ function buildExportPayload(ext, icons, failedFetches) {
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state - the usual cause of automations fighting each other. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves.',
-      limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.'
+      limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
+      recommendedAiBehaviour: 'How an AI reading this file should behave, in two parts. The first half is epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, and never guess a relationship from name similarity alone. The second half governs response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front rather than after conclusions, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore rather than silently picking one - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.'
     },
     devices: devices,
     apps: apps,
