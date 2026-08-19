@@ -235,6 +235,39 @@ Discussed and postponed rather than scoped - real product decisions needed first
 
 Not scoped further than this; revisit only with those three questions actually decided.
 
+### P3 - User-authored notes/tags on apps and devices
+
+**Source:** Gordon, 2026-08-19, discussing what else the AI export could carry to let an AI
+advise rather than just describe topology. Every other candidate discussed alongside this one
+(schedule/mode-HSM/notification summaries, a capability-vs-usage-gap insight, external-
+dependency blast radius) is inference from structure the app already has. This is the one
+gap none of that closes: why a node exists or what the user actually wants, which is not
+derivable from the hub at all.
+
+Two precedents already exist to build on rather than starting fresh:
+
+- The Device Icons panel already has a `note` field, wired end-to-end through UI, saved state,
+  and the export schema (`deviceIconOverrides[].note`) - but scoped narrowly to "why did I
+  override this icon", and devices only, not apps. Generalising it (usable without also
+  setting an icon override, and available for apps too) is a smaller lift than a new field.
+- External systems and Pivot tables already prove the pattern of an editable table panel whose
+  edits persist server-side and appear in the export.
+
+Two UX shapes discussed, not mutually exclusive - recommended to share one backing state
+rather than build as two separate features:
+
+- Quick-add at the per-node click-through panel (flow/Insights/inert panel) - low friction,
+  capture a thought while already looking at that node.
+- A table view, a 5th panel button alongside the existing four - better for reviewing/bulk-
+  editing everything written so far.
+
+Storage should follow the External systems/Device Icons convention: server-side app `state`
+with GET/SAVE ajax endpoints, not `localStorage` - notes need to survive a browser change and
+appear in the export, the same reason those two already work that way.
+
+Not scoped further than this; needs its own design pass (quick-add panel layout, table panel
+layout, and the state shape both would read/write) before implementation.
+
 ### P3 - Associate Hub Variables with Variable Connector devices
 
 **Source:** JimB functional review, 2026-08-16; Hub Variable lineage specification section 12;
