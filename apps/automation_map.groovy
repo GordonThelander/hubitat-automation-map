@@ -3721,7 +3721,7 @@ ${santaHtml}
     <option value="rulelinks">Rule to rule only</option>
     <option value="depends">External systems only</option>
   </select></label>
-  <button id="resetBtn" type="button">Show all</button>
+  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214;">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
   <button id="pivotBtn" type="button">Pivot tables</button>
@@ -6221,7 +6221,61 @@ deviceSelect.addEventListener('change', function () {
   applyFilters();
 });
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
+// Short synthesised confirmation tone, agreed with Gordon 2026-08-19 - no
+// audio file, no external asset, consistent with the rest of this page being
+// fully self-contained. Deliberately click-only, not on page open: browsers
+// block audio autoplay until the user has interacted with the page, and a
+// click is exactly the interaction that satisfies that, while page load is
+// not - discussed and dropped rather than shipping something that would
+// silently fail to play in some browsers with nothing telling the user why.
+// One note of the sequence below - its own oscillator/gain pair, since a
+// single node can only ever play one pitch once.
+function playTone(ctx, freq, startOffset, duration, peakGain) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  const t0 = ctx.currentTime + startOffset;
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(peakGain, t0 + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + duration);
+}
+
+function playShowAllSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // C5, E5 quick and quiet, then G5+C6 together, louder and held longer -
+    // a rising major-triad arpeggio landing on a bright two-note chord, the
+    // classic "ta-da" shape rather than a flat single beep.
+    playTone(ctx, 523.25, 0, 0.12, 0.12);
+    playTone(ctx, 659.25, 0.1, 0.12, 0.12);
+    playTone(ctx, 783.99, 0.2, 0.5, 0.16);
+    playTone(ctx, 1046.5, 0.2, 0.5, 0.12);
+  } catch (e) { /* Web Audio unsupported or blocked - never breaks the click itself */ }
+}
+
 document.getElementById('resetBtn').addEventListener('click', function () {
+  playShowAllSound();
+  // Deliberately NOT a real click on the legend's own toggle header - found
+  // live that reusing it also overwrote the saved amLegendCollapsed
+  // preference, so a normally-collapsed legend stayed force-expanded on
+  // every later page load too, not just this one view. This updates the
+  // same two things a click does (the CSS class, the arrow glyph/aria-state)
+  // without the localStorage write, so the expand is visual-only for this
+  // Show all and the user's own saved preference survives untouched.
+  const legendEl = document.getElementById('legend');
+  if (legendEl && legendEl.classList.contains('collapsed')) {
+    legendEl.classList.remove('collapsed');
+    const legendToggle = document.getElementById('legend-toggle');
+    if (legendToggle) {
+      legendToggle.innerHTML = '&#9662;';
+      legendToggle.setAttribute('aria-expanded', 'true');
+    }
+  }
   exitToWholeMap();
   // Re-frame the whole map, the same fit() the opening view is built from.
   //
@@ -6237,6 +6291,25 @@ document.getElementById('resetBtn').addEventListener('click', function () {
   // opening sequence, and changing either one is what broke the opening
   // animation twice. Nothing outside this click is affected.
   network.fit({ animation: false });
+  // fit() itself already pads 10% around the nodes' bounding box (vis-
+  // network's own margin, not something this app controls), but Gordon found
+  // that still too tight after a focused view. Backed out further on top of
+  // fit()'s own result, same centre, just a smaller scale. 0.6 measured live
+  // against the actual opening scale (fit() landed at 0.295 one run, the
+  // real opening scale was 0.171 - a 0.58 ratio), not guessed; physics
+  // settles into a different bounding box each time, so the exact ratio
+  // needed will still vary click to click, this just gets much closer on
+  // average than the earlier 0.8 did.
+  //
+  // Position and scale captured and passed together in one moveTo call,
+  // not scale alone relying on moveTo's own "default position to the
+  // current one" behaviour - found live that the implicit default drifted
+  // the centre off what fit() had just set, since it is resolved through a
+  // canvas-to-view conversion that itself depends on the scale being
+  // changed in the same call. Being explicit about both removes that.
+  const fitPosition = network.getViewPosition();
+  const fitScale = network.getScale();
+  network.moveTo({ position: fitPosition, scale: fitScale * 0.6, animation: false });
 });
 // A separate site Automation Map does not control, so it opens in a new tab
 // rather than replacing this one - the map is mid-session state (whatever is
