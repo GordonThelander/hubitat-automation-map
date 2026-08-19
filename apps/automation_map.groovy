@@ -576,7 +576,7 @@ void startScan() {
     // that block sits after the scanError abort check, so on a failed
     // enumeration it never runs and this count would otherwise still be
     // whatever an unrelated earlier scan left behind, read back out through
-    // compatibilitySummary/scanStatusJson/Export JSON as if it described
+    // compatibilitySummary/scanStatusJson/AI friendly export as if it described
     // the scan that just failed to even start.
     state.deviceIdsUnreadable = []
     state.scanQueue = fetchAllDeviceIds()
@@ -3419,7 +3419,7 @@ String buildMapHtml() {
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
     String jsonStr = jsonForScriptEmbed(graph)
-    // For the Export JSON feature - scan provenance the client-side GRAPH
+    // For the AI friendly export feature - scan provenance the client-side GRAPH
     // blob above does not carry on its own. Built the same safe way GRAPH
     // is (JsonOutput, not manual string splicing) so an exception message
     // in scanError can never break out of the embedding script tag.
@@ -3712,8 +3712,8 @@ ${santaHtml}
   <button id="extBtn" type="button">External systems</button>
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
-  <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">Export JSON</button>
-  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community Utilities</button>
+  <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
@@ -5812,7 +5812,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // so a consumer reading externalSystemDeclarations/deviceIconOverrides in
   // isolation is told outright rather than misreading empty as confirmed-empty.
   (failedFetches || []).forEach(function (field) {
-    limitations.push('Could not reach the hub for ' + field + ' when this file was generated - it is null below, not confirmed empty. Re-run Export JSON to try again.');
+    limitations.push('Could not reach the hub for ' + field + ' when this file was generated - it is null below, not confirmed empty. Re-run AI friendly export to try again.');
   });
 
   // Additive field, not a breaking schema change - an older consumer that has

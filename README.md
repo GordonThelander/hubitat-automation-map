@@ -52,7 +52,7 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
-**Export JSON.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
+**AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
 
 ## What "app" means here
 
