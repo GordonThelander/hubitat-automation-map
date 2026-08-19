@@ -6004,7 +6004,15 @@ document.getElementById('pivotClose').addEventListener('click', function () {
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
 // dropping the user straight into a few hundred nodes with no starting point.
+// Shown once ever, not once per page load - same persisted-preference pattern
+// as the legend's own amLegendCollapsed, so a user who has already read this
+// does not see it again on every visit. Auto-hiding on a node click (see
+// focusNode()) is a separate, existing nicety and stays session-only,
+// unpersisted - only the explicit Got it button counts as "closed" here.
 (function () {
+  let dismissed = false;
+  try { dismissed = localStorage.getItem('amHintDismissed') === '1'; } catch (e) { }
+  if (dismissed) return;
   const hint = document.createElement('div');
   hint.id = 'hint';
   hint.innerHTML = '<b>Start here</b><br>' +
@@ -6014,7 +6022,10 @@ document.getElementById('pivotClose').addEventListener('click', function () {
     'Take your time to explore.' +
     '<div style="margin-top:12px"><button id="hintClose" type="button">Got it</button></div>';
   document.body.appendChild(hint);
-  document.getElementById('hintClose').addEventListener('click', function () { hint.style.display = 'none'; });
+  document.getElementById('hintClose').addEventListener('click', function () {
+    hint.style.display = 'none';
+    try { localStorage.setItem('amHintDismissed', '1'); } catch (e) { }
+  });
 })();
 
 const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
