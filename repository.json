@@ -1,0 +1,17 @@
+{
+  "author": "Gordon Thelander",
+  "gitHubUrl": "https://github.com/GordonThelander",
+  "payPalUrl": "",
+  "packages": [
+    {
+      "name": "Automation Map (Dev)",
+      "category": "Utility",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/packageManifest.json",
+      "description": "Private test channel tracking the dev branch. Installs alongside the release version under a separate name. Not for general installation.",
+      "tags": [
+        "Tools & Utilities"
+      ],
+      "id": "42cf37df-8a8d-4041-a235-d76c9610e57e"
+    }
+  ]
+}
