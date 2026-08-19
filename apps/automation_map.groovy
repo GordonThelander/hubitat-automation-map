@@ -6079,7 +6079,14 @@ function exitToWholeMap() {
   appSelect.value = '__all__';
   deviceSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
-  flowPanel.style.display = 'none';
+  // All four floating panels, not just flowPanel - this only ever closed
+  // Insights/flow, so External systems, Pivot tables or Device icons could be
+  // left open through a Show all/Exit. Went unnoticed while the legend stayed
+  // fully hidden whenever any panel was open; once the collapsed legend was
+  // fixed to stay visible through that, the leftover open panel became
+  // visible alongside it - reported as "legend expands", but the actual
+  // cause is this, not the legend logic itself.
+  [flowPanel, extPanel, pivotPanel, iconsPanel].forEach(function (p) { if (p) p.style.display = 'none'; });
   syncLegendVisibility();
   // A real history entry, not just a local reset - so Back afterward returns
   // to wherever Exit was clicked from, correctly, by the same mechanism as
