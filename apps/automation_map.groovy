@@ -80,13 +80,6 @@ import java.util.regex.Pattern
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
 @Field static final String APP_VERSION = '2.0.0'
-// automation_map.groovy is meant to be byte-identical between dev and main
-// (per README: only the app name, package id and raw URLs differ) - so an
-// asset URL baked into this file cannot hardcode either branch by name
-// without breaking on the other one after a merge. Reusing APP_NAME's own
-// "(Dev)" marker, the one thing this file already legitimately varies by
-// branch, rather than inventing a second, separate signal for the same fact.
-@Field static final String REPO_BRANCH = APP_NAME.contains('(Dev)') ? 'dev' : 'main'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -6268,11 +6261,15 @@ function playSynthesizedFallback() {
 
 // "Frying Pan Hit" by Mike Koenig, soundbible.com, CC BY 3.0 (see README
 // Credits). Hosted in this repo rather than embedded as a data URI to keep
-// this already-large page from growing further - REPO_BRANCH (Groovy side)
-// resolves to whichever branch this exact file is actually running on, so
-// this one URL is correct on both dev and main without the source differing
-// between them.
-const SHOW_ALL_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${REPO_BRANCH}/assets/show-all-sound.mp3';
+// this already-large page from growing further - the branch below resolves
+// to whichever branch this exact file is actually running on (from
+// APP_NAME's existing "(Dev)" marker, the one thing this file already
+// legitimately varies by branch), so this one URL is correct on both dev
+// and main without the source differing between them. Computed inline here
+// rather than as its own @Field: a static field's initializer referencing
+// another static field (APP_NAME) compiles fine locally but is rejected
+// live by Hubitat's own sandbox - found live, not caught by groovyc.
+const SHOW_ALL_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/assets/show-all-sound.mp3';
 let showAllAudio = null;
 function playShowAllSound() {
   try {
