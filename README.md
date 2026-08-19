@@ -155,6 +155,8 @@ The app exposes two endpoints, using the same access token as the map link, usef
 
 **Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
 
+**"Frying Pan Hit" sound effect** by Mike Koenig, via [SoundBible.com](https://soundbible.com/1004-Frying-Pan-Hit.html), licensed under [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/). Plays on the Show all button.
+
 ## Branches
 
 `main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.

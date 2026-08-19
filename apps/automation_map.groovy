@@ -80,6 +80,13 @@ import java.util.regex.Pattern
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
 @Field static final String APP_VERSION = '2.0.0'
+// automation_map.groovy is meant to be byte-identical between dev and main
+// (per README: only the app name, package id and raw URLs differ) - so an
+// asset URL baked into this file cannot hardcode either branch by name
+// without breaking on the other one after a merge. Reusing APP_NAME's own
+// "(Dev)" marker, the one thing this file already legitimately varies by
+// branch, rather than inventing a second, separate signal for the same fact.
+@Field static final String REPO_BRANCH = APP_NAME.contains('(Dev)') ? 'dev' : 'main'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -6245,17 +6252,39 @@ function playTone(ctx, freq, startOffset, duration, peakGain) {
   osc.stop(t0 + duration);
 }
 
-function playShowAllSound() {
+// Kept as a fallback, not removed - if the MP3 has not reached this branch
+// yet (pushed to hub before pushed to git, or a raw.githubusercontent.com
+// hiccup), a click should still make some sound rather than silently do
+// nothing.
+function playSynthesizedFallback() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    // C5, E5 quick and quiet, then G5+C6 together, louder and held longer -
-    // a rising major-triad arpeggio landing on a bright two-note chord, the
-    // classic "ta-da" shape rather than a flat single beep.
     playTone(ctx, 523.25, 0, 0.12, 0.12);
     playTone(ctx, 659.25, 0.1, 0.12, 0.12);
     playTone(ctx, 783.99, 0.2, 0.5, 0.16);
     playTone(ctx, 1046.5, 0.2, 0.5, 0.12);
   } catch (e) { /* Web Audio unsupported or blocked - never breaks the click itself */ }
+}
+
+// "Frying Pan Hit" by Mike Koenig, soundbible.com, CC BY 3.0 (see README
+// Credits). Hosted in this repo rather than embedded as a data URI to keep
+// this already-large page from growing further - REPO_BRANCH (Groovy side)
+// resolves to whichever branch this exact file is actually running on, so
+// this one URL is correct on both dev and main without the source differing
+// between them.
+const SHOW_ALL_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${REPO_BRANCH}/assets/show-all-sound.mp3';
+let showAllAudio = null;
+function playShowAllSound() {
+  try {
+    if (!showAllAudio) {
+      showAllAudio = new Audio(SHOW_ALL_SOUND_URL);
+      showAllAudio.volume = 0.6;
+      showAllAudio.addEventListener('error', playSynthesizedFallback, { once: true });
+    }
+    showAllAudio.currentTime = 0;
+    const p = showAllAudio.play();
+    if (p && p.catch) p.catch(playSynthesizedFallback);
+  } catch (e) { playSynthesizedFallback(); }
 }
 
 document.getElementById('resetBtn').addEventListener('click', function () {
