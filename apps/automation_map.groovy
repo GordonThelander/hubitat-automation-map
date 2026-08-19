@@ -3501,6 +3501,15 @@ String buildMapHtml() {
   #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
   #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
+  /* Sits behind the network canvas (earlier in DOM order, no z-index of its
+     own, and vis-network's own canvas has no background fill so empty space
+     around the graph shows whatever is layered underneath it). Fixed, not
+     absolute - pinned to the middle of the actual screen regardless of where
+     physics settles the graph's own bounding box, per Gordon's own framing
+     of this as "centre of the animation" rather than a specific graph node. */
+  #hubWatermark { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+                  max-width:38vw; max-height:38vh; opacity:0.10; pointer-events:none;
+                  user-select:none; }
   /* First shipped as a bare 1em glyph with no background - reported as "had to
      go hunting for it". A visible pill with its own border and a hover state
      reads as a button; a lone triangle in a wall of text does not. */
@@ -3734,6 +3743,7 @@ ${santaHtml}
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
+<img id="hubWatermark" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/hub-from-side.png" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
