@@ -5,7 +5,7 @@
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
 
-This document specifies the JSON file produced by **Export JSON**. The file is intended for
+This document specifies the JSON file produced by **AI friendly export**. The file is intended for
 an AI assistant, analysis program, documentation generator, or future MCP server. It is a
 static configuration snapshot, not a command interface and not live device state.
 
