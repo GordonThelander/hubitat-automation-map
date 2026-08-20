@@ -266,10 +266,10 @@ installer.
 Fix: raise `minimumHEVersion` to the oldest firmware actually tested, or note in the README
 that 2.3.0 is a floor for the core map only.
 
-**Partially addressed 2026-08-21.** README now carries the floor caveat: 2.3.0 is confirmed
-for the core map, VRB 2.0 decoding and `/hub2/appsList` discovery are not separately
-version-tested. `minimumHEVersion` itself is unchanged, since raising it to a specific number
-needs Gordon to say what firmware he's actually tested on, not a guess.
+**Fixed 2026-08-21.** Gordon confirmed testing was only ever done on 2.5.1.152. Manifest raised
+to `"2.5.1"` (HPM's 3-part semver, matching every other package in this portfolio, not the
+4-segment build number). README's requirement list now states the tested platform directly
+instead of caveating an unverified floor.
 
 ### P1 - README understates what the browser fetches, and two small manifest/doc mismatches
 
