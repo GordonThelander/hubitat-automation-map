@@ -203,7 +203,19 @@ Map main() {
     // from this page would set itself running and then never execute a single
     // batch. So the scan is not offered at all until installation completes.
     boolean ready = app.installationState == 'COMPLETE'
-    if (ready && !state.accessToken) createAccessToken()
+    String oauthError = null
+    if (ready && !state.accessToken) {
+        try {
+            createAccessToken()
+        } catch (Exception e) {
+            // OAuth is off for this app, so createAccessToken() throws. Without this
+            // catch the whole page threw here - the first screen a hand-installer sees
+            // if they skip the OAuth step, with no indication what went wrong.
+            oauthError = 'Automation Map needs OAuth enabled to create the map link. In the ' +
+                "hub's Apps Code editor, open Automation Map, click OAuth -> Enable OAuth " +
+                'in App -> Update, then reopen this page.'
+        }
+    }
     clearAbandonedScan()
 
     // A full scan takes a couple of minutes. Without this the page looked frozen
@@ -218,6 +230,9 @@ Map main() {
         // the first scan.
         if (ready) {
             section {
+                if (oauthError) {
+                    paragraph "<b style='color:#c0392b'>${oauthError}</b>"
+                }
                 // The scan is started by fetching the app's own /scan endpoint
                 // rather than from a Hubitat button. runIn() called out of
                 // appButtonHandler does not reliably schedule anything: on a
@@ -707,7 +722,10 @@ void scanDeviceBatch() {
     Map labels = state.deviceLabels as Map
     Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
     Map roomsByDev = (state.deviceRooms ?: [:]) as Map
-    List appIds = state.appIds as List
+    // LinkedHashSet, not List: appId membership is checked once per device app
+    // reference across the whole scan, and a linear contains() over a growing
+    // List made that quadratic. Preserves insertion order like the List did.
+    Set appIds = new LinkedHashSet(state.appIds as List)
     int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
 
     // This app's own device picker references every selected device, which would
@@ -732,7 +750,7 @@ void scanDeviceBatch() {
             capsByDev[devId] = info.capabilities
             if (info.room) roomsByDev[devId] = info.room
             (info.appIds as List).each { String appId ->
-                if (appId != selfId && !appIds.contains(appId)) appIds << appId
+                if (appId != selfId) appIds << appId
             }
         }
     }
@@ -741,7 +759,7 @@ void scanDeviceBatch() {
     state.deviceCapabilities = capsByDev
     state.deviceRooms = roomsByDev
     state.deviceIdsUnreadable = unreadable
-    state.appIds = appIds
+    state.appIds = appIds as List
     state.scanQueue = queue.drop(size)
     state.scanDone = (state.scanDone ?: 0) + size
 }
@@ -754,13 +772,15 @@ void startAppPhase() {
     // Order matters only for readability of the queue. Device-found ids stay
     // first, so the apps that will actually be drawn are read first and a scan
     // interrupted part way through has the useful half.
-    List appIds = state.appIds as List
+    // LinkedHashSet, not List: same quadratic-contains() fix as scanDeviceBatch,
+    // and it preserves the device-found-ids-first order this comment relies on.
+    Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
     int fromDevices = appIds.size()
     fetchInstalledAppIds().each { String appId ->
-        if (appId != selfId && !appIds.contains(appId)) appIds << appId
+        if (appId != selfId) appIds << appId
     }
-    state.appIds = appIds
+    state.appIds = appIds as List
     // Kept for the scan summary. The count is the honest way to describe what
     // this bought: on a hub where every app touches a device it is zero, and
     // saying so is better than implying the map gained something it did not.
@@ -2530,7 +2550,9 @@ Map buildGraph() {
 
     Map<String, Map> nodes = [:]
     List<Map> edges = []
-    List<String> seen = []
+    // Set, not List: dedup key membership is checked once per candidate edge,
+    // and a linear contains() over a growing List made the whole build quadratic.
+    Set<String> seen = new LinkedHashSet<>()
     Map flows = [:]
     Map nameCache = [:]
     Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
@@ -3022,8 +3044,16 @@ String hostFromUrl(String url) {
         if (i >= 0 && i < cut) cut = i
     }
     s = s.substring(0, cut)
-    int colon = s.lastIndexOf(':')
-    if (colon > 0 && !s.contains(']')) s = s.substring(0, colon)
+    int bracket = s.lastIndexOf(']')
+    if (bracket >= 0) {
+        // Bracketed IPv6 literal, e.g. [::1]:8080 - a port colon only ever
+        // appears after the closing bracket, never inside the literal itself.
+        int portColon = s.indexOf(':', bracket)
+        if (portColon > bracket) s = s.substring(0, portColon)
+    } else {
+        int colon = s.lastIndexOf(':')
+        if (colon > 0) s = s.substring(0, colon)
+    }
     s = s.trim().toLowerCase()
     return s ?: null
 }
@@ -4796,7 +4826,7 @@ function showInertPanel(node) {
       const when = j.next ? new Date(j.next).toLocaleString(undefined,
         { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'unknown';
       html += '<li>Next run: ' + when +
-        (j.cron ? '<br><span class="sub">Schedule: <code>' + j.cron + '</code></span>' : '') + '</li>';
+        (j.cron ? '<br><span class="sub">Schedule: <code>' + extEsc(j.cron) + '</code></span>' : '') + '</li>';
     });
     html += '</ul>';
   }
