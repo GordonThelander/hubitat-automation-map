@@ -188,6 +188,10 @@ sees.
 
 Fix: wrap in try/catch, render a short paragraph naming the two clicks that fix it.
 
+**Fixed 2026-08-21.** `main()` now catches the exception from `createAccessToken()` and shows
+a paragraph naming the two clicks (Apps Code -> Automation Map -> OAuth -> Enable OAuth in
+App -> Update) instead of throwing. The rest of the page still renders below it.
+
 ### P1 - Runtime assets hotlinked from raw.githubusercontent.com
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
@@ -219,6 +223,11 @@ Fix: swap `List` for a `Set` (or a `Map` keyed the same way) at all 8 sites - dr
 behaviour, no state-shape change. Worth doing regardless of the larger architecture item, since
 it's cheap and this is the execution most at risk of timing out.
 
+**Fixed 2026-08-21.** All 8 sites now use `LinkedHashSet`, preserving the existing insertion
+order (`appIds`' device-found-ids-first ordering, relied on by the scan summary count) while
+making membership checks O(1). `state.appIds` is still written back as a `List`, so its stored
+shape is unchanged.
+
 ### P1 - Supporting Docs index references deleted files, omits three that exist
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
@@ -236,6 +245,11 @@ deletions were deliberate and correct; only the index is stale.
 
 Fix: regenerate the Contents table from the current directory listing.
 
+**Fixed 2026-08-21.** Contents table now lists the 3 previously-omitted files and drops the 2
+deleted ones. The `registry-pack-v0.3` and Status sections, which had the same staleness
+independently (one referenced the deleted registry JSON by name, the other the deleted
+rule-to-rule draft by name), are corrected too.
+
 ### P1 - minimumHEVersion is below the app's real floor
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
@@ -251,6 +265,11 @@ installer.
 
 Fix: raise `minimumHEVersion` to the oldest firmware actually tested, or note in the README
 that 2.3.0 is a floor for the core map only.
+
+**Partially addressed 2026-08-21.** README now carries the floor caveat: 2.3.0 is confirmed
+for the core map, VRB 2.0 decoding and `/hub2/appsList` discovery are not separately
+version-tested. `minimumHEVersion` itself is unchanged, since raising it to a specific number
+needs Gordon to say what firmware he's actually tested on, not a guess.
 
 ### P1 - README understates what the browser fetches, and two small manifest/doc mismatches
 
@@ -269,6 +288,12 @@ just describes the older, narrower rule.
 
 Fix: list the actual hosts in Requirements and limitations (or make it moot by fixing the CDN
 and asset-hotlinking items above); update the two doc/code mismatches - both are one-line edits.
+
+**Fixed 2026-08-21**, except the asset-hotlinking item itself, which is unstarted. README now
+lists cdnjs and GitHub alongside the CDN, and corrects the Rule Machine engine-gating claim to
+match the code (any Rule Machine engine for Hub Variable edges, no engine gate at all for rule
+links). `dateReleased` already matched its last commit day by the time this was checked, so
+that half of the pairing needed no change.
 
 ### P2 - "Community Utilities" button on the map page
 
@@ -377,6 +402,9 @@ correct.
 Fix: when `]` is present, look for the last `:` after it rather than skipping the strip
 entirely.
 
+**Fixed 2026-08-21.** `hostFromUrl()` now looks for a colon after the closing bracket when one
+is present, instead of skipping port-stripping for every bracketed host.
+
 ### P2 - One unescaped value in an otherwise consistently-escaped page
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
@@ -389,6 +417,9 @@ through the safe path. The source is the hub's own scheduler, so this isn't a li
 it's the kind of gap that survives a refactor into somewhere it does matter.
 
 Fix: wrap in `extEsc()` like its neighbours.
+
+**Fixed 2026-08-21.** The cron string now goes through `extEsc()` before `innerHTML`, same as
+the timestamp beside it.
 
 ### P2 - Saving a preference can fire unbounded HTTP inside a web request
 
