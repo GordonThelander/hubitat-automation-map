@@ -208,6 +208,12 @@ lags `dev` on GitHub, and both buttons fall back to the same synthesized tone.
 Fix: File Manager, same as the CDN item. The watermark is the single largest asset on the page
 and is purely decorative.
 
+**Partially addressed 2026-08-20.** The Show all sound is removed entirely (function, constants,
+call site, credit line, and the orphaned mp3 all deleted) rather than fixed - simplest immediate
+option, and it also fully retires the "plays the wrong sound" bug since there is no longer a
+sound to get wrong. The watermark and the Community utilities sound are still hotlinked from
+`raw.githubusercontent.com` exactly as described above; this item stays open for those two.
+
 ### P1 - Quadratic edge/device dedup inside the execution that already dies on large hubs
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
@@ -438,6 +444,15 @@ Fix: answer the POST and rebuild on a `runIn(1, ...)`, the pattern the scan chai
 Fully resolved if the graph-derivation architecture item below is taken on: saving a
 declaration becomes a write plus a client-side re-derive, no hub work beyond persisting the
 row.
+
+**Fixed 2026-08-20 - the immediate fix, not the architecture change.** Both handlers now call
+`runIn(1, 'rebuildStoredGraph')` instead of running `buildGraph()` inline; the new
+`rebuildStoredGraph()` helper sits right after `buildGraph()`'s own definition. Confirmed safe
+to defer: neither `externalsJson()` nor `iconOverridesJson()` (the JSON each handler returns)
+reads `state.graph` - both derive their response from `state.appInfo`/`state.deviceLabels`/the
+just-saved preference directly, so the response is unaffected by the rebuild happening a second
+later. The graph-derivation architecture item below is still open and would remove this class of
+problem entirely rather than defer it.
 
 ### P2 - No shared request wrapper; seven call sites repeat the same contract
 
