@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.0'
+@Field static final String APP_VERSION = '2.0.1'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -616,7 +616,17 @@ void startScan() {
     // job scheduled, just a heartbeat that stopped. The old graph is unusable
     // during a scan anyway, since graphVersion is cleared on the line above.
     state.graph = null
+    // All three unscheduled together. Only scanBatch is guaranteed pending at
+    // any given moment, but a scan restarted while a previous one's last
+    // batch had already scheduled fetchRegistry/finishScan otherwise leaves
+    // those two jobs orphaned - one fires mid-way into THIS scan, builds a
+    // graph from whatever appInfo the new scan has managed to populate so
+    // far, and stamps it complete. The map then reads as finished while the
+    // real scan is still running, silently, with nothing on screen to say
+    // so.
     unschedule('scanBatch')
+    unschedule('fetchRegistry')
+    unschedule('finishScan')
     runIn(1, 'scanBatch')
 }
 
@@ -3342,7 +3352,18 @@ Map scanMapping() {
     // Hubitat returned its HTML error page.
     log.warn "${app.label}: /scan endpoint reached"
     try {
-        startScan()
+        // Guarded the same way scheduledScanHandler() already is - a repeat
+        // GET while a scan is running must not restart it. Restarting orphans
+        // the previous scan's own fetchRegistry/finishScan jobs, which is
+        // exactly the stale-watchdog failure startScan()'s own unschedule()
+        // calls now guard against; skipping here closes the other half of
+        // that same gap. Answering with the current status instead of an
+        // error keeps the page's poll loop working unchanged either way.
+        if (state.scanRunning) {
+            log.info "${app.label}: /scan reached while a scan is already running, not restarting"
+        } else {
+            startScan()
+        }
         // Inside the try, not after it. Left outside, an exception in
         // scanStatusJson() or render() escaped this handler entirely and
         // produced the same unexplained HTML page the handler exists to stop.
@@ -3472,9 +3493,19 @@ String buildMapHtml() {
 <!-- Pinned to exact versions, not 'latest'/'@10' - an upstream release could
      otherwise change behaviour under this app with no corresponding commit
      here to explain why the map suddenly looks or acts differently. Bump
-     deliberately, not by whatever the CDN resolves to on a given day. -->
-<script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
+     deliberately, not by whatever the CDN resolves to on a given day.
+
+     integrity is pinned alongside the version for the same reason a version
+     pin alone was not enough: this page is served from the hub's own origin
+     with a live OAuth access token in the URL, so anything that executes
+     here can read that token and reach the hub admin UI same-origin. A
+     version number pins which release SHOULD load; integrity pins the exact
+     bytes that actually did, so a compromised or tampered CDN response fails
+     closed (the browser refuses to execute it) instead of running with the
+     hub's own trust. Regenerate both hashes if either version above is ever
+     bumped - they are tied to these exact files, not the package version. -->
+<script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js" integrity="sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP" crossorigin="anonymous"></script>
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
