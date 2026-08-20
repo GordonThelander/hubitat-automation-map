@@ -2,7 +2,7 @@
   "packageName": "Automation Map",
   "author": "Gordon Thelander",
   "version": "2.0.1",
-  "minimumHEVersion": "2.3.0",
+  "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-08-20",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
