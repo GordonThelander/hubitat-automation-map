@@ -13,8 +13,9 @@ where the backlog referenced them and they would eventually have been lost.
 | --- | --- |
 | `rule_machine_5_1_storage_format.md` | Rule Machine 5.1 documentation (**written**, ready to publish) |
 | `registry-pack-v0.3/` | Integration registry |
-| `Rule_Machine_5_1_Execution_Explained_Draft.md` | Rule Machine 5.1 documentation (superseded, see below) |
-| `hubitat_automation_map_rule_to_rule_implementation.md` | Rule-to-rule: device-mediated links |
+| `rule_machine_execution_and_cross_rule_causality.md` | Rule Machine 5.1 documentation and rule-to-rule links (superseded source material, see below) |
+| `ai_export_spec.md` | AI-friendly Export JSON (implemented contract, export schema 3) |
+| `hpm_scrape_spec.md` | Origin task spec for the package identity index now built and maintained in `GordonThelander/HPM_Manifest_Crawl` |
 
 ## rule_machine_5_1_storage_format.md
 
@@ -32,8 +33,10 @@ not documented anywhere.
 
 Generated 2026-08-11, originally distributed as `hubitat_automation_map_registry_pack_v0.3.zip`.
 
-- `hubitat_automation_map_app_integration_registry_v0.3.json` is the useful part: 101
-  entries, declarative `matchRules`, `dependencies[]` and `runtimeCriticality`.
+- The 101-entry `matchRules`/`dependencies[]`/`runtimeCriticality` registry this pack
+  originally shipped as `hubitat_automation_map_app_integration_registry_v0.3.json` was
+  deleted here in `c117b71`: the app now fetches it at scan time from the crawl repository
+  that builds and maintains it, so this folder no longer keeps a second copy to go stale.
 - `hubitat_automation_map_registry_method_and_rationale.md` and `explanation.md` are the
   design write-ups.
 - `hubitat_automation_map_device_driver_registry_v0.1.json` holds **3 device entries**. It
@@ -51,9 +54,9 @@ Deliberately not imported from the original archive:
 ## Status
 
 These are inputs, not decisions. Read `BACKLOG.md` first: it records what was assessed,
-what was rejected and why, and which parts are worth building. The
-`rule_to_rule_implementation.md` document in particular is roughly five times larger than
-what should be built, and its Phase 1 already shipped in 1.3.3.
+what was rejected and why, and which parts are worth building. The rule-to-rule
+implementation proposal folded into `rule_machine_execution_and_cross_rule_causality.md` was
+roughly five times larger than what should be built, and its Phase 1 already shipped in 1.3.3.
 
 ## Rule Machine 5.1 execution documentation
 
