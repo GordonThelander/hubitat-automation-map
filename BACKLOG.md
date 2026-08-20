@@ -9,7 +9,87 @@ Not shipped with the HPM package. Items here are agreed ideas awaiting a decisio
 Genuine defects affecting the v2.0.0 release, not feature requests. These jump the queue ahead
 of the prioritised candidates below.
 
-None open currently.
+**All three below fixed and shipped in 2.0.1, 2026-08-20.** Kept here rather than deleted, as
+the record of what shipped and why - see "Recently shipped" convention elsewhere in this file.
+
+### Fixed in 2.0.1 - repository.json on main advertised only the Dev package
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+`repository.json` on `main` lists a single package, `"Automation Map (Dev)"`, description
+`"Private test channel... Not for general installation"`, pointing at the `dev` branch's
+manifest. Anyone adding this repo's `main`-branch `repository.json` as a custom HPM repository
+therefore installs the Dev build with no release package available at all - almost certainly a
+dev-to-main merge artifact, and exactly the kind of thing the README's own "Branches" note
+("Only the app name, package id and the raw URLs differ between the branches") lets through
+unnoticed on the next merge. The documented install path (Install -> From a URL ->
+`packageManifest.json`) is unaffected.
+
+Fix: point `main`'s `repository.json` at the release package and `main`'s manifest. Add this
+file to the README's list of per-branch differences so a future merge doesn't reintroduce it.
+
+**Fixed 2026-08-20.** `repository.json` on `main` now lists the real "Automation Map" package
+pointing at `main/packageManifest.json`, with a fresh package id (`649b4714-efa5-48af-af93-
+6359ccd9537d`) distinct from both the app's own definition id and the Dev channel's package id.
+README's Branches section now calls out `repository.json` explicitly as a file that does not
+diff-merge cleanly, so this doesn't silently regress on the next dev-to-main merge.
+
+### Fixed in 2.0.1 - a stale finalization watchdog could publish a partial graph as finished
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact, two findings that share one root cause.
+
+`startScan()` (`apps/automation_map.groovy:619`) only calls `unschedule('scanBatch')`. The last
+batch of a scan additionally schedules `runIn(1, 'fetchRegistry')` and a `runIn(45,
+'finishScan')` watchdog (:680, :686). Starting a second scan inside that 45-second window
+orphans the watchdog, which then fires mid-way into the *new* scan, builds a graph from
+half-populated `appInfo`, stamps it with the current `GRAPH_SCHEMA`, and clears
+`scanRunning` - so the map reads as complete while the real scan is still running. It
+self-corrects when the live chain reaches its own `finishScan()`, but the window in between
+shows an incomplete map with no indication that it is one.
+
+The trigger vector is the second finding: `scanMapping()` (:3345, the `/scan` GET endpoint)
+calls `startScan()` unconditionally, with no `state.scanRunning` guard. Compare
+`scheduledScanHandler()` (:191-198), which checks `state.scanRunning` first and skips instead
+of restarting. A repeat GET to `/scan` while a scan is already running is exactly the trigger
+for the watchdog bug above.
+
+Fix both together: add the same `state.scanRunning` guard to `scanMapping()` that
+`scheduledScanHandler()` already uses (answer with current status instead of restarting), and
+add `unschedule('fetchRegistry')` / `unschedule('finishScan')` alongside the existing
+`unschedule('scanBatch')` in `startScan()`. Either alone narrows the window; both close it.
+
+**Fixed 2026-08-20.** `startScan()` now unschedules `fetchRegistry` and `finishScan` alongside
+`scanBatch`. `scanMapping()` now checks `state.scanRunning` before calling `startScan()`, same
+pattern as `scheduledScanHandler()`, and answers with current status instead of restarting.
+Verified live against the hub with a deliberate race: two `/scan` hits fired back-to-back
+produced identical `scanHeartbeat` timestamps, confirming the second call did not re-invoke
+`startScan()`.
+
+### Fixed in 2.0.1 - third-party CDN scripts ran same-origin with a live OAuth token, no SRI
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+The map page loads vis-network from unpkg and mermaid from jsdelivr (:3476-3477), plus an icon
+font from cdnjs (:3491). Versions are pinned, but no script tag has an `integrity` attribute
+(`grep -c 'integrity=' apps/automation_map.groovy` returns 0) and there is no CSP. The page is
+served from the hub's own origin with a live OAuth access token in the URL query string, so
+anything executing in that page can read the token and reach the hub admin UI same-origin. The
+risk isn't that a CDN compromise is likely - it's the blast radius if one ever happens.
+
+Fix: add `integrity` + `crossorigin="anonymous"` to both script tags (and the font), or vendor
+the libraries into the hub's File Manager and serve them locally - see also the related P7 item
+below, which would need this done anyway.
+
+**Fixed 2026-08-20**, script tags only - the cdnjs icon font has no SRI mechanism available for
+a CSS `@font-face` load, so it's unresolved by this fix and remains covered by the File Manager
+migration item further down. Both script tags now carry `integrity="sha384-..."` and
+`crossorigin="anonymous"`, hashes computed locally from the exact pinned files (not trusted from
+a third party). Verified live: both the main graph (vis-network) and a rule flowchart (mermaid)
+rendered correctly after the push, which a wrong hash would have blocked outright rather than
+degraded.
 
 ---
 
@@ -94,6 +174,101 @@ Acceptance criteria:
 - Reset restores all entries.
 - Search/filtering the picklist does not lose selections outside the current search result.
 - Decide explicitly whether selections persist only for the page session or across reloads.
+
+### P1 - Hand-install without OAuth throws instead of explaining
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+`main()` calls `createAccessToken()` unguarded on every page render (:206). A hand-installer
+who skips "OAuth -> Enable OAuth in App -> Update" (README step 2) gets an uncaught exception
+page on first render rather than the README's promised "without it there is no map link" - the
+failure is documented, but its on-screen shape isn't. This is the first screen a hand-installer
+sees.
+
+Fix: wrap in try/catch, render a short paragraph naming the two clicks that fix it.
+
+### P1 - Runtime assets hotlinked from raw.githubusercontent.com
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+Every map load pulls a 352 KB watermark PNG (:3746), and on click, two MP3s (:6327, :6346),
+straight from the GitHub raw host, branch chosen at render time by whether the app name
+contains `(Dev)`. Same trust class as the CDN-script urgent item above, plus
+`raw.githubusercontent.com` is rate-limited with no availability promise - it's not a delivery
+CDN. This is also the concrete mechanism behind the "Community utilities plays the Show all
+sound in prod" bug hit live 2026-08-20: `main`'s branch-selected asset URLs 404 whenever `main`
+lags `dev` on GitHub, and both buttons fall back to the same synthesized tone.
+
+Fix: File Manager, same as the CDN item. The watermark is the single largest asset on the page
+and is purely decorative.
+
+### P1 - Quadratic edge/device dedup inside the execution that already dies on large hubs
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact (all 8 call sites).
+
+`buildGraph()` dedupes with `List<String> seen` and `seen.contains(key)` at six call sites
+(:2684, :2701, :2727, :2776, :2837, :2878) - a linear scan per candidate edge, quadratic over
+the build. The device walk has the same shape via `appIds.contains()` (:725, :751). A few
+thousand edges means millions of string comparisons inside the exact execution that has already
+died once on a large hub (see the P1 architecture item below).
+
+Fix: swap `List` for a `Set` (or a `Map` keyed the same way) at all 8 sites - drop-in, identical
+behaviour, no state-shape change. Worth doing regardless of the larger architecture item, since
+it's cheap and this is the execution most at risk of timing out.
+
+### P1 - Supporting Docs index references deleted files, omits three that exist
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact (both deletions, all three omissions).
+
+`Supporting Docs/README.md`'s Contents table lists
+`Rule_Machine_5_1_Execution_Explained_Draft.md` and
+`hubitat_automation_map_rule_to_rule_implementation.md`, both deleted in `0d65e2b`; the Status
+section still sends readers to the latter by name. The registry-pack section calls
+`hubitat_automation_map_app_integration_registry_v0.3.json` "the useful part: 101 entries" -
+deleted in `c117b71` when the app switched to fetching the shared registry instead. Three files
+that do exist (`ai_export_spec.md`, `hpm_scrape_spec.md`,
+`rule_machine_execution_and_cross_rule_causality.md`) appear nowhere in the index. The
+deletions were deliberate and correct; only the index is stale.
+
+Fix: regenerate the Contents table from the current directory listing.
+
+### P1 - minimumHEVersion is below the app's real floor
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+`packageManifest.json` claims `minimumHEVersion: 2.3.0`. The app decodes Visual Rule Builder
+2.0 (`DECODED_ENGINES_TEXT`, :116) - a feature still in beta on the 2.4.x line - and depends on
+`/hub2/appsList` (`fetchInstalledAppIds()`, :976), whose availability on 2.3.0 isn't
+established anywhere in the repo. Degradation is graceful in both cases (undecoded engines are
+counted and reported; a missing app list falls back to device-led discovery), so this is an
+unverified claim rather than a crash risk - but it's still a claim the manifest makes to every
+installer.
+
+Fix: raise `minimumHEVersion` to the oldest firmware actually tested, or note in the README
+that 2.3.0 is a floor for the core map only.
+
+### P1 - README understates what the browser fetches, and two small manifest/doc mismatches
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact on both counts.
+
+README says "The graph and flowchart libraries load from a CDN," but doesn't mention cdnjs for
+the device icon font (:3491 - without it every icon node renders as a blank box) or GitHub for
+the watermark and two sound effects (:3746, :6327, :6346). Separately:
+`dateReleased: 2026-08-19` in the manifest predates same-day commits that landed after it on
+`main` (`41284c4`, `b39b59f`); and the README says rule-to-rule links and Hub Variable edges are
+read "from Rule Machine 5.1 only," while the code actually gates on `startsWith('Rule-')` (:1185
+- any Rule Machine engine) and runs `extractRuleLinks()` (:1168) against every app
+unconditionally. The gating comment at :1170-1184 explains that choice deliberately; the README
+just describes the older, narrower rule.
+
+Fix: list the actual hosts in Requirements and limitations (or make it moot by fixing the CDN
+and asset-hotlinking items above); update the two doc/code mismatches - both are one-line edits.
 
 ### P2 - "Community Utilities" button on the map page
 
@@ -186,6 +361,68 @@ distinguishing Hub Variable nodes from other node types at a glance (an icon con
 device icons), or about being able to select one Hub Variable and see every rule that reads or
 writes it highlighted together (a selection/highlight behaviour)? The acceptance criteria differ
 substantially between the two readings.
+
+### P2 - IPv6 loopback with a port is drawn as an external system
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+`hostFromUrl()` (:3002-3020) strips a trailing `:port` only when the host contains no `]` - a
+guard meant to protect bracketed IPv6 literals, which also disables port-stripping for them
+entirely (:3016). `http://[::1]:8080/hub/reboot` yields `[::1]:8080`, which misses
+`LOOPBACK_HOSTS` (`'[::1]'` with no port, :2998), so a rule posting to the hub over IPv6 is
+drawn as an outside dependency instead of "This hub." Unbracketed and no-port cases are both
+correct.
+
+Fix: when `]` is present, look for the last `:` after it rather than skipping the strip
+entirely.
+
+### P2 - One unescaped value in an otherwise consistently-escaped page
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+Escaping in this file is otherwise consistent (`jsonForScriptEmbed()`, `extEsc()`,
+`mermaidEscape()`). The one exception: a scheduled job's cron string is concatenated into
+`innerHTML` raw (:4768 - `'<code>' + j.cron + '</code>'`) while the timestamp beside it goes
+through the safe path. The source is the hub's own scheduler, so this isn't a live hole, but
+it's the kind of gap that survives a refactor into somewhere it does matter.
+
+Fix: wrap in `extEsc()` like its neighbours.
+
+### P2 - Saving a preference can fire unbounded HTTP inside a web request
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact.
+
+`buildGraph()` resolves unknown rule targets through `linkedRuleName()` -> `fetchAppName()`
+(:2401 -> :2364), a synchronous loopback `httpGet` per unresolved id, cached per build but
+unbounded in count. Both POST handlers - `/externals` and `/icon-overrides` - call
+`buildGraph()` directly (:3214, :3286). A user saving an external-system declaration on a hub
+with many dangling rule references pays for HTTP calls plus a full graph rebuild inside the
+request - the same inline-work pattern already documented (:661) as having killed
+`finishScan()` once.
+
+Fix: answer the POST and rebuild on a `runIn(1, ...)`, the pattern the scan chain already uses.
+Fully resolved if the graph-derivation architecture item below is taken on: saving a
+declaration becomes a write plus a client-side re-derive, no hub work beyond persisting the
+row.
+
+### P2 - No shared request wrapper; seven call sites repeat the same contract
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact (all 7 sites, distinct timeout literals as described).
+
+Every hub fetch is a bare `httpGet` with its own inline try/catch, its own `resp.data
+instanceof Map` guard, its own timeout literal (10 at :536/:1025/:2367, 20 at :1071, 30 at
+:818/:938/:979), and its own error-recording convention. The failure contract is defined seven
+times and isn't quite the same twice - `fetchAllDeviceIds()` needed an explicit "sets scanError
+itself and returns on failure" comment at its call site to be usable safely.
+
+Fix: one private wrapper taking path, timeout, and a name, returning a normalized `[ok, data,
+error]`, with the loopback base URL and the `instanceof Map` coercion in one place. Shortens all
+seven sites, makes timeout choice visible as data, and gives a single point to add retry or an
+async variant later.
 
 ### P3 - Search Hub Variables
 
@@ -284,6 +521,110 @@ Investigation required before implementation:
 - Test renamed, deleted and duplicated/stale connectors.
 - Decide whether the connector remains a normal device node, becomes an alias, or is visually
   grouped with the variable. Native Hub Variable support must not be blocked by this work.
+
+---
+
+## Architecture - hub/browser placement (from the 2026-08-20 code audit)
+
+The shared root cause behind several items above: the hub is a 4-core ARM Cortex-A53 sharing
+memory with every other app on the device; the browser rendering the map is, for this workload,
+an order of magnitude faster with effectively unbounded memory. The app already honours that
+split for most of its analysis (pivot tables, Insights, mermaid layout, focus/filter set
+operations, CSV export, the whole AI export payload are all computed client-side, from data the
+page already holds). These items are the places where derivable work stayed on the constrained
+side. Dividing line to apply to anything new: ship raw, let the page derive. Sorts, set
+differences, top-N, threshold classification, display-string shaping and percentage rollups
+belong in the browser; irregular-payload parsing and fetch coalescing belong on the hub. The
+scrape itself, response normalization, and rule-flow decoding (reverse-engineering Rule
+Machine's private storage layout) are correctly hub-side and should stay there.
+
+### P3 - Stop computing and persisting the derived graph on the hub
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact. This is a design change, not a bug fix - flagged by the auditor as
+the item that decides how far this app can scale, not something to rush.
+
+Three separate mitigations in this file address the same root cause: dropping the previous
+graph before a rescan rather than holding it (`state.graph = null`, :612-618), stripping flows
+from `appInfo` once they're in the graph because they were "61KB of a 244KB state... held
+twice" (:889-897), and fetching a slim registry because the canonical 165KB one "was enough to
+kill the execution that fetched it, silently." Nothing caps, sheds, or pages the graph itself,
+so a hub several times the current dev hub's size hits the same wall from a different
+direction - this is the app's real scaling limit, not CPU.
+
+The structural reason: state holds two representations of the same information at once.
+`state.appInfo` is the raw scrape; `state.graph` (written at :886, :3214, :3286) is
+`buildGraph()`'s derivation from it. Stripping flows afterward recovers part of the
+duplication, not the design that creates it. The quadratic-dedup and unbounded-inline-HTTP
+items above are both consequences of this one decision, not independent defects.
+
+Suggested direction: persist the raw scan result only, ship it to the page, and assemble the
+graph there - the page already builds far more complex derived views from this same data. Halves
+stored state, removes the dedup and inline-HTTP items above as a side effect (both POST
+handlers stop needing to rebuild anything server-side). Snapshot semantics are unaffected: the
+scan stays expensive and infrequent, the page still renders a fixed picture of the last one -
+only the derivation step moves. If too large to take on now, state a supported hub size in the
+README so the failure mode is expected rather than mysterious, and move the graph blob to File
+Manager (written once per scan, read only by the map page).
+
+### P3 - Move remaining display-shaping and classification logic to the browser
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact (all cited functions and locations). Natural companion to the item
+above; smaller in scope, cheapest to relocate first.
+
+Several derivations run in Groovy over data the page already receives, producing nothing the
+page couldn't produce itself: `autoDetectIconKeyForDevice()` (:2186) maps capabilities/name
+words to an icon key, running once per device node in `buildGraph()` and again per row in
+`iconOverridesJson()` (:3292) - twice per scan, over capability lists already shipped to the
+browser, which already has `iconsEffectiveKey()` layering the user's override on top. `nodeEntry()`
+(:2461) truncates labels for canvas rendering, but label width is a property of the viewport,
+which only the page knows. `inertReason()` (:2486) and `compatibilitySummary()` (:473) assemble
+presentation strings server-side; the latter has to (it renders the Hubitat settings page), the
+former doesn't (consumed only by the map page). Registry matching (`registryMatches()` :3048,
+`registryEntryState()` :3072, `externalsForType()` :3121, `classifiedTypes()` :3133) duplicates
+set-intersection logic the page already does in `extRowsFor()`/`extRegistryFor()`.
+
+Individually small; together they're the per-node cost multiplier on the graph build the items
+above are about, and each bakes a display decision into the stored graph, making it larger than
+it needs to be. Icon detection is the cheapest to relocate first - the rules are already a pair
+of static tables, and moving them means an icon-rule change no longer invalidates a stored
+graph.
+
+### P3 - Serve the map page from File Manager instead of a Groovy GString
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact. Independent of the items above, but arrives free if the CDN/asset
+security items are taken on, since those need somewhere local to serve from anyway.
+
+Roughly 310KB of the 368KB app file is the HTML/CSS/JS map page, emitted as one GString from
+`buildMapHtml()` (:3431-6433), plus a 29KB base64 PNG constant (:97). This creates a bug class
+specific to the arrangement: Groovy consumes backslash escapes before the browser ever sees the
+string, so a regex literal, a `join('\n')`, or an apostrophe can silently kill the page script.
+`check_template.sh` exists solely to guard against this, and its header records the bug landing
+three times already.
+
+The current arrangement buys real things - single-file install with no File Manager step, and
+no possibility of the page and the app drifting to different versions - so this is a trade-off,
+not an unqualified defect.
+
+Suggested direction: serving the page from File Manager removes the escaping hazard entirely,
+brings the page under `node --check`, and cuts the Groovy file to roughly a sixth of its size.
+It's also a prerequisite for the cleanest fix to the CDN-integrity and asset-hotlinking items
+above, which need somewhere local to serve libraries/assets from - so if those are taken on,
+this comes as part of that work rather than extra. Cost: a two-file deploy and a version check
+between them.
+
+### P3 - Registry fetch is a synchronous blocking HTTP call (optional)
+
+**Source:** external static code audit (community, 2026-08-20). Verified against the file
+directly - confirmed exact. Auditor's own framing: "a note, not a defect."
+
+`fetchRegistry()` (:818) does a blocking internet `httpGet` with `timeout: 30`. Well contained -
+its own scheduled execution, a watchdog behind it, failure is explicitly non-fatal - so this is
+low priority. `asynchttpGet` would remove the whole class of risk rather than fence it.
+
+Worth doing only if the registry grows or moves off GitHub - not urgent on its own.
 
 ---
 

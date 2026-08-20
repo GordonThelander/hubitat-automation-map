@@ -171,4 +171,4 @@ To use it, add this as a custom repository in your own HPM:
 https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/repository.json
 ```
 
-Changes are made and tested on `dev`, then merged to `main` for release. Only the app name, package id and the raw URLs differ between the branches.
+Changes are made and tested on `dev`, then merged to `main` for release. Only the app name, package id, the raw URLs, and each branch's own `repository.json` differ between the branches - check `repository.json` specifically after every merge, since it does not diff-merge cleanly and has previously ended up on `main` still pointing at the Dev package.
