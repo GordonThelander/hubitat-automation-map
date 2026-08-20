@@ -2916,6 +2916,23 @@ Map buildGraph() {
     return [nodes: nodes.values().toList(), edges: edges, flows: flows]
 }
 
+// Scheduled rather than called inline from a save handler, for the same reason
+// the scan chain schedules its own graph build instead of running it in the
+// batch that finishes the scan: buildGraph() can make its own loopback HTTP
+// calls resolving unresolved rule-to-rule targets (linkedRuleName ->
+// fetchAppName), unbounded in count on a hub with many dangling references.
+// Doing that inside the web request that handles a POST leaves the browser
+// waiting on hub-to-hub HTTP calls it has no reason to know about, for a
+// request that is otherwise just persisting a row. Scheduling it 1 second
+// out, the same pattern scanBatch already uses for fetchRegistry, answers the
+// POST immediately and lets the rebuild happen off the request entirely.
+// Runs by handler name, so two saves close together simply reschedule the
+// same job rather than queuing two rebuilds.
+void rebuildStoredGraph() {
+    state.graph = buildGraph()
+    state.graphVersion = GRAPH_SCHEMA
+}
+
 // ===================================================================================================================
 // External systems
 //
@@ -3249,10 +3266,13 @@ Map externalsSaveMapping() {
     }
 
     state.userRegistry = incoming
-    // The graph is rebuilt from stored scan data rather than rescanning: the
-    // declarations changed, the hub did not.
-    state.graph = buildGraph()
-    state.graphVersion = GRAPH_SCHEMA
+    // Rebuilt from stored scan data rather than rescanning - the declarations
+    // changed, the hub did not - and rebuilt off the request entirely (see
+    // rebuildStoredGraph()) rather than inline, since buildGraph() can make
+    // its own unbounded HTTP calls. externalsJson() below does not read
+    // state.graph, so the response is unaffected by the rebuild being
+    // deferred.
+    runIn(1, 'rebuildStoredGraph')
     log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
     return render(status: 200, contentType: 'application/json', data: externalsJson())
 }
@@ -3321,10 +3341,10 @@ Map iconOverridesSaveMapping() {
 
     state.deviceIconOverrides = incoming
     state.deviceIconNotes = incomingNotes
-    // Same reasoning as externalsSaveMapping: rebuilt from stored scan data,
-    // not a rescan - the overrides changed, the hub did not.
-    state.graph = buildGraph()
-    state.graphVersion = GRAPH_SCHEMA
+    // Same reasoning as externalsSaveMapping: rebuilt off the request via
+    // rebuildStoredGraph(), not inline - the overrides changed, the hub did
+    // not, and iconOverridesJson() below does not read state.graph.
+    runIn(1, 'rebuildStoredGraph')
     log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
@@ -6375,35 +6395,10 @@ function playSynthesizedFallback() {
   } catch (e) { /* Web Audio unsupported or blocked - never breaks the click itself */ }
 }
 
-// "Frying Pan Hit" by Mike Koenig, soundbible.com, CC BY 3.0 (see README
-// Credits). Hosted in this repo rather than embedded as a data URI to keep
-// this already-large page from growing further - the branch below resolves
-// to whichever branch this exact file is actually running on (from
-// APP_NAME's existing "(Dev)" marker, the one thing this file already
-// legitimately varies by branch), so this one URL is correct on both dev
-// and main without the source differing between them. Computed inline here
-// rather than as its own @Field: a static field's initializer referencing
-// another static field (APP_NAME) compiles fine locally but is rejected
-// live by Hubitat's own sandbox - found live, not caught by groovyc.
-const SHOW_ALL_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/assets/show-all-sound.mp3';
-let showAllAudio = null;
-function playShowAllSound() {
-  try {
-    if (!showAllAudio) {
-      showAllAudio = new Audio(SHOW_ALL_SOUND_URL);
-      showAllAudio.volume = 0.6;
-      showAllAudio.addEventListener('error', playSynthesizedFallback, { once: true });
-    }
-    showAllAudio.currentTime = 0;
-    const p = showAllAudio.play();
-    if (p && p.catch) p.catch(playSynthesizedFallback);
-  } catch (e) { playSynthesizedFallback(); }
-}
-
 // "Woman Excited Cheers And Phrases Says Yes 1" by Floraphonic, via Pixabay
 // (Pixabay Content License - free for this use, attribution not required,
 // credited in README anyway). Same lazy-load/branch-aware/fallback pattern
-// as playShowAllSound() above.
+// as playSynthesizedFallback() above.
 const COMMUNITY_UTILITIES_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/assets/community-utilities-sound.mp3';
 let communityUtilitiesAudio = null;
 function playCommunityUtilitiesSound() {
@@ -6420,7 +6415,6 @@ function playCommunityUtilitiesSound() {
 }
 
 document.getElementById('resetBtn').addEventListener('click', function () {
-  playShowAllSound();
   // Panel-closing and the legend force-expand both now live inside
   // exitToWholeMap() itself (via closeSecondaryPanels()), shared with every
   // other place a selection changes - no longer duplicated here.
