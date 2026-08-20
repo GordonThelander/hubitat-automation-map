@@ -73,13 +73,13 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
 
-@Field static final String APP_NAME = 'Automation Map'
+@Field static final String APP_NAME = 'Automation Map (Dev)'
 // Every build of this app excludes all of its own variants from the map,
 // whatever each one calls itself. A dev copy installed beside the release would
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.1'
+@Field static final String APP_VERSION = '2.0.2'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
