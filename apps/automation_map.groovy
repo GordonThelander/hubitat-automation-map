@@ -673,10 +673,16 @@ void startScan() {
     // device + 35 app, at the current DEVICE_BATCH_SIZE/APP_BATCH_SIZE) each
     // paying a full second of scheduling gap was the dominant cost in a
     // ~2 minute scan, well ahead of the ~300 individual HTTP fetches
-    // themselves. 200ms is a first guess, not a value tuned against a
-    // measured platform ceiling the way the batch sizes were - watch this
-    // live rather than trust it.
-    runInMillis(200, 'scanBatch')
+    // themselves. First tried at 200ms: confirmed live it dropped the scan
+    // to ~8-10 seconds, but that broke the page's own progress feedback -
+    // scanButtonHtml()'s reload timing (a 2s wait, then Hubitat's own 4s
+    // refreshInterval) was tuned against the old ~2 minute scan, and at
+    // 8-10s total there was no window left where a reload showed real
+    // in-between progress, so the button looked inert even though the scan
+    // completed correctly every time. Backed off to 400ms - still a large
+    // improvement over 1000ms, but leaves visible progress before the
+    // existing UI timing catches up.
+    runInMillis(400, 'scanBatch')
 }
 
 void scanBatch() {
@@ -711,7 +717,7 @@ void scanBatch() {
     try {
         if (state.scanQueue) {
             // Speed experiment, 2026-08-21 - see the same note in startScan().
-            runInMillis(200, 'scanBatch')
+            runInMillis(400, 'scanBatch')
         } else if (advanced && state.scanPhase == 'devices') {
             startAppPhase()
         } else {
@@ -829,7 +835,7 @@ void startAppPhase() {
     state.scanTotal = appIds.size()
     state.scanDone = 0
     // Speed experiment, 2026-08-21 - see the same note in startScan().
-    runInMillis(200, 'scanBatch')
+    runInMillis(400, 'scanBatch')
 }
 
 void scanAppBatch() {
