@@ -218,11 +218,16 @@ Map main() {
     }
     clearAbandonedScan()
 
-    // A full scan takes a couple of minutes. Without this the page looked frozen
-    // - the progress line only moved if you closed and reopened it, which reads
-    // as a hang rather than as work in progress.
+    // A full scan takes several seconds to a couple of minutes depending on hub
+    // size. Without this the page looked frozen - the progress line only moved
+    // if you closed and reopened it, which reads as a hang rather than as work
+    // in progress. Was 4 - dropped to 2 alongside the scan-batch speed
+    // experiment (2026-08-21): at the new ~8-11 second total scan time, a
+    // 4-second refresh left too few reload cycles inside the whole run for any
+    // of them to land mid-progress, so the page looked inert even on a scan
+    // that completed correctly every time.
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && state.scanRunning) ? 4 : 0) {
+                       refreshInterval: (ready && state.scanRunning) ? 2 : 0) {
         // Scan status, the map link and the Scan button all sit ABOVE the device
         // picker. The picker renders as a list of every device on the hub, so
         // anything below it is off the bottom of the screen - which is where the
@@ -413,7 +418,10 @@ function amStartScan() {
         return d;
       });
     })
-    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
+    // Was 2000ms - shortened alongside refreshInterval above, same reason:
+    // tuned against the old ~2 minute scan, too slow to catch any real
+    // progress within the new ~8-11 second total.
+    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 800); })
     .catch(function (e) {
       b.disabled = false;
       var where = '(could not parse the attempted URL)';
