@@ -188,6 +188,23 @@ Acceptance criteria:
 "noisy" on the map isn't a meaningful category the way it might be for a notification channel,
 so there's nothing coherent for an exclusion toggle to act on.
 
+### P1 - "View Automation Map" opens in the same browser tab, not a new one
+
+**Source:** trep (community code audit author), forum feedback on the audit writeup,
+2026-08-20/21 - "Open the SPA in a separate tab."
+
+Confirmed live: the `href()` element for the map link (:279-284) renders with no `target`
+attribute, so clicking it navigates the current tab away from the hub's admin UI to the map
+page - unlike the Community Utilities button and the community-thread link on the same page,
+both of which already open in a new tab. Losing the admin UI tab is a bigger cost for this link
+than for either of those, since it's the app's own primary action.
+
+Needs investigation before a fix: Hubitat's `href()` DSL doesn't expose a `target` parameter
+directly, so it's not yet established whether `style: 'embedded'` or another supported option
+gets a new tab, or whether this needs a different approach (e.g. a plain anchor rendered via
+`paragraph` instead of `href()`). Don't assume a fix works without confirming live - this is
+exactly the kind of platform-rendering behaviour that isn't safe to guess at.
+
 ### P1 - Hand-install without OAuth throws instead of explaining
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
@@ -365,7 +382,11 @@ first to take the user off the Hubitat-served map entirely, to a separate site A
 does not control. Not a functional risk, the app works identically without it - just a
 different kind of button than anything else currently in that row.
 
-**Decided 2026-08-21:** link to the bare homepage, as originally shown. Not yet built.
+**Decided 2026-08-21:** link to the bare homepage, as originally shown. Already how it works -
+`communityUtilitiesBtn`'s click handler has opened
+`https://gordonthelander.github.io/HPM_Manifest_Crawl/` in a new tab (`noopener`) since 2.0.0.
+This decision confirms the existing behaviour rather than describing unbuilt work; the open
+question above is now closed with no code change required.
 
 ### P2 - Multi-select an interconnected subgraph
 
@@ -654,6 +675,23 @@ layout, and the state shape both would read/write) before implementation.
 **Rejected 2026-08-21.** Gordon: this is the wrong place for it - apps and devices already have
 their own notes fields natively in Hubitat. Duplicating that inside Automation Map would give
 users two places to look for the same kind of information rather than one.
+
+### P3 - Cross-reference the map with hub runtime data to surface the heaviest/most active rules
+
+**Source:** trep (community code audit author), forum feedback on the audit writeup,
+2026-08-20/21 - "Consider cross-referencing the analysis with the runtime data available on the
+hub, to surface the heaviest rules or those that run most often."
+
+Distinct from anything currently on the map: everything drawn today comes from *configuration*
+(what an app is set up to touch), not *behaviour* (what actually ran, how often, or how long it
+took). Genuinely useful on a large hub - `oldcomputerwiz`'s forum report of a scan on 322
+devices/444 apps took long enough that they didn't want it running daily, and knowing which
+rules are actually hot would help prioritise where to look first.
+
+Not scoped - needs its own investigation before design: what runtime data Hubitat's internal
+endpoints actually expose per app/rule (execution count, duration, last-run time are the
+obvious candidates, none confirmed available), and whether it's cheap enough to fetch that it
+doesn't become its own version of the P1/P2 problem the scan already has elsewhere in this file.
 
 ### P3 - Associate Hub Variables with Variable Connector devices
 
