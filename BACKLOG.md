@@ -903,3 +903,39 @@ A defensive fetch-layer patch shipped anyway (`stripReplacementChar()`, applied 
 first come off the wire in `fetchAppRelationships`) - harmless hygiene, kept in case something
 like this recurs, not because it was confirmed to be the actual fix. Re-open only if this is
 seen again with something to actually investigate (a reproducible trigger, not just the symptom).
+
+### Speeding up the scan via runInMillis (attempted and reverted, 2026-08-21)
+
+**Source:** Gordon asked what the scan's limiting factor was. Answer at the time: ~48 total
+batches (13 device + 35 app, at `DEVICE_BATCH_SIZE`/`APP_BATCH_SIZE`), each paying a full
+second of `runIn(1, 'scanBatch')` scheduling gap between them - roughly 48+ seconds of pure
+wait, ahead of the ~300 individual HTTP fetches themselves, against a ~123 second total scan.
+
+Tried replacing the three batch-loop `runIn(1, 'scanBatch')` calls (`startScan()`,
+`scanBatch()`'s same-phase reschedule, `startAppPhase()`) with `runInMillis()` at 200ms, then
+400ms. Confirmed live both times: total scan time dropped dramatically, but not smoothly -
+runs measured anywhere from under a second to ~10 seconds to, on one fresh-install test,
+**~153 seconds with the scan stalling at 102 of 103 apps** and the hub logging "clearing an
+abandoned scan" a full 87 seconds after it had already logged "scan complete". Polling
+`/scan-status` directly during a fast run showed the batches were not actually respecting the
+requested interval - progress went from 0/194 to fully complete (194 devices + 103 apps) in
+under half a second once execution started, nothing like 47 evenly-spaced 400ms hops.
+
+Concluded this is Hubitat's own scheduler behaving unpredictably under a tight, repeated
+`runInMillis()` self-rescheduling loop fired back-to-back roughly 48 times - not something
+either 200ms or 400ms is a "safer" choice of, and not something this app can control from its
+own side. `runIn()`'s whole-second granularity is almost certainly the platform's actual
+tested/supported case for this pattern; `runInMillis()` is a real API but this repeated-loop
+use is apparently outside where it behaves reliably.
+
+Fully reverted - confirmed a clean, zero-diff revert against the pre-experiment commit
+(`47534f4`) for `apps/automation_map.groovy`. Also reverted alongside it: `scanButtonHtml()`'s
+reload delay (was shortened 2000ms->800ms to try to keep the progress UI legible against the
+faster scan) and `refreshInterval` (was 4->2, same reason) - both no longer needed once the
+scan itself is back to its original, reliable pace.
+
+Not re-open without a fundamentally different approach (larger batches to cut the *number* of
+hops rather than the delay between them, which risks Hubitat's per-execution time ceiling
+instead - see the graph-derivation architecture item elsewhere in this file for the same
+underlying tension between hub-side batching and platform limits) - simply picking a different
+millisecond value is not expected to behave more predictably than 200ms or 400ms did here.
