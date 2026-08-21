@@ -218,16 +218,11 @@ Map main() {
     }
     clearAbandonedScan()
 
-    // A full scan takes several seconds to a couple of minutes depending on hub
-    // size. Without this the page looked frozen - the progress line only moved
-    // if you closed and reopened it, which reads as a hang rather than as work
-    // in progress. Was 4 - dropped to 2 alongside the scan-batch speed
-    // experiment (2026-08-21): at the new ~8-11 second total scan time, a
-    // 4-second refresh left too few reload cycles inside the whole run for any
-    // of them to land mid-progress, so the page looked inert even on a scan
-    // that completed correctly every time.
+    // A full scan takes a couple of minutes. Without this the page looked frozen
+    // - the progress line only moved if you closed and reopened it, which reads
+    // as a hang rather than as work in progress.
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && state.scanRunning) ? 2 : 0) {
+                       refreshInterval: (ready && state.scanRunning) ? 4 : 0) {
         // Scan status, the map link and the Scan button all sit ABOVE the device
         // picker. The picker renders as a list of every device on the hub, so
         // anything below it is off the bottom of the screen - which is where the
@@ -418,10 +413,7 @@ function amStartScan() {
         return d;
       });
     })
-    // Was 2000ms - shortened alongside refreshInterval above, same reason:
-    // tuned against the old ~2 minute scan, too slow to catch any real
-    // progress within the new ~8-11 second total.
-    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 800); })
+    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
     .catch(function (e) {
       b.disabled = false;
       var where = '(could not parse the attempted URL)';
@@ -677,20 +669,7 @@ void startScan() {
     unschedule('scanBatch')
     unschedule('fetchRegistry')
     unschedule('finishScan')
-    // Speed experiment, 2026-08-21: was runIn(1, ...). ~48 batches (13
-    // device + 35 app, at the current DEVICE_BATCH_SIZE/APP_BATCH_SIZE) each
-    // paying a full second of scheduling gap was the dominant cost in a
-    // ~2 minute scan, well ahead of the ~300 individual HTTP fetches
-    // themselves. First tried at 200ms: confirmed live it dropped the scan
-    // to ~8-10 seconds, but that broke the page's own progress feedback -
-    // scanButtonHtml()'s reload timing (a 2s wait, then Hubitat's own 4s
-    // refreshInterval) was tuned against the old ~2 minute scan, and at
-    // 8-10s total there was no window left where a reload showed real
-    // in-between progress, so the button looked inert even though the scan
-    // completed correctly every time. Backed off to 400ms - still a large
-    // improvement over 1000ms, but leaves visible progress before the
-    // existing UI timing catches up.
-    runInMillis(400, 'scanBatch')
+    runIn(1, 'scanBatch')
 }
 
 void scanBatch() {
@@ -724,8 +703,7 @@ void scanBatch() {
 
     try {
         if (state.scanQueue) {
-            // Speed experiment, 2026-08-21 - see the same note in startScan().
-            runInMillis(400, 'scanBatch')
+            runIn(1, 'scanBatch')
         } else if (advanced && state.scanPhase == 'devices') {
             startAppPhase()
         } else {
@@ -842,8 +820,7 @@ void startAppPhase() {
     state.scanQueue = appIds
     state.scanTotal = appIds.size()
     state.scanDone = 0
-    // Speed experiment, 2026-08-21 - see the same note in startScan().
-    runInMillis(400, 'scanBatch')
+    runIn(1, 'scanBatch')
 }
 
 void scanAppBatch() {
