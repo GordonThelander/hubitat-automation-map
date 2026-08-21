@@ -540,6 +540,35 @@ String compatibilitySummary() {
 // Scanning - phase 1 discovers app ids from devices, phase 2 pulls each app's real relationships
 // ===================================================================================================================
 
+// Every hub-facing fetch in this file (six loopback, one to REGISTRY_URL on
+// GitHub) used to carry its own inline try/catch, its own timeout literal,
+// and its own copy of this exact shape - the failure contract was defined
+// seven times and was not quite the same twice, which is why
+// fetchAllDeviceIds() needed an explicit "sets scanError itself and returns
+// on failure" comment at its own call site to be usable safely. This is the
+// one place that shape is written now.
+//
+// data comes back exactly as the response sent it, not coerced to Map here -
+// fetchAllDeviceIds needs a List, so that decision stays with whoever
+// actually knows their own endpoint's shape. extraOpts exists only for
+// fetchRegistry's contentType; every loopback caller passes none.
+Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
+    Map out = [ok: false, data: null, error: null]
+    try {
+        httpGet(extraOpts + [uri: uri, timeout: timeoutSec]) { resp ->
+            out.data = resp.data
+            out.ok = true
+        }
+    } catch (Exception ex) {
+        out.error = "${ex.message}"
+    }
+    return out
+}
+
+// The one thing every loopback caller shares - not shared with fetchRegistry,
+// which hits REGISTRY_URL on GitHub instead.
+@Field static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
+
 // Everything this app knows comes from undocumented hub endpoints, so on a hub
 // unlike the one it was written against it must say WHY it found nothing rather
 // than presenting an empty map as if that were the answer. The most likely
@@ -547,17 +576,14 @@ String compatibilitySummary() {
 // endpoints answer with a login page instead of JSON.
 Map probeCompatibility() {
     Map out = [ok: false, detail: '']
-    try {
-        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${app.id}", timeout: 10]) { resp ->
-            if (resp.data instanceof Map && (resp.data as Map).installedApp) {
-                out.ok = true
-                out.detail = 'Hub internal endpoints reachable.'
-            } else {
-                out.detail = 'The hub answered, but not with app JSON. If Hub Login Security is enabled, Automation Map cannot read app configuration.'
-            }
-        }
-    } catch (Exception ex) {
-        out.detail = "Could not reach the hub's internal app endpoint (${ex.message}). This Hubitat version may not expose /installedapp/statusJson."
+    Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${app.id}", 10)
+    if (!result.ok) {
+        out.detail = "Could not reach the hub's internal app endpoint (${result.error}). This Hubitat version may not expose /installedapp/statusJson."
+    } else if (result.data instanceof Map && (result.data as Map).installedApp) {
+        out.ok = true
+        out.detail = 'Hub internal endpoints reachable.'
+    } else {
+        out.detail = 'The hub answered, but not with app JSON. If Hub Login Security is enabled, Automation Map cannot read app configuration.'
     }
     return out
 }
@@ -849,32 +875,32 @@ void fetchRegistry() {
     Map meta = [state: 'OK', fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
 
     try {
-        httpGet([uri: REGISTRY_URL, contentType: 'application/json', timeout: 30]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
-            List entries = (data.entries ?: []) as List
-            meta.entries = entries.size()
-            meta.schemaVersion = "${data.schemaVersion}"
+        Map result = httpFetch(REGISTRY_URL, 30, [contentType: 'application/json'])
+        if (!result.ok) throw new Exception(result.error)
+        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+        List entries = (data.entries ?: []) as List
+        meta.entries = entries.size()
+        meta.schemaVersion = "${data.schemaVersion}"
 
-            types.each { String appType ->
-                entries.each { ent ->
-                    if (!(ent instanceof Map)) return
-                    Map e = ent as Map
-                    if (registryEntryState(e, appType) != 'MATCH') return
-                    (e.dependencies ?: []).each { dep ->
-                        if (!(dep instanceof Map)) return
-                        Map d = dep as Map
-                        String name = "${d.name}".trim()
-                        if (!name || name == 'null') return
-                        String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
-                        String crit = "${d.runtimeCriticality}"
-                        if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
-                        matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
-                    }
+        types.each { String appType ->
+            entries.each { ent ->
+                if (!(ent instanceof Map)) return
+                Map e = ent as Map
+                if (registryEntryState(e, appType) != 'MATCH') return
+                (e.dependencies ?: []).each { dep ->
+                    if (!(dep instanceof Map)) return
+                    Map d = dep as Map
+                    String name = "${d.name}".trim()
+                    if (!name || name == 'null') return
+                    String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
+                    String crit = "${d.runtimeCriticality}"
+                    if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
+                    matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
                 }
             }
-            meta.matched = matches.size()
-            meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
         }
+        meta.matched = matches.size()
+        meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
     } catch (Exception ex) {
         meta.state = 'ERROR'
         meta.error = "${ex.message}"
@@ -968,18 +994,14 @@ void finishScan() {
 // The capability parameter is required. Without it the endpoint returns [].
 List fetchAllDeviceIds() {
     List ids = []
-    try {
-        httpGet([uri: 'http://127.0.0.1:8080/device/listJson?capability=capability.*', timeout: 30]) { resp ->
-            def data = resp.data
-            if (data instanceof List) {
-                data.each { d ->
-                    if (d instanceof Map && d.id != null) ids << "${d.id}"
-                }
-            }
+    Map result = httpFetch("${LOOPBACK_BASE}/device/listJson?capability=capability.*", 30)
+    if (!result.ok) {
+        log.warn "${app.label}: could not list devices: ${result.error}"
+        state.scanError = "Could not list devices from the hub: ${result.error}"
+    } else if (result.data instanceof List) {
+        (result.data as List).each { d ->
+            if (d instanceof Map && d.id != null) ids << "${d.id}"
         }
-    } catch (Exception ex) {
-        log.warn "${app.label}: could not list devices: ${ex.message}"
-        state.scanError = "Could not list devices from the hub: ${ex.message}"
     }
     return ids.unique()
 }
@@ -1009,17 +1031,16 @@ List fetchAllDeviceIds() {
 // than read one level deep.
 List fetchInstalledAppIds() {
     List ids = []
-    try {
-        httpGet([uri: 'http://127.0.0.1:8080/hub2/appsList', timeout: 30]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
-            collectAppIds(data.apps, ids)
-        }
-    } catch (Exception ex) {
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/appsList", 30)
+    if (!result.ok) {
         // Deliberately not a scan error. Losing this costs completeness, not
         // correctness: every app found through a device is still found. An
         // older firmware without the endpoint should degrade to the previous
         // behaviour rather than fail the scan.
-        log.warn "${app.label}: could not list installed apps, falling back to device-led discovery only: ${ex.message}"
+        log.warn "${app.label}: could not list installed apps, falling back to device-led discovery only: ${result.error}"
+    } else {
+        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+        collectAppIds(data.apps, ids)
     }
     return ids.unique()
 }
@@ -1056,45 +1077,45 @@ void collectAppIds(def nodes, List ids) {
 Map fetchDeviceApps(String devId) {
     Map out = [label: null, appIds: [], capabilities: [], room: null, type: null, error: null]
     try {
-        httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 10]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
-            String breadcrumb = data.extraBreadcrumb as String
-            if (breadcrumb) out.label = stripTags(breadcrumb)
+        Map result = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 10)
+        if (!result.ok) throw new Exception(result.error)
+        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+        String breadcrumb = data.extraBreadcrumb as String
+        if (breadcrumb) out.label = stripTags(breadcrumb)
 
-            Map dev = data.device as Map
-            if (dev) {
-                out.capabilities = (dev.capabilities ?: []) as List
-                if (dev.roomName) out.room = dev.roomName as String
-                // deviceTypeName is the driver name (e.g. "CoCoHue Scene"), not
-                // anything the user named the device - a reliable signal
-                // capability alone cannot give (a Scene device declares
-                // PushableButton same as a real button/remote does).
-                if (dev.deviceTypeName) out.type = dev.deviceTypeName as String
-            }
-
-            List ids = []
-            Map parentApp = data.parentApp as Map
-            if (parentApp?.id != null) ids << "${parentApp.id}"
-
-            // appsUsing, NOT appsUsingForDialog.
-            //
-            // appsUsingForDialog is capped at five entries on every device, with
-            // appsUsingForDialogMore holding only a COUNT of the remainder, not
-            // the ids. It exists to render a dialog, not to enumerate anything.
-            // appsUsing sits beside it in the same response and is complete: on
-            // one device here it holds 29 entries where the dialog field holds
-            // five.
-            //
-            // Reading the dialog field made every app beyond the fifth on a
-            // shared device invisible, which is not the rare edge case it sounds
-            // like. A rule using only popular devices was missed entirely, and
-            // was noticed only because another rule named it as a target.
-            List using = (data.appsUsing ?: data.appsUsingForDialog ?: []) as List
-            using.each { u ->
-                if (u instanceof Map && u.id != null) ids << "${u.id}"
-            }
-            out.appIds = ids.unique()
+        Map dev = data.device as Map
+        if (dev) {
+            out.capabilities = (dev.capabilities ?: []) as List
+            if (dev.roomName) out.room = dev.roomName as String
+            // deviceTypeName is the driver name (e.g. "CoCoHue Scene"), not
+            // anything the user named the device - a reliable signal
+            // capability alone cannot give (a Scene device declares
+            // PushableButton same as a real button/remote does).
+            if (dev.deviceTypeName) out.type = dev.deviceTypeName as String
         }
+
+        List ids = []
+        Map parentApp = data.parentApp as Map
+        if (parentApp?.id != null) ids << "${parentApp.id}"
+
+        // appsUsing, NOT appsUsingForDialog.
+        //
+        // appsUsingForDialog is capped at five entries on every device, with
+        // appsUsingForDialogMore holding only a COUNT of the remainder, not
+        // the ids. It exists to render a dialog, not to enumerate anything.
+        // appsUsing sits beside it in the same response and is complete: on
+        // one device here it holds 29 entries where the dialog field holds
+        // five.
+        //
+        // Reading the dialog field made every app beyond the fifth on a
+        // shared device invisible, which is not the rare edge case it sounds
+        // like. A rule using only popular devices was missed entirely, and
+        // was noticed only because another rule named it as a target.
+        List using = (data.appsUsing ?: data.appsUsingForDialog ?: []) as List
+        using.each { u ->
+            if (u instanceof Map && u.id != null) ids << "${u.id}"
+        }
+        out.appIds = ids.unique()
     } catch (Exception ex) {
         log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
         out.error = "${ex.message}"
@@ -1107,8 +1128,9 @@ Map fetchDeviceApps(String devId) {
 Map fetchAppRelationships(String appId, Map labels) {
     Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
-        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 20]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
+        Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 20)
+        if (!result.ok) throw new Exception(result.error)
+        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
 
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
@@ -1255,7 +1277,6 @@ Map fetchAppRelationships(String appId, Map labels) {
                     subs  : countOf(data.eventSubscriptions),
                 ]
             }
-        }
     } catch (Exception ex) {
         out.error = ex.message
         log.warn "${app.label}: app ${appId} lookup failed: ${ex.message}"
@@ -2426,22 +2447,22 @@ String stripStatusMarkup(String s) {
 Map fetchAppName(String appId) {
     Map out = [label: null, type: null, drawLabel: null, missing: false]
     try {
-        httpGet([uri: "http://127.0.0.1:8080/installedapp/statusJson/${appId}", timeout: 10]) { resp ->
-            Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
-            Map installedApp = data.installedApp as Map
-            if (installedApp?.label || installedApp?.name) {
-                String rawLabel = (installedApp?.label ?: installedApp?.name) as String
-                out.label = stripTags(rawLabel)
-                out.drawLabel = stripStatusMarkup(rawLabel)
-                out.type = installedApp?.name
-            } else {
-                // A deleted app still answers 200 here, with an empty shell
-                // rather than a 404. So a rule naming a rule that no longer
-                // exists is not an error to swallow, it is a dangling
-                // reference worth showing: the action stays in the calling
-                // rule and silently does nothing.
-                out.missing = true
-            }
+        Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 10)
+        if (!result.ok) throw new Exception(result.error)
+        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+        Map installedApp = data.installedApp as Map
+        if (installedApp?.label || installedApp?.name) {
+            String rawLabel = (installedApp?.label ?: installedApp?.name) as String
+            out.label = stripTags(rawLabel)
+            out.drawLabel = stripStatusMarkup(rawLabel)
+            out.type = installedApp?.name
+        } else {
+            // A deleted app still answers 200 here, with an empty shell
+            // rather than a 404. So a rule naming a rule that no longer
+            // exists is not an error to swallow, it is a dangling
+            // reference worth showing: the action stays in the calling
+            // rule and silently does nothing.
+            out.missing = true
         }
     } catch (Exception ex) {
         log.warn "${app.label}: could not name linked rule ${appId}: ${ex.message}"
