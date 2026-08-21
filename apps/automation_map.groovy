@@ -3594,6 +3594,9 @@ String buildMapHtml() {
   #hubWatermark { position:fixed; top:68%; left:82%; transform:translate(-50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
+  /* Hub photo specifically shown at half the Christmas tree's size, per
+     Gordon's request - the tree's own dimensions (38vw/38vh) are unaffected. */
+  #hubWatermark.hubPhoto { max-width:19vw; max-height:19vh; }
   /* First shipped as a bare 1em glyph with no background - reported as "had to
      go hunting for it". A visible pill with its own border and a hover state
      reads as a button; a lone triangle in a wall of text does not. */
@@ -3827,7 +3830,7 @@ ${santaHtml}
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
-<img id="hubWatermark" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
+<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
