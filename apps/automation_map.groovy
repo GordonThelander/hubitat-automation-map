@@ -3585,10 +3585,12 @@ String buildMapHtml() {
   /* Sits behind the network canvas (earlier in DOM order, no z-index of its
      own, and vis-network's own canvas has no background fill so empty space
      around the graph shows whatever is layered underneath it). Fixed, not
-     absolute - pinned to the middle of the actual screen regardless of where
-     physics settles the graph's own bounding box, per Gordon's own framing
-     of this as "centre of the animation" rather than a specific graph node. */
-  #hubWatermark { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+     absolute - pinned to a fixed point on the actual screen regardless of
+     where physics settles the graph's own bounding box. Offset right and
+     down from dead centre (was 50/50) since a fully-populated graph's own
+     node cluster tends to sit left-of-centre, leaving this spot the clearer
+     one - confirmed against a live screenshot, not guessed. */
+  #hubWatermark { position:fixed; top:55%; left:68%; transform:translate(-50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.10; pointer-events:none;
                   user-select:none; }
   /* First shipped as a bare 1em glyph with no background - reported as "had to
