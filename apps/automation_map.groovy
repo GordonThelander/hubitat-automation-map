@@ -669,7 +669,14 @@ void startScan() {
     unschedule('scanBatch')
     unschedule('fetchRegistry')
     unschedule('finishScan')
-    runIn(1, 'scanBatch')
+    // Speed experiment, 2026-08-21: was runIn(1, ...). ~48 batches (13
+    // device + 35 app, at the current DEVICE_BATCH_SIZE/APP_BATCH_SIZE) each
+    // paying a full second of scheduling gap was the dominant cost in a
+    // ~2 minute scan, well ahead of the ~300 individual HTTP fetches
+    // themselves. 200ms is a first guess, not a value tuned against a
+    // measured platform ceiling the way the batch sizes were - watch this
+    // live rather than trust it.
+    runInMillis(200, 'scanBatch')
 }
 
 void scanBatch() {
@@ -703,7 +710,8 @@ void scanBatch() {
 
     try {
         if (state.scanQueue) {
-            runIn(1, 'scanBatch')
+            // Speed experiment, 2026-08-21 - see the same note in startScan().
+            runInMillis(200, 'scanBatch')
         } else if (advanced && state.scanPhase == 'devices') {
             startAppPhase()
         } else {
@@ -820,7 +828,8 @@ void startAppPhase() {
     state.scanQueue = appIds
     state.scanTotal = appIds.size()
     state.scanDone = 0
-    runIn(1, 'scanBatch')
+    // Speed experiment, 2026-08-21 - see the same note in startScan().
+    runInMillis(200, 'scanBatch')
 }
 
 void scanAppBatch() {
