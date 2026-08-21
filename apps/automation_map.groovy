@@ -2195,6 +2195,11 @@ String prettyMethod(String method) {
     [key: 'appliance', words: ['kettle', 'oven', 'fridge', 'refrigerator', 'dishwasher',
                                 'washer', 'dryer', 'microwave', 'toaster']],
     [key: 'network',   words: ['internet', 'wifi', 'router', 'modem']],
+    // 'bridge' specifically, not the broader "Hub & infrastructure" grouping
+    // the class comment above rules out by capability - CoCoHue Bridge and
+    // similar devices consistently carry "Bridge" in their own name even
+    // though nothing in their capability list says so.
+    [key: 'hub',       words: ['bridge']],
     // 'nest' rather than 'hub' for the Google Nest Hub devices - 'hub' alone
     // is too generic a word to risk matching against unrelated devices.
     [key: 'display',   words: ['display', 'monitor', 'tablet', 'nest']],
@@ -2237,14 +2242,17 @@ String autoDetectIconKeyForDevice(String name, List capabilities) {
 //   station reads as Environmental sensors, an EV charger as Switch or
 //   Energy, vehicle presence as Location & presence. Correct by capability,
 //   just not separately labelled "outdoor" or "vehicle".
-// - Hub & infrastructure (bridges, repeaters, network monitors): the one
-//   capability that looks relevant, NetworkDevice, is also carried by
-//   ordinary media devices (the Chromecast speakers all declare it), so
-//   using it here would misclassify them. No safe signal found. Checked
-//   again directly against CoCoHue Bridge and Hub Information Driver when
-//   Gordon asked for a "Hub" category specifically: CoCoHue Bridge reports
-//   only [Actuator, Refresh, Initialize] - no capability distinguishes a
-//   bridge/hub device from any other integration-managed actuator.
+// - Hub & infrastructure (bridges, repeaters, network monitors) has no
+//   capability signal: NetworkDevice, the one that looks relevant, is also
+//   carried by ordinary media devices (the Chromecast speakers all declare
+//   it), so using it here would misclassify them. Checked directly against
+//   CoCoHue Bridge and Hub Information Driver when Gordon first asked for a
+//   "Hub" category: CoCoHue Bridge reports only [Actuator, Refresh,
+//   Initialize] - no capability distinguishes a bridge/hub device from any
+//   other integration-managed actuator. Bridges specifically are handled by
+//   name instead (ICON_NAME_HINTS' 'bridge' -> hub entry below) - repeaters
+//   and network monitors still have no signal, capability or name, and
+//   remain unclassified.
 // - Voice assistants (Google Home Mini, Google Nest Hub): also checked
 //   directly when Gordon asked for an "Assistant" category. These report
 //   the exact same capabilities as a plain Chromecast speaker (AudioVolume,
