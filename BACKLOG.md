@@ -140,6 +140,9 @@ button were both trying to build. The remaining, narrower ask above (return to t
 layout rather than a freshly re-settled one) is still open, but a dedicated reset-to-fresh-
 layout button is not - "Show all" already is one.
 
+**Rejected 2026-08-21.** Gordon: too complex for the value it returns, given "Show all" already
+covers the common case above. Not pursuing the narrower same-layout-restore behaviour further.
+
 ### P1 - Make the legend accurate and usable on smaller tablets
 
 **Source:** JimB functional review, 2026-08-16.
@@ -154,6 +157,12 @@ Acceptance criteria:
 - On smaller tablets, either use a shorter legend or give it a bounded scroll area.
 - Ensure the legend does not obscure the controls, map, or open panels.
 - Confirm the result at desktop and tablet widths.
+
+**Rejected 2026-08-21.** Gordon: the app isn't designed for small form factor - use a large
+screen instead, so the tablet-scaling requirement doesn't apply. This closes the item as
+scoped. It doesn't independently confirm or deny whether the legend's own wording is still
+accurate against current rendering rules; that's a separate, smaller question, worth its own
+look only if a specific inaccuracy is ever actually spotted.
 
 ### P1 - Picklist exclusion controls
 
@@ -174,6 +183,10 @@ Acceptance criteria:
 - Reset restores all entries.
 - Search/filtering the picklist does not lose selections outside the current search result.
 - Decide explicitly whether selections persist only for the page session or across reloads.
+
+**Rejected 2026-08-21.** Gordon: doesn't hold together in this context - an app or device being
+"noisy" on the map isn't a meaningful category the way it might be for a notification channel,
+so there's nothing coherent for an exclusion toggle to act on.
 
 ### P1 - Hand-install without OAuth throws instead of explaining
 
@@ -390,6 +403,10 @@ Grouping proposal to validate with Jim before implementation:
 - Devices: group by the app/device category Jim intended; clarify whether this means room,
   icon category, owning app, or a separate Apps/Devices split before coding.
 - Preserve search across groups and expose group names to assistive technology.
+
+**Closed 2026-08-21.** Gordon considers this done via the icon work already shipped (every
+device/app picklist entry now carries its icon/engine-tag). The parent/child ordering and
+room/category grouping proposal above was never built and isn't being picked up separately.
 
 ### P2 - Extend the displayed map by one level
 
@@ -634,6 +651,10 @@ appear in the export, the same reason those two already work that way.
 Not scoped further than this; needs its own design pass (quick-add panel layout, table panel
 layout, and the state shape both would read/write) before implementation.
 
+**Rejected 2026-08-21.** Gordon: this is the wrong place for it - apps and devices already have
+their own notes fields natively in Hubitat. Duplicating that inside Automation Map would give
+users two places to look for the same kind of information rather than one.
+
 ### P3 - Associate Hub Variables with Variable Connector devices
 
 **Source:** JimB functional review, 2026-08-16; Hub Variable lineage specification section 12;
@@ -760,6 +781,9 @@ its own scheduled execution, a watchdog behind it, failure is explicitly non-fat
 low priority. `asynchttpGet` would remove the whole class of risk rather than fence it.
 
 Worth doing only if the registry grows or moves off GitHub - not urgent on its own.
+
+**Confirmed no action needed, 2026-08-21.** Gordon: it isn't blocking anything, it already
+fails gracefully. Matches the auditor's own framing above - stays noted, not queued.
 
 ---
 
