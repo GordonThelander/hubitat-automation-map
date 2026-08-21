@@ -852,6 +852,7 @@ void deviceAsyncWatchdog(data) {
 void finalizeDevicePhase(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return  // already finalized (watchdog and last-callback can both fire once each; the second is a no-op)
+    log.warn "DIAG finalizeDevicePhase RUNNING scanId=${scanId} processed=${(scan.processed as AtomicInteger).get()} total=${scan.total}"
     DEVICE_SCANS.remove(scanId)
     unschedule('deviceAsyncWatchdog')
 
@@ -917,6 +918,7 @@ void startAppPhase() {
     }
 
     String scanId = "apps-${now()}-${(int)(Math.random() * 9999)}"
+    log.warn "DIAG startAppPhase CREATING scanId=${scanId} appIds=${appIds.size()}"
     ConcurrentHashMap scan = new ConcurrentHashMap()
     scan.total = appIds.size()
     scan.inFlight = new AtomicInteger(0)
@@ -986,6 +988,12 @@ void appFetchCb(resp, data) {
     if (scan == null) return  // callback from a prior, already-finalized scan
 
     String appId = data.appId as String
+    // DIAG: track how many times this scanId has processed this exact appId.
+    ConcurrentHashMap callCounts = (scan.callCounts as ConcurrentHashMap)
+    if (callCounts == null) { callCounts = new ConcurrentHashMap<String, AtomicInteger>(); scan.callCounts = callCounts }
+    AtomicInteger cnt = (callCounts.putIfAbsent(appId, new AtomicInteger(0)) ?: callCounts[appId]) as AtomicInteger
+    int seenNow = cnt.incrementAndGet()
+    if (seenNow > 1) log.warn "DIAG DUPLICATE appId=${appId} scanId=${scanId} seenCount=${seenNow}"
     Map info
     try {
         if (resp?.status == 200) {
@@ -1066,6 +1074,7 @@ void appAsyncWatchdog(data) {
 void finalizeAppPhase(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return  // already finalized (watchdog and last-callback can both fire once each; the second is a no-op)
+    log.warn "DIAG finalizeAppPhase RUNNING scanId=${scanId} decoded=${(scan.decoded as AtomicInteger).get()} processed=${(scan.processed as AtomicInteger).get()} pendingLeft=${(scan.pending as ConcurrentLinkedQueue).size()} total=${scan.total} appInfoSize=${(scan.appInfo as Map).size()}"
     APP_SCANS.remove(scanId)
     unschedule('appAsyncWatchdog')
 
