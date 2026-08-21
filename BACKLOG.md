@@ -847,6 +847,81 @@ incremental detection alone indefinitely.
 Not scoped further than this; the endpoint investigation above decides whether it's worth
 scoping at all.
 
+**Clarifying evidence, 2026-08-21**, from reviewing hubitrep's own `HubDiagnostics` app
+(`github.com/hubitrep/hubitat`, `HubDiagnostics/`) - a mature, independent Hubitat diagnostics
+tool by the same person who ran the code audit. Its own config-drift feature ("Snapshots") does
+*not* use a cheap per-item change signal either - it captures a full snapshot (complete device
+list, app counts, network config, etc.) and diffs two full snapshots against each other after
+the fact, per its README. That's a different technique from what this item originally wanted
+(skip fetching the unchanged majority) - it still pays the full capture cost every time, just
+gets a structured diff at the end instead of eyeballing it. Weak evidence, from one data point,
+that no cheap "has this changed" signal exists on the platform for this to lean on: if it did,
+a tool this deep into Hubitat's internals would be a likely place to see it used. Doesn't close
+the gating question, but lowers confidence that this item is buildable as originally conceived.
+
+### P1 - Concurrent async fetching instead of serial batches, for the scan itself
+
+**Source:** hubitrep's `HubDiagnostics` app (`github.com/hubitrep/hubitat`, `HubDiagnostics/`),
+reviewed 2026-08-21 for extension ideas. Different lever from the delta-scan item above, and
+from the two already-reverted speed attempts elsewhere in this file - worth its own item.
+
+Its Device Audit feature crawls `/device/fullJson/{id}` for every device - the same style of
+per-device call this app's own `fetchDeviceApps()` makes - and its README states this is "one
+call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap," completing a
+350-device hub in 30-60 seconds. That is a materially different technique from anything tried
+in this file so far: every speed attempt here (the reverted `runInMillis` experiment, the
+reverted `APP_BATCH_SIZE` bump) changed the *scheduling interval or batch size* of a serial
+walk - one batch runs, finishes, `runIn(1, ...)` schedules the next. HubDiagnostics instead runs
+several fetches genuinely concurrently within one execution, capped at a platform limit, via
+Hubitat's `asynchttpGet()` API rather than the synchronous `httpGet()` this app's `httpFetch()`
+wrapper is built on.
+
+Confirmed, not just claimed: `asynchttpGet()` is real and in active use in that codebase - found
+and quoted verbatim a working callback (`githubVersionCallback(resp, data)`, registered via
+`asynchttpGet('githubVersionCallback', [uri: ..., ...])`), and the constant
+`AUDIT_MAX_INFLIGHT = 8` plus `ConcurrentHashMap`/`AtomicInteger`/`ConcurrentLinkedQueue` state
+tracking for the audit scan's in-flight/pending bookkeeping. Not confirmed: the exact queue-
+refill logic (`apiAuditStart` and its callback) - the source file is large enough that two
+targeted fetches both truncated before reaching it. The *approach* is verified real and working
+on this platform; the *exact mechanics* of the 8-concurrent throttle are not yet seen firsthand.
+
+Why this is worth investigating ahead of the delta-scan item above: it doesn't depend on an
+unconfirmed platform signal existing, it's demonstrably already working in a live, mature
+community tool on real hubs, and it attacks the exact bottleneck already identified this
+session (the ~48 batches and their `runIn(1, ...)` gaps are the dominant cost, not the HTTP
+fetch time itself) from a different, likely more reliable angle than tightening the scheduling
+loop - which this session already has direct evidence is unpredictable under `runInMillis`.
+Async concurrency doesn't touch `runIn()`/`runInMillis()` scheduling at all; it changes how much
+work happens *inside* each scheduled execution.
+
+Not scoped further than this - needs reading the actual queue-refill implementation (ideally by
+asking hubitrep directly, given their offer of help on the P7 item elsewhere in this file) before
+committing to a design, and needs to account for `fetchAppRelationships()` being meaningfully
+heavier per call than a device audit's read (rule-flow decoding, not just a JSON fetch), so the
+same 8-concurrent number may not transfer directly to the app phase.
+
+### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
+
+**Source:** hubitrep's `HubDiagnostics` app (`github.com/hubitrep/hubitat`, `HubDiagnostics/`),
+reviewed 2026-08-21 for extension ideas.
+
+Its Device Usage Audit builds two reverse indices per its README: "Apps → devices" and
+"Dashboards → devices," and flags a device as an unreferenced cleanup candidate only when
+neither points to it. This app's existing Insights panel already has the app-side half of that
+("Devices nothing references" - no app owns, watches or drives them) but has no visibility into
+Hubitat Dashboards at all. A device that looks orphaned by this app's current check could
+legitimately be sitting on someone's dashboard as a manual on/off tile with no automation
+behind it - a real false positive in an existing, shipped Insight, not a new feature gap.
+
+Not confirmed this session: which endpoint HubDiagnostics reads dashboard-to-device
+assignments from - not visible in what was fetched from its README/source. Needs its own
+investigation into the dashboard data Hubitat exposes (likely something under `/dashboard/...`
+internal endpoints, unconfirmed) before this is scoped further. Two other small ideas from the
+same audit feature, noted but not written up as their own items: rendering a disabled app's
+device reference with strikethrough so a "ghost reference" is visually distinguishable from a
+live one, and flagging devices via Hubitat's own `orphan: true` mesh field as a second,
+independent signal alongside the reference-count check this app already does.
+
 ### P3 - Move remaining display-shaping and classification logic to the browser
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
