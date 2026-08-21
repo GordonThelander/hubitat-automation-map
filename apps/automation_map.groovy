@@ -72,6 +72,9 @@
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String APP_NAME = 'Automation Map (Dev)'
 // Every build of this app excludes all of its own variants from the map,
@@ -122,7 +125,31 @@ boolean showSanta() {
 // local-path case for every user to fix a case that only affects some.
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
-@Field static final Integer APP_BATCH_SIZE = 3
+
+// ===== Async app-phase scan constants =====
+// The device phase stays batch/runIn(1, ...) driven - see scanDeviceBatch.
+// The app phase (statusJson per app, meaningfully heavier per call than a
+// device fetch: rule-flow decoding, not just a JSON read) uses a self-
+// refilling asynchttpGet pipeline instead, following the pattern verified in
+// hubitrep's HubDiagnostics app (github.com/hubitrep/hubitat) and confirmed
+// live on this hub before being built on: a final static reference to a
+// thread-safe collection survives concurrent asynchttpGet callbacks cleanly
+// (4 runs of 8 concurrent callbacks, 0 lost or duplicate writes each time).
+// See BACKLOG.md for the verification detail.
+@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   // Hubitat's documented concurrent-async-per-app cap
+@Field static final int APP_ASYNC_WATCHDOG_SEC = 90  // safety net if a callback is genuinely lost
+// One entry per in-progress app-phase scan, keyed by scanId. Each entry is
+// itself a ConcurrentHashMap with keys: total (Integer), inFlight
+// (AtomicInteger), processed (AtomicInteger), pending
+// (ConcurrentLinkedQueue<String> of app ids), appInfo
+// (ConcurrentHashMap<String, Map> - the actual result, merged into
+// state.appInfo only at finalization), labels (ConcurrentHashMap<String,
+// String> - device labels discovered while processing apps, merged into
+// state.deviceLabels only at finalization - concurrent callbacks must never
+// write state directly, exactly the race this whole design avoids),
+// decoded/unreadable/rulesDecoded/rulesSkipped (AtomicInteger each),
+// otherEngines (ConcurrentHashMap<String, Boolean> used as a concurrent set).
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
 
 definition(
     name: APP_NAME,
@@ -476,8 +503,21 @@ void clearAbandonedScan() {
     // Previously this branch discarded a fully-read scan and told the user
     // to start over from zero; now it finishes the one step that never got
     // the chance to run.
+    //
+    // state.scanQueue is [] for the ENTIRE app phase now, not just at the
+    // end - the app phase is a self-driving async pipeline (see
+    // startAppPhase/dispatchAppOne/appFetchCb), not the runIn(1, ...) batch
+    // loop this branch was originally written against. The extra
+    // APP_SCANS check distinguishes "async pipeline still genuinely
+    // running" (do nothing here, its own watchdog owns recovery) from "the
+    // pipeline finished and finalizeAppPhase's own runIn() scheduling is
+    // what got stuck" (the same failure this branch has always protected
+    // against, now one step downstream). The heartbeat-staleness gate above
+    // already stops this firing during healthy operation, since every async
+    // callback re-stamps it - this is the belt-and-suspenders half.
     List queue = (state.scanQueue ?: []) as List
-    if (!queue && state.scanPhase == 'apps') {
+    boolean asyncAppScanActive = state.scanPhase == 'apps' && APP_SCANS.containsKey(state.appScanId as String)
+    if (!queue && state.scanPhase == 'apps' && !asyncAppScanActive) {
         log.warn "${app.label}: scan batches finished but finalization never ran - finishing now instead of discarding it"
         finishScan()
         return
@@ -673,6 +713,9 @@ void startScan() {
     runIn(1, 'scanBatch')
 }
 
+// Devices phase only now. The app phase is a self-driving async pipeline,
+// not a runIn(1, ...) loop - see startAppPhase/dispatchAppOne/appFetchCb -
+// so this never runs during it.
 void scanBatch() {
     // Anything thrown out of this method is fatal to the whole scan: Hubitat
     // discards the state written during a failed execution, so the queue would
@@ -680,14 +723,8 @@ void scanBatch() {
     // stuck at "scanning" with no error recorded. Every stage is therefore
     // guarded separately, and the reschedule happens no matter what.
     state.scanHeartbeat = now()
-    boolean advanced = false
     try {
-        if (state.scanPhase == 'devices') {
-            scanDeviceBatch()
-        } else {
-            scanAppBatch()
-        }
-        advanced = true
+        scanDeviceBatch()
     } catch (Exception ex) {
         log.warn "${app.label}: scanBatch failed: ${ex.message}"
         state.scanError = "${ex.message}"
@@ -696,8 +733,7 @@ void scanBatch() {
         // what runs next on the assumption the batch succeeded. An empty
         // queue after a genuine failure used to read exactly like an empty
         // queue after finishing normally, and the scan would proceed straight
-        // into fetchRegistry/finishScan - building and stamping a graph from
-        // data a failed batch never finished collecting.
+        // into the app phase with data a failed batch never finished collecting.
         state.scanRunning = false
         return
     }
@@ -705,38 +741,8 @@ void scanBatch() {
     try {
         if (state.scanQueue) {
             runIn(1, 'scanBatch')
-        } else if (advanced && state.scanPhase == 'devices') {
-            startAppPhase()
         } else {
-            // Scheduled rather than called, so the graph build gets an
-            // execution to itself. fetchRegistry chains on to finishScan.
-            //
-            // Called inline it ran in the same execution as the last batch of
-            // app fetches, so one execution did up to three 20-second HTTP
-            // fetches, then built a 285-node graph, then made up to three more
-            // HTTP calls naming deleted rules, then wrote the whole state. That
-            // execution died on a 74-app hub: no error, no scheduled job, just a
-            // heartbeat that stopped two apps from the end.
-            //
-            // Splitting it also means the batch work is already committed if
-            // the build itself fails.
-            //
-            // The PENDING marker is written HERE, not inside fetchRegistry,
-            // because state is only committed at the END of an execution. An
-            // execution that dies mid-fetch discards everything it wrote, so
-            // fetchRegistry structurally cannot record that it started. Without
-            // this marker, "never ran" and "died trying" look identical from the
-            // outside, and the page told a user who had just run a scan that the
-            // registry had never been fetched.
-            state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
-                                  matched: 0, error: null, schemaVersion: null]
-            runIn(1, 'fetchRegistry')
-            // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
-            // dies takes the graph build down with it and the scan never
-            // completes at all. Scheduling finishScan again for the same handler
-            // replaces this job, so the normal path cancels the watchdog simply
-            // by rescheduling it one second out.
-            runIn(45, 'finishScan')
+            startAppPhase()
         }
     } catch (Exception ex) {
         log.warn "${app.label}: scan could not continue: ${ex.message}"
@@ -784,6 +790,14 @@ void scanDeviceBatch() {
 // state.appIds is therefore always empty entering this function; kept as a
 // LinkedHashSet build for the dedup-against-self-id logic, not because
 // anything populates it beforehand any more.
+//
+// The app phase is a self-driving async pipeline from here, not a runIn(1,
+// ...) batch loop - statusJson is meaningfully heavier per call than a
+// device fetch (rule-flow decoding), and this is the fetch that genuinely
+// cannot be bulked the way the device phase's was. Pattern verified against
+// hubitrep's HubDiagnostics app and confirmed live on this hub (static-field
+// survival across concurrent asynchttpGet callbacks, 4/4 clean runs) before
+// being built on - see BACKLOG.md.
 void startAppPhase() {
     Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
@@ -793,47 +807,219 @@ void startAppPhase() {
     state.appIds = appIds as List
 
     state.scanPhase = 'apps'
-    state.scanQueue = appIds
     state.scanTotal = appIds.size()
     state.scanDone = 0
-    runIn(1, 'scanBatch')
-}
+    // Not the live queue any more - the real queue is APP_SCANS[scanId].pending.
+    // Left empty rather than removed so scanStatusJson's `queued` field and
+    // clearAbandonedScan's staleness check both still have a defined value.
+    state.scanQueue = []
 
-void scanAppBatch() {
-    List queue = state.scanQueue as List
-    Map appInfo = state.appInfo as Map
-    Map labels = state.deviceLabels as Map
-    int size = queue.size() < APP_BATCH_SIZE ? queue.size() : APP_BATCH_SIZE
-
-    queue.take(size).each { String appId ->
-        Map info = fetchAppRelationships(appId, labels)
-        appInfo[appId] = info
-        // Only a genuine fetch failure counts as unreadable. An app with no
-        // roles was read perfectly well - it simply has no device relationships
-        // to draw, which is also true of Automation Map itself once it excludes
-        // itself. Counting those as failures made every scan report "1 app
-        // could not be read", which is what it does to its own entry.
-        if (info.error) {
-            state.appsUnreadable = (state.appsUnreadable ?: 0) + 1
-        } else {
-            state.appsDecoded = (state.appsDecoded ?: 0) + 1
-        }
-        if (info.flow) {
-            state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
-        } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
-            // A rule engine this version does not decode. Counted so it is
-            // reported rather than looking like a rule with nothing in it.
-            List others = (state.otherEngines ?: []) as List
-            if (!others.contains("${info.type}")) others << "${info.type}"
-            state.otherEngines = others
-            state.rulesSkipped = (state.rulesSkipped ?: 0) + 1
-        }
+    if (appIds.isEmpty()) {
+        // Nothing to dispatch - go straight to the same finalization every
+        // other path uses, without ever creating a scan entry to finalize.
+        beginRegistryAndFinish()
+        return
     }
 
-    state.appInfo = appInfo
-    state.deviceLabels = labels
-    state.scanQueue = queue.drop(size)
-    state.scanDone = (state.scanDone ?: 0) + size
+    String scanId = "apps-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total = appIds.size()
+    scan.inFlight = new AtomicInteger(0)
+    scan.processed = new AtomicInteger(0)
+    scan.pending = new ConcurrentLinkedQueue<String>(appIds)
+    scan.appInfo = new ConcurrentHashMap<String, Map>()
+    // Device labels discovered while processing apps (childDevices,
+    // eventSubscriptions, appSettings names) - merged into
+    // state.deviceLabels only at finalizeAppPhase, never written to state
+    // directly from a callback. This is the specific race the whole design
+    // avoids: concurrent callbacks each reading-then-writing state.deviceLabels
+    // would silently drop whichever wrote last, per Hubitat's own last-
+    // write-wins state persistence.
+    scan.labels = new ConcurrentHashMap<String, String>()
+    scan.decoded = new AtomicInteger(0)
+    scan.unreadable = new AtomicInteger(0)
+    scan.rulesDecoded = new AtomicInteger(0)
+    scan.rulesSkipped = new AtomicInteger(0)
+    scan.otherEngines = new ConcurrentHashMap<String, Boolean>()
+    APP_SCANS[scanId] = scan
+    state.appScanId = scanId
+
+    // Scheduled once at pipeline start, not per-item like the old batch
+    // watchdog - if callbacks stop arriving entirely, finalize with whatever
+    // was collected rather than leave the scan stuck forever. A partial
+    // result some apps are missing from beats no result at all; this is the
+    // same trade-off clearAbandonedScan already makes for a stuck scan.
+    runIn(APP_ASYNC_WATCHDOG_SEC, 'appAsyncWatchdog', [data: [scanId: scanId]])
+
+    APP_ASYNC_MAX_INFLIGHT.times { dispatchAppOne(scanId) }
+}
+
+// CAS-bounded dispatch: reserves a slot in the in-flight pool (<=
+// APP_ASYNC_MAX_INFLIGHT), pops the next pending app id atomically, and
+// issues an async statusJson fetch. Returns false if the cap is reached, the
+// queue is empty, or the scan no longer exists (already finalized).
+boolean dispatchAppOne(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return false
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {
+        int n = inFlight.get()
+        if (n >= APP_ASYNC_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    String appId = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (appId == null) {
+        inFlight.decrementAndGet()
+        return false
+    }
+
+    asynchttpGet('appFetchCb',
+        [uri: "${LOOPBACK_BASE}/installedapp/statusJson/${appId}", contentType: 'application/json', timeout: 20],
+        [scanId: scanId, appId: appId])
+    return true
+}
+
+// Async callback for /installedapp/statusJson/{id}. Runs the same
+// processAppRelationships() the old synchronous batch used, decrements
+// inFlight, dispatches the next pending id (refilling the pipeline), or
+// finalizes once the queue is drained and every in-flight call has landed.
+void appFetchCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return  // callback from a prior, already-finalized scan
+
+    String appId = data.appId as String
+    Map info
+    try {
+        if (resp?.status == 200) {
+            Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
+            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap)
+        } else {
+            info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                    ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                    error: "HTTP ${resp?.status ?: 'n/a'}"]
+        }
+    } catch (Exception ex) {
+        info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: "${ex.message}"]
+    }
+    (scan.appInfo as ConcurrentHashMap)[appId] = info
+
+    // Same distinction as the old batch loop: only a genuine fetch/processing
+    // failure counts as unreadable. An app with no roles was read perfectly
+    // well, it simply has nothing to draw.
+    if (info.error) {
+        (scan.unreadable as AtomicInteger).incrementAndGet()
+    } else {
+        (scan.decoded as AtomicInteger).incrementAndGet()
+    }
+    if (info.flow) {
+        (scan.rulesDecoded as AtomicInteger).incrementAndGet()
+    } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
+        (scan.otherEngines as ConcurrentHashMap)["${info.type}"] = true
+        (scan.rulesSkipped as AtomicInteger).incrementAndGet()
+    }
+
+    int processed = (scan.processed as AtomicInteger).incrementAndGet()
+    int inFlight = (scan.inFlight as AtomicInteger).decrementAndGet()
+
+    // Best-effort progress snapshot only - the progress bar, not correctness.
+    // Concurrent callbacks writing state directly is exactly the race the
+    // static accumulation above avoids for the actual result data; a
+    // snapshot integer can only ever lag behind the true count (never wrong
+    // direction, per Hubitat's last-write-wins persistence), which is fine
+    // for a percentage but would not be fine for appInfo entries going missing.
+    state.scanDone = processed
+    state.scanHeartbeat = now()
+
+    if (!(scan.pending as ConcurrentLinkedQueue).isEmpty()) {
+        dispatchAppOne(scanId)
+    } else if (inFlight == 0 && (scan.processed as AtomicInteger).get() >= (scan.total as Integer)) {
+        // Fresh read of processed, not this callback's local value - same
+        // reasoning HubDiagnostics documents for its own equivalent check:
+        // processed and inFlight are independent atomics, so the callback
+        // that zeroes inFlight is not necessarily the one whose increment
+        // hit total. inFlight.decrementAndGet() returns 0 for exactly one
+        // callback, so this still fires exactly once.
+        finalizeAppPhase(scanId)
+    }
+}
+
+// Watchdog for a stuck async app-phase pipeline - callbacks that never
+// arrive at all, not a per-item failure (those already have their own
+// soft-fail path via info.error and still count as processed).
+void appAsyncWatchdog(data) {
+    String scanId = data?.scanId as String
+    if (!scanId) return
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return  // already finalized normally, nothing to do
+
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    log.warn "${app.label}: app-phase async scan ${scanId} did not finish within ${APP_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed) - finalizing with what was collected"
+    finalizeAppPhase(scanId)
+}
+
+// Called by whichever async callback lands last (pending empty, inFlight
+// zero) or by the watchdog above. Merges the scan's static-accumulated
+// results into state in one single execution - the only place any of this
+// data is written to state at all, which is what avoids the concurrent-
+// write race the whole design exists to avoid. Mirrors what the old
+// scanBatch()'s app-phase-finished branch used to do inline.
+void finalizeAppPhase(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return  // already finalized (watchdog and last-callback can both fire once each; the second is a no-op)
+    APP_SCANS.remove(scanId)
+    unschedule('appAsyncWatchdog')
+
+    try {
+        Map appInfo = (state.appInfo ?: [:]) as Map
+        appInfo.putAll(scan.appInfo as Map)
+        state.appInfo = appInfo
+
+        Map labels = (state.deviceLabels ?: [:]) as Map
+        labels.putAll(scan.labels as Map)
+        state.deviceLabels = labels
+
+        state.appsDecoded = (state.appsDecoded ?: 0) as Integer + (scan.decoded as AtomicInteger).get()
+        state.appsUnreadable = (state.appsUnreadable ?: 0) as Integer + (scan.unreadable as AtomicInteger).get()
+        state.rulesDecoded = (state.rulesDecoded ?: 0) as Integer + (scan.rulesDecoded as AtomicInteger).get()
+        state.rulesSkipped = (state.rulesSkipped ?: 0) as Integer + (scan.rulesSkipped as AtomicInteger).get()
+        List others = (state.otherEngines ?: []) as List
+        (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> if (!others.contains(eng)) others << eng }
+        state.otherEngines = others
+
+        state.scanDone = scan.total as Integer
+        state.scanHeartbeat = now()
+    } catch (Exception ex) {
+        log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
+        state.scanError = "${ex.message}"
+        state.scanRunning = false
+        return
+    }
+
+    beginRegistryAndFinish()
+}
+
+// The registry-fetch-then-graph-build handoff, shared by the normal
+// end-of-app-phase path and the empty-app-list path in startAppPhase. Split
+// out rather than duplicated - was inline at the end of the old scanBatch().
+void beginRegistryAndFinish() {
+    // The PENDING marker is written here, not inside fetchRegistry, because
+    // state is only committed at the END of an execution - an execution
+    // that dies mid-fetch discards everything it wrote, so fetchRegistry
+    // structurally cannot record that it started.
+    state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
+                          matched: 0, error: null, schemaVersion: null]
+    runIn(1, 'fetchRegistry')
+    // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
+    // dies takes the graph build down with it and the scan never completes
+    // at all. Scheduling finishScan again for the same handler replaces
+    // this job, so the normal path cancels the watchdog simply by
+    // rescheduling it one second out.
+    runIn(45, 'finishScan')
 }
 
 // Runs as its own scheduled execution between the app phase and the graph
@@ -1099,13 +1285,33 @@ Map fetchDeviceCapabilities(String devId) {
 
 // Phase 2: the real relationship data. Also harvests device labels for devices
 // the user did not select, since settings carry {id: name} maps.
+// Synchronous entry point. No longer called from the scan loop - see
+// startAppPhase/dispatchAppOne for the async pipeline the scan itself uses -
+// kept for anything that wants one app's relationships outside a scan.
 Map fetchAppRelationships(String appId, Map labels) {
     Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
         Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 20)
         if (!result.ok) throw new Exception(result.error)
         Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+        return processAppRelationships(appId, data, labels)
+    } catch (Exception ex) {
+        out.error = ex.message
+        log.warn "${app.label}: app ${appId} lookup failed: ${ex.message}"
+        return out
+    }
+}
 
+// Pure processing, split out of fetchAppRelationships so the async scan
+// pipeline's callback can run it directly on data it already has, with no
+// second fetch. Mutates labels in place, same as before the split - the
+// async pipeline gives each concurrent callback its own per-scan labels map
+// to mutate safely, merged into state.deviceLabels only at finalization, not
+// state.deviceLabels itself (concurrent callbacks racing on state directly
+// is exactly the failure mode this whole rewrite exists to avoid).
+Map processAppRelationships(String appId, Map data, Map labels) {
+    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
+    try {
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.label = stripTags(rawLabel)
@@ -1253,7 +1459,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             }
     } catch (Exception ex) {
         out.error = ex.message
-        log.warn "${app.label}: app ${appId} lookup failed: ${ex.message}"
+        log.warn "${app.label}: app ${appId} processing failed: ${ex.message}"
     }
     return out
 }
@@ -3476,12 +3682,17 @@ Map scanStatusMapping() {
 }
 
 String scanStatusJson() {
+    // state.scanQueue is always [] during the app phase now - the live queue
+    // is APP_SCANS[scanId].pending, read directly here rather than let this
+    // report a misleadingly-early 0 for the whole phase.
+    ConcurrentHashMap appScan = state.scanPhase == 'apps' ? APP_SCANS[state.appScanId as String] : null
+    int queued = appScan ? (appScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
     return JsonOutput.toJson([
         running: state.scanRunning as boolean,
         phase: state.scanPhase,
         done: state.scanDone,
         total: state.scanTotal,
-        queued: (state.scanQueue ?: []).size(),
+        queued: queued,
         apps: (state.appInfo ?: [:]).size(),
         devices: (state.deviceLabels ?: [:]).size(),
         error: state.scanError,
