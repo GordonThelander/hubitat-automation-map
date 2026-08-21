@@ -946,6 +946,29 @@ batched, the device phase alone gives back ~56s. Caveat on all projections: thes
 with Python threads against the hub, which bounds what the HTTP work can cost but does not
 prove Groovy's `asynchttpGet` scheduler achieves the same throughput in the app sandbox.
 
+**Findings 1+2 built and live-tested, 2026-08-21.** `fetchDeviceListBulk()` and
+`fetchDeviceCapabilities()` implemented, pushed to the Dev hub instance, groovyc/
+`check_template.sh` clean, then run through a full fresh scan and verified against the actual
+result rather than just measured HTTP timing:
+
+- **Device phase: ~60s -> ~17s** (`scan-status` polling showed the devices phase already
+  finished, 0/104 apps, by t=17s). Total scan **124s -> 101s**. Smaller than the pure-HTTP 3.7s
+  projection above because this deliberately kept the existing `DEVICE_BATCH_SIZE`/`runIn(1,
+  ...)` batching in place (3 batches of ~15/15/4 representatives instead of touching the
+  scheduling model) - the 3.7s number was HTTP time alone, not scan wall-clock through the
+  batch loop. App phase unchanged, as expected - findings 1+2 don't touch it.
+- **Correctness, checked against the live result, not assumed:** 0 devices/apps unreadable, 61
+  rules decoded (identical to every prior baseline scan this session), all 194 devices got a
+  label/room/capabilities with zero empty-capability or missing-label rows. 31 distinct
+  capability signatures across 194 devices (34 driver types) - the per-driver-sharing
+  assumption held on a full live scan, not just the earlier 4-device sample. Both icon features
+  built earlier this session still auto-detect correctly post-rewrite: `CoCoHue Bridge 988DA0`
+  -> `hub`, the Alert Group Scene devices -> `scene`.
+
+Finding 3 (async concurrency, the app-phase lever and the bigger architectural change) is
+deliberately not part of this build - still the next step if more speed is wanted, per the
+sequencing note below. Committed to `dev` only (`b97f10b`), not merged to `main`.
+
 Sequencing suggestion if picked up: finding 2 first (biggest win, smallest blast radius - it
 changes what `fetchDeviceApps` fetches, not how the scan is scheduled), then finding 1 (removes
 code, needs the settings-page wording change), then finding 3 last (the real architectural
