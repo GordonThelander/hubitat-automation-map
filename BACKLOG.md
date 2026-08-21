@@ -859,46 +859,101 @@ that no cheap "has this changed" signal exists on the platform for this to lean 
 a tool this deep into Hubitat's internals would be a likely place to see it used. Doesn't close
 the gating question, but lowers confidence that this item is buildable as originally conceived.
 
-### P1 - Concurrent async fetching instead of serial batches, for the scan itself
+### P1 - Rebuild the scan: bulk list + per-driver capabilities + async concurrency
 
-**Source:** hubitrep's `HubDiagnostics` app (`github.com/hubitrep/hubitat`, `HubDiagnostics/`),
-reviewed 2026-08-21 for extension ideas. Different lever from the delta-scan item above, and
-from the two already-reverted speed attempts elsewhere in this file - worth its own item.
+**Source:** reviewing hubitrep's `HubDiagnostics` app (`github.com/hubitrep/hubitat`,
+`HubDiagnostics/`) 2026-08-21, then measuring the ideas against Gordon's own hub directly.
+Supersedes the earlier, vaguer version of this item. This is the single biggest scan-speed
+finding in this file, and unlike the two reverted speed experiments elsewhere here, every claim
+below was measured live rather than reasoned about.
 
-Its Device Audit feature crawls `/device/fullJson/{id}` for every device - the same style of
-per-device call this app's own `fetchDeviceApps()` makes - and its README states this is "one
-call per device, throttled to the Hubitat platform's 8-concurrent-async-call cap," completing a
-350-device hub in 30-60 seconds. That is a materially different technique from anything tried
-in this file so far: every speed attempt here (the reverted `runInMillis` experiment, the
-reverted `APP_BATCH_SIZE` bump) changed the *scheduling interval or batch size* of a serial
-walk - one batch runs, finishes, `runIn(1, ...)` schedules the next. HubDiagnostics instead runs
-several fetches genuinely concurrently within one execution, capped at a platform limit, via
-Hubitat's `asynchttpGet()` API rather than the synchronous `httpGet()` this app's `httpFetch()`
-wrapper is built on.
+**Measured baseline** (Gordon's C-8, 194 devices / 103 apps, from the live 2.0.4 scan):
+device phase ~60s, app phase ~58s, ~124s total. Pure HTTP cost measured separately: ~34s
+serial for the devices, ~42s serial for the apps, ~76s combined. The ~48s gap between 76s of
+HTTP and a 124s scan is almost exactly the ~48 batches x `runIn(1, ...)` - confirming, with
+numbers, the diagnosis already recorded in the reverted-experiments entries below.
 
-Confirmed, not just claimed: `asynchttpGet()` is real and in active use in that codebase - found
-and quoted verbatim a working callback (`githubVersionCallback(resp, data)`, registered via
-`asynchttpGet('githubVersionCallback', [uri: ..., ...])`), and the constant
-`AUDIT_MAX_INFLIGHT = 8` plus `ConcurrentHashMap`/`AtomicInteger`/`ConcurrentLinkedQueue` state
-tracking for the audit scan's in-flight/pending bookkeeping. Not confirmed: the exact queue-
-refill logic (`apiAuditStart` and its callback) - the source file is large enough that two
-targeted fetches both truncated before reaching it. The *approach* is verified real and working
-on this platform; the *exact mechanics* of the 8-concurrent throttle are not yet seen firsthand.
+Three independent findings, each verified on the hub:
 
-Why this is worth investigating ahead of the delta-scan item above: it doesn't depend on an
-unconfirmed platform signal existing, it's demonstrably already working in a live, mature
-community tool on real hubs, and it attacks the exact bottleneck already identified this
-session (the ~48 batches and their `runIn(1, ...)` gaps are the dominant cost, not the HTTP
-fetch time itself) from a different, likely more reliable angle than tightening the scheduling
-loop - which this session already has direct evidence is unpredictable under `runInMillis`.
-Async concurrency doesn't touch `runIn()`/`runInMillis()` scheduling at all; it changes how much
-work happens *inside* each scheduled execution.
+**1. The per-device `appIds` walk is redundant - `/hub2/appsList` is a strict superset.**
+Fetched every app id from `/hub2/appsList` (105), then fetched all 194 devices' `appsUsing` +
+`parentApp` and unioned them (80). Apps discoverable *only* by walking devices: **zero**. Apps
+only the listing finds: 25. So device-led app discovery contributes nothing the listing does not
+already provide, and `fetchDeviceApps()`'s `appIds` extraction can go entirely. One hub, one
+sample - worth re-checking on a hub with unusual child-app nesting before relying on it.
+Knock-on: `state.appsFromListing` and the settings-page sentence built from it ("N of them
+reference no device and would not have been found by walking devices alone") become
+meaningless if device-led discovery is removed, and would need rewording.
 
-Not scoped further than this - needs reading the actual queue-refill implementation (ideally by
-asking hubitrep directly, given their offer of help on the P7 item elsewhere in this file) before
-committing to a design, and needs to account for `fetchAppRelationships()` being meaningfully
-heavier per call than a device audit's read (rule-flow decoding, not just a JSON fetch), so the
-same 8-concurrent number may not transfer directly to the app phase.
+**2. Capabilities are a property of the driver, not the device - fetch once per driver type.**
+`/hub2/devicesList` returns all 194 devices in ONE call carrying `id`, `name` (the label),
+`type` (the driver name), `roomName`/`roomId`, plus `deviceTypeId`, `isOrphan`, `disabled`,
+`dashboardTypes`, and parent/child structure. That covers three of the five fields
+`fetchDeviceApps()` currently pays a per-device call for (label, room, type); combined with
+finding 1, **capabilities is the only remaining reason to fetch a device individually at all**.
+And there are only **34 distinct `deviceTypeId` values across 194 devices**. Tested whether
+devices sharing a driver share capabilities: sampled up to 4 devices in each of the 22 driver
+types that have more than one device - **0 mismatches**. So capabilities can be fetched once per
+driver type and applied to every device on that driver. (Sampling caveat: up to 4 per type on
+one hub, not exhaustive. A composite/child driver that varies its capability list per instance
+would break this; none seen here. Worth a guard that falls back to a per-device fetch if a
+driver ever looks inconsistent.) Also probed for a bulk capabilities endpoint and found none -
+`/device/list/data` (200, 194 entries) carries `deviceTypeName`/`label`/`roomId` but no
+capabilities either; `/hub2/devicesCapabilities`, `/device/capabilities/json` and
+`/hub2/deviceCapabilities` are all 404.
+
+**Measured result of 1 + 2 together: the device phase drops from ~60s to 3.7s** - one
+`/hub2/devicesList` call (1.0s) plus 34 driver-representative `fullJson` calls 8-way concurrent
+(2.6s). That is a ~16x reduction, and it comes from making far fewer calls, not from tightening
+any scheduling loop.
+
+**3. Async concurrency, for what genuinely must stay per-item (the app phase).**
+Every app still needs its own `/installedapp/statusJson/{id}` - that IS the relationship data,
+there is no bulk equivalent. Measured: ~42s serial vs **12.2s at 8-way concurrent (3.5x)**. The
+device side benefits less (34s serial vs 20s concurrent, only 1.7x) because the hub serialises
+a lot internally - useful to know, since it means concurrency alone was never going to deliver
+the 8x the connection count suggests. Concurrency is the smaller of the two levers; finding 2 is
+the bigger one.
+
+**The implementation pattern, read from HubDiagnostics' source directly** (cloned and read, not
+summarised): `dispatchOne(scanId)` CAS-reserves a slot against `AUDIT_MAX_INFLIGHT = 8` via an
+`AtomicInteger`, polls the next id off a `ConcurrentLinkedQueue`, and issues
+`asynchttpGet('fullJsonCb', params, [scanId: ..., deviceId: ...])`. The callback
+`fullJsonCb(resp, data)` records the result, increments `processed`, decrements `inFlight`, then
+either dispatches the next pending id (keeping the pipeline full) or finalises. Startup is
+`AUDIT_MAX_INFLIGHT.times { dispatchOne(scanId) }` - and note there is **no `runIn` between
+items at all**; the only `runIn` is a single `runIn(120, 'auditWatchdog')` safety net for a
+genuinely lost callback. That is the structural difference: the whole walk is one self-refilling
+async pipeline, not N scheduled batches.
+
+**Two traps that pattern implies for this app, both documented in their code:**
+- Results must accumulate in a `@Field static final ConcurrentHashMap` keyed by scan id, **not
+  in `state`**. Their `apiAuditStatus` comment spells out why: `state` writes from up to 8
+  concurrent callbacks have last-write-wins semantics, so a `state`-based counter lags or loses
+  data. This app's `scanDeviceBatch()`/`scanAppBatch()` write straight into `state.*` maps today,
+  so this is not a small change to the accumulation model. (Mutable `@Field static` is used
+  throughout their app and works; this repo's own notes carry a caution about statics in the
+  Hubitat sandbox, so confirm with a small test before building on it.)
+- Their finalisation check re-reads `processed` fresh rather than trusting the callback's own
+  local value, with a long comment explaining that `processed` and `inFlight` are independent
+  atomics and the callback that zeroes `inFlight` is not necessarily the one whose increment hit
+  the total. Worth copying that reasoning rather than rediscovering it via a scan that never
+  finalises.
+
+**Projected combined effect: ~124s -> roughly 16-20s of fetching** (3.7s devices + 12.2s apps),
+plus graph-build time, on this hub. Even taking only finding 2 and leaving the app phase
+batched, the device phase alone gives back ~56s. Caveat on all projections: these were measured
+with Python threads against the hub, which bounds what the HTTP work can cost but does not
+prove Groovy's `asynchttpGet` scheduler achieves the same throughput in the app sandbox.
+
+Sequencing suggestion if picked up: finding 2 first (biggest win, smallest blast radius - it
+changes what `fetchDeviceApps` fetches, not how the scan is scheduled), then finding 1 (removes
+code, needs the settings-page wording change), then finding 3 last (the real architectural
+change, since it replaces the batch/`state` accumulation model wholesale). hubitrep offered help
+on the P7 item elsewhere in this file and would be the obvious person to sanity-check finding 3
+against their own implementation.
+
+### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
 
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
 
