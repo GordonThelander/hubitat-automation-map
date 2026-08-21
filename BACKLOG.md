@@ -192,7 +192,7 @@ Fix: wrap in try/catch, render a short paragraph naming the two clicks that fix 
 a paragraph naming the two clicks (Apps Code -> Automation Map -> OAuth -> Enable OAuth in
 App -> Update) instead of throwing. The rest of the page still renders below it.
 
-### P1 - Runtime assets hotlinked from raw.githubusercontent.com
+### Closed - Runtime assets hotlinked from raw.githubusercontent.com
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
 directly - confirmed exact.
@@ -231,6 +231,16 @@ mermaid's load state is never checked independently of vis-network's, so a flowc
 CDN failure (vis-network fine, mermaid down) has no equivalent graceful message. Gordon's call:
 leave as is - not worth a dedicated fix for a rare, narrow failure mode on a decorative/secondary
 feature.
+
+**Closed 2026-08-21.** Confirmed: stay on GitHub hotlinking for the watermark and Community
+Utilities sound, no further work planned. Hotlinking is the cheaper, more practical choice here
+precisely because the map already has a hard, unavoidable dependency on internet connectivity -
+the vis-network and mermaid CDN libraries the whole page needs to function at all already require
+it, and the README already documents this ("The viewing browser needs internet"). Removing two
+decorative assets' dependency on GitHub would not remove that existing dependency, so it buys
+no real reduction in what the app requires to work, only extra complexity for File Manager or
+base64-embedding to carry two images/sounds that were never going to make the app internet-free
+either way.
 
 ### P1 - Quadratic edge/device dedup inside the execution that already dies on large hubs
 
