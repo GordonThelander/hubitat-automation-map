@@ -214,6 +214,24 @@ option, and it also fully retires the "plays the wrong sound" bug since there is
 sound to get wrong. The watermark and the Community utilities sound are still hotlinked from
 `raw.githubusercontent.com` exactly as described above; this item stays open for those two.
 
+**Decided 2026-08-21: keep hotlinking, File Manager rejected.** Discussed the three real options
+(File Manager, base64-embedding like the existing 29KB constant, staying on GitHub). File Manager
+rejected deliberately: it fixes nothing for anyone except Gordon's own hub, since storage is
+per-hub and nothing auto-populates it for other HPM installers - `uploadHubFile()`
+self-provisioning could close that gap but adds real complexity for two decorative assets. Stays
+on GitHub hotlinking instead, with the requirement that a missing asset must never break the
+app, not just degrade quietly.
+
+Checked against the actual failure-handling code rather than assumed: this mostly already holds.
+vis-network failing to load is caught (`typeof window.vis === 'undefined'`) and shows "Could not
+load the drawing libraries" instead of a blank page. The sound already has a three-layer
+fallback to a synthesized tone (`error` event, `play()` rejection, try/catch) and never throws.
+The watermark `<img>` fails silently by nature of the tag, no JS involved. The one real gap:
+mermaid's load state is never checked independently of vis-network's, so a flowchart-specific
+CDN failure (vis-network fine, mermaid down) has no equivalent graceful message. Gordon's call:
+leave as is - not worth a dedicated fix for a rare, narrow failure mode on a decorative/secondary
+feature.
+
 ### P1 - Quadratic edge/device dedup inside the execution that already dies on large hubs
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
