@@ -140,6 +140,9 @@ button were both trying to build. The remaining, narrower ask above (return to t
 layout rather than a freshly re-settled one) is still open, but a dedicated reset-to-fresh-
 layout button is not - "Show all" already is one.
 
+**Rejected 2026-08-21.** Gordon: too complex for the value it returns, given "Show all" already
+covers the common case above. Not pursuing the narrower same-layout-restore behaviour further.
+
 ### P1 - Make the legend accurate and usable on smaller tablets
 
 **Source:** JimB functional review, 2026-08-16.
@@ -154,6 +157,12 @@ Acceptance criteria:
 - On smaller tablets, either use a shorter legend or give it a bounded scroll area.
 - Ensure the legend does not obscure the controls, map, or open panels.
 - Confirm the result at desktop and tablet widths.
+
+**Rejected 2026-08-21.** Gordon: the app isn't designed for small form factor - use a large
+screen instead, so the tablet-scaling requirement doesn't apply. This closes the item as
+scoped. It doesn't independently confirm or deny whether the legend's own wording is still
+accurate against current rendering rules; that's a separate, smaller question, worth its own
+look only if a specific inaccuracy is ever actually spotted.
 
 ### P1 - Picklist exclusion controls
 
@@ -174,6 +183,27 @@ Acceptance criteria:
 - Reset restores all entries.
 - Search/filtering the picklist does not lose selections outside the current search result.
 - Decide explicitly whether selections persist only for the page session or across reloads.
+
+**Rejected 2026-08-21.** Gordon: doesn't hold together in this context - an app or device being
+"noisy" on the map isn't a meaningful category the way it might be for a notification channel,
+so there's nothing coherent for an exclusion toggle to act on.
+
+### P1 - "View Automation Map" opens in the same browser tab, not a new one
+
+**Source:** trep (community code audit author), forum feedback on the audit writeup,
+2026-08-20/21 - "Open the SPA in a separate tab."
+
+Confirmed live: the `href()` element for the map link (:279-284) renders with no `target`
+attribute, so clicking it navigates the current tab away from the hub's admin UI to the map
+page - unlike the Community Utilities button and the community-thread link on the same page,
+both of which already open in a new tab. Losing the admin UI tab is a bigger cost for this link
+than for either of those, since it's the app's own primary action.
+
+Needs investigation before a fix: Hubitat's `href()` DSL doesn't expose a `target` parameter
+directly, so it's not yet established whether `style: 'embedded'` or another supported option
+gets a new tab, or whether this needs a different approach (e.g. a plain anchor rendered via
+`paragraph` instead of `href()`). Don't assume a fix works without confirming live - this is
+exactly the kind of platform-rendering behaviour that isn't safe to guess at.
 
 ### P1 - Hand-install without OAuth throws instead of explaining
 
@@ -352,6 +382,12 @@ first to take the user off the Hubitat-served map entirely, to a separate site A
 does not control. Not a functional risk, the app works identically without it - just a
 different kind of button than anything else currently in that row.
 
+**Decided 2026-08-21:** link to the bare homepage, as originally shown. Already how it works -
+`communityUtilitiesBtn`'s click handler has opened
+`https://gordonthelander.github.io/HPM_Manifest_Crawl/` in a new tab (`noopener`) since 2.0.0.
+This decision confirms the existing behaviour rather than describing unbuilt work; the open
+question above is now closed with no code change required.
+
 ### P2 - Multi-select an interconnected subgraph
 
 **Source:** JimB functional review, 2026-08-16.
@@ -368,6 +404,12 @@ Acceptance criteria:
 - Empty, disconnected, and very large selections have understandable feedback.
 - Existing single-item drill-down and browser Back behaviour continue to work.
 
+**Clarified 2026-08-21.** Gordon's intended shape is narrower than the original title suggests:
+click one app and walk outward N hops from it, not an arbitrary multi-select across the whole
+map. That makes this the same interaction as "Extend the displayed map by one level" below,
+just generalised past a single hop - see that item for the open question of what determines N.
+Worth tracking as one item once picked up rather than two.
+
 ### P2 - Group and identify items in the picklists
 
 **Source:** JimB functional review, 2026-08-16.
@@ -382,6 +424,10 @@ Grouping proposal to validate with Jim before implementation:
 - Devices: group by the app/device category Jim intended; clarify whether this means room,
   icon category, owning app, or a separate Apps/Devices split before coding.
 - Preserve search across groups and expose group names to assistive technology.
+
+**Closed 2026-08-21.** Gordon considers this done via the icon work already shipped (every
+device/app picklist entry now carries its icon/engine-tag). The parent/child ordering and
+room/category grouping proposal above was never built and isn't being picked up separately.
 
 ### P2 - Extend the displayed map by one level
 
@@ -399,6 +445,12 @@ Acceptance criteria:
   changed.
 - Back/undo restores the preceding scope without rebuilding the full layout.
 
+**Open question, 2026-08-21:** what determines "one level"? A fixed single hop per click that
+can be repeated (as described above), a user-chosen N up front, or unbounded extension until the
+result stabilizes - each implies different UI. Also converges with "Multi-select an
+interconnected subgraph" above, clarified the same day as essentially this same interaction
+generalised to picking the starting point freely - resolve the two together.
+
 ### P2 - Local Variables are drawn as Hub Variables
 
 **Source:** JimB testing, 2026-08-17. "Local Variables are identified as Hub Variables. Not
@@ -410,6 +462,10 @@ Variables are correctly detected but there is no case for showing them on the ma
 scope decision - Local Variables are private to one app, so a graph about cross-app
 relationships may have nothing useful to say about them). Resolve which before touching code.
 
+**Gordon, 2026-08-21: confirmed as the next investigation to pick up.** Not yet started - the
+next step is reading how the scanner distinguishes (or fails to distinguish) the two variable
+types before deciding which of the two explanations above is correct.
+
 ### P2 - A single icon per Hub Variable, so all of its connections are visible at once
 
 **Source:** JimB testing, 2026-08-17. "Hub Variables should be identified by a single icon so
@@ -420,6 +476,9 @@ distinguishing Hub Variable nodes from other node types at a glance (an icon con
 device icons), or about being able to select one Hub Variable and see every rule that reads or
 writes it highlighted together (a selection/highlight behaviour)? The acceptance criteria differ
 substantially between the two readings.
+
+**Parked, 2026-08-21.** Gordon: hold this rather than pursue now. Revisit if the underspecified
+question above gets answered on its own, or if this resurfaces as a concrete need.
 
 ### P2 - IPv6 loopback with a port is drawn as an external system
 
@@ -517,6 +576,10 @@ itself.
 v2.0.0. Add a search box to whatever Hub Variable listing/panel exists, matching the
 search-box pattern already used for the app/device filter dropdowns.
 
+**Confirmed as wanted, 2026-08-21.** Gordon agrees it's a good, low-friction addition - stays
+P3 (small, no dependencies) but is now an accepted candidate rather than just an idea offered
+in passing.
+
 ### P3 - Hide a branch or everything downstream
 
 **Source:** JimB functional review, 2026-08-16.
@@ -532,6 +595,12 @@ Design questions:
 - Does a shared node remain when another visible path reaches it?
 - Is this a reversible view operation, and how is hidden state disclosed?
 - How does it interact with exclusion, multi-select and one-level extension?
+
+**Rejected 2026-08-21.** Gordon: disqualified by the same property that made this need a
+definition in the first place - the map is a graph with shared nodes and cycles, not a tree, so
+"downstream" has no single honest meaning to hide by. The design questions above were never
+answered because there isn't a version of this that stays simple once a node has more than one
+path back in.
 
 ### P3 - Export as a warm-start cache, not a portable full rebuild
 
@@ -558,6 +627,17 @@ Discussed and postponed rather than scoped - real product decisions needed first
   heals drift between the backup and the live hub, and avoids silently trusting a stale decode.
 
 Not scoped further than this; revisit only with those three questions actually decided.
+
+**Reframed, 2026-08-21.** Gordon sees a different, arguably stronger case than the original
+scan-performance framing: how does a user's configured data (icon overrides, notes, external
+system declarations, everything that isn't derivable from the hub itself) move to a new or
+replacement hub on an upgrade? That's a real gap - none of it currently has an export/import
+path at all. It doesn't remove the structural problem already identified above (device/app IDs
+are hub-assigned and don't survive a hub swap, so a raw scan-result import still can't
+reconstruct itself on different hardware without Hubitat's own backup/restore recreating the
+apps and devices first), but it changes *why* this is worth building. Still deferred - needs
+its own design pass, now specifically around "what survives a hub swap and how it reattaches to
+the new hub's IDs" rather than the original warm-start framing.
 
 ### P3 - User-authored notes/tags on apps and devices
 
@@ -592,6 +672,27 @@ appear in the export, the same reason those two already work that way.
 Not scoped further than this; needs its own design pass (quick-add panel layout, table panel
 layout, and the state shape both would read/write) before implementation.
 
+**Rejected 2026-08-21.** Gordon: this is the wrong place for it - apps and devices already have
+their own notes fields natively in Hubitat. Duplicating that inside Automation Map would give
+users two places to look for the same kind of information rather than one.
+
+### P3 - Cross-reference the map with hub runtime data to surface the heaviest/most active rules
+
+**Source:** trep (community code audit author), forum feedback on the audit writeup,
+2026-08-20/21 - "Consider cross-referencing the analysis with the runtime data available on the
+hub, to surface the heaviest rules or those that run most often."
+
+Distinct from anything currently on the map: everything drawn today comes from *configuration*
+(what an app is set up to touch), not *behaviour* (what actually ran, how often, or how long it
+took). Genuinely useful on a large hub - `oldcomputerwiz`'s forum report of a scan on 322
+devices/444 apps took long enough that they didn't want it running daily, and knowing which
+rules are actually hot would help prioritise where to look first.
+
+Not scoped - needs its own investigation before design: what runtime data Hubitat's internal
+endpoints actually expose per app/rule (execution count, duration, last-run time are the
+obvious candidates, none confirmed available), and whether it's cheap enough to fetch that it
+doesn't become its own version of the P1/P2 problem the scan already has elsewhere in this file.
+
 ### P3 - Associate Hub Variables with Variable Connector devices
 
 **Source:** JimB functional review, 2026-08-16; Hub Variable lineage specification section 12;
@@ -624,6 +725,12 @@ differences, top-N, threshold classification, display-string shaping and percent
 belong in the browser; irregular-payload parsing and fetch coalescing belong on the hub. The
 scrape itself, response normalization, and rule-flow decoding (reverse-engineering Rule
 Machine's private storage layout) are correctly hub-side and should stay there.
+
+**Deferred to v3.0, 2026-08-21.** Gordon's call on all three items below: high effort and risk
+for what would be, functionally, very little the user actually notices - the map would look and
+behave the same either way, the benefit is scan speed and headroom for larger hubs, not new
+capability. Worth doing eventually, and worth doing together rather than piecemeal once it's
+picked up, but not a routine addition to any release before v3.0.
 
 ### P3 - Stop computing and persisting the derived graph on the hub
 
@@ -712,6 +819,9 @@ its own scheduled execution, a watchdog behind it, failure is explicitly non-fat
 low priority. `asynchttpGet` would remove the whole class of risk rather than fence it.
 
 Worth doing only if the registry grows or moves off GitHub - not urgent on its own.
+
+**Confirmed no action needed, 2026-08-21.** Gordon: it isn't blocking anything, it already
+fails gracefully. Matches the auditor's own framing above - stays noted, not queued.
 
 ---
 
@@ -903,3 +1013,59 @@ A defensive fetch-layer patch shipped anyway (`stripReplacementChar()`, applied 
 first come off the wire in `fetchAppRelationships`) - harmless hygiene, kept in case something
 like this recurs, not because it was confirmed to be the actual fix. Re-open only if this is
 seen again with something to actually investigate (a reproducible trigger, not just the symptom).
+
+### Speeding up the scan via runInMillis (attempted and reverted, 2026-08-21)
+
+**Source:** Gordon asked what the scan's limiting factor was. Answer at the time: ~48 total
+batches (13 device + 35 app, at `DEVICE_BATCH_SIZE`/`APP_BATCH_SIZE`), each paying a full
+second of `runIn(1, 'scanBatch')` scheduling gap between them - roughly 48+ seconds of pure
+wait, ahead of the ~300 individual HTTP fetches themselves, against a ~123 second total scan.
+
+Tried replacing the three batch-loop `runIn(1, 'scanBatch')` calls (`startScan()`,
+`scanBatch()`'s same-phase reschedule, `startAppPhase()`) with `runInMillis()` at 200ms, then
+400ms. Confirmed live both times: total scan time dropped dramatically, but not smoothly -
+runs measured anywhere from under a second to ~10 seconds to, on one fresh-install test,
+**~153 seconds with the scan stalling at 102 of 103 apps** and the hub logging "clearing an
+abandoned scan" a full 87 seconds after it had already logged "scan complete". Polling
+`/scan-status` directly during a fast run showed the batches were not actually respecting the
+requested interval - progress went from 0/194 to fully complete (194 devices + 103 apps) in
+under half a second once execution started, nothing like 47 evenly-spaced 400ms hops.
+
+Concluded this is Hubitat's own scheduler behaving unpredictably under a tight, repeated
+`runInMillis()` self-rescheduling loop fired back-to-back roughly 48 times - not something
+either 200ms or 400ms is a "safer" choice of, and not something this app can control from its
+own side. `runIn()`'s whole-second granularity is almost certainly the platform's actual
+tested/supported case for this pattern; `runInMillis()` is a real API but this repeated-loop
+use is apparently outside where it behaves reliably.
+
+Fully reverted - confirmed a clean, zero-diff revert against the pre-experiment commit
+(`47534f4`) for `apps/automation_map.groovy`. Also reverted alongside it: `scanButtonHtml()`'s
+reload delay (was shortened 2000ms->800ms to try to keep the progress UI legible against the
+faster scan) and `refreshInterval` (was 4->2, same reason) - both no longer needed once the
+scan itself is back to its original, reliable pace.
+
+Not re-open without a fundamentally different approach (larger batches to cut the *number* of
+hops rather than the delay between them, which risks Hubitat's per-execution time ceiling
+instead - see the graph-derivation architecture item elsewhere in this file for the same
+underlying tension between hub-side batching and platform limits) - simply picking a different
+millisecond value is not expected to behave more predictably than 200ms or 400ms did here.
+
+### Larger app batches to cut the number of scheduling hops (attempted and reverted, 2026-08-21)
+
+**Source:** Gordon, following the `runInMillis` result above - asked whether a ~25% speedup was
+possible some other, safer way. The candidate identified: raise `APP_BATCH_SIZE` (3) instead of
+shortening the gap between batches, since that leaves `runIn()`'s whole-second scheduling alone
+entirely and just does more work per hop.
+
+Tried `APP_BATCH_SIZE` 3 -> 4 (cuts the app phase from ~35 batches to ~26). Pushed to the Dev
+hub instance and measured against a same-day, same-instance baseline (a fresh reinstall scan
+just prior, unrelated to this change, timed at 124s end to end). The 3->4 run measured 128s -
+no improvement, slightly slower if anything, and well inside the run-to-run variance already
+seen elsewhere on this platform. Reverted back to 3; not worth the added risk (see the P1
+quadratic-dedup item and the architecture section below for why a bigger per-execution app
+batch is a real, not theoretical, risk on this platform) for a change that produced no measured
+benefit.
+
+Not re-open by guessing a different batch size without a reason to expect the earlier
+measurement was noise. If revisited, measure against a same-session baseline (not a remembered
+number from a different day) before drawing a conclusion.
