@@ -122,7 +122,7 @@ boolean showSanta() {
 // local-path case for every user to fix a case that only affects some.
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
 @Field static final Integer DEVICE_BATCH_SIZE = 15
-@Field static final Integer APP_BATCH_SIZE = 3
+@Field static final Integer APP_BATCH_SIZE = 4
 
 definition(
     name: APP_NAME,
