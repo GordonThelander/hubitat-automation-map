@@ -1161,7 +1161,7 @@ Map fetchAppRelationships(String appId, Map labels) {
                 out.endpoints = []
                 out.hubVarWrites = []
                 out.hubVarReads = []
-                return
+                return out
             }
 
             // A paused rule still holds all its device references but is not
