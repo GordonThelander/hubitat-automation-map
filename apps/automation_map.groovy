@@ -503,19 +503,11 @@ String compatibilitySummary() {
     }
     int devUnreadable = ((state.deviceIdsUnreadable ?: []) as List).size()
     if (devUnreadable > 0) {
-        s << "<b style='color:#c0392b'>${devUnreadable} device(s) could not be read</b> and are missing from this map, along with any app only discoverable through them. "
+        s << "<b style='color:#c0392b'>${devUnreadable} device(s) had unreadable capabilities</b> - they still appear on the map with the room/name/type this hub's device listing already gave up front, just without a capability-derived icon. "
     }
     s << "Read ${decoded} app(s)"
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} flow(s)."
-
-    // Said out loud because the number is usually small and sometimes zero, and
-    // a scan that quietly claims completeness it did not earn is the thing this
-    // whole discovery change exists to prevent.
-    int listed = (state.appsFromListing ?: 0) as Integer
-    if (listed > 0) {
-        s << " ${listed} of them reference no device and would not have been found by walking devices alone."
-    }
 
     // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
     // and said nothing about the difference, so the summary, the Focus app list
@@ -550,15 +542,16 @@ String compatibilitySummary() {
 // Every hub-facing fetch in this file (six loopback, one to REGISTRY_URL on
 // GitHub) used to carry its own inline try/catch, its own timeout literal,
 // and its own copy of this exact shape - the failure contract was defined
-// seven times and was not quite the same twice, which is why
-// fetchAllDeviceIds() needed an explicit "sets scanError itself and returns
+// seven times and was not quite the same twice, which is why the original
+// device-listing fetch needed an explicit "sets scanError itself and returns
 // on failure" comment at its own call site to be usable safely. This is the
 // one place that shape is written now.
 //
 // data comes back exactly as the response sent it, not coerced to Map here -
-// fetchAllDeviceIds needs a List, so that decision stays with whoever
-// actually knows their own endpoint's shape. extraOpts exists only for
-// fetchRegistry's contentType; every loopback caller passes none.
+// every current caller expects a Map, but that decision stays with whoever
+// actually knows their own endpoint's shape rather than being assumed here.
+// extraOpts exists only for fetchRegistry's contentType; every loopback
+// caller passes none.
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     Map out = [ok: false, data: null, error: null]
     try {
@@ -612,10 +605,9 @@ void startScan() {
     state.rulesDecoded = 0
     state.rulesSkipped = 0
     state.ruleLinks = 0
-    state.appsFromListing = 0
     state.appsInert = 0
     state.otherEngines = []
-    // Cleared BEFORE fetchAllDeviceIds runs, not after. That call sets
+    // Cleared BEFORE fetchDeviceListBulk runs, not after. That call sets
     // scanError itself on failure - clearing it afterward silently erased
     // the one error a user most needed to see, the enumeration that made
     // the whole scan pointless before a single app was even queued.
@@ -627,19 +619,30 @@ void startScan() {
     // compatibilitySummary/scanStatusJson/AI friendly export as if it described
     // the scan that just failed to even start.
     state.deviceIdsUnreadable = []
-    state.scanQueue = fetchAllDeviceIds()
-    // fetchAllDeviceIds sets scanError itself and returns [] on failure -
-    // checked here, not assumed handled downstream. Before this check, a
-    // failed enumeration still fell through into a full scan with zero
-    // devices queued: scanRunning went true, the app phase ran anyway, and
-    // a graph with no devices and no device relationships could be stamped
-    // as a normal, complete result, with the one error a user needed to
-    // see left to be found only by reading scanError separately rather
-    // than the scan visibly having stopped.
-    if (state.scanError) {
+    Map bulk = fetchDeviceListBulk()
+    if (bulk.error) {
+        state.scanError = "Could not list devices from the hub: ${bulk.error}"
         state.scanRunning = false
         return
     }
+    // Label/room/type are already known for every device from this one call -
+    // NOT batched, unlike capabilities below. Only capabilities need a
+    // per-driver-type follow-up fetch.
+    state.deviceLabels = bulk.labels as Map
+    state.deviceRooms = bulk.rooms as Map
+    state.deviceTypes = bulk.types as Map
+    state.deviceCapabilities = [:]
+    // Map of representative device id -> every device id sharing its driver
+    // (deviceTypeId), including the representative itself. scanDeviceBatch
+    // fetches capabilities once per representative and applies the result to
+    // the whole group - see fetchDeviceListBulk's comment for why this is
+    // safe (capabilities are a driver property, verified identical within a
+    // driver on this hub).
+    state.deviceTypeGroups = bulk.typeGroups as Map
+    // The queue is representatives only, not all devices - this is the whole
+    // point of the change. A hub with 194 devices across 34 drivers walks 34
+    // items here, not 194.
+    state.scanQueue = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
     state.scanTotal = (state.scanQueue as List).size()
     state.scanDone = 0
     state.scanPhase = 'devices'
@@ -647,15 +650,6 @@ void startScan() {
     // Stamped here as well as in scanBatch, so a scan that never manages to run
     // a single batch still has a timestamp for clearAbandonedScan to age out.
     state.scanHeartbeat = now()
-    state.deviceLabels = [:]
-    // NOT state.deviceIconOverrides or state.deviceIconNotes - both are the
-    // user's own input (a correction, and a freeform note on an
-    // unrecognised device), same category as state.userRegistry for
-    // external systems, and must survive a rescan the same way those
-    // declarations do.
-    state.deviceCapabilities = [:]
-    state.deviceRooms = [:]
-    state.deviceTypes = [:]
     state.appIds = []
     state.appInfo = [:]
     state.graphVersion = null
@@ -751,77 +745,52 @@ void scanBatch() {
     }
 }
 
+// queue holds one representative device id per driver type, not every device
+// - see startScan/fetchDeviceListBulk. Each representative's capabilities are
+// applied to every device sharing its driver via state.deviceTypeGroups.
 void scanDeviceBatch() {
     List queue = state.scanQueue as List
-    Map labels = state.deviceLabels as Map
     Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
-    Map roomsByDev = (state.deviceRooms ?: [:]) as Map
-    Map typesByDev = (state.deviceTypes ?: [:]) as Map
-    // LinkedHashSet, not List: appId membership is checked once per device app
-    // reference across the whole scan, and a linear contains() over a growing
-    // List made that quadratic. Preserves insertion order like the List did.
-    Set appIds = new LinkedHashSet(state.appIds as List)
+    Map typeGroups = (state.deviceTypeGroups ?: [:]) as Map
     int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
-
-    // This app's own device picker references every selected device, which would
-    // otherwise draw ~200 meaningless "acts on" edges from Automation Map itself.
-    String selfId = "${app.id}"
 
     // Same distinction already drawn for apps below: only a genuine fetch
     // failure counts as unreadable, tracked by id so the export/UI can name
-    // which devices were missed, not just how many. Before this, a failed
-    // device.fullJson call was indistinguishable from a device that simply
-    // had nothing to report - the device silently dropped out of the scan
-    // (no label, no capabilities, no room, and any app only discoverable
-    // through it could be missed too) with the finished scan still able to
-    // report no top-level error at all.
+    // which devices were missed, not just how many. A failed representative
+    // fetch marks every device in its driver group unreadable for
+    // capabilities specifically - their label/room/type are already known
+    // from the bulk listing, so they still appear on the map, just without a
+    // capability-derived icon.
     List unreadable = (state.deviceIdsUnreadable ?: []) as List
-    queue.take(size).each { String devId ->
-        Map info = fetchDeviceApps(devId)
+    queue.take(size).each { String repId ->
+        Map info = fetchDeviceCapabilities(repId)
+        List group = (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
         if (info.error) {
-            if (!unreadable.contains(devId)) unreadable << devId
+            group.each { String devId -> if (!unreadable.contains(devId)) unreadable << devId }
         } else {
-            if (info.label) labels[devId] = info.label
-            capsByDev[devId] = info.capabilities
-            if (info.room) roomsByDev[devId] = info.room
-            if (info.type) typesByDev[devId] = info.type
-            (info.appIds as List).each { String appId ->
-                if (appId != selfId) appIds << appId
-            }
+            group.each { String devId -> capsByDev[devId] = info.capabilities }
         }
     }
 
-    state.deviceLabels = labels
     state.deviceCapabilities = capsByDev
-    state.deviceRooms = roomsByDev
-    state.deviceTypes = typesByDev
     state.deviceIdsUnreadable = unreadable
-    state.appIds = appIds as List
     state.scanQueue = queue.drop(size)
     state.scanDone = (state.scanDone ?: 0) + size
 }
 
+// Apps are discovered entirely from /hub2/appsList now - device-led discovery
+// (walking appsUsing on every device) was dropped from fetchDeviceCapabilities,
+// verified on this hub to contribute zero apps the listing didn't already have.
+// state.appIds is therefore always empty entering this function; kept as a
+// LinkedHashSet build for the dedup-against-self-id logic, not because
+// anything populates it beforehand any more.
 void startAppPhase() {
-    // The device walk is finished, so this is the point where the two discovery
-    // channels are merged. Done here rather than before the device phase so a
-    // failure of either one still leaves a usable scan.
-    //
-    // Order matters only for readability of the queue. Device-found ids stay
-    // first, so the apps that will actually be drawn are read first and a scan
-    // interrupted part way through has the useful half.
-    // LinkedHashSet, not List: same quadratic-contains() fix as scanDeviceBatch,
-    // and it preserves the device-found-ids-first order this comment relies on.
     Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
-    int fromDevices = appIds.size()
     fetchInstalledAppIds().each { String appId ->
         if (appId != selfId) appIds << appId
     }
     state.appIds = appIds as List
-    // Kept for the scan summary. The count is the honest way to describe what
-    // this bought: on a hub where every app touches a device it is zero, and
-    // saying so is better than implying the map gained something it did not.
-    state.appsFromListing = appIds.size() - fromDevices
 
     state.scanPhase = 'apps'
     state.scanQueue = appIds
@@ -999,18 +968,47 @@ void finishScan() {
 // on a user action rather than on the hub.
 //
 // The capability parameter is required. Without it the endpoint returns [].
-List fetchAllDeviceIds() {
-    List ids = []
-    Map result = httpFetch("${LOOPBACK_BASE}/device/listJson?capability=capability.*", 30)
+// Bulk device enumeration. Replaces the old fetchAllDeviceIds() + per-device
+// fetchDeviceApps() pair for everything except capabilities: this one call
+// carries label, room and driver name for every device at once - fields that
+// previously cost a /device/fullJson round trip each. Verified field mapping
+// against the per-device endpoint for the same device before relying on it:
+// data.name is the device's LABEL (not its type - a different bulk endpoint,
+// /device/list/data, calls the label "label" and puts the type in "name",
+// the opposite way round), data.type is the driver name, data.roomName is the
+// room. Confirmed flat - no nested children - and enumerates the identical
+// device set as the old /device/listJson?capability=capability.* call.
+//
+// Also groups devices by deviceTypeId (driver): capabilities are a property
+// of the driver, not the individual device, and every device sharing a
+// driver was confirmed (sampled) to report identical capabilities - see the
+// scan-speed item in BACKLOG.md. typeGroups (stored as state.deviceTypeGroups)
+// holds one representative device id per driver, mapped to every device id
+// sharing that driver; scanDeviceBatch fetches capabilities for the
+// representative only and applies the result to the whole group.
+Map fetchDeviceListBulk() {
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
-        state.scanError = "Could not list devices from the hub: ${result.error}"
-    } else if (result.data instanceof List) {
-        (result.data as List).each { d ->
-            if (d instanceof Map && d.id != null) ids << "${d.id}"
-        }
+        out.error = result.error
+        return out
     }
-    return ids.unique()
+    Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+    Map typeGroups = [:]
+    (data.devices ?: []).each { entry ->
+        Map d = (entry instanceof Map) ? (entry.data as Map) : null
+        if (!d || d.id == null) return
+        String devId = "${d.id}"
+        if (d.name) out.labels[devId] = "${d.name}"
+        if (d.roomName) out.rooms[devId] = "${d.roomName}"
+        if (d.type) out.types[devId] = "${d.type}"
+        String typeKey = "${d.deviceTypeId}"
+        List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
+        group << devId
+    }
+    out.typeGroups = typeGroups
+    return out
 }
 
 // Every installed app on the hub, in one request, whether or not it references
@@ -1077,52 +1075,21 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
-// Phase 1: only needs the app ids this device is attached to. Also harvests
-// capabilities and room from the same response for the device icon feature -
-// this is a field already sitting in a request this function was making
-// anyway, not a new HTTP call.
-Map fetchDeviceApps(String devId) {
-    Map out = [label: null, appIds: [], capabilities: [], room: null, type: null, error: null]
+// Capabilities only - label, room, type and app-discovery all come from the
+// bulk fetchDeviceListBulk()/fetchInstalledAppIds() calls now, and appsUsing
+// (device-led app discovery) was dropped entirely: verified on this hub that
+// every app findable by walking devices is also in /hub2/appsList, so the
+// device walk contributed zero apps the listing didn't already have. See the
+// scan-speed item in BACKLOG.md for the verification. This is called once per
+// driver type (a representative device id), not once per device.
+Map fetchDeviceCapabilities(String devId) {
+    Map out = [capabilities: [], error: null]
     try {
         Map result = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 10)
         if (!result.ok) throw new Exception(result.error)
         Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        String breadcrumb = data.extraBreadcrumb as String
-        if (breadcrumb) out.label = stripTags(breadcrumb)
-
         Map dev = data.device as Map
-        if (dev) {
-            out.capabilities = (dev.capabilities ?: []) as List
-            if (dev.roomName) out.room = dev.roomName as String
-            // deviceTypeName is the driver name (e.g. "CoCoHue Scene"), not
-            // anything the user named the device - a reliable signal
-            // capability alone cannot give (a Scene device declares
-            // PushableButton same as a real button/remote does).
-            if (dev.deviceTypeName) out.type = dev.deviceTypeName as String
-        }
-
-        List ids = []
-        Map parentApp = data.parentApp as Map
-        if (parentApp?.id != null) ids << "${parentApp.id}"
-
-        // appsUsing, NOT appsUsingForDialog.
-        //
-        // appsUsingForDialog is capped at five entries on every device, with
-        // appsUsingForDialogMore holding only a COUNT of the remainder, not
-        // the ids. It exists to render a dialog, not to enumerate anything.
-        // appsUsing sits beside it in the same response and is complete: on
-        // one device here it holds 29 entries where the dialog field holds
-        // five.
-        //
-        // Reading the dialog field made every app beyond the fifth on a
-        // shared device invisible, which is not the rare edge case it sounds
-        // like. A rule using only popular devices was missed entirely, and
-        // was noticed only because another rule named it as a target.
-        List using = (data.appsUsing ?: data.appsUsingForDialog ?: []) as List
-        using.each { u ->
-            if (u instanceof Map && u.id != null) ids << "${u.id}"
-        }
-        out.appIds = ids.unique()
+        if (dev) out.capabilities = (dev.capabilities ?: []) as List
     } catch (Exception ex) {
         log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
         out.error = "${ex.message}"
