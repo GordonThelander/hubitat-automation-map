@@ -3586,11 +3586,12 @@ String buildMapHtml() {
      own, and vis-network's own canvas has no background fill so empty space
      around the graph shows whatever is layered underneath it). Fixed, not
      absolute - pinned to a fixed point on the actual screen regardless of
-     where physics settles the graph's own bounding box. Offset right and
-     down from dead centre (was 50/50) since a fully-populated graph's own
-     node cluster tends to sit left-of-centre, leaving this spot the clearer
-     one - confirmed against a live screenshot, not guessed. */
-  #hubWatermark { position:fixed; top:55%; left:68%; transform:translate(-50%, -50%);
+     where physics settles the graph's own bounding box. Moved off dead
+     centre (was 50/50) since a fully-populated graph's own node cluster
+     tends to sit left-of-centre; positioned below #controls specifically
+     (not just anywhere clear of the graph) per Gordon's own instruction,
+     confirmed against a live screenshot rather than guessed. */
+  #hubWatermark { position:fixed; top:68%; left:82%; transform:translate(-50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.10; pointer-events:none;
                   user-select:none; }
   /* First shipped as a bare 1em glyph with no background - reported as "had to
