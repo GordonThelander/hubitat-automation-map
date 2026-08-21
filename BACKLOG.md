@@ -482,7 +482,7 @@ just-saved preference directly, so the response is unaffected by the rebuild hap
 later. The graph-derivation architecture item below is still open and would remove this class of
 problem entirely rather than defer it.
 
-### P2 - No shared request wrapper; seven call sites repeat the same contract
+### Fixed - No shared request wrapper; seven call sites repeat the same contract
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
 directly - confirmed exact (all 7 sites, distinct timeout literals as described).
@@ -497,6 +497,19 @@ Fix: one private wrapper taking path, timeout, and a name, returning a normalize
 error]`, with the loopback base URL and the `instanceof Map` coercion in one place. Shortens all
 seven sites, makes timeout choice visible as data, and gives a single point to add retry or an
 async variant later.
+
+**Fixed 2026-08-21.** Added `httpFetch(uri, timeoutSec, extraOpts = [:])`, returning `[ok, data,
+error]`. Deviated from the suggestion in one place: `data` is returned exactly as the response
+sent it rather than coerced to Map inside the wrapper, since `fetchAllDeviceIds()` needs a List
+- coercion stays at each call site, which already knows its own endpoint's real shape. A
+`LOOPBACK_BASE` constant replaces the six repeated `http://127.0.0.1:8080` literals;
+`fetchRegistry()`'s external `REGISTRY_URL` call goes through the same wrapper via `extraOpts`
+for its `contentType`. All 7 sites converted (`probeCompatibility`, `fetchRegistry`,
+`fetchAllDeviceIds`, `fetchInstalledAppIds`, `fetchDeviceApps`, `fetchAppRelationships`,
+`fetchAppName`) with no behaviour change at any of them - each site's own error-handling,
+logging, and fallback logic is untouched, only the fetch mechanics moved. Verified: `groovyc`
+clean, `check_template.sh` clean, zero raw `httpGet([uri:` calls remain outside the wrapper
+itself.
 
 ### P3 - Search Hub Variables
 
