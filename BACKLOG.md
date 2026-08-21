@@ -188,22 +188,35 @@ Acceptance criteria:
 "noisy" on the map isn't a meaningful category the way it might be for a notification channel,
 so there's nothing coherent for an exclusion toggle to act on.
 
-### P1 - "View Automation Map" opens in the same browser tab, not a new one
+### P3 - "View Automation Map" popup is a fixed 800px wide, not a full new tab
 
 **Source:** hubitrep (community code audit author), forum feedback on the audit writeup,
-2026-08-20/21 - "Open the SPA in a separate tab."
+2026-08-20/21 - "Open the SPA in a separate tab." Re-investigated 2026-08-21 after hubitrep
+proposed a specific fix; the original framing of this item turned out to be wrong.
 
-Confirmed live: the `href()` element for the map link (:279-284) renders with no `target`
-attribute, so clicking it navigates the current tab away from the hub's admin UI to the map
-page - unlike the Community Utilities button and the community-thread link on the same page,
-both of which already open in a new tab. Losing the admin UI tab is a bigger cost for this link
-than for either of those, since it's the app's own primary action.
+**Correction, 2026-08-21.** The original write-up of this item (below, struck through in intent
+if not in markdown) claimed the link "navigates the current tab away... unlike the Community
+Utilities button." That was based on checking only the `target` HTML attribute, which is a red
+herring here: read the actual `onclick` and found `href()` never relies on `target` at all.
+Every `href()` link on this platform renders `onclick="openWindow(this);return false;"`, calling
+Hubitat's own `openWindow()`, which does `window.open(a.href, a.title,
+"resizable,height=H,width=800,left=X")` and, once that window closes, resubmits the settings
+form. So the map link was already opening in a separate window, not replacing the admin tab -
+the original claim (and the fix built on it) was wrong.
 
-Needs investigation before a fix: Hubitat's `href()` DSL doesn't expose a `target` parameter
-directly, so it's not yet established whether `style: 'embedded'` or another supported option
-gets a new tab, or whether this needs a different approach (e.g. a plain anchor rendered via
-`paragraph` instead of `href()`). Don't assume a fix works without confirming live - this is
-exactly the kind of platform-rendering behaviour that isn't safe to guess at.
+hubitrep proposed changing `style: 'embedded'` to `style: 'external'` as "the whole fix." Tested
+live on the Dev hub instance rather than trusted: both styles render the exact same `onclick`
+handler, byte for byte. No difference in behaviour on this hub's platform build (confirmed C-8).
+Reverted after testing; not carrying this change.
+
+What the real, narrower issue actually is: `openWindow()` opens a **fixed 800px-wide** popup,
+not a full-size new tab - cramped for a data-dense interactive graph, and popups are commonly
+blocked by browsers by default with only a subtle address-bar indicator, which would read to a
+user as "nothing happened" rather than "a new tab opened." Either of those is a real, worth-
+fixing usability problem; "it replaces my tab" was not. A fix here means not going through
+`href()`'s `openWindow()` at all - e.g. a plain anchor with `target="_blank"` rendered via
+`paragraph` instead - not tweaking `href()`'s `style` parameter, which this session confirmed has
+no effect on this behaviour.
 
 ### P1 - Hand-install without OAuth throws instead of explaining
 
@@ -690,7 +703,7 @@ layout, and the state shape both would read/write) before implementation.
 their own notes fields natively in Hubitat. Duplicating that inside Automation Map would give
 users two places to look for the same kind of information rather than one.
 
-### P3 - Cross-reference the map with hub runtime data to surface the heaviest/most active rules
+### P2 - Cross-reference the map with hub runtime data to surface the heaviest/most active rules
 
 **Source:** hubitrep (community code audit author), forum feedback on the audit writeup,
 2026-08-20/21 - "Consider cross-referencing the analysis with the runtime data available on the
@@ -702,10 +715,24 @@ took). Genuinely useful on a large hub - `oldcomputerwiz`'s forum report of a sc
 devices/444 apps took long enough that they didn't want it running daily, and knowing which
 rules are actually hot would help prioritise where to look first.
 
-Not scoped - needs its own investigation before design: what runtime data Hubitat's internal
-endpoints actually expose per app/rule (execution count, duration, last-run time are the
-obvious candidates, none confirmed available), and whether it's cheap enough to fetch that it
-doesn't become its own version of the P1/P2 problem the scan already has elsewhere in this file.
+**Gating question closed, 2026-08-21.** hubitrep identified `/logs/json` and it checks out -
+verified live against Gordon's hub. One unauthenticated local GET, no per-app fan-out at all:
+top-level `appStats[]` (150 entries on this hub) and `deviceStats[]`, each with `id`, `total`
+(cumulative ms), `count` (execution count), `average` (ms/execution), `pct`/`pctTotal` (share of
+app/hub runtime), `stateSize` (bytes, confirmed - `formattedStateSize` is the same number with
+thousands separators only, no unit conversion, so `"25,955"` is ~25KB not 25MB), `largeState`
+(the hub's own oversized-state flag), plus `hubActionCount`/`cloudCallCount`/
+`pendingEventsCount`. `appStats[].id` joins directly onto the `installedapp/statusJson/{id}`
+endpoint this app already keys everything on - confirmed live (id `2869` in both). Note per
+hubitrep, not independently reproduced: `appStats[].name` is the installed app's *label*, joins
+to this app's `out.label` not `out.type` - easy to cross the two by mistake. Also per hubitrep:
+these are cumulative since last reboot/stats reset, so "heaviest" means total-over-uptime, not a
+current rate - a rate needs two samples or a divide-by-uptime.
+
+This closes the original gating question (does Hubitat expose this without a fetch storm) with
+a clean yes - one cheap call, not a P1/P2-style scaling problem like the scan itself. What's left
+is design, not investigation: which of `total`/`count`/`pctTotal`/`largeState` to surface and
+how (a sortable column in Insights, a size/colour cue on the graph itself, a dedicated panel).
 
 ### P3 - Associate Hub Variables with Variable Connector devices
 
@@ -867,6 +894,18 @@ It's also a prerequisite for the cleanest fix to the CDN-integrity and asset-hot
 above, which need somewhere local to serve libraries/assets from - so if those are taken on,
 this comes as part of that work rather than extra. Cost: a two-file deploy and a version check
 between them.
+
+**Version-skew mitigation proposed, 2026-08-21.** hubitrep (forum feedback on the audit
+writeup) proposed the specific mechanism for that "version check between them" cost: embed a
+`CODE_VERSION` constant in the served HTML, have the app's sync step verify a downloaded file's
+embedded version matches its own before accepting it, and re-sync automatically if the file is
+missing (`downloadHubFile`/`uploadHubFile`, both available in the app sandbox per hubitrep - not
+independently confirmed this session). A mismatch would fail loudly instead of silently
+rendering a stale page against a new API. Doesn't remove the two-file-deploy cost itself, but
+does directly answer the drift concern that was the other half of it. hubitrep offered to point
+at a working implementation if useful when this is picked up - worth taking them up on given
+this session confirmed their earlier audit findings were all accurate, independent of the one
+claim (the href tab-fix) that didn't hold up under direct testing above.
 
 ### P3 - Registry fetch is a synchronous blocking HTTP call (optional)
 
