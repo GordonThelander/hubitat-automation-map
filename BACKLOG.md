@@ -190,7 +190,7 @@ so there's nothing coherent for an exclusion toggle to act on.
 
 ### P1 - "View Automation Map" opens in the same browser tab, not a new one
 
-**Source:** trep (community code audit author), forum feedback on the audit writeup,
+**Source:** hubitrep (community code audit author), forum feedback on the audit writeup,
 2026-08-20/21 - "Open the SPA in a separate tab."
 
 Confirmed live: the `href()` element for the map link (:279-284) renders with no `target`
@@ -692,7 +692,7 @@ users two places to look for the same kind of information rather than one.
 
 ### P3 - Cross-reference the map with hub runtime data to surface the heaviest/most active rules
 
-**Source:** trep (community code audit author), forum feedback on the audit writeup,
+**Source:** hubitrep (community code audit author), forum feedback on the audit writeup,
 2026-08-20/21 - "Consider cross-referencing the analysis with the runtime data available on the
 hub, to surface the heaviest rules or those that run most often."
 
