@@ -1078,10 +1078,19 @@ void finalizeAppPhase(String scanId) {
         labels.putAll(scan.labels as Map)
         state.deviceLabels = labels
 
-        state.appsDecoded = ((state.appsDecoded ?: 0) as Integer) + (scan.decoded as AtomicInteger).get()
-        state.appsUnreadable = ((state.appsUnreadable ?: 0) as Integer) + (scan.unreadable as AtomicInteger).get()
-        state.rulesDecoded = ((state.rulesDecoded ?: 0) as Integer) + (scan.rulesDecoded as AtomicInteger).get()
-        state.rulesSkipped = ((state.rulesSkipped ?: 0) as Integer) + (scan.rulesSkipped as AtomicInteger).get()
+        // Plain replacement, not accumulation - scan.decoded.get() etc. are
+        // already the COMPLETE count for this scan (every callback in the
+        // pipeline incremented the same counter), not a delta to add onto
+        // whatever state already held. += here was a real bug: caught live
+        // when two scan generations overlapped during testing and
+        // appsDecoded ended up reading higher than the total app count on
+        // the hub. Idempotent this way too - if finalize is ever somehow
+        // invoked twice for the same scanId, this just writes the same
+        // correct value twice rather than doubling it.
+        state.appsDecoded = (scan.decoded as AtomicInteger).get()
+        state.appsUnreadable = (scan.unreadable as AtomicInteger).get()
+        state.rulesDecoded = (scan.rulesDecoded as AtomicInteger).get()
+        state.rulesSkipped = (scan.rulesSkipped as AtomicInteger).get()
         List others = (state.otherEngines ?: []) as List
         (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> if (!others.contains(eng)) others << eng }
         state.otherEngines = others
