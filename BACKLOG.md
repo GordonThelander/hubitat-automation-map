@@ -570,6 +570,19 @@ logging, and fallback logic is untouched, only the fetch mechanics moved. Verifi
 clean, `check_template.sh` clean, zero raw `httpGet([uri:` calls remain outside the wrapper
 itself.
 
+### P3 - Show the last scan's date/time on the app page
+
+**Source:** oldcomputerwiz, forum feedback, 2026-08-21 - "list the date that the last scan was
+done on the app page (maybe next to the scan button?)."
+
+Already trivial to build: `state.scanHeartbeat` is stamped throughout the scan chain and
+already surfaced to the AI export (`lastScanCompletedAt`) and used internally for abandoned-scan
+recovery - it has just never been formatted and shown next to the Scan button itself, alongside
+the existing "Last scan: X of Y" progress line.
+
+**Committed publicly, 2026-08-21.** Gordon replied on the thread that this will land in the
+next minor release. Gordon is building this one directly rather than delegating it.
+
 ### P3 - Search Hub Variables
 
 **Source:** JimB testing, 2026-08-17, offered as "a future idea", not a request against
