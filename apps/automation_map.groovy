@@ -5413,7 +5413,8 @@ function extRender(message) {
 
   let h = '<h3>External systems</h3>';
   h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
-       'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
+       'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down. Rows not yet declared here are pre-filled from a ' +
+       '<a href="https://github.com/GordonThelander/HPM_Manifest_Crawl/blob/main/AUTOMATION_MAP_CONTRACT.md" target="_blank" rel="noopener">shared community registry</a>; your own declaration always replaces it.</p>';
 
   h += '<table><thead><tr><th>App type</th><th>Needs</th><th>Kind</th><th>Needed for</th><th></th></tr></thead><tbody>';
 

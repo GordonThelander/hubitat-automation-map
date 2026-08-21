@@ -48,7 +48,7 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 - **Apps with no device or rule relationship** - installed and readable, but touch nothing, grouped by why (holds other apps, runs on a schedule, references nothing at all).
 - **Broken rule references** - a rule still names another rule, action, pause target or Private Boolean that no longer exists.
 
-**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Declare it yourself in the External systems panel and it is drawn as its own diamond-shaped node, dashed edge back to the app that depends on it - so you can see what breaks if that outside service goes down. A shared community registry pre-fills the common ones; your own declarations always win over it.
+**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Declare it yourself in the External systems panel and it is drawn as its own diamond-shaped node, dashed edge back to the app that depends on it - so you can see what breaks if that outside service goes down. A [shared community registry](https://github.com/GordonThelander/HPM_Manifest_Crawl/blob/main/AUTOMATION_MAP_CONTRACT.md) pre-fills the common ones; your own declarations always win over it.
 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
