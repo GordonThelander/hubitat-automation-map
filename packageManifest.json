@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map",
   "author": "Gordon Thelander",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-08-21",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Automation Map 2.0.3 - draws every installed app and device on your hub as an interactive graph, showing how they relate to each other and decoding rule logic into flowcharts. (v2.0.3: bridge and scene devices now auto-detect correctly plus some internal code enhancements)",
+  "releaseNotes": "Automation Map 2.0.4 - draws every installed app and device on your hub as an interactive graph, showing how they relate to each other and decoding rule logic into flowcharts. (v2.0.4: the app page now shows the date and time of the last scan, not just device/app counts)",
   "apps": [
     {
       "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "2.0.3"
+      "version": "2.0.4"
     }
   ],
   "drivers": []

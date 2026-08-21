@@ -79,7 +79,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.3'
+@Field static final String APP_VERSION = '2.0.4'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -250,7 +250,14 @@ Map main() {
                     if (state.scanRunning) {
                         progress += ' - this page updates itself, no need to reload.'
                     } else {
-                        progress = "Last scan: ${done} of ${total} ${state.scanPhase == 'apps' ? 'apps' : 'devices'}."
+                        // scanHeartbeat is stamped at the start of finishScan(), so it lands a
+                        // few seconds ahead of this page reporting the scan as finished - close
+                        // enough for a "when did this last run" display. Same value already
+                        // backs the AI export's lastScanCompletedAt.
+                        String when = state.scanHeartbeat ?
+                            new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : null
+                        progress = "Last scan: ${done} of ${total} ${state.scanPhase == 'apps' ? 'apps' : 'devices'}" +
+                            (when ? " - ${when}" : '') + '.'
                     }
                     paragraph progress
                 }
