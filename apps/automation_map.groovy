@@ -124,20 +124,34 @@ boolean showSanta() {
 // and touching its group indices to add a second capture risks breaking the
 // local-path case for every user to fix a case that only affects some.
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
-@Field static final Integer DEVICE_BATCH_SIZE = 15
 
-// ===== Async app-phase scan constants =====
-// The device phase stays batch/runIn(1, ...) driven - see scanDeviceBatch.
-// The app phase (statusJson per app, meaningfully heavier per call than a
-// device fetch: rule-flow decoding, not just a JSON read) uses a self-
-// refilling asynchttpGet pipeline instead, following the pattern verified in
+// ===== Async scan constants, both phases =====
+// Both the device phase (capabilities, once per driver-type representative -
+// see fetchDeviceListBulk) and the app phase (statusJson per app, meaningfully
+// heavier per call: rule-flow decoding, not just a JSON read) use a self-
+// refilling asynchttpGet pipeline, following the pattern verified in
 // hubitrep's HubDiagnostics app (github.com/hubitrep/hubitat) and confirmed
 // live on this hub before being built on: a final static reference to a
 // thread-safe collection survives concurrent asynchttpGet callbacks cleanly
 // (4 runs of 8 concurrent callbacks, 0 lost or duplicate writes each time).
-// See BACKLOG.md for the verification detail.
+// See BACKLOG.md for the verification detail. Two independent pipelines
+// (DEVICE_SCANS/APP_SCANS) rather than one shared abstraction - the two
+// phases accumulate different shaped results and this codebase already
+// keeps devices and apps as parallel, not shared, code throughout.
+@Field static final int DEVICE_ASYNC_MAX_INFLIGHT = 8
+@Field static final int DEVICE_ASYNC_WATCHDOG_SEC = 60  // fewer items than apps typically, shorter net is fine
 @Field static final int APP_ASYNC_MAX_INFLIGHT = 8   // Hubitat's documented concurrent-async-per-app cap
 @Field static final int APP_ASYNC_WATCHDOG_SEC = 90  // safety net if a callback is genuinely lost
+// One entry per in-progress device-phase scan, keyed by scanId. Each entry
+// is itself a ConcurrentHashMap with keys: total (Integer), inFlight
+// (AtomicInteger), processed (AtomicInteger), pending
+// (ConcurrentLinkedQueue<String> of representative device ids), capsByDev
+// (ConcurrentHashMap<String, List> - device id -> capabilities, expanded from
+// representative to every device sharing its driver, merged into
+// state.deviceCapabilities only at finalization), unreadableDevs
+// (ConcurrentHashMap<String, Boolean> used as a concurrent set of device ids
+// whose driver-representative fetch failed).
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
 // One entry per in-progress app-phase scan, keyed by scanId. Each entry is
 // itself a ConcurrentHashMap with keys: total (Integer), inFlight
 // (AtomicInteger), processed (AtomicInteger), pending
@@ -673,22 +687,27 @@ void startScan() {
     state.deviceTypes = bulk.types as Map
     state.deviceCapabilities = [:]
     // Map of representative device id -> every device id sharing its driver
-    // (deviceTypeId), including the representative itself. scanDeviceBatch
+    // (deviceTypeId), including the representative itself. dispatchDeviceOne
     // fetches capabilities once per representative and applies the result to
     // the whole group - see fetchDeviceListBulk's comment for why this is
     // safe (capabilities are a driver property, verified identical within a
     // driver on this hub).
     state.deviceTypeGroups = bulk.typeGroups as Map
-    // The queue is representatives only, not all devices - this is the whole
-    // point of the change. A hub with 194 devices across 34 drivers walks 34
-    // items here, not 194.
-    state.scanQueue = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
-    state.scanTotal = (state.scanQueue as List).size()
+    // Representatives only, not all devices - this is the whole point of the
+    // change. A hub with 194 devices across 34 drivers walks 34 items here,
+    // not 194. Not the live queue either way any more - the real queue is
+    // DEVICE_SCANS[scanId].pending, see below. Left empty rather than
+    // removed so scanStatusJson's queued field and clearAbandonedScan's
+    // staleness check both still have a defined value.
+    List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
+    state.scanQueue = []
+    state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
     state.scanRunning = true
-    // Stamped here as well as in scanBatch, so a scan that never manages to run
-    // a single batch still has a timestamp for clearAbandonedScan to age out.
+    // Stamped here as well as in the async callbacks, so a scan that never
+    // manages to land a single callback still has a timestamp for
+    // clearAbandonedScan to age out.
     state.scanHeartbeat = now()
     state.appIds = []
     state.appInfo = [:]
@@ -699,94 +718,170 @@ void startScan() {
     // job scheduled, just a heartbeat that stopped. The old graph is unusable
     // during a scan anyway, since graphVersion is cleared on the line above.
     state.graph = null
-    // All three unscheduled together. Only scanBatch is guaranteed pending at
-    // any given moment, but a scan restarted while a previous one's last
-    // batch had already scheduled fetchRegistry/finishScan otherwise leaves
-    // those two jobs orphaned - one fires mid-way into THIS scan, builds a
-    // graph from whatever appInfo the new scan has managed to populate so
-    // far, and stamps it complete. The map then reads as finished while the
-    // real scan is still running, silently, with nothing on screen to say
-    // so.
+    // fetchRegistry/finishScan unscheduled here so a scan restarted while a
+    // previous one's app phase had already finished and scheduled them
+    // doesn't leave those two jobs orphaned - one firing mid-way into THIS
+    // scan would build a graph from whatever appInfo has been populated so
+    // far and stamp it complete, with nothing on screen to say the real scan
+    // is still running. scanBatch unscheduled too - vestigial by this point
+    // (nothing schedules that name any more, both phases are async
+    // pipelines) but harmless, and clears any job by that name left over
+    // from before this version was deployed.
     unschedule('scanBatch')
     unschedule('fetchRegistry')
     unschedule('finishScan')
-    runIn(1, 'scanBatch')
+
+    if (repIds.isEmpty()) {
+        // No devices at all - go straight to the app phase, same as an
+        // empty representative queue would after finishing normally.
+        startAppPhase()
+        return
+    }
+
+    String scanId = "devices-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total = repIds.size()
+    scan.inFlight = new AtomicInteger(0)
+    scan.processed = new AtomicInteger(0)
+    scan.pending = new ConcurrentLinkedQueue<String>(repIds)
+    scan.capsByDev = new ConcurrentHashMap<String, List>()
+    scan.unreadableDevs = new ConcurrentHashMap<String, Boolean>()
+    DEVICE_SCANS[scanId] = scan
+    state.deviceScanId = scanId
+
+    runIn(DEVICE_ASYNC_WATCHDOG_SEC, 'deviceAsyncWatchdog', [data: [scanId: scanId]])
+    DEVICE_ASYNC_MAX_INFLIGHT.times { dispatchDeviceOne(scanId) }
 }
 
-// Devices phase only now. The app phase is a self-driving async pipeline,
-// not a runIn(1, ...) loop - see startAppPhase/dispatchAppOne/appFetchCb -
-// so this never runs during it.
-void scanBatch() {
-    // Anything thrown out of this method is fatal to the whole scan: Hubitat
-    // discards the state written during a failed execution, so the queue would
-    // never advance AND no follow-up job would be scheduled, leaving the app
-    // stuck at "scanning" with no error recorded. Every stage is therefore
-    // guarded separately, and the reschedule happens no matter what.
-    state.scanHeartbeat = now()
+// CAS-bounded dispatch: reserves a slot in the in-flight pool (<=
+// DEVICE_ASYNC_MAX_INFLIGHT), pops the next pending representative device id
+// atomically, and issues an async fullJson fetch for its capabilities.
+// Returns false if the cap is reached, the queue is empty, or the scan no
+// longer exists (already finalized).
+boolean dispatchDeviceOne(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return false
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {
+        int n = inFlight.get()
+        if (n >= DEVICE_ASYNC_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    String repId = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (repId == null) {
+        inFlight.decrementAndGet()
+        return false
+    }
+
+    asynchttpGet('deviceFetchCb',
+        [uri: "${LOOPBACK_BASE}/device/fullJson/${repId}", contentType: 'application/json', timeout: 10],
+        [scanId: scanId, repId: repId])
+    return true
+}
+
+// Async callback for /device/fullJson/{representative id}. Applies the
+// result to every device sharing that representative's driver, decrements
+// inFlight, dispatches the next pending representative, or finalizes once
+// the queue is drained and every in-flight call has landed.
+void deviceFetchCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return  // callback from a prior, already-finalized scan
+
+    String repId = data.repId as String
+    // state.deviceTypeGroups is written once in startScan, before any
+    // dispatch, and never written again until the next scan - read-only for
+    // the life of this phase, so reading it here from a concurrent callback
+    // is safe. Only concurrent WRITES are the hazard this design avoids.
+    Map typeGroups = (state.deviceTypeGroups ?: [:]) as Map
+    List group = (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
+
+    List caps = null
     try {
-        scanDeviceBatch()
+        if (resp?.status == 200) {
+            Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
+            Map dev = respData.device as Map
+            caps = dev ? (dev.capabilities ?: []) as List : []
+        }
     } catch (Exception ex) {
-        log.warn "${app.label}: scanBatch failed: ${ex.message}"
+        log.warn "${app.label}: device ${repId} lookup failed: ${ex.message}"
+    }
+
+    // Same distinction as the app phase: only a genuine fetch failure counts
+    // as unreadable, and only for capabilities specifically - label/room/type
+    // are already known for every device from the bulk listing regardless.
+    if (caps == null) {
+        group.each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+    } else {
+        group.each { String devId -> (scan.capsByDev as ConcurrentHashMap)[devId] = caps }
+    }
+
+    int processed = (scan.processed as AtomicInteger).incrementAndGet()
+    int inFlight = (scan.inFlight as AtomicInteger).decrementAndGet()
+
+    // Best-effort progress snapshot only, same caveat as the app phase's
+    // equivalent - fine for the progress bar, never relied on for correctness.
+    state.scanDone = processed
+    state.scanHeartbeat = now()
+
+    if (!(scan.pending as ConcurrentLinkedQueue).isEmpty()) {
+        dispatchDeviceOne(scanId)
+    } else if (inFlight == 0 && (scan.processed as AtomicInteger).get() >= (scan.total as Integer)) {
+        finalizeDevicePhase(scanId)
+    }
+}
+
+// Watchdog for a stuck device-phase pipeline - mirrors appAsyncWatchdog.
+void deviceAsyncWatchdog(data) {
+    String scanId = data?.scanId as String
+    if (!scanId) return
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return  // already finalized normally, nothing to do
+
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    log.warn "${app.label}: device-phase async scan ${scanId} did not finish within ${DEVICE_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed) - finalizing with what was collected"
+    finalizeDevicePhase(scanId)
+}
+
+// Merges the scan's static-accumulated capability results into state in one
+// single execution, then moves on to the app phase - mirrors
+// finalizeAppPhase's structure and reasoning.
+void finalizeDevicePhase(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return  // already finalized (watchdog and last-callback can both fire once each; the second is a no-op)
+    DEVICE_SCANS.remove(scanId)
+    unschedule('deviceAsyncWatchdog')
+
+    try {
+        Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
+        capsByDev.putAll(scan.capsByDev as Map)
+        state.deviceCapabilities = capsByDev
+
+        List unreadable = (state.deviceIdsUnreadable ?: []) as List
+        (scan.unreadableDevs as ConcurrentHashMap).keySet().each { String devId ->
+            if (!unreadable.contains(devId)) unreadable << devId
+        }
+        state.deviceIdsUnreadable = unreadable
+
+        state.scanDone = scan.total as Integer
+        state.scanHeartbeat = now()
+    } catch (Exception ex) {
+        log.warn "${app.label}: device-phase finalization failed: ${ex.message}"
         state.scanError = "${ex.message}"
-        state.scanQueue = []
-        // Stops here rather than falling into the block below, which decides
-        // what runs next on the assumption the batch succeeded. An empty
-        // queue after a genuine failure used to read exactly like an empty
-        // queue after finishing normally, and the scan would proceed straight
-        // into the app phase with data a failed batch never finished collecting.
         state.scanRunning = false
         return
     }
 
-    try {
-        if (state.scanQueue) {
-            runIn(1, 'scanBatch')
-        } else {
-            startAppPhase()
-        }
-    } catch (Exception ex) {
-        log.warn "${app.label}: scan could not continue: ${ex.message}"
-        state.scanError = "${ex.message}"
-        state.scanRunning = false
-    }
-}
-
-// queue holds one representative device id per driver type, not every device
-// - see startScan/fetchDeviceListBulk. Each representative's capabilities are
-// applied to every device sharing its driver via state.deviceTypeGroups.
-void scanDeviceBatch() {
-    List queue = state.scanQueue as List
-    Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
-    Map typeGroups = (state.deviceTypeGroups ?: [:]) as Map
-    int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
-
-    // Same distinction already drawn for apps below: only a genuine fetch
-    // failure counts as unreadable, tracked by id so the export/UI can name
-    // which devices were missed, not just how many. A failed representative
-    // fetch marks every device in its driver group unreadable for
-    // capabilities specifically - their label/room/type are already known
-    // from the bulk listing, so they still appear on the map, just without a
-    // capability-derived icon.
-    List unreadable = (state.deviceIdsUnreadable ?: []) as List
-    queue.take(size).each { String repId ->
-        Map info = fetchDeviceCapabilities(repId)
-        List group = (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
-        if (info.error) {
-            group.each { String devId -> if (!unreadable.contains(devId)) unreadable << devId }
-        } else {
-            group.each { String devId -> capsByDev[devId] = info.capabilities }
-        }
-    }
-
-    state.deviceCapabilities = capsByDev
-    state.deviceIdsUnreadable = unreadable
-    state.scanQueue = queue.drop(size)
-    state.scanDone = (state.scanDone ?: 0) + size
+    startAppPhase()
 }
 
 // Apps are discovered entirely from /hub2/appsList now - device-led discovery
-// (walking appsUsing on every device) was dropped from fetchDeviceCapabilities,
-// verified on this hub to contribute zero apps the listing didn't already have.
+// (walking appsUsing on every device) was dropped from the device-phase fetch
+// (see deviceFetchCb), verified on this hub to contribute zero apps the
+// listing didn't already have.
 // state.appIds is therefore always empty entering this function; kept as a
 // LinkedHashSet build for the dedup-against-self-id logic, not because
 // anything populates it beforehand any more.
@@ -1170,7 +1265,7 @@ void finishScan() {
 // driver was confirmed (sampled) to report identical capabilities - see the
 // scan-speed item in BACKLOG.md. typeGroups (stored as state.deviceTypeGroups)
 // holds one representative device id per driver, mapped to every device id
-// sharing that driver; scanDeviceBatch fetches capabilities for the
+// sharing that driver; deviceFetchCb fetches capabilities for the
 // representative only and applies the result to the whole group.
 Map fetchDeviceListBulk() {
     Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
@@ -1259,28 +1354,6 @@ void collectAppIds(def nodes, List ids) {
         }
         if (entry.children instanceof List) pending.addAll(entry.children as List)
     }
-}
-
-// Capabilities only - label, room, type and app-discovery all come from the
-// bulk fetchDeviceListBulk()/fetchInstalledAppIds() calls now, and appsUsing
-// (device-led app discovery) was dropped entirely: verified on this hub that
-// every app findable by walking devices is also in /hub2/appsList, so the
-// device walk contributed zero apps the listing didn't already have. See the
-// scan-speed item in BACKLOG.md for the verification. This is called once per
-// driver type (a representative device id), not once per device.
-Map fetchDeviceCapabilities(String devId) {
-    Map out = [capabilities: [], error: null]
-    try {
-        Map result = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 10)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        Map dev = data.device as Map
-        if (dev) out.capabilities = (dev.capabilities ?: []) as List
-    } catch (Exception ex) {
-        log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
-        out.error = "${ex.message}"
-    }
-    return out
 }
 
 // Phase 2: the real relationship data. Also harvests device labels for devices
@@ -3682,11 +3755,13 @@ Map scanStatusMapping() {
 }
 
 String scanStatusJson() {
-    // state.scanQueue is always [] during the app phase now - the live queue
-    // is APP_SCANS[scanId].pending, read directly here rather than let this
-    // report a misleadingly-early 0 for the whole phase.
-    ConcurrentHashMap appScan = state.scanPhase == 'apps' ? APP_SCANS[state.appScanId as String] : null
-    int queued = appScan ? (appScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
+    // state.scanQueue is always [] during both phases now - the live queue is
+    // DEVICE_SCANS/APP_SCANS[scanId].pending, read directly here rather than
+    // let this report a misleadingly-early 0 for the whole phase.
+    ConcurrentHashMap liveScan = null
+    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
+    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
     return JsonOutput.toJson([
         running: state.scanRunning as boolean,
         phase: state.scanPhase,
