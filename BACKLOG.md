@@ -352,6 +352,8 @@ first to take the user off the Hubitat-served map entirely, to a separate site A
 does not control. Not a functional risk, the app works identically without it - just a
 different kind of button than anything else currently in that row.
 
+**Decided 2026-08-21:** link to the bare homepage, as originally shown. Not yet built.
+
 ### P2 - Multi-select an interconnected subgraph
 
 **Source:** JimB functional review, 2026-08-16.
@@ -367,6 +369,12 @@ Acceptance criteria:
 - The displayed graph has a documented, predictable inclusion rule.
 - Empty, disconnected, and very large selections have understandable feedback.
 - Existing single-item drill-down and browser Back behaviour continue to work.
+
+**Clarified 2026-08-21.** Gordon's intended shape is narrower than the original title suggests:
+click one app and walk outward N hops from it, not an arbitrary multi-select across the whole
+map. That makes this the same interaction as "Extend the displayed map by one level" below,
+just generalised past a single hop - see that item for the open question of what determines N.
+Worth tracking as one item once picked up rather than two.
 
 ### P2 - Group and identify items in the picklists
 
@@ -399,6 +407,12 @@ Acceptance criteria:
   changed.
 - Back/undo restores the preceding scope without rebuilding the full layout.
 
+**Open question, 2026-08-21:** what determines "one level"? A fixed single hop per click that
+can be repeated (as described above), a user-chosen N up front, or unbounded extension until the
+result stabilizes - each implies different UI. Also converges with "Multi-select an
+interconnected subgraph" above, clarified the same day as essentially this same interaction
+generalised to picking the starting point freely - resolve the two together.
+
 ### P2 - Local Variables are drawn as Hub Variables
 
 **Source:** JimB testing, 2026-08-17. "Local Variables are identified as Hub Variables. Not
@@ -410,6 +424,10 @@ Variables are correctly detected but there is no case for showing them on the ma
 scope decision - Local Variables are private to one app, so a graph about cross-app
 relationships may have nothing useful to say about them). Resolve which before touching code.
 
+**Gordon, 2026-08-21: confirmed as the next investigation to pick up.** Not yet started - the
+next step is reading how the scanner distinguishes (or fails to distinguish) the two variable
+types before deciding which of the two explanations above is correct.
+
 ### P2 - A single icon per Hub Variable, so all of its connections are visible at once
 
 **Source:** JimB testing, 2026-08-17. "Hub Variables should be identified by a single icon so
@@ -420,6 +438,9 @@ distinguishing Hub Variable nodes from other node types at a glance (an icon con
 device icons), or about being able to select one Hub Variable and see every rule that reads or
 writes it highlighted together (a selection/highlight behaviour)? The acceptance criteria differ
 substantially between the two readings.
+
+**Parked, 2026-08-21.** Gordon: hold this rather than pursue now. Revisit if the underspecified
+question above gets answered on its own, or if this resurfaces as a concrete need.
 
 ### P2 - IPv6 loopback with a port is drawn as an external system
 
@@ -517,6 +538,10 @@ itself.
 v2.0.0. Add a search box to whatever Hub Variable listing/panel exists, matching the
 search-box pattern already used for the app/device filter dropdowns.
 
+**Confirmed as wanted, 2026-08-21.** Gordon agrees it's a good, low-friction addition - stays
+P3 (small, no dependencies) but is now an accepted candidate rather than just an idea offered
+in passing.
+
 ### P3 - Hide a branch or everything downstream
 
 **Source:** JimB functional review, 2026-08-16.
@@ -532,6 +557,12 @@ Design questions:
 - Does a shared node remain when another visible path reaches it?
 - Is this a reversible view operation, and how is hidden state disclosed?
 - How does it interact with exclusion, multi-select and one-level extension?
+
+**Rejected 2026-08-21.** Gordon: disqualified by the same property that made this need a
+definition in the first place - the map is a graph with shared nodes and cycles, not a tree, so
+"downstream" has no single honest meaning to hide by. The design questions above were never
+answered because there isn't a version of this that stays simple once a node has more than one
+path back in.
 
 ### P3 - Export as a warm-start cache, not a portable full rebuild
 
@@ -558,6 +589,17 @@ Discussed and postponed rather than scoped - real product decisions needed first
   heals drift between the backup and the live hub, and avoids silently trusting a stale decode.
 
 Not scoped further than this; revisit only with those three questions actually decided.
+
+**Reframed, 2026-08-21.** Gordon sees a different, arguably stronger case than the original
+scan-performance framing: how does a user's configured data (icon overrides, notes, external
+system declarations, everything that isn't derivable from the hub itself) move to a new or
+replacement hub on an upgrade? That's a real gap - none of it currently has an export/import
+path at all. It doesn't remove the structural problem already identified above (device/app IDs
+are hub-assigned and don't survive a hub swap, so a raw scan-result import still can't
+reconstruct itself on different hardware without Hubitat's own backup/restore recreating the
+apps and devices first), but it changes *why* this is worth building. Still deferred - needs
+its own design pass, now specifically around "what survives a hub swap and how it reattaches to
+the new hub's IDs" rather than the original warm-start framing.
 
 ### P3 - User-authored notes/tags on apps and devices
 
@@ -624,6 +666,12 @@ differences, top-N, threshold classification, display-string shaping and percent
 belong in the browser; irregular-payload parsing and fetch coalescing belong on the hub. The
 scrape itself, response normalization, and rule-flow decoding (reverse-engineering Rule
 Machine's private storage layout) are correctly hub-side and should stay there.
+
+**Deferred to v3.0, 2026-08-21.** Gordon's call on all three items below: high effort and risk
+for what would be, functionally, very little the user actually notices - the map would look and
+behave the same either way, the benefit is scan speed and headroom for larger hubs, not new
+capability. Worth doing eventually, and worth doing together rather than piecemeal once it's
+picked up, but not a routine addition to any release before v3.0.
 
 ### P3 - Stop computing and persisting the derived graph on the hub
 
@@ -939,3 +987,23 @@ hops rather than the delay between them, which risks Hubitat's per-execution tim
 instead - see the graph-derivation architecture item elsewhere in this file for the same
 underlying tension between hub-side batching and platform limits) - simply picking a different
 millisecond value is not expected to behave more predictably than 200ms or 400ms did here.
+
+### Larger app batches to cut the number of scheduling hops (attempted and reverted, 2026-08-21)
+
+**Source:** Gordon, following the `runInMillis` result above - asked whether a ~25% speedup was
+possible some other, safer way. The candidate identified: raise `APP_BATCH_SIZE` (3) instead of
+shortening the gap between batches, since that leaves `runIn()`'s whole-second scheduling alone
+entirely and just does more work per hop.
+
+Tried `APP_BATCH_SIZE` 3 -> 4 (cuts the app phase from ~35 batches to ~26). Pushed to the Dev
+hub instance and measured against a same-day, same-instance baseline (a fresh reinstall scan
+just prior, unrelated to this change, timed at 124s end to end). The 3->4 run measured 128s -
+no improvement, slightly slower if anything, and well inside the run-to-run variance already
+seen elsewhere on this platform. Reverted back to 3; not worth the added risk (see the P1
+quadratic-dedup item and the architecture section below for why a bigger per-execution app
+batch is a real, not theoretical, risk on this platform) for a change that produced no measured
+benefit.
+
+Not re-open by guessing a different batch size without a reason to expect the earlier
+measurement was noise. If revisited, measure against a same-session baseline (not a remembered
+number from a different day) before drawing a conclusion.
