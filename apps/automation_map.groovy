@@ -5008,11 +5008,13 @@ function appOptionText(n) {
 
 // Same purely-decorative prefix for devices, reusing n.icon - the existing
 // auto-detected/user-overridden classification the Device icons panel
-// already maintains, not a new scheme invented for this picklist. Every one
-// of the 17 known categories maps to a fixed three-letter code, agreed with
-// Gordon 2026-08-19; 'unknown' (n.icon's own fallback for anything neither
-// capability nor name detection recognised) gets UNK rather than being left
-// blank, same reasoning as CUS above - nothing in the list goes untagged.
+// already maintains, not a new scheme invented for this picklist. Started as
+// 17 categories mapped to a fixed three-letter code, agreed with Gordon
+// 2026-08-19; 'scene' added 2026-08-21. Six more of ICON_KEYS (locks, safety,
+// cameras, shades, sensor, ai) still have no entry here and fall through to
+// UNK same as genuine 'unknown' does - not an oversight in this pass, just
+// not the one Gordon asked about; worth a follow-up if any of those turn out
+// to matter here the way scene did.
 const DEVICE_ICON_TAGS = {
   lighting: 'LGT',
   switches: 'SWT',
@@ -5030,7 +5032,8 @@ const DEVICE_ICON_TAGS = {
   water: 'WTR',
   broker: 'BRK',
   hub: 'HUB',
-  network: 'NET'
+  network: 'NET',
+  scene: 'SCN'
 };
 function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
