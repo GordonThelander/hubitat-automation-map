@@ -965,9 +965,53 @@ result rather than just measured HTTP timing:
   built earlier this session still auto-detect correctly post-rewrite: `CoCoHue Bridge 988DA0`
   -> `hub`, the Alert Group Scene devices -> `scene`.
 
-Finding 3 (async concurrency, the app-phase lever and the bigger architectural change) is
-deliberately not part of this build - still the next step if more speed is wanted, per the
-sequencing note below. Committed to `dev` only (`b97f10b`), not merged to `main`.
+**Finding 3 built and live-tested, 2026-08-21.** Async concurrency for the app phase, following
+the sequencing plan above - self-refilling `asynchttpGet` pipeline capped at 8 concurrent calls,
+mirroring the pattern read directly from hubitrep's `HubDiagnostics` source, replacing the
+`APP_BATCH_SIZE`/`runIn(1, ...)` batch loop for apps entirely (the device phase's batch loop is
+untouched).
+
+De-risked before building anything real: the whole feasibility of this rests on mutable
+`@Field static` state surviving correctly across separate concurrent `asynchttpGet` callback
+executions, exactly the pattern this repo's own history flags as a Hubitat sandbox risk that
+local `groovyc` cannot catch. Built a throwaway isolated test first (8 concurrent callbacks each
+incrementing a static `AtomicInteger` and writing to a static `ConcurrentHashMap`), ran it live
+against the Dev hub instance 4 times back-to-back - 8/8 landed correctly every time, zero lost or
+duplicate writes - then removed the test scaffold and built the real feature on a confirmed
+assumption rather than a borrowed one.
+
+**A genuine hub-vs-local compiler gap surfaced during this build**, worth remembering: local
+`groovyc` accepted `state.appsDecoded = (state.appsDecoded ?: 0) as Integer + (scan.decoded as
+AtomicInteger).get()` without complaint; the hub's own parser rejected it outright
+(`expecting '}', found '+'`) - `as` and `+` are ambiguous at that precedence and the two parsers
+resolve it differently. The push failed cleanly with an error response, no live breakage,
+lock unconsumed - confirms the lock-based push flow fails safe. Fixed with explicit parens
+(`((x ?: 0) as Integer) + y`). Filed as a fact about this toolchain, not solved once and
+forgotten: local `groovyc` is a necessary check, not a sufficient one, for anything using `as`
+next to an operator.
+
+**Live-tested result, full scan on Gordon's C-8 (194 devices, 104 apps):**
+
+| | Original | Findings 1+2 | Findings 1+2+3 |
+|---|---|---|---|
+| Total scan time | ~124s | 101s | **50s** |
+| Device phase | ~60s | ~17s | ~17s (unchanged) |
+| App phase | ~58-84s | unchanged | **~23s** |
+
+Correctness checked against the live result across three independent test runs this session
+(original baseline, findings 1+2, findings 1+2+3), not assumed to carry over: **61 rules
+decoded, 0 apps/devices unreadable, identical every time.** The live map page was loaded and
+inspected directly (not just the scan-status API) - `vis-network` rendered 315 nodes, matching
+the scan summary's own count exactly, "Devices: 194 Apps: 103" (104 found, 1 self-exclusion, as
+expected).
+
+One accepted, narrow gap: the watchdog (`appAsyncWatchdog`, 90s) finalizes with whatever was
+collected if callbacks stop arriving entirely - an app that never gets a callback at all (not
+even a per-item failure, genuinely no response) is simply absent from `appInfo` with no visible
+"this one went missing" indicator, unlike a normal per-app fetch failure which is tracked and
+shown. Rare-case safety net, not the normal path; not solved further here.
+
+Committed to `dev` only (`362dd6a` + the parser-precedence fix `e3f0eca`), not merged to `main`.
 
 Sequencing suggestion if picked up: finding 2 first (biggest win, smallest blast radius - it
 changes what `fetchDeviceApps` fetches, not how the scan is scheduled), then finding 1 (removes
