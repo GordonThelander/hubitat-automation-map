@@ -1020,6 +1020,51 @@ change, since it replaces the batch/`state` accumulation model wholesale). hubit
 on the P7 item elsewhere in this file and would be the obvious person to sanity-check finding 3
 against their own implementation.
 
+**Device phase also converted to the same async pipeline, 2026-08-21, all four levers now
+combined.** After finding 3 shipped, Gordon noticed the device phase - untouched by findings
+1+2's batch-loop-still-in-place design - now visibly dominated the scan: ~14s wall-clock for
+work that only takes ~3.7s of real HTTP time, the same batch/`runIn(1, ...)` overhead already
+known to be expensive, just now a much bigger fraction of a much smaller total. Extended the
+proven app-phase pattern to the 34 driver-representative capability fetches:
+`dispatchDeviceOne`/`deviceFetchCb`/`deviceAsyncWatchdog`/`finalizeDevicePhase`, mirroring their
+app-phase counterparts exactly, `DEVICE_SCANS` alongside `APP_SCANS`. `scanBatch()`,
+`scanDeviceBatch()`, `DEVICE_BATCH_SIZE`, and the now-redundant synchronous
+`fetchDeviceCapabilities()` all removed - both phases are self-driving async pipelines now,
+nothing schedules a batch loop for either one.
+
+**Result: total scan time 50s -> 17-19s.** Verified stable and correct on a clean, isolated run
+(not rapid-fire tested): 61 rules decoded, 104 apps read, 0 unreadable, `graphVersion` set,
+identical to every prior baseline.
+
+**Two more bugs found and fixed during this round, both worth remembering:**
+
+- Another hub-vs-local parser gap, same shape as finding 3's: `state.appsDecoded = (x ?: 0) as
+  Integer + y` compiled clean locally, hub rejected it (`expecting '}', found '+'`). Fixed the
+  same way, explicit parens. Reinforces the earlier note - this is a recurring toolchain gap for
+  `as` next to an operator, not a one-off.
+- **A real double-counting bug**, caught live: `finalizeAppPhase` wrote `state.appsDecoded =
+  ((state.appsDecoded ?: 0) as Integer) + scan.decoded.get()` - accumulating onto whatever state
+  already held, rather than replacing it. `scan.decoded.get()` is already the complete count for
+  that scan; there was never a reason to add it to anything. Surfaced during rapid back-to-back
+  testing as `appsDecoded: 169` with only 104 real apps on the hub. Root cause not fully proven
+  at the exact mechanism level, but strong evidence points to stale `runIn()` watchdog schedules
+  from earlier test-scan generations: Hubitat's job scheduler persists `runIn()` entries across a
+  code push even though recompilation resets the static accumulator maps
+  (`APP_SCANS`/`DEVICE_SCANS`), so a stale watchdog from an old generation can fire during a
+  later one. Confirmed by waiting 150s before a fresh test - the corruption did not recur.
+  Very likely specific to this session's testing pattern (rapid re-triggering combined with
+  redeploying source mid-scan) rather than something a normal user would hit - the existing
+  `state.scanRunning` guard on `/scan` already blocks a genuine double-start through normal use,
+  and normal use never involves pushing new source while a scan is in flight. Fixed regardless
+  of exact mechanism: changed `+=` to `=`, which is idempotent - even if finalize is ever invoked
+  more than once for the same scanId by some future edge case, it now writes the same correct
+  value twice rather than compounding an error. `finalizeDevicePhase` was already correct (uses
+  `putAll`/membership-check merges, naturally idempotent), only the four app-phase counters had
+  the bug.
+
+Committed to `dev` only (`efecbc5` device-phase extension, `bc2c8ec` the `+=`->`=` fix,
+`530628a` diagnostic cleanup), not merged to `main`.
+
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
 
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
