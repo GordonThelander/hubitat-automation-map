@@ -761,6 +761,51 @@ only the derivation step moves. If too large to take on now, state a supported h
 README so the failure mode is expected rather than mysterious, and move the graph blob to File
 Manager (written once per scan, read only by the map page).
 
+**Sizing estimate reset, 2026-08-21.** The original public estimate (forum, 2026-08-12, ~80
+bytes of app state per node/relationship) put the comfortable ceiling at roughly 2,500-3,000
+combined nodes+relationships, ~600 devices and ~250 apps. `oldcomputerwiz`'s C5 hub (forum
+feedback, 2026-08-21) - 322 devices, 444 apps, 91 Hub Variables, 3662 edges - is 857 nodes plus
+3662 edges, ~4,500 combined, well past that old estimate, and it completed successfully. So the
+hard ceiling is higher than originally estimated - real evidence now says at least ~4,500
+combined items works, actual failure point still untested beyond that. Splitting this into two
+separate numbers going forward rather than one: a **completes-at-all** ceiling (now known to be
+higher than first thought) and a **comfortable/fast** ceiling (this hub was slow enough that the
+reporter didn't want it running daily - that threshold is somewhere below 4,500 and still
+unmeasured). This item (moving derivation to the browser) raises the first number by removing
+the hub-side build/storage risk; it does not by itself fix the second, which is dominated by the
+batch/scheduling loop - see the delta-scan idea below for a lever that actually attacks that one.
+
+### P2 - Delta scan: only re-fetch what's changed since the last scan
+
+**Source:** Gordon, 2026-08-21, prompted by `oldcomputerwiz`'s large-hub speed report above.
+
+Every scan today does a full walk regardless of what changed: every device gets
+`fetchDeviceApps()`, every app gets `fetchAppRelationships()`, same cost whether the hub is
+untouched since yesterday or heavily edited. For the scheduled/automatic scan case especially,
+most nights very little actually changes, so most of that work is repeated for nothing. Unlike
+the graph-derivation item above (which mainly buys reliability/state-size headroom, not scan
+*time* - see the sizing note above), a real delta mechanism would cut the dominant cost directly:
+fewer items means fewer of the ~48 batches and their `runIn(1, ...)` scheduling hops, which is
+where most of a scan's wall-clock time actually goes.
+
+The gating question, not yet investigated: does Hubitat expose any cheap, lightweight signal
+that a device or app's configuration changed since a given time, without fetching its full
+relationship data to find out? If no such signal exists on the endpoints this app already uses
+(`/device/fullJson/<id>`, `/hub2/appsList`, `/installedapp/statusJson/<id>`), a delta scan saves
+nothing - fetching a device just to check whether it changed costs the same as fetching it to
+read its relationships, so there's no shortcut without that signal. This needs checking against
+the actual endpoint responses before anything else here is worth planning.
+
+If a usable signal does exist, the harder design question is correctness under a false negative:
+reusing stale data for something that changed but wasn't detected means the map is silently
+wrong until the next full scan, with no indication on screen that it happened. Whatever design
+comes out of this needs an explicit staleness model (e.g. always run a full scan on some cadence
+regardless of deltas, or surface which parts of the map are how old) rather than trusting
+incremental detection alone indefinitely.
+
+Not scoped further than this; the endpoint investigation above decides whether it's worth
+scoping at all.
+
 ### P3 - Move remaining display-shaping and classification logic to the browser
 
 **Source:** external static code audit (community, 2026-08-20). Verified against the file
