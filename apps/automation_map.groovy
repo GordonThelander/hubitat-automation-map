@@ -3592,7 +3592,7 @@ String buildMapHtml() {
      (not just anywhere clear of the graph) per Gordon's own instruction,
      confirmed against a live screenshot rather than guessed. */
   #hubWatermark { position:fixed; top:68%; left:82%; transform:translate(-50%, -50%);
-                  max-width:38vw; max-height:38vh; opacity:0.10; pointer-events:none;
+                  max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
   /* First shipped as a bare 1em glyph with no background - reported as "had to
      go hunting for it". A visible pill with its own border and a hover state
