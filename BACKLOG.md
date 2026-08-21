@@ -1065,6 +1065,40 @@ identical to every prior baseline.
 Committed to `dev` only (`efecbc5` device-phase extension, `bc2c8ec` the `+=`->`=` fix,
 `530628a` diagnostic cleanup), not merged to `main`.
 
+**Reverted, 2026-08-21 - a data-integrity issue neither found bug explains.** After the counter
+fix above, a fresh isolated scan still showed `state.appInfo` (the durable per-app result) with
+more entries than the scan's own `decoded`+`unreadable` counters could account for - confirmed
+via a targeted diagnostic that the scan's own static accumulator was correct (61 entries,
+matching `decoded=61` exactly) at the moment of merge, meaning something overwrote
+`state.appInfo` with a stale snapshot *after* the correct write landed.
+
+Read hubitrep's actual installed `HubDiagnostics` source directly (not the GitHub copy) looking
+for how their own async device-audit pipeline handles this, and found their own documented fix
+for the identical platform behavior: a code comment citing their own past issue ("R-6 G1")
+where concurrent `asynchttpGet` callbacks writing to `state` exhibit last-write-wins lag under
+load, verified by their own testing. Their answer: never let the real result touch `state` at
+all - `finalizeAudit()` stores the actual device data in a `@Field static volatile Map`,
+explicitly documented as "lost on hub restart (acceptable)" for an on-demand audit tool.
+`state.audit` is only ever a tiny, disposable progress scalar, never the real data, so even
+when a stale callback clobbers it, nothing important is lost.
+
+That pattern isn't portable to Automation Map as-is - `state.appInfo`/`state.graph` surviving a
+hub reboot is core to what this app is for, not an optional convenience. A real fix likely needs
+two changes informed by this comparison: stop writing `state.scanDone`/`state.scanHeartbeat`
+from inside every callback at all (read progress from the static `AtomicInteger` directly, same
+conclusion hubitrep reached), and don't call the finalize step inline from the terminal
+callback's own execution - schedule it, so the `state.appInfo` write happens in an execution
+cleanly separated from the concurrent callback burst rather than racing inside it. Neither change
+is proven to fully close the window - hubitrep's own system still has some residual exposure for
+`state.audit`, it's just harmless there because the real data was never at risk. Given the
+stakes (a wrong map, not just a slow one) and that this needs real platform expertise to resolve
+with confidence, reverted `apps/automation_map.groovy` exactly to the pre-finding-3 baseline
+(`f9d9228`, v2.0.4) rather than ship something not fully understood. Findings 1+2 (bulk device
+list, per-driver capabilities) involved no async concurrency and no state-write timing issues
+were ever observed with them - only finding 3 and its device-phase extension are being given up
+here. Worth asking hubitrep directly before re-attempting, given they've already fought this
+exact battle once.
+
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
 
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
