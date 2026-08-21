@@ -622,6 +622,7 @@ void startScan() {
     // declarations do.
     state.deviceCapabilities = [:]
     state.deviceRooms = [:]
+    state.deviceTypes = [:]
     state.appIds = []
     state.appInfo = [:]
     state.graphVersion = null
@@ -722,6 +723,7 @@ void scanDeviceBatch() {
     Map labels = state.deviceLabels as Map
     Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
     Map roomsByDev = (state.deviceRooms ?: [:]) as Map
+    Map typesByDev = (state.deviceTypes ?: [:]) as Map
     // LinkedHashSet, not List: appId membership is checked once per device app
     // reference across the whole scan, and a linear contains() over a growing
     // List made that quadratic. Preserves insertion order like the List did.
@@ -749,6 +751,7 @@ void scanDeviceBatch() {
             if (info.label) labels[devId] = info.label
             capsByDev[devId] = info.capabilities
             if (info.room) roomsByDev[devId] = info.room
+            if (info.type) typesByDev[devId] = info.type
             (info.appIds as List).each { String appId ->
                 if (appId != selfId) appIds << appId
             }
@@ -758,6 +761,7 @@ void scanDeviceBatch() {
     state.deviceLabels = labels
     state.deviceCapabilities = capsByDev
     state.deviceRooms = roomsByDev
+    state.deviceTypes = typesByDev
     state.deviceIdsUnreadable = unreadable
     state.appIds = appIds as List
     state.scanQueue = queue.drop(size)
@@ -1050,7 +1054,7 @@ void collectAppIds(def nodes, List ids) {
 // this is a field already sitting in a request this function was making
 // anyway, not a new HTTP call.
 Map fetchDeviceApps(String devId) {
-    Map out = [label: null, appIds: [], capabilities: [], room: null, error: null]
+    Map out = [label: null, appIds: [], capabilities: [], room: null, type: null, error: null]
     try {
         httpGet([uri: "http://127.0.0.1:8080/device/fullJson/${devId}", timeout: 10]) { resp ->
             Map data = (resp.data instanceof Map) ? (resp.data as Map) : [:]
@@ -1061,6 +1065,11 @@ Map fetchDeviceApps(String devId) {
             if (dev) {
                 out.capabilities = (dev.capabilities ?: []) as List
                 if (dev.roomName) out.room = dev.roomName as String
+                // deviceTypeName is the driver name (e.g. "CoCoHue Scene"), not
+                // anything the user named the device - a reliable signal
+                // capability alone cannot give (a Scene device declares
+                // PushableButton same as a real button/remote does).
+                if (dev.deviceTypeName) out.type = dev.deviceTypeName as String
             }
 
             List ids = []
@@ -2175,6 +2184,13 @@ String prettyMethod(String method) {
     [key: 'appliance', label: 'Appliance',            caps: []],
     [key: 'network',   label: 'Internet/network',     caps: []],
     [key: 'display',   label: 'Display',              caps: []],
+    // Empty caps like the four above, but detected off deviceType (the
+    // driver name) rather than name - see autoDetectIconKeyForDevice(). A
+    // Scene device (CoCoHue Scene, Hubitat's own Groups and Scenes) declares
+    // PushableButton same as a real button/remote, so capability alone
+    // resolves it to 'buttons', and its own name ("Dining - Relax") carries
+    // no hint either.
+    [key: 'scene',     label: 'Scene',                caps: []],
 ]
 
 // Name-based hints, checked BEFORE capability - added at Gordon's explicit
@@ -2218,7 +2234,15 @@ List nameWords(String name) {
     return (name ?: '').toLowerCase().split('[^a-z0-9]+') as List
 }
 
-String autoDetectIconKeyForDevice(String name, List capabilities) {
+// deviceType is the driver name (e.g. "CoCoHue Scene"), checked before both
+// the name hints and capability - it is the one signal here that is not the
+// user's own naming choice, so a substring match on it carries far less
+// false-positive risk than the same match would against a device's name.
+// Needed specifically for Scene devices: they declare PushableButton same as
+// a real button/remote, and their names ("Dining - Relax") say nothing about
+// being a scene at all, so neither of the other two signals can find them.
+String autoDetectIconKeyForDevice(String name, List capabilities, String deviceType = null) {
+    if (deviceType && deviceType.toLowerCase().contains('scene')) return 'scene'
     List words = nameWords(name)
     for (hint in ICON_NAME_HINTS) {
         Map h = hint as Map
@@ -2278,7 +2302,7 @@ String autoDetectIconKeyForDevice(String name, List capabilities) {
     'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
     'cameras', 'shades', 'broker', 'climate', 'lighting', 'security', 'media',
     'switches', 'energy', 'environmental', 'sensor', 'hub', 'ai', 'appliance',
-    'network', 'display', 'unknown',
+    'network', 'display', 'scene', 'unknown',
 ]
 
 // Nothing in ICON_RULES matched - not a guess, an honest "this app does not
@@ -2552,6 +2576,7 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
+    Map deviceTypes = (state.deviceTypes ?: [:]) as Map
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
@@ -2711,7 +2736,8 @@ Map buildGraph() {
                 // only otherwise is it worth asking the name/capability
                 // fallback what this device is.
                 nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
-                    autoDetectIconKeyForDevice((labels[devId] ?: '') as String, deviceCaps[devId] as List)
+                    autoDetectIconKeyForDevice((labels[devId] ?: '') as String, deviceCaps[devId] as List,
+                                               deviceTypes[devId] as String)
                 // A freeform note on an unrecognised device surfaces in the
                 // tooltip, not just the icon panel - otherwise the only place
                 // that context exists is a table the user has to go find.
@@ -3361,6 +3387,7 @@ String iconOverridesJson() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map rooms = (state.deviceRooms ?: [:]) as Map
     Map caps = (state.deviceCapabilities ?: [:]) as Map
+    Map types = (state.deviceTypes ?: [:]) as Map
     Map overrides = (state.deviceIconOverrides ?: [:]) as Map
     Map notes = (state.deviceIconNotes ?: [:]) as Map
 
@@ -3369,7 +3396,7 @@ String iconOverridesJson() {
             id: devId,
             name: label,
             room: rooms[devId] ?: '',
-            detected: autoDetectIconKeyForDevice(label as String, caps[devId] as List),
+            detected: autoDetectIconKeyForDevice(label as String, caps[devId] as List, types[devId] as String),
             override: overrides[devId] ?: 'auto',
             note: notes[devId] ?: '',
             capabilities: caps[devId] ?: [],
@@ -3883,6 +3910,11 @@ const ICON_GLYPHS = {
   security: '\uf0f3', media: '\uf028', switches: '\uf205', energy: '\ue0b7',
   environmental: '\uf2c9', sensor: '\uf2db', hub: '\uf0e8', ai: '\uf544',
   appliance: '\ue51a', network: '\uf0ac', display: '\ue163',
+  // 'sliders' (was 'sliders-h' pre-FA6) - a preset/adjustable-levels glyph,
+  // reasonable fit for a saved lighting scene. Not verified against a
+  // rendered page - if this shows as a blank box instead of a glyph, the
+  // codepoint is wrong and needs picking again from the actual font file.
+  scene: '\uf1de',
   unknown: '\uf059',
 };
 
