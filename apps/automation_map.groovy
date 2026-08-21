@@ -983,10 +983,10 @@ void finalizeAppPhase(String scanId) {
         labels.putAll(scan.labels as Map)
         state.deviceLabels = labels
 
-        state.appsDecoded = (state.appsDecoded ?: 0) as Integer + (scan.decoded as AtomicInteger).get()
-        state.appsUnreadable = (state.appsUnreadable ?: 0) as Integer + (scan.unreadable as AtomicInteger).get()
-        state.rulesDecoded = (state.rulesDecoded ?: 0) as Integer + (scan.rulesDecoded as AtomicInteger).get()
-        state.rulesSkipped = (state.rulesSkipped ?: 0) as Integer + (scan.rulesSkipped as AtomicInteger).get()
+        state.appsDecoded = ((state.appsDecoded ?: 0) as Integer) + (scan.decoded as AtomicInteger).get()
+        state.appsUnreadable = ((state.appsUnreadable ?: 0) as Integer) + (scan.unreadable as AtomicInteger).get()
+        state.rulesDecoded = ((state.rulesDecoded ?: 0) as Integer) + (scan.rulesDecoded as AtomicInteger).get()
+        state.rulesSkipped = ((state.rulesSkipped ?: 0) as Integer) + (scan.rulesSkipped as AtomicInteger).get()
         List others = (state.otherEngines ?: []) as List
         (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> if (!others.contains(eng)) others << eng }
         state.otherEngines = others
