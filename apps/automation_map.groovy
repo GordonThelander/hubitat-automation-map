@@ -276,11 +276,13 @@ Map main() {
                         // scanHeartbeat is stamped at the start of finishScan(), so it lands a
                         // few seconds ahead of this page reporting the scan as finished - close
                         // enough for a "when did this last run" display. Same value already
-                        // backs the AI export's lastScanCompletedAt.
+                        // backs the AI export's lastScanCompletedAt. Counts moved out of this
+                        // line entirely - see the "Map contains" paragraph below, which covers
+                        // apps/devices/nodes/relationships together in one place instead of
+                        // splitting apps in here and nodes/edges down there.
                         String when = state.scanHeartbeat ?
-                            new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : null
-                        String lastScanCount = isDevicePhase ? "${realDeviceTotal ?: total} devices (${total} driver types)" : "${done} apps"
-                        progress = "Last scan: ${lastScanCount}" + (when ? " - ${when}" : '') + '.'
+                            new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : 'unknown'
+                        progress = "Last scan : <span style='color:#2e7d32'>${when}</span>"
                     }
                     // Wrapped in an id'd span, not a bare paragraph - amProgressPoll()
                     // below replaces this element's text in place once JS takes over,
@@ -309,7 +311,8 @@ Map main() {
                         // as uncoloured edges rather than failing visibly.
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
-                        paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
+                        paragraph "Map contains: ${(state.appInfo ?: [:]).size()} apps, ${(state.deviceLabels ?: [:]).size()} devices, " +
+                            "${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
                         paragraph compatibilitySummary()
                         href(
                             name: 'mapLink', title: 'View Automation Map',
@@ -486,11 +489,20 @@ function amProgressPoll() {
       if (d.running) {
         amSawRunning = true;
         var isDevicePhase = d.phase !== 'apps';
-        var phaseLabel = isDevicePhase ? 'Reading device types' : 'Reading apps';
-        var deviceContext = (isDevicePhase && d.devices) ? ' (' + d.devices + ' devices)' : '';
-        var pct = d.total > 0 ? Math.floor((d.done * 100) / d.total) : 0;
-        el.textContent = phaseLabel + ': ' + d.done + ' of ' + d.total + deviceContext +
-                          ' (' + pct + '%) - updating live, no need to reload.';
+        if (!isDevicePhase && d.total > 0 && d.done >= d.total) {
+          // Every app is read, but scanRunning is still true - fetchRegistry
+          // and finishScan (the graph build) are their own separately
+          // scheduled executions after this, not instant. Without this the
+          // page sat on "106 of 106 (100%)" looking finished for that whole
+          // gap, which read as stuck rather than as the next real step.
+          el.textContent = 'Building map - please wait...';
+        } else {
+          var phaseLabel = isDevicePhase ? 'Reading device types' : 'Reading apps';
+          var deviceContext = (isDevicePhase && d.devices) ? ' (' + d.devices + ' devices)' : '';
+          var pct = d.total > 0 ? Math.floor((d.done * 100) / d.total) : 0;
+          el.textContent = phaseLabel + ': ' + d.done + ' of ' + d.total + deviceContext +
+                            ' (' + pct + '%) - updating live, no need to reload.';
+        }
         setTimeout(amProgressPoll, 1500);
       } else if (amSawRunning) {
         // Live-updating this one span cannot reveal the map link/insights
