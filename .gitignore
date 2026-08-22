@@ -8,3 +8,7 @@
 # history remains in git if ever needed.
 handoff.md
 amnesia.md
+
+# Cross-AI review handoffs (e.g. Codex feedback on a specific investigation) -
+# local working material, not project source, never pushed.
+Bucket/
