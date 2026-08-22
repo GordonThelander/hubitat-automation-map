@@ -1099,6 +1099,44 @@ were ever observed with them - only finding 3 and its device-phase extension are
 here. Worth asking hubitrep directly before re-attempting, given they've already fought this
 exact battle once.
 
+**Reapplied as v2.0.5, 2026-08-22 - hardened, dev-soak candidate, not yet production.** Read
+hubitrep's actual `HubDiagnostics` source directly (as speculated above) and found their own
+documented fix for the identical platform behavior: never let concurrent callbacks write real
+results into `state` at all. Rebuilt findings 1+2+3 on top of that insight, taken further than
+HubDiagnostics needed to go since this app's results must survive a reboot and theirs don't:
+per-item claims with attempt tokens, atomic conditional-ownership retirement
+(`claims.remove(id, exactClaim)`), a missing-callback reaper, exact completion invariants
+(`==`, not `>=`), and durable publication only from a separately scheduled execution, never
+inline inside a callback. Reviewed and hardened through several rounds with Codex (see
+`Bucket/Queue/`, gitignored) before any live test - two more real bugs found and fixed purely
+through that review, before ever touching a hub: callbacks were still writing progress fields to
+`state` (recreating the exact race this exists to prevent), and the watchdog's failure path
+could race a legitimate finalize and overwrite a successful publication with a false failure.
+
+Controlled dev-hub test (instance 3050, code id 1189, production id 1188 never touched): four
+scans at 21.1-25.5s against a 134s same-day serial baseline, identical device data across all
+194 devices, one explained app-count difference (an unrelated half-installed app that
+independently vanished from the hub's own `/hub2/appsList` between measurements, not dropped by
+this code), zero dispatch-throw/reap/watchdog/invariant-violation events on real data, no
+post-completion mutation observed 140s past the watchdog horizon. The historical 74-app crash
+this section describes was this same hub, not a smaller one - today's test ran successfully at
+105 apps, past that scale, with the 08-13 state-footprint fix (drop-not-hold the previous graph)
+still in place unchanged.
+
+Two Hubitat-loader restrictions found only by pushing to the hub, not by local `groovyc`:
+importing `AtomicLong` is rejected outright (`AtomicInteger` is fine), and one `@Field static
+final` cannot reference another's value even in correct declaration order. Full writeup:
+`Supporting Docs/async_scan_v205_technical_report.md`; generalized pattern published separately
+at `github.com/GordonThelander/hubitat_dev_utililities` ("Transactional Bounded-Async
+Discovery"), credited to hubitrep's `HubDiagnostics` as the origin.
+
+Currently on `dev` only, live on the Dev hub instance for a bounded soak (Codex's
+recommendation: 24h+, several more scans, checked each time against the same acceptance
+criteria as the four controlled runs) before production promotion is considered. Not yet
+measured: hub CPU/memory pressure during a scan, and live exercise of the recovery paths
+(dispatch-throw rollback, claim reaper) against real data - both still rest on the isolated
+harness and code inspection, not a live failure.
+
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps
 
 ### P2 - "Devices nothing references" doesn't check Dashboard tiles, only apps

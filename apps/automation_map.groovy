@@ -72,6 +72,9 @@
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String APP_NAME = 'Automation Map (Dev)'
 // Every build of this app excludes all of its own variants from the map,
@@ -79,7 +82,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.4'
+@Field static final String APP_VERSION = '2.0.5'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -90,14 +93,8 @@ import java.util.regex.Pattern
 // rescan that already exists for exactly this situation.
 @Field static final String GRAPH_SCHEMA = '5'
 
-// A once-a-year decoration, embedded as a data URI rather than hosted -
-// this app has no other place to serve an asset from, and a ~29KB addition
-// to the page for five days a year is not worth standing up file storage
-// for. Source PNG is 21.7KB.
-@Field static final String SANTA_PNG_B64 = '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'
-
-// Confirmed on a live preview 2026-08-14 (placement, size and caption all
-// checked against the actual rendered page before this gate went in).
+// Gates the watermark's Dec 20-25 swap to the Christmas tree image
+// (see hubWatermark below) - the only thing showSanta() controls now.
 boolean showSanta() {
     Calendar cal = Calendar.getInstance(location.timeZone)
     cal.setTime(new Date())
@@ -121,8 +118,6 @@ boolean showSanta() {
 // and touching its group indices to add a second capture risks breaking the
 // local-path case for every user to fix a case that only affects some.
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
-@Field static final Integer DEVICE_BATCH_SIZE = 15
-@Field static final Integer APP_BATCH_SIZE = 3
 
 definition(
     name: APP_NAME,
@@ -221,8 +216,16 @@ Map main() {
     // A full scan takes a couple of minutes. Without this the page looked frozen
     // - the progress line only moved if you closed and reopened it, which reads
     // as a hang rather than as work in progress.
+    // Live progress now comes from amProgressPoll() below (a lightweight
+    // fetch of /scan-status updating one span in place), not from Hubitat's
+    // own full-page refreshInterval - a scan now typically finishes in
+    // 15-25s, and a 4-second full-page reload against that window produced
+    // 2-3 jarring whole-page flashes rather than a smooth progress display.
+    // A long fallback interval is kept, not removed entirely, in case the
+    // JS poll itself ever fails to start or silently stalls - the same
+    // belt-and-suspenders reasoning as the async pipeline's own watchdogs.
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && state.scanRunning) ? 4 : 0) {
+                       refreshInterval: (ready && state.scanRunning) ? 60 : 0) {
         // Scan status, the map link and the Scan button all sit ABOVE the device
         // picker. The picker renders as a list of every device on the hub, so
         // anything below it is off the bottom of the screen - which is where the
@@ -237,18 +240,38 @@ Map main() {
                 // rather than from a Hubitat button. runIn() called out of
                 // appButtonHandler does not reliably schedule anything: on a
                 // clean install the queue was populated, scanRunning was true,
-                // no job was scheduled, and scanBatch never ran even once - its
-                // heartbeat was never written. Driving it through the endpoint
+                // no job was scheduled, and the async pipeline never advanced
+                // even once - its heartbeat was never written. Driving it through the endpoint
                 // runs the scan in an ordinary app execution, which works.
                 paragraph scanButtonHtml()
                 if (state.scanTotal) {
-                    Integer done = (state.scanDone ?: 0) as Integer
+                    // state.scanDone is only ever written once per phase now
+                    // (by the phase-starting execution and by its finalize) -
+                    // callbacks/reapers stay entirely state-free, so this
+                    // would read frozen at 0 for the whole active phase
+                    // without reading the live scan accumulator instead. Same
+                    // fix as scanStatusJson().
+                    ConcurrentHashMap liveScan = null
+                    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
+                    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+                    Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: 0) as Integer
                     Integer total = (state.scanTotal ?: 1) as Integer
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
-                    String phase = state.scanPhase == 'apps' ? 'Reading apps' : 'Reading devices'
-                    String progress = "${phase}: ${done} of ${total} (${pct}%)"
+                    boolean isDevicePhase = state.scanPhase != 'apps'
+                    // total/done during the device phase count driver-type
+                    // representatives (34 on this hub), not individual devices
+                    // (194) - dispatchDeviceOne fetches capabilities once per
+                    // representative and applies the result to its whole group,
+                    // so there is no finer-grained "device 47 of 194" progress
+                    // to report even in principle. Labelled and shown alongside
+                    // the real device count instead of mislabelling the
+                    // representative count as a device count.
+                    String phase = isDevicePhase ? 'Reading device types' : 'Reading apps'
+                    Integer realDeviceTotal = (state.deviceScanTotal ?: 0) as Integer
+                    String deviceContext = (isDevicePhase && realDeviceTotal > 0) ? " (${realDeviceTotal} devices)" : ''
+                    String progress = "${phase}: ${done} of ${total}${deviceContext} (${pct}%)"
                     if (state.scanRunning) {
-                        progress += ' - this page updates itself, no need to reload.'
+                        progress += ' - updating live, no need to reload.'
                     } else {
                         // scanHeartbeat is stamped at the start of finishScan(), so it lands a
                         // few seconds ahead of this page reporting the scan as finished - close
@@ -256,10 +279,15 @@ Map main() {
                         // backs the AI export's lastScanCompletedAt.
                         String when = state.scanHeartbeat ?
                             new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : null
-                        progress = "Last scan: ${done} of ${total} ${state.scanPhase == 'apps' ? 'apps' : 'devices'}" +
-                            (when ? " - ${when}" : '') + '.'
+                        String lastScanCount = isDevicePhase ? "${realDeviceTotal ?: total} devices (${total} driver types)" : "${done} apps"
+                        progress = "Last scan: ${lastScanCount}" + (when ? " - ${when}" : '') + '.'
                     }
-                    paragraph progress
+                    // Wrapped in an id'd span, not a bare paragraph - amProgressPoll()
+                    // below replaces this element's text in place once JS takes over,
+                    // rather than needing a full page reload to show new numbers. This
+                    // server-rendered text is still the correct first paint and the
+                    // no-JS fallback, not dead markup.
+                    paragraph "<span id='amProgress'>${progress}</span>"
                 }
                 if (state.scanError) {
                     paragraph "<b style='color:#c0392b'>Scan error: ${state.scanError}</b>"
@@ -363,7 +391,7 @@ function amStartScan() {
   // session cookie makes the hub treat this as part of the open UI transaction,
   // and scheduled jobs created inside one are discarded - startScan() would
   // populate the queue and set scanRunning, then runIn() would silently
-  // schedule nothing and scanBatch would never execute. Authenticating with the
+  // schedule nothing and the async pipeline would never execute. Authenticating with the
   // access token alone runs it as an ordinary request, which schedules.
   // Reads the body as TEXT and parses it here, rather than calling r.json()
   // and letting the browser throw. A raw "Unexpected token '<'" tells you only
@@ -420,7 +448,7 @@ function amStartScan() {
         return d;
       });
     })
-    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
+    .then(function () { m.textContent = 'Scanning - progress below updates live.'; amSawRunning = true; amProgressPoll(); })
     .catch(function (e) {
       b.disabled = false;
       var where = '(could not parse the attempted URL)';
@@ -428,7 +456,69 @@ function amStartScan() {
       m.textContent = 'Could not start the scan: ' + e.message + ' | tried: ' + where;
     });
 }
+// Live progress for the span scanButtonHtml's caller renders as
+// <span id="amProgress">. Reuses amPickURL's same local/cloud origin
+// detection amStartScan already relies on - the cloud/CORS case has no live
+// polling available for the same documented reason amStartScan falls back
+// to a hidden-iframe navigation, so it falls back to one delayed reload
+// instead. amSawRunning is the guard against reloading a page that was
+// never actually watching a live scan - only a poll that itself observed
+// running:true, in THIS page view, triggers the one-time reload once the
+// scan finishes; a page opened after the fact just shows the static
+// "Last scan" text with no polling at all.
+var amPolling = false;
+var amSawRunning = false;
+function amProgressPoll() {
+  if (amPolling) return;
+  amPolling = true;
+  var statusUrl = amPickURL('${getLocalURL('scan-status')}', '${getCloudURL('scan-status')}');
+  if (statusUrl.indexOf('http') === 0) {
+    amPolling = false;
+    setTimeout(function () { location.reload(); }, 4000);
+    return;
+  }
+  fetch(statusUrl, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      amPolling = false;
+      var el = document.getElementById('amProgress');
+      if (!el) return;
+      if (d.running) {
+        amSawRunning = true;
+        var isDevicePhase = d.phase !== 'apps';
+        var phaseLabel = isDevicePhase ? 'Reading device types' : 'Reading apps';
+        var deviceContext = (isDevicePhase && d.devices) ? ' (' + d.devices + ' devices)' : '';
+        var pct = d.total > 0 ? Math.floor((d.done * 100) / d.total) : 0;
+        el.textContent = phaseLabel + ': ' + d.done + ' of ' + d.total + deviceContext +
+                          ' (' + pct + '%) - updating live, no need to reload.';
+        setTimeout(amProgressPoll, 1500);
+      } else if (amSawRunning) {
+        // Live-updating this one span cannot reveal the map link/insights
+        // sections, which only render at all when state.graph exists in the
+        // page's original server-rendered HTML - one reload is still needed
+        // to show those, just once, at the actual end, not every 4 seconds
+        // for the whole scan.
+        el.textContent = 'Scan complete - reloading...';
+        location.reload();
+      }
+    })
+    .catch(function () {
+      amPolling = false;
+      // Silent - the 60s refreshInterval fallback still covers a poll that
+      // keeps failing, and a transient failure just gets retried below. Not
+      // worth a user-visible error for a background progress poll.
+      setTimeout(amProgressPoll, 3000);
+    });
+}
 ${autoScanScript()}
+if (${state.scanRunning ? 'true' : 'false'}) {
+  // A scan was already running when this page was rendered (reopened mid-
+  // scan, or the 60s fallback refreshInterval fired) - resume live polling
+  // immediately rather than wait for the user to notice and reload again.
+  amSawRunning = true;
+  document.addEventListener('DOMContentLoaded', amProgressPoll);
+  if (document.readyState !== 'loading') amProgressPoll();
+}
 </script>"""
 }
 
@@ -452,8 +542,11 @@ boolean graphIsStale() {
 // button and shows a progress line that never moves - the app looks permanently
 // mid-scan with no way back. That happens if the hub restarts or the app is
 // updated mid-scan, and it happened to anyone who pressed Scan before the app
-// finished installing. scanBatch stamps a heartbeat every batch, so a scan whose
-// heartbeat has stopped advancing is over whatever its flag says.
+// finished installing. state.scanHeartbeat is stamped once, when a phase
+// starts, not refreshed by callbacks/reapers any more - those stay entirely
+// state-free. Whether a scan is genuinely still active is answered below by
+// checking DEVICE_SCANS/APP_SCANS for a live entry, not by heartbeat
+// recency; the 90s check is only a cheap first filter before that lookup.
 void clearAbandonedScan() {
     if (!state.scanRunning) return
     Long beat = (state.scanHeartbeat ?: 0) as Long
@@ -476,6 +569,33 @@ void clearAbandonedScan() {
     // Previously this branch discarded a fully-read scan and told the user
     // to start over from zero; now it finishes the one step that never got
     // the chance to run.
+    //
+    // Callbacks and reapers never write state.scanHeartbeat any more (see
+    // deviceFetchCb/appFetchCb - it moved to a scan-local timestamp field,
+    // scanStatusJson reads it live). So the staleness check above no longer
+    // means "no progress in 90s" during an active async phase - it just
+    // means "90s since this scan STARTED", which fires on every long-running
+    // scan whether it is healthy or not. Deferring to whichever phase's own
+    // watchdog/reaper is live is therefore not a belt-and-suspenders
+    // addition any more, it is the only thing standing between a perfectly
+    // healthy in-progress scan and this function marking it abandoned.
+    boolean asyncDeviceScanActive = state.scanPhase == 'devices' && DEVICE_SCANS.containsKey(state.deviceScanId as String)
+    boolean asyncAppScanActive = state.scanPhase == 'apps' && APP_SCANS.containsKey(state.appScanId as String)
+    if (asyncDeviceScanActive || asyncAppScanActive) return
+
+    // The batch-reading work itself can finish - queue empty, every app
+    // already read into appInfo - while the scheduled finalization
+    // (fetchRegistry -> finishScan, or its 45-second watchdog) never runs at
+    // all. runIn() is already known to be unreliable on this platform - see
+    // the Scan button's own comment on why it does not use
+    // appButtonHandler - and this is the same failure class landing on a
+    // different scheduled call. finishScan() itself makes no HTTP calls - it
+    // is buildGraph() over data this app already collected, plus
+    // bookkeeping - so calling it directly here, synchronously, cannot fail
+    // the same way a scheduled job can. By this point asyncAppScanActive is
+    // already known false, so an empty queue in the app phase specifically
+    // means the async pipeline finished and only the registry/graph-build
+    // handoff got stuck, not that it is still running.
     List queue = (state.scanQueue ?: []) as List
     if (!queue && state.scanPhase == 'apps') {
         log.warn "${app.label}: scan batches finished but finalization never ran - finishing now instead of discarding it"
@@ -508,14 +628,6 @@ String compatibilitySummary() {
     s << "Read ${decoded} app(s)"
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} flow(s)."
-
-    // Said out loud because the number is usually small and sometimes zero, and
-    // a scan that quietly claims completeness it did not earn is the thing this
-    // whole discovery change exists to prevent.
-    int listed = (state.appsFromListing ?: 0) as Integer
-    if (listed > 0) {
-        s << " ${listed} of them reference no device and would not have been found by walking devices alone."
-    }
 
     // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
     // and said nothing about the difference, so the summary, the Focus app list
@@ -556,9 +668,10 @@ String compatibilitySummary() {
 // one place that shape is written now.
 //
 // data comes back exactly as the response sent it, not coerced to Map here -
-// fetchAllDeviceIds needs a List, so that decision stays with whoever
-// actually knows their own endpoint's shape. extraOpts exists only for
-// fetchRegistry's contentType; every loopback caller passes none.
+// different endpoints return different top-level shapes (a bare List or a
+// Map), so that decision stays with whoever actually knows their own
+// endpoint's shape. extraOpts exists only for fetchRegistry's contentType;
+// every loopback caller passes none.
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     Map out = [ok: false, data: null, error: null]
     try {
@@ -575,6 +688,63 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
 // The one thing every loopback caller shares - not shared with fetchRegistry,
 // which hits REGISTRY_URL on GitHub instead.
 @Field static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
+
+// Hardened async dispatch pipeline (v2.0.5) - reintroduces the
+// concurrent-fetch work from the reverted 2.0.5 attempt, this time with
+// the fixes verified against the live hub in the isolated dispatch-test
+// harness: try/catch rollback around every asynchttpGet call, per-item
+// claim/attempt-token tracking, a claim reaper for callbacks that never
+// arrive at all, atomic conditional-removal ownership so a callback and
+// the reaper can never both resolve the same attempt, exact completion
+// invariants, exactly-once finalization, and a fail-closed watchdog that
+// marks a stalled scan failed rather than publish a partial result
+// labeled complete. See BACKLOG.md and the Bucket/ collaboration record
+// for the full history of what was found and why each piece exists.
+@Field static final int DEVICE_ASYNC_MAX_INFLIGHT = 8
+@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   // Hubitat's documented concurrent-async-per-app cap
+// Bounded retry for a synchronous dispatch throw or an aged, unresolved
+// claim - not for an ordinary HTTP-level failure, which already resolves
+// in a single callback with no dangling claim and needs no retry.
+@Field static final int ATTEMPT_CAP = 2
+@Field static final int CLAIM_REAP_INTERVAL_SEC = 10
+// Must exceed the longest real request timeout used by either phase
+// (device fetch: 10s, app fetch: 20s) plus scheduling margin - a
+// deadline shorter than a real request's own timeout makes premature
+// reaping possible by construction, not just by bad luck. Confirmed as
+// a real defect at 8000ms (below the test harness's own 10s "good"
+// timeout) during the isolated test's second review round; raised well
+// clear of this pipeline's real 20s maximum.
+@Field static final long CLAIM_REAP_DEADLINE_MS = 25000
+// Both phases share the same claim deadline/reap interval/attempt cap, so
+// the worst-case time to terminally resolve one item is the same for
+// either phase: ATTEMPT_CAP reap cycles, each up to (deadline + one poll
+// interval) before the next attempt even starts - here, 2 * (25s + 10s) =
+// 70s. A watchdog shorter than that envelope can fail a pipeline that is
+// behaving exactly as designed - confirmed as a real defect (60s device
+// watchdog against this same ~70s worst case) during the production-diff
+// review, not just a theoretical gap. 60s of real margin added on top of
+// the 70s envelope, not just clearing the minimum: 130s each.
+//
+// Written as plain literals, not computed from ATTEMPT_CAP/
+// CLAIM_REAP_DEADLINE_MS/CLAIM_REAP_INTERVAL_SEC above - the hub's own
+// loader rejects one @Field static final referencing another one's value
+// ("was found in a static scope but doesn't refer to a local variable,
+// static field or class"), even though local groovyc accepts it and even
+// though the referenced field is declared earlier in the file. Confirmed
+// against the hub directly, not assumed. If either the deadline, the
+// interval, or the attempt cap above ever changes, these two must be
+// recalculated by hand and this comment's math updated to match.
+@Field static final int DEVICE_ASYNC_WATCHDOG_SEC = 130
+@Field static final int APP_ASYNC_WATCHDOG_SEC = 130
+// Per-scan accumulator, keyed by scanId - never read from or written to
+// state directly by a callback. Callbacks only ever touch these static
+// maps; state is written exactly once per phase, by finalizeDevicePhase/
+// finalizeAppPhase, in a single execution. This is what avoids the
+// concurrent-write race this whole design exists to avoid: Hubitat's
+// last-write-wins state persistence means two callbacks racing to write
+// state directly could silently drop whichever wrote last.
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
 
 // Everything this app knows comes from undocumented hub endpoints, so on a hub
 // unlike the one it was written against it must say WHY it found nothing rather
@@ -612,259 +782,836 @@ void startScan() {
     state.rulesDecoded = 0
     state.rulesSkipped = 0
     state.ruleLinks = 0
-    state.appsFromListing = 0
     state.appsInert = 0
     state.otherEngines = []
-    // Cleared BEFORE fetchAllDeviceIds runs, not after. That call sets
+    // Cleared BEFORE fetchDeviceListBulk runs, not after. That call sets
     // scanError itself on failure - clearing it afterward silently erased
     // the one error a user most needed to see, the enumeration that made
     // the whole scan pointless before a single app was even queued.
     state.scanError = null
-    // Also cleared here, not down with the rest of the reset block below -
-    // that block sits after the scanError abort check, so on a failed
-    // enumeration it never runs and this count would otherwise still be
-    // whatever an unrelated earlier scan left behind, read back out through
-    // compatibilitySummary/scanStatusJson/AI friendly export as if it described
-    // the scan that just failed to even start.
     state.deviceIdsUnreadable = []
-    state.scanQueue = fetchAllDeviceIds()
-    // fetchAllDeviceIds sets scanError itself and returns [] on failure -
-    // checked here, not assumed handled downstream. Before this check, a
-    // failed enumeration still fell through into a full scan with zero
-    // devices queued: scanRunning went true, the app phase ran anyway, and
-    // a graph with no devices and no device relationships could be stamped
-    // as a normal, complete result, with the one error a user needed to
-    // see left to be found only by reading scanError separately rather
-    // than the scan visibly having stopped.
-    if (state.scanError) {
+    Map bulk = fetchDeviceListBulk()
+    if (bulk.error) {
+        state.scanError = "Could not list devices from the hub: ${bulk.error}"
         state.scanRunning = false
         return
     }
-    state.scanTotal = (state.scanQueue as List).size()
+    // Label/room/type are already known for every device from this one call -
+    // NOT batched, unlike capabilities below. Only capabilities need a
+    // per-driver-type follow-up fetch.
+    state.deviceLabels = bulk.labels as Map
+    state.deviceRooms = bulk.rooms as Map
+    state.deviceTypes = bulk.types as Map
+    state.deviceCapabilities = [:]
+    // Map of representative device id -> every device id sharing its driver
+    // (deviceTypeId), including the representative itself. dispatchDeviceOne
+    // fetches capabilities once per representative and applies the result to
+    // the whole group - see fetchDeviceListBulk's comment for why this is
+    // safe (capabilities are a driver property, verified identical within a
+    // driver on this hub).
+    state.deviceTypeGroups = bulk.typeGroups as Map
+    List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
+    state.scanQueue = []
+    // state.scanTotal is the representative/driver-type count dispatchDeviceOne
+    // actually iterates over (34 on this hub, not 194) - correct for the
+    // dispatch/invariant machinery, but showing it labelled as a device count
+    // on the settings page reads as "only 34 devices found", which is wrong
+    // and confusing. deviceScanTotal is the real device count, kept
+    // separately purely for that display - see main()'s progress paragraph.
+    state.deviceScanTotal = (bulk.labels as Map).size()
+    state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
     state.scanRunning = true
-    // Stamped here as well as in scanBatch, so a scan that never manages to run
-    // a single batch still has a timestamp for clearAbandonedScan to age out.
+    // Stamped here as well as in the async callbacks, so a scan that never
+    // manages to land a single callback still has a timestamp for
+    // clearAbandonedScan to age out.
     state.scanHeartbeat = now()
-    state.deviceLabels = [:]
-    // NOT state.deviceIconOverrides or state.deviceIconNotes - both are the
-    // user's own input (a correction, and a freeform note on an
-    // unrecognised device), same category as state.userRegistry for
-    // external systems, and must survive a rescan the same way those
-    // declarations do.
-    state.deviceCapabilities = [:]
-    state.deviceRooms = [:]
-    state.deviceTypes = [:]
     state.appIds = []
     state.appInfo = [:]
     state.graphVersion = null
     // Dropped, not merely marked stale. Holding the previous graph while
-    // appInfo fills doubles peak state for the whole scan, and on a 74-app hub
-    // that was enough to kill a scan two apps from the end: no error logged, no
-    // job scheduled, just a heartbeat that stopped. The old graph is unusable
-    // during a scan anyway, since graphVersion is cleared on the line above.
+    // appInfo fills doubles peak state for the whole scan - this is Gordon's
+    // own hub, and on 2026-08-13, at 74 apps, that was enough to kill a scan
+    // two apps from the end: no error logged, no job scheduled, just a
+    // heartbeat that stopped (see commits 9ef2359/95a2a10). The old graph is
+    // unusable during a scan anyway, since graphVersion is cleared above.
+    //
+    // Deliberately not attempting double-buffering (holding the old graph
+    // live in state while a new one fills) as part of this hardening pass -
+    // that is exactly the pattern the 2026-08-13 fix removed, not an
+    // untested scale question. This hub is now at 105 apps, larger than the
+    // 74 that crashed it, and has run cleanly under the current drop-not-hold
+    // design repeatedly, including this hardening pass's own dev-soak test.
+    // Re-introducing double buffering would be a real, different design
+    // change, and would need its own peak-memory measurement before trusting
+    // it - not because this hub is too small to have exercised the old
+    // failure at all, but because nothing here has re-tested holding two
+    // copies since the fix that stopped doing that.
     state.graph = null
-    // All three unscheduled together. Only scanBatch is guaranteed pending at
-    // any given moment, but a scan restarted while a previous one's last
-    // batch had already scheduled fetchRegistry/finishScan otherwise leaves
-    // those two jobs orphaned - one fires mid-way into THIS scan, builds a
-    // graph from whatever appInfo the new scan has managed to populate so
-    // far, and stamps it complete. The map then reads as finished while the
-    // real scan is still running, silently, with nothing on screen to say
-    // so.
-    unschedule('scanBatch')
     unschedule('fetchRegistry')
     unschedule('finishScan')
-    runIn(1, 'scanBatch')
+
+    if (repIds.isEmpty()) {
+        // No devices at all - go straight to the app phase, same as an
+        // empty representative queue would after finishing normally.
+        startAppPhase()
+        return
+    }
+
+    String scanId = "devices-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total = repIds.size()
+    scan.inFlight = new AtomicInteger(0)
+    scan.processed = new AtomicInteger(0)
+    scan.pending = new ConcurrentLinkedQueue(repIds)
+    scan.claims = new ConcurrentHashMap()
+    scan.tokenSeq = new AtomicInteger(0)
+    // Two separate guards, deliberately not one - finalizeScheduleGuard only
+    // proves "a scheduling runIn() was issued", finalizeGuard only proves
+    // "the actual state publish happened". Conflating them would let a
+    // scheduled job that never runs permanently block the watchdog's own
+    // recovery path from ever publishing.
+    scan.finalizeScheduleGuard = new AtomicInteger(0)
+    scan.finalizeGuard = new AtomicInteger(0)
+    scan.capsByDev = new ConcurrentHashMap<String, List>()
+    scan.unreadableDevs = new ConcurrentHashMap<String, Boolean>()
+    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
+    // Copied in, not read from state by a callback - callbacks and reapers
+    // must never touch state at all, not even to read. typeGroups was
+    // written once, moments ago, in this same execution, so this copy is
+    // exactly as current as a read would have been, with none of the
+    // question of whether a concurrent execution can safely read state.
+    scan.typeGroups = new ConcurrentHashMap((bulk.typeGroups ?: [:]) as Map)
+    DEVICE_SCANS[scanId] = scan
+    state.deviceScanId = scanId
+
+    // Single-scan-at-a-time within this app instance: reapers/watchdogs are
+    // scheduled and unscheduled by handler name, and Hubitat's runIn()
+    // replaces rather than stacks a prior job under the same name. Automation
+    // Map already enforces one live scan via the UI/clearAbandonedScan, so
+    // this matches an existing constraint rather than introducing a new one.
+    runIn(DEVICE_ASYNC_WATCHDOG_SEC, 'deviceAsyncWatchdog', [data: [scanId: scanId]])
+    runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
+    refillDevicePipeline(scanId)
 }
 
-void scanBatch() {
-    // Anything thrown out of this method is fatal to the whole scan: Hubitat
-    // discards the state written during a failed execution, so the queue would
-    // never advance AND no follow-up job would be scheduled, leaving the app
-    // stuck at "scanning" with no error recorded. Every stage is therefore
-    // guarded separately, and the reschedule happens no matter what.
-    state.scanHeartbeat = now()
-    boolean advanced = false
+void refillDevicePipeline(String scanId) {
+    // Iterative, not recursive: dispatchDeviceOne() returns true whenever it
+    // made progress (a successful dispatch, or a rollback+requeue/terminal-fail
+    // after a synchronous throw), so looping here bounds the work to the
+    // pending queue's size instead of growing the call stack on repeated
+    // synchronous failures. Verified against real repeated synchronous
+    // failures in the isolated dispatch-test harness before being relied on
+    // here.
+    while (dispatchDeviceOne(scanId)) { /* keep refilling */ }
+}
+
+// CAS-bounded dispatch: reserves a slot in the in-flight pool (<=
+// DEVICE_ASYNC_MAX_INFLIGHT), pops the next pending representative device id
+// (or requeued retry, carrying its prior attempt count), records a claim
+// before ever calling asynchttpGet, and issues an async fullJson fetch for
+// that representative's capabilities. Every failure path below rolls back
+// the reservation and the claim via conditional removal - see the isolated
+// test's dispatch-throw/claim-reaper findings for why an unconditional
+// remove is not safe once callbacks and the reaper can genuinely overlap.
+boolean dispatchDeviceOne(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return false
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {
+        int n = inFlight.get()
+        if (n >= DEVICE_ASYNC_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    def raw = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (raw == null) {
+        inFlight.decrementAndGet()
+        return false
+    }
+    String repId = (raw instanceof Map) ? (raw as Map).id as String : raw as String
+    int attemptCount = ((raw instanceof Map) ? ((raw as Map).attemptCount ?: 0) as Integer : 0) + 1
+
+    String attemptToken = "tok-${(scan.tokenSeq as AtomicInteger).incrementAndGet()}"
+    Map myClaim = [attemptToken: attemptToken, dispatchedAt: now(), attemptCount: attemptCount]
+    (scan.claims as ConcurrentHashMap)[repId] = myClaim
+
     try {
-        if (state.scanPhase == 'devices') {
-            scanDeviceBatch()
-        } else {
-            scanAppBatch()
-        }
-        advanced = true
+        asynchttpGet('deviceFetchCb',
+            [uri: "${LOOPBACK_BASE}/device/fullJson/${repId}", contentType: 'application/json', timeout: 10],
+            [scanId: scanId, repId: repId, attemptToken: attemptToken])
+        return true
     } catch (Exception ex) {
-        log.warn "${app.label}: scanBatch failed: ${ex.message}"
+        log.warn "${app.label}: device ${repId} dispatch threw: ${ex.message}"
+        // Ownership proven the same way the callback/reaper prove it below -
+        // only this execution could plausibly hold this exact claim object
+        // (nothing else has had a chance to touch it since it was created a
+        // few lines above), but the conditional remove costs nothing and
+        // keeps every retirement path in this pipeline consistent.
+        boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, myClaim)
+        if (owned) inFlight.decrementAndGet()
+        if (owned) {
+            scan.lastProgressAt = now()
+            if (attemptCount < ATTEMPT_CAP) {
+                (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
+            } else {
+                // Every device sharing this representative's driver, not just
+                // the representative itself - a driver-group capability
+                // failure is a failure for the whole group, same as the real
+                // callback path below marks it.
+                deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+                (scan.processed as AtomicInteger).incrementAndGet()
+            }
+        }
+        maybeFinalizeDevicePhase(scanId)
+        return true   // made progress; refillDevicePipeline's loop tries again
+    }
+}
+
+// Shared by dispatchDeviceOne's terminal-throw path, deviceFetchCb, and
+// reapDeviceClaim's terminal path - every device sharing repId's driver,
+// from the scan-local copy of typeGroups (never state - see the comment
+// where scan.typeGroups is populated in startScan).
+List deviceGroupFor(ConcurrentHashMap scan, String repId) {
+    Map typeGroups = (scan.typeGroups ?: [:]) as Map
+    return (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
+}
+
+// Async callback for /device/fullJson/{representative id}. Applies the
+// result to every device sharing that representative's driver, releases the
+// claim and the in-flight slot (only if this execution actually owns the
+// claim - see the ownership note in dispatchDeviceOne), then refills and
+// checks for completion.
+void deviceFetchCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return  // callback from a prior, already-finalized scan
+
+    String repId = data.repId as String
+    String attemptToken = data.attemptToken as String
+    Map claim = (scan.claims as ConcurrentHashMap)[repId] as Map
+
+    if (claim == null || claim.attemptToken != attemptToken) return   // stale or duplicate
+
+    boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, claim)
+    if (!owned) return   // lost the race - deviceClaimReaper already retired this exact attempt
+
+    List group = deviceGroupFor(scan, repId)
+
+    List caps = null
+    try {
+        if (resp?.status == 200) {
+            Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
+            Map dev = respData.device as Map
+            caps = dev ? (dev.capabilities ?: []) as List : []
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: device ${repId} lookup failed: ${ex.message}"
+    }
+
+    if (caps == null) {
+        group.each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+    } else {
+        group.each { String devId -> (scan.capsByDev as ConcurrentHashMap)[devId] = caps }
+    }
+
+    (scan.processed as AtomicInteger).incrementAndGet()
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    // Scan-local progress marker, not state - see the top-of-pipeline
+    // comment on why callbacks/reapers never write state at all, not even a
+    // best-effort progress field. scanStatusJson() reads this live.
+    scan.lastProgressAt = now()
+
+    refillDevicePipeline(scanId)
+    maybeFinalizeDevicePhase(scanId)
+}
+
+// Active recovery for claims that were dispatched but never got any callback
+// at all - not a per-item HTTP failure (those already resolve in one
+// callback via caps==null above), but genuine platform-level silence.
+// Self-reschedules via runIn every CLAIM_REAP_INTERVAL_SEC until the phase
+// finalizes. Ownership is proven via conditional removal against a claim
+// value snapshotted at scan time, exactly as verified in the isolated
+// dispatch-test harness - see that harness's claimReaper()/reapOne() for the
+// full reasoning this mirrors.
+void deviceClaimReaper(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+    if ((scan.finalizeGuard as AtomicInteger).get() == 1) return
+
+    long nowMs = now()
+    Map claims = scan.claims as ConcurrentHashMap
+    List<Map> staleCandidates = []
+    claims.each { repId, claim ->
+        long dispatchedAt = (claim as Map).dispatchedAt as Long
+        if (nowMs - dispatchedAt >= CLAIM_REAP_DEADLINE_MS) {
+            staleCandidates << [repId: repId as String, claim: claim as Map]
+        }
+    }
+    staleCandidates.each { c -> reapDeviceClaim(scanId, c.repId as String, c.claim as Map) }
+
+    ConcurrentHashMap scan2 = DEVICE_SCANS[scanId]
+    if (scan2 != null && (scan2.finalizeGuard as AtomicInteger).get() != 1) {
+        runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
+    }
+}
+
+void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+
+    long ageMs = now() - (candidateClaim.dispatchedAt as Long)
+    if (ageMs < CLAIM_REAP_DEADLINE_MS) return
+
+    Map claims = scan.claims as ConcurrentHashMap
+    boolean owned = claims.remove(repId, candidateClaim)
+    if (!owned) return   // resolved or replaced since the scan - not this attempt's to reap
+
+    int attemptCount = candidateClaim.attemptCount as Integer
+    log.warn "${app.label}: device ${repId} claim reaped after ${ageMs}ms with no callback (attempt ${attemptCount})"
+
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    scan.lastProgressAt = now()
+
+    if (attemptCount < ATTEMPT_CAP) {
+        (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
+    } else {
+        // Whole driver group, not just the representative - same reasoning
+        // as dispatchDeviceOne's terminal-throw path.
+        deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+        (scan.processed as AtomicInteger).incrementAndGet()
+    }
+
+    refillDevicePipeline(scanId)
+    maybeFinalizeDevicePhase(scanId)
+}
+
+// Diagnostic-only safety net for a pipeline that has stalled well past what
+// any real callback or reap cycle should take. Deliberately does NOT
+// finalize with whatever was collected - see finalizeDevicePhase/
+// maybeFinalizeDevicePhase for why publishing a partial result labeled
+// complete is worse than failing visibly. Marks the scan failed instead.
+void deviceAsyncWatchdog(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return   // already finalized normally, nothing to do
+
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total) {
+        // Invariants already satisfied - this is just the watchdog and the
+        // last legitimate resolution landing at nearly the same moment.
+        // finalizeDevicePhase is itself exactly-once via finalizeGuard, so
+        // calling it here is safe either way.
+        finalizeDevicePhase(scanId)
+        return
+    }
+    if (processed > total) {
+        log.warn "${app.label}: device-phase scan ${scanId} invariant violation - processed=${processed} exceeds total=${total}"
+    }
+
+    // CAS the same guard finalizeDevicePhase uses, BEFORE writing anything -
+    // a legitimate finalize from a callback/reap landing concurrently with
+    // this watchdog execution must win this race, not have its successful
+    // publication overwritten by this failure path landing after it. If the
+    // CAS fails, a real finalize already happened or is in progress and this
+    // execution has nothing left to do.
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+
+    log.warn "${app.label}: device-phase async scan ${scanId} did not finish within ${DEVICE_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
+    DEVICE_SCANS.remove(scanId)
+    unschedule('deviceClaimReaper')
+    // Honest, not "kept the previous map" - startScan already wiped
+    // state.graph/appInfo/deviceCapabilities before this scan's first
+    // dispatch even went out, so there is no previous map left to retain by
+    // this point, only that no NEW, possibly-incomplete one gets published
+    // in its place. Real retention (double buffering) is deliberately not
+    // attempted - see BACKLOG.md.
+    state.scanError = "Device scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map"
+    state.scanRunning = false
+}
+
+// Called once invariants are exactly satisfied, from whichever path notices
+// that first (a callback or a reap). Deliberately does NOT call
+// finalizeDevicePhase() inline - this function still runs as part of a
+// callback/reap execution, and per the production-diff review, even a
+// terminal callback with zero other callbacks outstanding is still an async
+// execution whose own state snapshot could be stale relative to some other
+// concurrent execution. Schedules a fresh, dedicated execution to do the
+// actual publish instead, the same discipline this app already uses for the
+// registry/graph-build handoff (see beginRegistryAndFinish). finalizeSchedule
+// Guard only proves "a scheduling runIn() was issued" - it is not the
+// publish-ownership proof, that is still finalizeGuard, checked again inside
+// the scheduled execution itself.
+void maybeFinalizeDevicePhase(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    if (processed > total) {
+        log.warn "${app.label}: device-phase scan ${scanId} invariant violation - processed=${processed} exceeds total=${total}"
+        return
+    }
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total) {
+        if ((scan.finalizeScheduleGuard as AtomicInteger).compareAndSet(0, 1)) {
+            runIn(1, 'finalizeDevicePhaseScheduled', [data: [scanId: scanId]])
+        }
+    }
+}
+
+// The dedicated execution maybeFinalizeDevicePhase schedules - re-verifies
+// invariants (state may only have improved since scheduling, since claims
+// only ever get reaped/resolved, never added back once the pending queue is
+// drained, but re-checking costs nothing and matches step 2/5 of the
+// reviewed design) before handing off to finalizeDevicePhase's own
+// finalizeGuard CAS, which remains the actual exactly-once publish proof.
+void finalizeDevicePhaseScheduled(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    if (!(pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total)) {
+        log.warn "${app.label}: device-phase scan ${scanId} no longer satisfies invariants at scheduled finalize (pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding} processed=${processed} total=${total}) - leaving it to the watchdog"
+        return
+    }
+    finalizeDevicePhase(scanId)
+}
+
+// Merges the scan's static-accumulated capability results into state in one
+// single execution via plain assignment - never putAll onto whatever state
+// already held. A merge can only ever add entries, never correct a bad
+// starting state; this specific mistake (putAll instead of =) was the second
+// confirmed bug behind the data-integrity finding that led to this whole
+// rewrite. Guarded exactly-once via finalizeGuard so the scheduled finalizer
+// and the watchdog's own already-satisfied recovery path can never both run
+// this - both are freshly scheduled executions, never called inline from a
+// callback/reap.
+void finalizeDevicePhase(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   // already finalized
+
+    DEVICE_SCANS.remove(scanId)
+    unschedule('deviceAsyncWatchdog')
+    unschedule('deviceClaimReaper')
+
+    try {
+        state.deviceCapabilities = new LinkedHashMap(scan.capsByDev as Map)
+
+        List unreadable = []
+        (scan.unreadableDevs as ConcurrentHashMap).keySet().each { String devId -> unreadable << devId }
+        state.deviceIdsUnreadable = unreadable
+
+        state.scanDone = scan.total as Integer
+        state.scanHeartbeat = now()
+    } catch (Exception ex) {
+        log.warn "${app.label}: device-phase finalization failed: ${ex.message}"
         state.scanError = "${ex.message}"
-        state.scanQueue = []
-        // Stops here rather than falling into the block below, which decides
-        // what runs next on the assumption the batch succeeded. An empty
-        // queue after a genuine failure used to read exactly like an empty
-        // queue after finishing normally, and the scan would proceed straight
-        // into fetchRegistry/finishScan - building and stamping a graph from
-        // data a failed batch never finished collecting.
         state.scanRunning = false
         return
     }
 
-    try {
-        if (state.scanQueue) {
-            runIn(1, 'scanBatch')
-        } else if (advanced && state.scanPhase == 'devices') {
-            startAppPhase()
-        } else {
-            // Scheduled rather than called, so the graph build gets an
-            // execution to itself. fetchRegistry chains on to finishScan.
-            //
-            // Called inline it ran in the same execution as the last batch of
-            // app fetches, so one execution did up to three 20-second HTTP
-            // fetches, then built a 285-node graph, then made up to three more
-            // HTTP calls naming deleted rules, then wrote the whole state. That
-            // execution died on a 74-app hub: no error, no scheduled job, just a
-            // heartbeat that stopped two apps from the end.
-            //
-            // Splitting it also means the batch work is already committed if
-            // the build itself fails.
-            //
-            // The PENDING marker is written HERE, not inside fetchRegistry,
-            // because state is only committed at the END of an execution. An
-            // execution that dies mid-fetch discards everything it wrote, so
-            // fetchRegistry structurally cannot record that it started. Without
-            // this marker, "never ran" and "died trying" look identical from the
-            // outside, and the page told a user who had just run a scan that the
-            // registry had never been fetched.
-            state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
-                                  matched: 0, error: null, schemaVersion: null]
-            runIn(1, 'fetchRegistry')
-            // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
-            // dies takes the graph build down with it and the scan never
-            // completes at all. Scheduling finishScan again for the same handler
-            // replaces this job, so the normal path cancels the watchdog simply
-            // by rescheduling it one second out.
-            runIn(45, 'finishScan')
-        }
-    } catch (Exception ex) {
-        log.warn "${app.label}: scan could not continue: ${ex.message}"
-        state.scanError = "${ex.message}"
-        state.scanRunning = false
-    }
+    startAppPhase()
 }
 
-void scanDeviceBatch() {
-    List queue = state.scanQueue as List
-    Map labels = state.deviceLabels as Map
-    Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
-    Map roomsByDev = (state.deviceRooms ?: [:]) as Map
-    Map typesByDev = (state.deviceTypes ?: [:]) as Map
-    // LinkedHashSet, not List: appId membership is checked once per device app
-    // reference across the whole scan, and a linear contains() over a growing
-    // List made that quadratic. Preserves insertion order like the List did.
-    Set appIds = new LinkedHashSet(state.appIds as List)
-    int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
-
-    // This app's own device picker references every selected device, which would
-    // otherwise draw ~200 meaningless "acts on" edges from Automation Map itself.
-    String selfId = "${app.id}"
-
-    // Same distinction already drawn for apps below: only a genuine fetch
-    // failure counts as unreadable, tracked by id so the export/UI can name
-    // which devices were missed, not just how many. Before this, a failed
-    // device.fullJson call was indistinguishable from a device that simply
-    // had nothing to report - the device silently dropped out of the scan
-    // (no label, no capabilities, no room, and any app only discoverable
-    // through it could be missed too) with the finished scan still able to
-    // report no top-level error at all.
-    List unreadable = (state.deviceIdsUnreadable ?: []) as List
-    queue.take(size).each { String devId ->
-        Map info = fetchDeviceApps(devId)
-        if (info.error) {
-            if (!unreadable.contains(devId)) unreadable << devId
-        } else {
-            if (info.label) labels[devId] = info.label
-            capsByDev[devId] = info.capabilities
-            if (info.room) roomsByDev[devId] = info.room
-            if (info.type) typesByDev[devId] = info.type
-            (info.appIds as List).each { String appId ->
-                if (appId != selfId) appIds << appId
-            }
-        }
-    }
-
-    state.deviceLabels = labels
-    state.deviceCapabilities = capsByDev
-    state.deviceRooms = roomsByDev
-    state.deviceTypes = typesByDev
-    state.deviceIdsUnreadable = unreadable
-    state.appIds = appIds as List
-    state.scanQueue = queue.drop(size)
-    state.scanDone = (state.scanDone ?: 0) + size
-}
-
+// Apps are discovered entirely from /hub2/appsList - device-led discovery
+// (walking appsUsing on every device) was dropped from the device-phase
+// fetch, verified on this hub to contribute zero apps the listing didn't
+// already have. state.appIds is therefore always empty entering this
+// function.
 void startAppPhase() {
-    // The device walk is finished, so this is the point where the two discovery
-    // channels are merged. Done here rather than before the device phase so a
-    // failure of either one still leaves a usable scan.
-    //
-    // Order matters only for readability of the queue. Device-found ids stay
-    // first, so the apps that will actually be drawn are read first and a scan
-    // interrupted part way through has the useful half.
-    // LinkedHashSet, not List: same quadratic-contains() fix as scanDeviceBatch,
-    // and it preserves the device-found-ids-first order this comment relies on.
     Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
-    int fromDevices = appIds.size()
     fetchInstalledAppIds().each { String appId ->
         if (appId != selfId) appIds << appId
     }
     state.appIds = appIds as List
-    // Kept for the scan summary. The count is the honest way to describe what
-    // this bought: on a hub where every app touches a device it is zero, and
-    // saying so is better than implying the map gained something it did not.
-    state.appsFromListing = appIds.size() - fromDevices
 
     state.scanPhase = 'apps'
-    state.scanQueue = appIds
     state.scanTotal = appIds.size()
     state.scanDone = 0
-    runIn(1, 'scanBatch')
-}
+    state.scanQueue = []
 
-void scanAppBatch() {
-    List queue = state.scanQueue as List
-    Map appInfo = state.appInfo as Map
-    Map labels = state.deviceLabels as Map
-    int size = queue.size() < APP_BATCH_SIZE ? queue.size() : APP_BATCH_SIZE
-
-    queue.take(size).each { String appId ->
-        Map info = fetchAppRelationships(appId, labels)
-        appInfo[appId] = info
-        // Only a genuine fetch failure counts as unreadable. An app with no
-        // roles was read perfectly well - it simply has no device relationships
-        // to draw, which is also true of Automation Map itself once it excludes
-        // itself. Counting those as failures made every scan report "1 app
-        // could not be read", which is what it does to its own entry.
-        if (info.error) {
-            state.appsUnreadable = (state.appsUnreadable ?: 0) + 1
-        } else {
-            state.appsDecoded = (state.appsDecoded ?: 0) + 1
-        }
-        if (info.flow) {
-            state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
-        } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
-            // A rule engine this version does not decode. Counted so it is
-            // reported rather than looking like a rule with nothing in it.
-            List others = (state.otherEngines ?: []) as List
-            if (!others.contains("${info.type}")) others << "${info.type}"
-            state.otherEngines = others
-            state.rulesSkipped = (state.rulesSkipped ?: 0) + 1
-        }
+    if (appIds.isEmpty()) {
+        beginRegistryAndFinish()
+        return
     }
 
-    state.appInfo = appInfo
-    state.deviceLabels = labels
-    state.scanQueue = queue.drop(size)
-    state.scanDone = (state.scanDone ?: 0) + size
+    String scanId = "apps-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total = appIds.size()
+    scan.inFlight = new AtomicInteger(0)
+    scan.processed = new AtomicInteger(0)
+    scan.pending = new ConcurrentLinkedQueue(appIds)
+    scan.claims = new ConcurrentHashMap()
+    scan.tokenSeq = new AtomicInteger(0)
+    // Two separate guards - see the device-scan creation comment on why
+    // scheduling proof and publish proof must not share one CAS.
+    scan.finalizeScheduleGuard = new AtomicInteger(0)
+    scan.finalizeGuard = new AtomicInteger(0)
+    scan.appInfo = new ConcurrentHashMap<String, Map>()
+    // Seeded from the device phase's complete bulk label inventory, not an
+    // empty map - the device phase already correctly found every device's
+    // label; app callbacks only ever ADD to or improve on that (a device
+    // referenced by an app setting, childDevice or subscription), they never
+    // need to be the sole source. Seeding from a fresh copy of what
+    // finalizeDevicePhase just published avoids the alternative bug: an
+    // empty starting map here meant finalizeAppPhase's plain-assignment
+    // replace of state.deviceLabels would DROP every device not referenced
+    // by any app, even though the bulk fetch had correctly found it. This
+    // is not the same "merge onto possibly-stale state" hazard the appInfo/
+    // capsByDev replace-not-merge fix guards against - this copy is taken
+    // from data this exact scan generation just finished publishing, not
+    // from whatever an unrelated earlier scan left behind.
+    scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
+    scan.decoded = new AtomicInteger(0)
+    scan.unreadable = new AtomicInteger(0)
+    scan.rulesDecoded = new AtomicInteger(0)
+    scan.rulesSkipped = new AtomicInteger(0)
+    scan.otherEngines = new ConcurrentHashMap<String, Boolean>()
+    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
+    APP_SCANS[scanId] = scan
+    state.appScanId = scanId
+
+    runIn(APP_ASYNC_WATCHDOG_SEC, 'appAsyncWatchdog', [data: [scanId: scanId]])
+    runIn(CLAIM_REAP_INTERVAL_SEC, 'appClaimReaper', [data: [scanId: scanId]])
+    refillAppPipeline(scanId)
+}
+
+void refillAppPipeline(String scanId) {
+    while (dispatchAppOne(scanId)) { /* keep refilling */ }
+}
+
+// CAS-bounded dispatch, same shape and same rollback/claim discipline as
+// dispatchDeviceOne above - see that function's comment for the full
+// reasoning, not repeated per phase.
+boolean dispatchAppOne(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return false
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {
+        int n = inFlight.get()
+        if (n >= APP_ASYNC_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    def raw = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (raw == null) {
+        inFlight.decrementAndGet()
+        return false
+    }
+    String appId = (raw instanceof Map) ? (raw as Map).id as String : raw as String
+    int attemptCount = ((raw instanceof Map) ? ((raw as Map).attemptCount ?: 0) as Integer : 0) + 1
+
+    String attemptToken = "tok-${(scan.tokenSeq as AtomicInteger).incrementAndGet()}"
+    Map myClaim = [attemptToken: attemptToken, dispatchedAt: now(), attemptCount: attemptCount]
+    (scan.claims as ConcurrentHashMap)[appId] = myClaim
+
+    try {
+        asynchttpGet('appFetchCb',
+            [uri: "${LOOPBACK_BASE}/installedapp/statusJson/${appId}", contentType: 'application/json', timeout: 20],
+            [scanId: scanId, appId: appId, attemptToken: attemptToken])
+        return true
+    } catch (Exception ex) {
+        log.warn "${app.label}: app ${appId} dispatch threw: ${ex.message}"
+        boolean owned = (scan.claims as ConcurrentHashMap).remove(appId, myClaim)
+        if (owned) inFlight.decrementAndGet()
+        if (owned) {
+            scan.lastProgressAt = now()
+            if (attemptCount < ATTEMPT_CAP) {
+                (scan.pending as ConcurrentLinkedQueue) << [id: appId, attemptCount: attemptCount]
+            } else {
+                Map info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                            ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                            error: "dispatch threw ${attemptCount}x: ${ex.message}"]
+                (scan.appInfo as ConcurrentHashMap)[appId] = info
+                (scan.unreadable as AtomicInteger).incrementAndGet()
+                (scan.processed as AtomicInteger).incrementAndGet()
+            }
+        }
+        maybeFinalizeAppPhase(scanId)
+        return true
+    }
+}
+
+// Async callback for /installedapp/statusJson/{id}. Runs the same
+// processAppRelationships() the old synchronous batch used, then releases
+// the claim and slot (only if this execution actually owns the claim).
+void appFetchCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+
+    String appId = data.appId as String
+    String attemptToken = data.attemptToken as String
+    Map claim = (scan.claims as ConcurrentHashMap)[appId] as Map
+
+    if (claim == null || claim.attemptToken != attemptToken) return
+
+    boolean owned = (scan.claims as ConcurrentHashMap).remove(appId, claim)
+    if (!owned) return
+
+    Map info
+    try {
+        if (resp?.status == 200) {
+            Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
+            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap)
+        } else {
+            info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                    ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                    error: "HTTP ${resp?.status ?: 'n/a'}"]
+        }
+    } catch (Exception ex) {
+        info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: "${ex.message}"]
+    }
+    (scan.appInfo as ConcurrentHashMap)[appId] = info
+
+    if (info.error) {
+        (scan.unreadable as AtomicInteger).incrementAndGet()
+    } else {
+        (scan.decoded as AtomicInteger).incrementAndGet()
+    }
+    if (info.flow) {
+        (scan.rulesDecoded as AtomicInteger).incrementAndGet()
+    } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
+        (scan.otherEngines as ConcurrentHashMap)["${info.type}"] = true
+        (scan.rulesSkipped as AtomicInteger).incrementAndGet()
+    }
+
+    (scan.processed as AtomicInteger).incrementAndGet()
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    // Scan-local progress marker, not state - callbacks/reapers never write
+    // state at all. scanStatusJson() reads this live.
+    scan.lastProgressAt = now()
+
+    refillAppPipeline(scanId)
+    maybeFinalizeAppPhase(scanId)
+}
+
+// Active recovery for app claims that never got any callback - mirrors
+// deviceClaimReaper/reapDeviceClaim exactly, see those for the full
+// reasoning.
+void appClaimReaper(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+    if ((scan.finalizeGuard as AtomicInteger).get() == 1) return
+
+    long nowMs = now()
+    Map claims = scan.claims as ConcurrentHashMap
+    List<Map> staleCandidates = []
+    claims.each { appId, claim ->
+        long dispatchedAt = (claim as Map).dispatchedAt as Long
+        if (nowMs - dispatchedAt >= CLAIM_REAP_DEADLINE_MS) {
+            staleCandidates << [appId: appId as String, claim: claim as Map]
+        }
+    }
+    staleCandidates.each { c -> reapAppClaim(scanId, c.appId as String, c.claim as Map) }
+
+    ConcurrentHashMap scan2 = APP_SCANS[scanId]
+    if (scan2 != null && (scan2.finalizeGuard as AtomicInteger).get() != 1) {
+        runIn(CLAIM_REAP_INTERVAL_SEC, 'appClaimReaper', [data: [scanId: scanId]])
+    }
+}
+
+void reapAppClaim(String scanId, String appId, Map candidateClaim) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+
+    long ageMs = now() - (candidateClaim.dispatchedAt as Long)
+    if (ageMs < CLAIM_REAP_DEADLINE_MS) return
+
+    Map claims = scan.claims as ConcurrentHashMap
+    boolean owned = claims.remove(appId, candidateClaim)
+    if (!owned) return
+
+    int attemptCount = candidateClaim.attemptCount as Integer
+    log.warn "${app.label}: app ${appId} claim reaped after ${ageMs}ms with no callback (attempt ${attemptCount})"
+
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    scan.lastProgressAt = now()
+
+    if (attemptCount < ATTEMPT_CAP) {
+        (scan.pending as ConcurrentLinkedQueue) << [id: appId, attemptCount: attemptCount]
+    } else {
+        Map info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                    ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                    error: "no callback within ${CLAIM_REAP_DEADLINE_MS}ms (attempt ${attemptCount})"]
+        (scan.appInfo as ConcurrentHashMap)[appId] = info
+        (scan.unreadable as AtomicInteger).incrementAndGet()
+        (scan.processed as AtomicInteger).incrementAndGet()
+    }
+
+    refillAppPipeline(scanId)
+    maybeFinalizeAppPhase(scanId)
+}
+
+// Diagnostic-only safety net, same fail-closed shape as deviceAsyncWatchdog -
+// see that function's comment for the full reasoning behind not finalizing
+// with a partial result.
+void appAsyncWatchdog(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    int appInfoSize = (scan.appInfo as Map).size()
+    int decoded = (scan.decoded as AtomicInteger).get()
+    int unreadable = (scan.unreadable as AtomicInteger).get()
+
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total
+            && appInfoSize == total && decoded + unreadable == total) {
+        finalizeAppPhase(scanId)
+        return
+    }
+    if (processed > total || appInfoSize > total) {
+        log.warn "${app.label}: app-phase scan ${scanId} invariant violation - processed=${processed} appInfo=${appInfoSize} total=${total}"
+    }
+
+    // CAS the same guard finalizeAppPhase uses, BEFORE writing anything - see
+    // deviceAsyncWatchdog's comment for the full race this closes.
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+
+    log.warn "${app.label}: app-phase async scan ${scanId} did not finish within ${APP_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
+    APP_SCANS.remove(scanId)
+    unschedule('appClaimReaper')
+    // Honest, not "kept the previous map" - see deviceAsyncWatchdog's
+    // comment; the same applies here, state.appInfo was already wiped to
+    // [:] in startScan before this scan's first dispatch went out.
+    state.scanError = "App scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map"
+    state.scanRunning = false
+}
+
+// Does NOT call finalizeAppPhase() inline - see maybeFinalizeDevicePhase's
+// comment for why, identical reasoning applies here.
+void maybeFinalizeAppPhase(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    int appInfoSize = (scan.appInfo as Map).size()
+    int decoded = (scan.decoded as AtomicInteger).get()
+    int unreadable = (scan.unreadable as AtomicInteger).get()
+    if (processed > total || appInfoSize > total) {
+        log.warn "${app.label}: app-phase scan ${scanId} invariant violation - processed=${processed} appInfo=${appInfoSize} total=${total}"
+        return
+    }
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total
+            && appInfoSize == total && decoded + unreadable == total) {
+        if ((scan.finalizeScheduleGuard as AtomicInteger).compareAndSet(0, 1)) {
+            runIn(1, 'finalizeAppPhaseScheduled', [data: [scanId: scanId]])
+        }
+    }
+}
+
+// The dedicated execution maybeFinalizeAppPhase schedules - see
+// finalizeDevicePhaseScheduled's comment, identical reasoning and structure.
+void finalizeAppPhaseScheduled(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    int appInfoSize = (scan.appInfo as Map).size()
+    int decoded = (scan.decoded as AtomicInteger).get()
+    int unreadable = (scan.unreadable as AtomicInteger).get()
+    if (!(pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total
+            && appInfoSize == total && decoded + unreadable == total)) {
+        log.warn "${app.label}: app-phase scan ${scanId} no longer satisfies invariants at scheduled finalize (pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding} processed=${processed} appInfo=${appInfoSize} total=${total}) - leaving it to the watchdog"
+        return
+    }
+    finalizeAppPhase(scanId)
+}
+
+// Merges the scan's static-accumulated results into state in one single
+// execution via plain assignment - never putAll. See finalizeDevicePhase's
+// comment; the same confirmed bug applied here, on state.appInfo, and is
+// fixed the same way. CAS-guarded exactly-once via finalizeGuard - the
+// scheduled finalizer and the watchdog's own already-satisfied recovery path
+// are both freshly scheduled executions, never called inline from a
+// callback/reap.
+void finalizeAppPhase(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+
+    APP_SCANS.remove(scanId)
+    unschedule('appAsyncWatchdog')
+    unschedule('appClaimReaper')
+
+    try {
+        state.appInfo = new LinkedHashMap(scan.appInfo as Map)
+        state.deviceLabels = new LinkedHashMap(scan.labels as Map)
+
+        // Plain values, not accumulation - scan.decoded.get() etc. are
+        // already the COMPLETE count for this scan (every callback in the
+        // pipeline incremented the same counter), not a delta to add onto
+        // whatever state already held. += here was the first confirmed bug
+        // behind the data-integrity finding: caught live when two scan
+        // generations overlapped during testing and appsDecoded ended up
+        // reading higher than the total app count on the hub.
+        state.appsDecoded = (scan.decoded as AtomicInteger).get()
+        state.appsUnreadable = (scan.unreadable as AtomicInteger).get()
+        state.rulesDecoded = (scan.rulesDecoded as AtomicInteger).get()
+        state.rulesSkipped = (scan.rulesSkipped as AtomicInteger).get()
+        List others = []
+        (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> others << eng }
+        state.otherEngines = others
+
+        state.scanDone = scan.total as Integer
+        state.scanHeartbeat = now()
+    } catch (Exception ex) {
+        log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
+        state.scanError = "${ex.message}"
+        state.scanRunning = false
+        return
+    }
+
+    beginRegistryAndFinish()
+}
+
+// The registry-fetch-then-graph-build handoff, shared by the normal
+// end-of-app-phase path and the empty-app-list path in startAppPhase.
+void beginRegistryAndFinish() {
+    // The PENDING marker is written here, not inside fetchRegistry, because
+    // state is only committed at the END of an execution - an execution
+    // that dies mid-fetch discards everything it wrote, so fetchRegistry
+    // structurally cannot record that it started.
+    state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
+                          matched: 0, error: null, schemaVersion: null]
+    runIn(1, 'fetchRegistry')
+    // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
+    // dies takes the graph build down with it and the scan never completes
+    // at all. Scheduling finishScan again for the same handler replaces
+    // this job, so the normal path cancels the watchdog simply by
+    // rescheduling it one second out.
+    runIn(45, 'finishScan')
 }
 
 // Runs as its own scheduled execution between the app phase and the graph
@@ -999,18 +1746,47 @@ void finishScan() {
 // on a user action rather than on the hub.
 //
 // The capability parameter is required. Without it the endpoint returns [].
-List fetchAllDeviceIds() {
-    List ids = []
-    Map result = httpFetch("${LOOPBACK_BASE}/device/listJson?capability=capability.*", 30)
+// Bulk device enumeration. Replaces the old fetchAllDeviceIds() + per-device
+// fetchDeviceApps() pair for everything except capabilities: this one call
+// carries label, room and driver name for every device at once - fields that
+// previously cost a /device/fullJson round trip each. Verified field mapping
+// against the per-device endpoint for the same device before relying on it:
+// data.name is the device's LABEL (not its type - a different bulk endpoint,
+// /device/list/data, calls the label "label" and puts the type in "name",
+// the opposite way round), data.type is the driver name, data.roomName is the
+// room. Confirmed flat - no nested children - and enumerates the identical
+// device set as the old /device/listJson?capability=capability.* call.
+//
+// Also groups devices by deviceTypeId (driver): capabilities are a property
+// of the driver, not the individual device, and every device sharing a
+// driver was confirmed (sampled) to report identical capabilities - see the
+// scan-speed item in BACKLOG.md. typeGroups (stored as state.deviceTypeGroups)
+// holds one representative device id per driver, mapped to every device id
+// sharing that driver; deviceFetchCb fetches capabilities for the
+// representative only and applies the result to the whole group.
+Map fetchDeviceListBulk() {
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
-        state.scanError = "Could not list devices from the hub: ${result.error}"
-    } else if (result.data instanceof List) {
-        (result.data as List).each { d ->
-            if (d instanceof Map && d.id != null) ids << "${d.id}"
-        }
+        out.error = result.error
+        return out
     }
-    return ids.unique()
+    Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+    Map typeGroups = [:]
+    (data.devices ?: []).each { entry ->
+        Map d = (entry instanceof Map) ? (entry.data as Map) : null
+        if (!d || d.id == null) return
+        String devId = "${d.id}"
+        if (d.name) out.labels[devId] = "${d.name}"
+        if (d.roomName) out.rooms[devId] = "${d.roomName}"
+        if (d.type) out.types[devId] = "${d.type}"
+        String typeKey = "${d.deviceTypeId}"
+        List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
+        group << devId
+    }
+    out.typeGroups = typeGroups
+    return out
 }
 
 // Every installed app on the hub, in one request, whether or not it references
@@ -1077,68 +1853,16 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
-// Phase 1: only needs the app ids this device is attached to. Also harvests
-// capabilities and room from the same response for the device icon feature -
-// this is a field already sitting in a request this function was making
-// anyway, not a new HTTP call.
-Map fetchDeviceApps(String devId) {
-    Map out = [label: null, appIds: [], capabilities: [], room: null, type: null, error: null]
-    try {
-        Map result = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 10)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        String breadcrumb = data.extraBreadcrumb as String
-        if (breadcrumb) out.label = stripTags(breadcrumb)
-
-        Map dev = data.device as Map
-        if (dev) {
-            out.capabilities = (dev.capabilities ?: []) as List
-            if (dev.roomName) out.room = dev.roomName as String
-            // deviceTypeName is the driver name (e.g. "CoCoHue Scene"), not
-            // anything the user named the device - a reliable signal
-            // capability alone cannot give (a Scene device declares
-            // PushableButton same as a real button/remote does).
-            if (dev.deviceTypeName) out.type = dev.deviceTypeName as String
-        }
-
-        List ids = []
-        Map parentApp = data.parentApp as Map
-        if (parentApp?.id != null) ids << "${parentApp.id}"
-
-        // appsUsing, NOT appsUsingForDialog.
-        //
-        // appsUsingForDialog is capped at five entries on every device, with
-        // appsUsingForDialogMore holding only a COUNT of the remainder, not
-        // the ids. It exists to render a dialog, not to enumerate anything.
-        // appsUsing sits beside it in the same response and is complete: on
-        // one device here it holds 29 entries where the dialog field holds
-        // five.
-        //
-        // Reading the dialog field made every app beyond the fifth on a
-        // shared device invisible, which is not the rare edge case it sounds
-        // like. A rule using only popular devices was missed entirely, and
-        // was noticed only because another rule named it as a target.
-        List using = (data.appsUsing ?: data.appsUsingForDialog ?: []) as List
-        using.each { u ->
-            if (u instanceof Map && u.id != null) ids << "${u.id}"
-        }
-        out.appIds = ids.unique()
-    } catch (Exception ex) {
-        log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
-        out.error = "${ex.message}"
-    }
-    return out
-}
-
-// Phase 2: the real relationship data. Also harvests device labels for devices
-// the user did not select, since settings carry {id: name} maps.
-Map fetchAppRelationships(String appId, Map labels) {
+// Pure processing, split out of fetchAppRelationships so the async scan
+// pipeline's callback can run it directly on data it already has, with no
+// second fetch. Mutates labels in place, same as before the split - the
+// async pipeline gives each concurrent callback its own per-scan labels map
+// to mutate safely, merged into state.deviceLabels only at finalization, not
+// state.deviceLabels itself (concurrent callbacks racing on state directly
+// is exactly the failure mode this whole rewrite exists to avoid).
+Map processAppRelationships(String appId, Map data, Map labels) {
     Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
-        Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 20)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.label = stripTags(rawLabel)
@@ -1286,7 +2010,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             }
     } catch (Exception ex) {
         out.error = ex.message
-        log.warn "${app.label}: app ${appId} lookup failed: ${ex.message}"
+        log.warn "${app.label}: app ${appId} processing failed: ${ex.message}"
     }
     return out
 }
@@ -2986,7 +3710,7 @@ Map buildGraph() {
 // Doing that inside the web request that handles a POST leaves the browser
 // waiting on hub-to-hub HTTP calls it has no reason to know about, for a
 // request that is otherwise just persisting a row. Scheduling it 1 second
-// out, the same pattern scanBatch already uses for fetchRegistry, answers the
+// out, the same pattern beginRegistryAndFinish already uses for fetchRegistry, answers the
 // POST immediately and lets the rebuild happen off the request entirely.
 // Runs by handler name, so two saves close together simply reschedule the
 // same job rather than queuing two rebuilds.
@@ -3509,12 +4233,24 @@ Map scanStatusMapping() {
 }
 
 String scanStatusJson() {
+    // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
+    // the phase-starting execution itself - never by a callback or reaper,
+    // which must stay entirely state-free. During an active phase the true
+    // live counters are DEVICE_SCANS/APP_SCANS[scanId]'s own accumulator;
+    // read directly from there rather than report a frozen, misleadingly-
+    // early snapshot for the whole phase.
+    ConcurrentHashMap liveScan = null
+    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
+    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
+    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : state.scanDone
+    def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
         running: state.scanRunning as boolean,
         phase: state.scanPhase,
-        done: state.scanDone,
+        done: done,
         total: state.scanTotal,
-        queued: (state.scanQueue ?: []).size(),
+        queued: queued,
         apps: (state.appInfo ?: [:]).size(),
         devices: (state.deviceLabels ?: [:]).size(),
         error: state.scanError,
@@ -3526,7 +4262,7 @@ String scanStatusJson() {
         rulesDecoded: state.rulesDecoded,
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
-        heartbeat: state.scanHeartbeat,
+        heartbeat: heartbeat,
         graphVersion: state.graphVersion,
     ])
 }
@@ -3580,19 +4316,6 @@ String buildMapHtml() {
         devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
     ]
     String scanMetaJsonStr = jsonForScriptEmbed(scanMeta)
-    // Positioned in the empty gap between the status box and the controls
-    // panel, where Gordon pointed at it - not overlapping either.
-    String santaHtml = showSanta() ?
-        '<img id="santa" src="data:image/png;base64,' + SANTA_PNG_B64 + '" alt="Merry Christmas" ' +
-        'style="position:absolute; top:6px; right:330px; width:150px; z-index:9; pointer-events:none;">' +
-        // Source PNG is exactly square, so at width:150px its rendered
-        // height is also 150px - the caption sits right at that bottom
-        // edge (top 6 + height 150 + a small gap) rather than a value
-        // guessed from how the image happens to look.
-        '<div id="santaCaption" style="position:absolute; top:162px; right:330px; width:150px; ' +
-        'text-align:center; color:#c0392b; font-weight:bold; font-size:0.85em; z-index:9; pointer-events:none;">' +
-        'Wishing you a Blessed Christmas</div>' : ''
-
     return """\
 <!doctype html>
 <html>
@@ -3794,7 +4517,6 @@ String buildMapHtml() {
 </head>
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
-${santaHtml}
 <div id="legend">
   <div id="legend-head"><button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body">&#9662;</button><span>Legend</span></div>
   <div id="legend-body">
