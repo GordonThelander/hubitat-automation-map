@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.7'
+@Field static final String APP_VERSION = '2.0.8'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -713,7 +713,24 @@ void clearAbandonedScan() {
         // recovery path, so it trusts the freshest ground truth for "what is
         // the currently active generation" rather than a value written
         // earlier that could have gone stale by the time recovery runs.
-        finishScan([lockToken: SCAN_LOCKS.get("${app.id}") as String])
+        String currentToken = SCAN_LOCKS.get("${app.id}") as String
+        if (currentToken == null) {
+            // Reproduced live 2026-08-24: an app code reload resets the
+            // static SCAN_LOCKS map to empty, but durable state.scanRunning
+            // survives the reload untouched, so this branch kept re-entering
+            // with a null token. finishScan()'s own claim always correctly
+            // rejected that null and discarded the graph it had just built -
+            // but with no token left to hand it, nothing ever recovered, and
+            // every status poll repeated the entire wasted rebuild forever.
+            // No original generation to reclaim ownership FROM here, so
+            // putIfAbsent claims the empty slot fresh instead of replace()
+            // transitioning an existing value - only one concurrent recovery
+            // attempt can win it.
+            String recoveryToken = "recovered-${now()}-${(int)(Math.random() * 999999)}"
+            if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
+            currentToken = recoveryToken
+        }
+        finishScan([lockToken: currentToken])
         return
     }
 
@@ -722,7 +739,18 @@ void clearAbandonedScan() {
     // the freshest possible ground truth (whatever SCAN_LOCKS currently
     // holds) rather than trusting a value written earlier that the very
     // malfunction being recovered from might have left stale.
-    markScanFinished(SCAN_LOCKS.get("${app.id}") as String,
+    String abandonedToken = SCAN_LOCKS.get("${app.id}") as String
+    if (abandonedToken == null) {
+        // Still claim the empty slot before touching durable state. A plain
+        // lock-free clear has a TOCTOU gap: a new scan can acquire after the
+        // null read but before these writes, and this stale recovery execution
+        // would then clear the new scan. putIfAbsent either gives recovery
+        // exclusive ownership or proves another execution got there first.
+        String recoveryToken = "recovered-abandon-${now()}-${(int)(Math.random() * 999999)}"
+        if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
+        abandonedToken = recoveryToken
+    }
+    markScanFinished(abandonedToken,
         'The previous scan stopped before it finished. Press Scan to run it again.')
     log.warn "${app.label}: clearing an abandoned scan"
 }
@@ -2060,19 +2088,20 @@ void finishScan(data = null) {
         regMeta.error = 'the registry fetch did not complete'
     }
 
-    // Pure computation over data already published by an earlier phase - no
-    // HTTP calls, no state writes of its own. Safe to run before the claim;
-    // a stale/superseded execution just gets its result discarded below.
-    Map graph = [:]
-    try {
-        graph = buildGraph()
-    } catch (Exception ex) {
-        log.warn "${app.label}: graph build failed: ${ex.message}"
-        markScanFinished(lockToken, "Graph build failed: ${ex.message}")
-        return
-    }
-
+    // buildGraph() moved INSIDE the protected closure below, not run before
+    // the claim - caught in review (reproduced live 2026-08-24): ownership
+    // was previously claimed only once building finished, so nothing
+    // stopped every 1.5s status poll's own recovery attempt from building
+    // the same graph redundantly in parallel, all racing for one claim that
+    // at most one of them could ever win. Worse, when the static lock had
+    // been reset entirely (an app code reload wipes @Field state but not
+    // durable state.scanRunning) every single attempt lost the claim, so
+    // the graph was rebuilt and discarded forever with no path to recovery.
+    // Claiming first means at most one execution ever runs buildGraph() at
+    // all for a given generation; every other concurrent caller's claim
+    // fails immediately and does no work.
     boolean finished = finishGeneration(lockToken, null) {
+        Map graph = buildGraph()
         state.scanHeartbeat = now()
         if (registryStalled) {
             state.registryMeta = regMeta
@@ -2114,7 +2143,10 @@ void finishScan(data = null) {
         log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
     }
     if (!finished) {
-        log.info "${app.label}: finishScan for a superseded scan generation, discarding the built graph without publishing"
+        // The claim is now checked before buildGraph() runs, so a
+        // superseded generation never builds a graph at all any more - it
+        // just loses the claim immediately and does nothing further.
+        log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
     }
 }
 
