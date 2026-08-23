@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.5'
+@Field static final String APP_VERSION = '2.0.7'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -157,12 +157,16 @@ void updated() {
     scheduleAutoScan()
 }
 
-// On by default (00:30) - the app-wide scan-first-then-explore experience
-// this app is built around is better served by a map that keeps itself
-// current than by one that goes stale until someone remembers to press Scan.
-// The toggle below is still there to opt out entirely. Rescheduled (not just
-// scheduled once) every time this runs, so turning the toggle off actually
-// cancels a previously-running schedule rather than leaving it firing.
+// On by default (00:30 production, 01:00 Dev when the time is left blank) -
+// the app-wide scan-first-then-explore experience this app is built around
+// is better served by a map that keeps itself current than by one that goes
+// stale until someone remembers to press Scan. The two defaults differ only
+// so a Dev install running alongside production on the same hub doesn't
+// compete with it for the same loopback endpoints at the same second - an
+// explicitly chosen time on either instance is never overridden. The toggle
+// below is still there to opt out entirely. Rescheduled (not just scheduled
+// once) every time this runs, so turning the toggle off actually cancels a
+// previously-running schedule rather than leaving it firing.
 void scheduleAutoScan() {
     unschedule('scheduledScanHandler')
     if (!settings.autoScanEnabled) return
@@ -171,11 +175,20 @@ void scheduleAutoScan() {
         // and reschedules it daily - standard, documented platform pattern,
         // not yet confirmed live against this specific input on this hub.
         schedule(settings.autoScanTime as String, 'scheduledScanHandler')
+    } else if (APP_NAME.contains('(Dev)')) {
+        // A Dev install sitting on its own explicit "01:00 (default)" text
+        // (see the settings page) - kept off production's 00:30 so the two
+        // don't compete for the same hub CPU/loopback endpoints at the same
+        // second when both are installed side by side, as they are on
+        // Gordon's own hub. Only the blank-time fallback differs; an
+        // explicitly chosen time on either instance is untouched above.
+        schedule('0 0 1 * * ?', 'scheduledScanHandler')
     } else {
         // Cron default: 00:30:00 every day (sec min hour day month weekday).
         schedule('0 30 0 * * ?', 'scheduledScanHandler')
     }
-    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: '00:30 (default)'}"
+    String defaultLabel = APP_NAME.contains('(Dev)') ? '01:00 (default)' : '00:30 (default)'
+    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
 }
 
 // Guarded against overlapping a scan already in progress - a manual press
@@ -189,7 +202,12 @@ void scheduledScanHandler() {
         return
     }
     log.info "${app.label}: starting scheduled overnight scan"
-    startScan()
+    // state.scanRunning above is a fast-path check only, harmless if stale -
+    // startScan()'s own atomic lock is what actually decides this correctly.
+    Map result = startScan()
+    if (!result.acquired) {
+        log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
+    }
 }
 
 Map main() {
@@ -327,12 +345,12 @@ Map main() {
             section {
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    description: 'On by default at 00:30. Turn off if you would rather press Scan yourself.',
+                    description: "On by default at ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}. Turn off if you would rather press Scan yourself.",
                     defaultValue: true, submitOnChange: true
                 if (settings.autoScanEnabled) {
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
-                        description: 'Leave blank for 00:30.', required: false
+                        description: "Leave blank for ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}.", required: false
                 }
             }
         }
@@ -423,6 +441,14 @@ function amStartScan() {
     f.style.display = 'none';
     f.src = scanUrl;
     document.body.appendChild(f);
+    // Marks a scan as pending-confirmation, read by the bootstrap retry
+    // block below on the NEXT page load. startScan() runs two real HTTP
+    // calls before it commits scanRunning=true, so this fixed 4-second
+    // reload can legitimately land before that commit - without this
+    // marker, that reload would render from stale pre-scan state (button
+    // enabled, no polling started) and just sit there, stale, until the
+    // user notices and reloads again by hand.
+    try { sessionStorage.setItem('amScanPending', '0'); } catch (ignore) { }
     setTimeout(function () { location.reload(); }, 4000);
     return;
   }
@@ -463,12 +489,20 @@ function amStartScan() {
 // <span id="amProgress">. Reuses amPickURL's same local/cloud origin
 // detection amStartScan already relies on - the cloud/CORS case has no live
 // polling available for the same documented reason amStartScan falls back
-// to a hidden-iframe navigation, so it falls back to one delayed reload
-// instead. amSawRunning is the guard against reloading a page that was
+// to a hidden-iframe navigation, so it does nothing further here and leaves
+// the page's own refreshInterval (see dynamicPage below) as the sole
+// fallback. amSawRunning is the guard against reloading a page that was
 // never actually watching a live scan - only a poll that itself observed
 // running:true, in THIS page view, triggers the one-time reload once the
 // scan finishes; a page opened after the fact just shows the static
 // "Last scan" text with no polling at all.
+//
+// Previously scheduled its own setTimeout(reload, 4000) here on the cloud
+// path. Every reload re-renders the page while scanRunning is still true,
+// which re-enters this same function on load and reschedules another
+// reload - an unbounded four-second reload chain for the whole scan, not
+// the single fallback the old comment claimed. Caught in the Bucket/Queue
+// remote-access review (2026-08-23) before this shipped past dev.
 var amPolling = false;
 var amSawRunning = false;
 function amProgressPoll() {
@@ -477,7 +511,6 @@ function amProgressPoll() {
   var statusUrl = amPickURL('${getLocalURL('scan-status')}', '${getCloudURL('scan-status')}');
   if (statusUrl.indexOf('http') === 0) {
     amPolling = false;
-    setTimeout(function () { location.reload(); }, 4000);
     return;
   }
   fetch(statusUrl, { cache: 'no-store', credentials: 'omit' })
@@ -527,9 +560,33 @@ if (${state.scanRunning ? 'true' : 'false'}) {
   // A scan was already running when this page was rendered (reopened mid-
   // scan, or the 60s fallback refreshInterval fired) - resume live polling
   // immediately rather than wait for the user to notice and reload again.
+  // Confirmed now, so the pending-retry marker below has done its job.
+  try { sessionStorage.removeItem('amScanPending'); } catch (ignore) { }
   amSawRunning = true;
   document.addEventListener('DOMContentLoaded', amProgressPoll);
   if (document.readyState !== 'loading') amProgressPoll();
+} else {
+  // Bounded retry for the amStartScan() cloud path's own fixed 4-second
+  // reload, which can legitimately land before startScan()'s two HTTP
+  // calls finish and scanRunning commits. Without this, that one reload
+  // renders from stale pre-scan state and never gets another chance -
+  // the amProgressPoll cascade this file used to have was the wrong fix
+  // for that (see amProgressPoll's own comment), but leaving the page
+  // permanently stale is not the right fix either. One extra reload only,
+  // not a chain: the counter caps it, and scanRunning true above (not
+  // this branch) is what takes over once the scan is actually confirmed.
+  try {
+    var amPendingRaw = sessionStorage.getItem('amScanPending');
+    if (amPendingRaw !== null) {
+      var amPendingAttempts = parseInt(amPendingRaw, 10) || 0;
+      if (amPendingAttempts < 1) {
+        sessionStorage.setItem('amScanPending', String(amPendingAttempts + 1));
+        setTimeout(function () { location.reload(); }, 3000);
+      } else {
+        sessionStorage.removeItem('amScanPending');
+      }
+    }
+  } catch (ignore) { }
 }
 </script>"""
 }
@@ -595,6 +652,46 @@ void clearAbandonedScan() {
     boolean asyncAppScanActive = state.scanPhase == 'apps' && APP_SCANS.containsKey(state.appScanId as String)
     if (asyncDeviceScanActive || asyncAppScanActive) return
 
+    // A "finishing:<token>:<since>" value means finishGeneration() is
+    // already mid-publish for the current generation (see its own comment) -
+    // actively wrapping up, not stuck. Recovering it here on sight would
+    // race the in-flight publish, and finishGeneration()'s own finally is
+    // about to release it as its very next real step regardless - UNLESS
+    // the execution holding it was killed outright (platform timeout, hub
+    // reboot) rather than merely throwing, which no in-process finally can
+    // cover. FINISHING_RECOVERY_SEC bounds how long this function trusts
+    // "actively finishing" before treating it as stranded instead.
+    String currentLock = SCAN_LOCKS.get("${app.id}") as String
+    if (currentLock != null && currentLock.startsWith('finishing:')) {
+        List parts = currentLock.split(':') as List
+        Long finishingSince = parts.size() >= 3 ? (parts[2] as Long) : 0L
+        if ((now() - finishingSince) < (FINISHING_RECOVERY_SEC * 1000)) return
+        log.warn "${app.label}: clearing a stranded finishing marker (${((now() - finishingSince) / 1000).intValue()}s old)"
+        // Not a direct remove-then-mutate - caught in review as the exact
+        // race the unified terminal protocol exists to remove, reintroduced
+        // in this one recovery-only path: after a plain conditional remove,
+        // a brand new scan C could acquire before the writes below ran, and
+        // recovery would then stomp C's just-started state. Atomically
+        // replaces the exact aged value with a distinct "recovering:"
+        // sentinel first - still occupying the slot, still blocking a new
+        // acquisition - writes the recovery state while that sentinel
+        // holds, then removes it last, in a finally. Not routed through
+        // finishGeneration()/markScanFinished(): this is recovering an
+        // already-stranded value, not a normal generation's own token
+        // handoff, and must not itself claim a fresh "finishing:" transition
+        // (which would nest and break this same parsing on a future pass).
+        String recoveryValue = "recovering:${currentLock}:${now()}"
+        if (SCAN_LOCKS.replace("${app.id}", currentLock, recoveryValue)) {
+            try {
+                state.scanError = 'The previous scan stopped before it finished. Press Scan to run it again.'
+                state.scanRunning = false
+            } finally {
+                SCAN_LOCKS.remove("${app.id}", recoveryValue)
+            }
+        }
+        return
+    }
+
     // The batch-reading work itself can finish - queue empty, every app
     // already read into appInfo - while the scheduled finalization
     // (fetchRegistry -> finishScan, or its 45-second watchdog) never runs at
@@ -611,12 +708,22 @@ void clearAbandonedScan() {
     List queue = (state.scanQueue ?: []) as List
     if (!queue && state.scanPhase == 'apps') {
         log.warn "${app.label}: scan batches finished but finalization never ran - finishing now instead of discarding it"
-        finishScan()
+        // Live SCAN_LOCKS snapshot, not a remembered token - same reasoning
+        // as this function's own genuinely-abandoned branch below: this is a
+        // recovery path, so it trusts the freshest ground truth for "what is
+        // the currently active generation" rather than a value written
+        // earlier that could have gone stale by the time recovery runs.
+        finishScan([lockToken: SCAN_LOCKS.get("${app.id}") as String])
         return
     }
 
-    state.scanRunning = false
-    state.scanError = 'The previous scan stopped before it finished. Press Scan to run it again.'
+    // Snapshot-then-conditional-remove, not a remembered token - this path
+    // exists specifically for "something is stuck, recover it", so it uses
+    // the freshest possible ground truth (whatever SCAN_LOCKS currently
+    // holds) rather than trusting a value written earlier that the very
+    // malfunction being recovered from might have left stale.
+    markScanFinished(SCAN_LOCKS.get("${app.id}") as String,
+        'The previous scan stopped before it finished. Press Scan to run it again.')
     log.warn "${app.label}: clearing an abandoned scan"
 }
 
@@ -748,6 +855,14 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
 // recalculated by hand and this comment's math updated to match.
 @Field static final int DEVICE_ASYNC_WATCHDOG_SEC = 130
 @Field static final int APP_ASYNC_WATCHDOG_SEC = 130
+// How long a "finishing" SCAN_LOCKS sentinel (see finishGeneration()) may
+// occupy the slot before clearAbandonedScan() treats it as stranded rather
+// than actively in progress. Generous relative to the actual work done under
+// that sentinel (in-memory state writes only, no HTTP calls) - this bound
+// exists for the case a language-level finally cannot cover at all: the
+// execution itself being killed outright (platform timeout, hub reboot)
+// mid-publish, not an ordinary thrown exception.
+@Field static final int FINISHING_RECOVERY_SEC = 60
 // Per-scan accumulator, keyed by scanId - never read from or written to
 // state directly by a callback. Callbacks only ever touch these static
 // maps; state is written exactly once per phase, by finalizeDevicePhase/
@@ -757,6 +872,27 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
 // state directly could silently drop whichever wrote last.
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
+// Single-flight lock keyed by app instance id. state.scanRunning alone cannot
+// serve this role: two scanMapping()/scheduledScanHandler() executions can
+// each read it before either one's own state commit lands (state only
+// commits durably at the end of a whole execution), so both proceed into
+// startScan(). putIfAbsent() is checked against this live, shared map
+// instead - not subject to that per-execution commit delay - so only one
+// concurrent caller can ever win it.
+//
+// The value is a unique per-attempt token, not a plain boolean - caught in
+// review before this shipped: a boolean lock's release (SCAN_LOCKS.remove)
+// has no ownership identity, so a LATE execution belonging to an OLDER scan
+// generation (a delayed watchdog, a delayed finalizer) could unconditionally
+// remove a NEWER generation's still-legitimate lock if it fires after that
+// newer generation has already acquired the same app id. Every release must
+// go through markScanFinished(token, ...) using the token THAT execution's
+// own generation was given at acquire time - remove(key, exactToken) then
+// only succeeds if this generation is still the current owner, and safely
+// no-ops otherwise. Reading SCAN_LOCKS's current value fresh at release time
+// instead of using a remembered token would defeat this entirely - that is
+// exactly how a late execution could adopt a newer generation's identity.
+@Field static final ConcurrentHashMap<String, String> SCAN_LOCKS = new ConcurrentHashMap<>()
 
 // Everything this app knows comes from undocumented hub endpoints, so on a hub
 // unlike the one it was written against it must say WHY it found nothing rather
@@ -777,7 +913,114 @@ Map probeCompatibility() {
     return out
 }
 
-void startScan() {
+// The sole place any scan generation's ownership actually ends - every
+// failure/watchdog/bootstrap-exception path (no data to publish, via the
+// markScanFinished() wrapper below) and finishScan()'s own success path
+// (graph/counters to publish, via the publishWork closure) alike, so the
+// two can never drift into separately-safe terminal protocols. Caught in
+// review across several rounds before this went near a hub:
+//
+// - An early version removed the lock conditionally but mutated
+//   state.scanRunning/state.scanError unconditionally underneath that
+//   check - safe for the lock, not for state a late execution could still
+//   stomp on a legitimately-running newer generation.
+// - A later version fixed that ordering but still released the lock BEFORE
+//   a caller's own further publish writes (finishScan's graph/counters) -
+//   a brand new scan could acquire and start resetting state while the old
+//   one was still mid-publish.
+// - Fixed by claiming an atomic original->finishing transition FIRST -
+//   nothing here or in publishWork touches state until this token is
+//   confirmed to still be the current owner at that exact instant. The
+//   finishing sentinel then continues occupying the slot for the whole of
+//   publishWork, blocking any new acquisition, and the real release -
+//   state.scanRunning=false, then removing the sentinel - is the LAST
+//   thing that happens, inside a finally, so an exception inside
+//   publishWork still releases rather than stranding the slot.
+//
+// The finishing value carries a timestamp (see FINISHING_RECOVERY_SEC) -
+// finally cannot cover the execution being killed outright (platform
+// timeout, hub reboot) mid-publish, only an ordinary thrown exception, so
+// clearAbandonedScan() has a bounded, timestamp-gated path to recover a
+// truly stranded sentinel rather than trusting the string forever.
+//
+// token must be the exact value this caller's own generation was given at
+// acquire time (see SCAN_LOCKS's comment for why a fresh re-read is not
+// safe here) - clearAbandonedScan() is the one deliberate exception, since
+// its whole job is recovering whatever generation is CURRENTLY stuck, and it
+// snapshots SCAN_LOCKS's live value itself before calling this.
+//
+// Returns true if this call actually became the one to terminate the
+// generation, false if the token no longer owns the lock - a stale/
+// superseded caller, correctly discarded, not an error.
+boolean finishGeneration(String token, String error = null, Closure publishWork = null) {
+    if (token == null) return false
+    String finishingValue = "finishing:${token}:${now()}"
+    if (!SCAN_LOCKS.replace("${app.id}", token, finishingValue)) return false
+    try {
+        if (publishWork != null) publishWork()
+        if (error != null) state.scanError = error
+    } catch (Exception ex) {
+        log.warn "${app.label}: scan termination failed: ${ex.message}"
+        state.scanError = "${ex.message}"
+    } finally {
+        state.scanRunning = false
+        SCAN_LOCKS.remove("${app.id}", finishingValue)
+    }
+    return true
+}
+
+// Thin wrapper for every terminal path with nothing to publish - kept as
+// the name the rest of the file already calls, so none of those nine call
+// sites needed to change again for this round.
+void markScanFinished(String token, String error = null) {
+    finishGeneration(token, error, null)
+}
+
+// Cheap "is my token still the current owner" check - caught in review as
+// the other half of the terminal-release fix above: token propagation only
+// prevents identity ADOPTION, it does nothing by itself to stop a late
+// execution belonging to an abandoned generation from mutating state on its
+// way TO a terminal call. Every separately-scheduled, late-capable handler
+// that publishes intermediate state (not just a terminal markScanFinished)
+// must check this before its first write, and again after any HTTP call in
+// between - abandonment and a fresh acquisition can interleave in that gap
+// exactly as easily as around the terminal release itself.
+boolean ownsLock(String token) {
+    return token != null && SCAN_LOCKS.get("${app.id}") == token
+}
+
+// Returns [acquired: true] once this call has won the single-flight lock and
+// (successfully or not) run the scan to its next state, or [acquired: false]
+// if another execution already holds it - callers must not treat that as an
+// error, and must not assume state.scanRunning reflects it (state.scanRunning
+// is this LOSING execution's own stale snapshot, not the winner's).
+Map startScan() {
+    // Generated before the acquire attempt, not after - putIfAbsent needs
+    // the value ready to insert. Carried forward explicitly from here on -
+    // as a parameter into startAppPhase(), on the DEVICE_SCANS/APP_SCANS
+    // accumulator for the watchdog/finalizer paths, and through runIn()'s
+    // own data payload for the registry/finish tail - never stashed in
+    // state for a later execution to read back. A late execution reading
+    // "the current token" from state instead of carrying its OWN generation's
+    // token is exactly how it could adopt a newer generation's identity;
+    // see markScanFinished()'s comment for the full reasoning.
+    String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
+    if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) return [acquired: false]
+    // The one unambiguous "a scan genuinely began" line, at the single choke
+    // point every entry path (manual /scan, the scheduled overnight trigger,
+    // any future caller) already funnels through - distinct from "/scan
+    // endpoint reached", which only proves the HTTP request arrived and says
+    // nothing about whether it actually started one (it may have lost the
+    // race, or found one already running).
+    log.info "${app.label}: scan started"
+    // Ownership-transfer flag, not an unconditional finally - success must
+    // keep holding the lock for the whole scan, not release it here. Flipped
+    // true only once responsibility has genuinely passed to markScanFinished
+    // (an early failure) or to the scheduled watchdog/reaper machinery (a
+    // real dispatch was handed off) - an exception before either point means
+    // this call is the only thing that will ever release the lock.
+    boolean released = false
+    try {
     Map compat = probeCompatibility()
     state.compatOk = compat.ok
     state.compatDetail = compat.detail
@@ -785,9 +1028,9 @@ void startScan() {
     // was still allowed into phases that depend on that exact endpoint,
     // rather than failing here where the cause is still known.
     if (!compat.ok) {
-        state.scanError = "${compat.detail}"
-        state.scanRunning = false
-        return
+        markScanFinished(lockToken, "${compat.detail}")
+        released = true
+        return [acquired: true]
     }
     state.appsDecoded = 0
     state.appsUnreadable = 0
@@ -804,9 +1047,9 @@ void startScan() {
     state.deviceIdsUnreadable = []
     Map bulk = fetchDeviceListBulk()
     if (bulk.error) {
-        state.scanError = "Could not list devices from the hub: ${bulk.error}"
-        state.scanRunning = false
-        return
+        markScanFinished(lockToken, "Could not list devices from the hub: ${bulk.error}")
+        released = true
+        return [acquired: true]
     }
     // Label/room/type are already known for every device from this one call -
     // NOT batched, unlike capabilities below. Only capabilities need a
@@ -867,8 +1110,16 @@ void startScan() {
     if (repIds.isEmpty()) {
         // No devices at all - go straight to the app phase, same as an
         // empty representative queue would after finishing normally.
-        startAppPhase()
-        return
+        // released is set AFTER startAppPhase() returns, not before - caught
+        // in review: startAppPhase() installs its own recovery machinery
+        // (an app accumulator/watchdog, or the registry/finish handoff)
+        // partway through its own body, not at its very first line. An
+        // exception thrown before that point must still be caught by THIS
+        // execution's own catch below, or the lock would be left permanently
+        // held with nothing left to ever release it.
+        startAppPhase(lockToken)
+        released = true
+        return [acquired: true]
     }
 
     String scanId = "devices-${now()}-${(int)(Math.random() * 9999)}"
@@ -895,6 +1146,10 @@ void startScan() {
     // exactly as current as a read would have been, with none of the
     // question of whether a concurrent execution can safely read state.
     scan.typeGroups = new ConcurrentHashMap((bulk.typeGroups ?: [:]) as Map)
+    // This generation's single-flight lock token, so deviceAsyncWatchdog and
+    // finalizeDevicePhase - both callback/reap-adjacent contexts that must
+    // never touch state - can release the correct lock without reading state.
+    scan.lockToken = lockToken
     DEVICE_SCANS[scanId] = scan
     state.deviceScanId = scanId
 
@@ -905,7 +1160,18 @@ void startScan() {
     // this matches an existing constraint rather than introducing a new one.
     runIn(DEVICE_ASYNC_WATCHDOG_SEC, 'deviceAsyncWatchdog', [data: [scanId: scanId]])
     runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
+    // Handed off here, before dispatch - the watchdog/reaper just scheduled
+    // above are what recover this scan from this point on, including if
+    // refillDevicePipeline() itself throws on its very first synchronous
+    // call. A stall they can't explain is exactly deviceAsyncWatchdog's own
+    // existing job, not a new failure mode this lock introduces.
+    released = true
     refillDevicePipeline(scanId)
+    return [acquired: true]
+    } catch (Exception ex) {
+        if (!released) markScanFinished(lockToken, "Unexpected error starting scan: ${ex.message}")
+        throw ex
+    }
 }
 
 void refillDevicePipeline(String scanId) {
@@ -1146,8 +1412,7 @@ void deviceAsyncWatchdog(data) {
     // this point, only that no NEW, possibly-incomplete one gets published
     // in its place. Real retention (double buffering) is deliberately not
     // attempted - see BACKLOG.md.
-    state.scanError = "Device scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map"
-    state.scanRunning = false
+    markScanFinished(scan.lockToken as String, "Device scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
 }
 
 // Called once invariants are exactly satisfied, from whichever path notices
@@ -1217,6 +1482,24 @@ void finalizeDevicePhase(String scanId) {
     if (scan == null) return
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   // already finalized
 
+    // finalizeGuard only proves this is the one execution allowed to attempt
+    // publishing THIS scanId's results - it says nothing about whether this
+    // scanId's generation is still the CURRENT one for the app instance.
+    // clearAbandonedScan() can release this generation's lock without
+    // touching DEVICE_SCANS or unscheduling its watchdog/reaper, so a late
+    // finalize for an already-abandoned generation can still reach here
+    // after a newer one has started. Checked before the first state write,
+    // not just relied on at an eventual markScanFinished() call - this path
+    // hands off to startAppPhase() on success and never calls
+    // markScanFinished() at all in that case.
+    if (!ownsLock(scan.lockToken as String)) {
+        log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
+        DEVICE_SCANS.remove(scanId)
+        unschedule('deviceAsyncWatchdog')
+        unschedule('deviceClaimReaper')
+        return
+    }
+
     DEVICE_SCANS.remove(scanId)
     unschedule('deviceAsyncWatchdog')
     unschedule('deviceClaimReaper')
@@ -1232,12 +1515,11 @@ void finalizeDevicePhase(String scanId) {
         state.scanHeartbeat = now()
     } catch (Exception ex) {
         log.warn "${app.label}: device-phase finalization failed: ${ex.message}"
-        state.scanError = "${ex.message}"
-        state.scanRunning = false
+        markScanFinished(scan.lockToken as String, "${ex.message}")
         return
     }
 
-    startAppPhase()
+    startAppPhase(scan.lockToken as String)
 }
 
 // Apps are discovered entirely from /hub2/appsList - device-led discovery
@@ -1245,11 +1527,29 @@ void finalizeDevicePhase(String scanId) {
 // fetch, verified on this hub to contribute zero apps the listing didn't
 // already have. state.appIds is therefore always empty entering this
 // function.
-void startAppPhase() {
+//
+// lockToken is passed explicitly by both callers, deliberately not read
+// back from a shared/state field here - caught in review: this function can
+// run from finalizeDevicePhase(), a separately scheduled execution that
+// could in principle fire late, after its own generation was abandoned and
+// a NEWER one has since started. Reading "the current token" from anywhere
+// shared at that point would let this late execution build an app-phase
+// accumulator labelled with the WRONG (newer) generation's token, which
+// could then legitimately release a scan it has nothing to do with.
+// Carrying the caller's own remembered token instead closes that.
+void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
     fetchInstalledAppIds().each { String appId ->
         if (appId != selfId) appIds << appId
+    }
+    // Re-checked here, not only trusted from the caller's own earlier check -
+    // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
+    // fresh acquisition can interleave during it exactly as easily as around
+    // any other gap in this pipeline.
+    if (!ownsLock(lockToken)) {
+        log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
+        return
     }
     state.appIds = appIds as List
 
@@ -1259,7 +1559,7 @@ void startAppPhase() {
     state.scanQueue = []
 
     if (appIds.isEmpty()) {
-        beginRegistryAndFinish()
+        beginRegistryAndFinish(lockToken)
         return
     }
 
@@ -1296,6 +1596,10 @@ void startAppPhase() {
     scan.rulesSkipped = new AtomicInteger(0)
     scan.otherEngines = new ConcurrentHashMap<String, Boolean>()
     scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
+    // The caller's own remembered token, carried forward - see this
+    // function's own comment for why it is deliberately never read back
+    // from anywhere shared/mutable instead.
+    scan.lockToken = lockToken
     APP_SCANS[scanId] = scan
     state.appScanId = scanId
 
@@ -1510,8 +1814,7 @@ void appAsyncWatchdog(data) {
     // Honest, not "kept the previous map" - see deviceAsyncWatchdog's
     // comment; the same applies here, state.appInfo was already wiped to
     // [:] in startScan before this scan's first dispatch went out.
-    state.scanError = "App scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map"
-    state.scanRunning = false
+    markScanFinished(scan.lockToken as String, "App scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
 }
 
 // Does NOT call finalizeAppPhase() inline - see maybeFinalizeDevicePhase's
@@ -1573,6 +1876,18 @@ void finalizeAppPhase(String scanId) {
     if (scan == null) return
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
+    // See finalizeDevicePhase()'s identical comment - finalizeGuard proves
+    // only exactly-once for THIS scanId, not that this generation is still
+    // current, and this path hands off to beginRegistryAndFinish() on
+    // success without ever calling markScanFinished().
+    if (!ownsLock(scan.lockToken as String)) {
+        log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
+        APP_SCANS.remove(scanId)
+        unschedule('appAsyncWatchdog')
+        unschedule('appClaimReaper')
+        return
+    }
+
     APP_SCANS.remove(scanId)
     unschedule('appAsyncWatchdog')
     unschedule('appClaimReaper')
@@ -1600,30 +1915,39 @@ void finalizeAppPhase(String scanId) {
         state.scanHeartbeat = now()
     } catch (Exception ex) {
         log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
-        state.scanError = "${ex.message}"
-        state.scanRunning = false
+        markScanFinished(scan.lockToken as String, "${ex.message}")
         return
     }
 
-    beginRegistryAndFinish()
+    beginRegistryAndFinish(scan.lockToken as String)
 }
 
 // The registry-fetch-then-graph-build handoff, shared by the normal
 // end-of-app-phase path and the empty-app-list path in startAppPhase.
-void beginRegistryAndFinish() {
+//
+// lockToken travels through runIn()'s own data payload from here all the
+// way to fetchRegistry and finishScan, rather than either of them reading
+// a value back from state - both are separately scheduled executions that could
+// in principle fire late, after their own generation was abandoned and a
+// newer one has since overwritten state with its own token. Carrying the
+// value forward explicitly means a late execution still only ever knows
+// its OWN generation's token, never whatever happens to be current by the
+// time it runs - see startAppPhase()'s comment for the identical reasoning
+// one hop earlier in this same chain.
+void beginRegistryAndFinish(String lockToken) {
     // The PENDING marker is written here, not inside fetchRegistry, because
     // state is only committed at the END of an execution - an execution
     // that dies mid-fetch discards everything it wrote, so fetchRegistry
     // structurally cannot record that it started.
     state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
                           matched: 0, error: null, schemaVersion: null]
-    runIn(1, 'fetchRegistry')
+    runIn(1, 'fetchRegistry', [data: [lockToken: lockToken]])
     // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
     // dies takes the graph build down with it and the scan never completes
     // at all. Scheduling finishScan again for the same handler replaces
     // this job, so the normal path cancels the watchdog simply by
     // rescheduling it one second out.
-    runIn(45, 'finishScan')
+    runIn(45, 'finishScan', [data: [lockToken: lockToken]])
 }
 
 // Runs as its own scheduled execution between the app phase and the graph
@@ -1634,7 +1958,16 @@ void beginRegistryAndFinish() {
 // Failure here is not fatal. The registry is a convenience; the user's own
 // declarations are the authority, and an unclassified app type is an explicit,
 // visible state rather than a silent absence.
-void fetchRegistry() {
+void fetchRegistry(jobData = null) {
+    String lockToken = jobData?.lockToken as String
+    // Checked before the very first write, including the heartbeat stamp -
+    // this is a separately scheduled execution that can in principle fire
+    // late, after its own generation was abandoned and a newer one has
+    // since started.
+    if (!ownsLock(lockToken)) {
+        log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
+        return
+    }
     state.scanHeartbeat = now()
     List types = discoveredAppTypes()
     List matches = []
@@ -1673,76 +2006,116 @@ void fetchRegistry() {
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
+    // Re-checked here, not only trusted from the entry check above - the
+    // registry fetch is a real 30-second-timeout HTTP call, and abandonment
+    // plus a fresh acquisition can interleave during it exactly as easily as
+    // around any other gap in this pipeline.
+    if (!ownsLock(lockToken)) {
+        log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
+        return
+    }
+
     // Only on success, so a failed fetch keeps the last good set rather than
     // silently emptying the map of everything the registry contributed.
     if (!meta.error) state.registryMatches = matches
     state.registryMeta = meta
     log.info "${app.label}: registry ${meta.error ? 'unavailable' : "gave ${meta.matched} dependency match(es) from ${meta.entries} entries"}"
-    runIn(1, 'finishScan')
+    runIn(1, 'finishScan', [data: [lockToken: lockToken]])
 }
 
-void finishScan() {
-    // Runs as its own scheduled execution, so a failure here leaves the scan
-    // data intact and reports itself, rather than silently stranding the app
-    // mid-scan the way an inline call did.
-    state.scanHeartbeat = now()
+// data.lockToken travels from beginRegistryAndFinish() via fetchRegistry(),
+// or (when clearAbandonedScan() calls this directly, bypassing the
+// scheduler entirely) is a live SCAN_LOCKS snapshot taken at that call
+// site, the same recovery-path reasoning as clearAbandonedScan()'s other
+// branch - see markScanFinished()'s comment.
+void finishScan(data = null) {
+    String lockToken = data?.lockToken as String
+    // Nothing is written to state above this point, deliberately - caught
+    // in review: an earlier version stamped state.scanHeartbeat and
+    // conditionally rewrote state.registryMeta before ever checking
+    // ownership, so a stale/superseded execution could still corrupt a
+    // newer generation's registry status even though it would correctly
+    // fail the finishing claim moments later and publish nothing else.
+    // Read-and-compute-locally is fine before the claim (nothing is
+    // committed by it), only writing state is not.
 
     // Still PENDING means fetchRegistry never reached its own bookkeeping, so
     // this execution is the watchdog firing rather than the normal chain. Say
     // so. The alternative is what shipped before: an app that had tried and
     // failed reporting that it had never tried, which is worse than an error.
-    Map regMeta = (state.registryMeta ?: [:]) as Map
-    if ("${regMeta.state}" == 'PENDING') {
+    // Computed here, written only inside the protected publish below - a real
+    // defensive copy, not just a local variable NAME. Caught in review:
+    // `state.registryMeta` returns the SAME live Map object state already
+    // holds, not a snapshot, so mutating it in place (even before ever
+    // reassigning state.registryMeta = regMeta) risks the same "mutate a
+    // state-held collection directly" hazard this file already treats as a
+    // confirmed bug class elsewhere (see the appInfo/capsByDev
+    // replace-not-merge comments) - a stale execution could alter a NEWER
+    // generation's registry status through this shared reference before its
+    // own finishGeneration() claim ever gets checked, let alone fails.
+    Map regMeta = new LinkedHashMap((state.registryMeta ?: [:]) as Map)
+    boolean registryStalled = "${regMeta.state}" == 'PENDING'
+    if (registryStalled) {
         regMeta.state = 'FAILED'
         regMeta.error = 'the registry fetch did not complete'
-        state.registryMeta = regMeta
-        log.warn "${app.label}: registry fetch did not complete, continuing without it"
     }
 
+    // Pure computation over data already published by an earlier phase - no
+    // HTTP calls, no state writes of its own. Safe to run before the claim;
+    // a stale/superseded execution just gets its result discarded below.
     Map graph = [:]
     try {
         graph = buildGraph()
     } catch (Exception ex) {
         log.warn "${app.label}: graph build failed: ${ex.message}"
-        state.scanError = "Graph build failed: ${ex.message}"
-        state.scanRunning = false
+        markScanFinished(lockToken, "Graph build failed: ${ex.message}")
         return
     }
-    state.scanRunning = false
-    state.graph = graph
-    state.graphVersion = GRAPH_SCHEMA
 
-    // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
-    // 61KB of a 244KB state on this hub, a quarter of everything stored, held
-    // twice for no reason. buildGraph falls back to the existing graph.flows on
-    // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
-    Map appInfo = (state.appInfo ?: [:]) as Map
-    appInfo.each { String appId, info ->
-        if (info instanceof Map) (info as Map).remove('flow')
-    }
-    state.appInfo = appInfo
-    // Counted from the finished graph rather than tallied during the scan.
-    // A rule that sets another rule's Private Boolean both true and false is
-    // two actions but one relationship, so a running tally reported 8 where
-    // the map drew 7.
-    int links = 0
-    ((graph.edges ?: []) as List).each { e ->
-        // Compared through a String-typed local: a GString never matches a
-        // String in contains(), because their hash codes differ.
-        String kind = "${(e as Map).kind}"
-        if (RULE_LINK_KIND_NAMES.contains(kind)) links++
-    }
-    state.ruleLinks = links
+    boolean finished = finishGeneration(lockToken, null) {
+        state.scanHeartbeat = now()
+        if (registryStalled) {
+            state.registryMeta = regMeta
+            log.warn "${app.label}: registry fetch did not complete, continuing without it"
+        }
+        state.graph = graph
+        state.graphVersion = GRAPH_SCHEMA
 
-    // Counted off the built graph rather than off appInfo, so the summary can
-    // only ever describe nodes that are really on the map.
-    int inertCount = 0
-    ((graph.nodes ?: []) as List).each { n ->
-        if ((n as Map).inert == true) inertCount++
-    }
-    state.appsInert = inertCount
+        // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
+        // 61KB of a 244KB state on this hub, a quarter of everything stored, held
+        // twice for no reason. buildGraph falls back to the existing graph.flows on
+        // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
+        Map appInfo = (state.appInfo ?: [:]) as Map
+        appInfo.each { String appId, info ->
+            if (info instanceof Map) (info as Map).remove('flow')
+        }
+        state.appInfo = appInfo
+        // Counted from the finished graph rather than tallied during the scan.
+        // A rule that sets another rule's Private Boolean both true and false is
+        // two actions but one relationship, so a running tally reported 8 where
+        // the map drew 7.
+        int links = 0
+        ((graph.edges ?: []) as List).each { e ->
+            // Compared through a String-typed local: a GString never matches a
+            // String in contains(), because their hash codes differ.
+            String kind = "${(e as Map).kind}"
+            if (RULE_LINK_KIND_NAMES.contains(kind)) links++
+        }
+        state.ruleLinks = links
 
-    log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+        // Counted off the built graph rather than off appInfo, so the summary can
+        // only ever describe nodes that are really on the map.
+        int inertCount = 0
+        ((graph.nodes ?: []) as List).each { n ->
+            if ((n as Map).inert == true) inertCount++
+        }
+        state.appsInert = inertCount
+
+        log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+    }
+    if (!finished) {
+        log.info "${app.label}: finishScan for a superseded scan generation, discarding the built graph without publishing"
+    }
 }
 
 // Every device on the hub.
@@ -4199,7 +4572,7 @@ Map scanMapping() {
     // Logging only from the catch below could not prove that - a throw in the
     // success path (scanStatusJson/render) would also leave the log silent while
     // Hubitat returned its HTML error page.
-    log.warn "${app.label}: /scan endpoint reached"
+    log.info "${app.label}: /scan endpoint reached"
     try {
         // Guarded the same way scheduledScanHandler() already is - a repeat
         // GET while a scan is running must not restart it. Restarting orphans
@@ -4208,15 +4581,43 @@ Map scanMapping() {
         // calls now guard against; skipping here closes the other half of
         // that same gap. Answering with the current status instead of an
         // error keeps the page's poll loop working unchanged either way.
+        //
+        // state.scanRunning here is a fast-path check only, harmless if
+        // stale - startScan()'s own atomic lock is the real guard. A second
+        // execution can read this as false before the winner's own commit
+        // lands (state only commits durably at the end of a whole
+        // execution), call startScan(), and lose that lock instead - not a
+        // failure, just this execution finding out it isn't the owner, and
+        // worth its own distinct log line rather than folding into the
+        // fast-path message below.
+        //
+        // casLost is tracked separately from "did this request skip
+        // starting a scan" - caught in review: an ordinary request arriving
+        // while a scan is already fully running (the state.scanRunning==true
+        // branch) is NOT the same situation as losing the CAS race, and must
+        // not be forced into the same "alreadyStarting" response. Only the
+        // genuine race case needs the override; the ordinary case already
+        // has an accurate live state.scanRunning to report as-is.
+        boolean casLost = false
         if (state.scanRunning) {
             log.info "${app.label}: /scan reached while a scan is already running, not restarting"
         } else {
-            startScan()
+            Map result = startScan()
+            if (!result.acquired) {
+                casLost = true
+                log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
+            }
         }
         // Inside the try, not after it. Left outside, an exception in
         // scanStatusJson() or render() escaped this handler entirely and
         // produced the same unexplained HTML page the handler exists to stop.
-        return render(status: 200, contentType: 'application/json', data: scanStatusJson())
+        //
+        // forceRunning (the casLost case) exists because this execution's
+        // own state.scanRunning can still read false here even though a
+        // scan genuinely is starting - it is the LOSING execution's stale
+        // snapshot, not the winner's, and scanStatusJson() would otherwise
+        // report a truthfully-wrong "running:false".
+        return render(status: 200, contentType: 'application/json', data: scanStatusJson(casLost))
     } catch (Exception ex) {
         log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
         // Serialised to a String, not passed as a Map. Every other render() in
@@ -4244,7 +4645,12 @@ Map scanStatusMapping() {
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
-String scanStatusJson() {
+// forceRunning exists for exactly one caller: scanMapping() when this
+// execution lost the startScan() single-flight lock to a concurrent one.
+// This execution's own state.scanRunning is that losing execution's stale
+// pre-commit snapshot, not the winner's - reporting it as false would be a
+// truthfully-wrong "nothing is happening" while a scan genuinely starts.
+String scanStatusJson(boolean forceRunning = false) {
     // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
     // the phase-starting execution itself - never by a callback or reaper,
     // which must stay entirely state-free. During an active phase the true
@@ -4258,7 +4664,8 @@ String scanStatusJson() {
     def done = liveScan ? (liveScan.processed as AtomicInteger).get() : state.scanDone
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
-        running: state.scanRunning as boolean,
+        running: forceRunning || (state.scanRunning as boolean),
+        alreadyStarting: forceRunning,
         phase: state.scanPhase,
         done: done,
         total: state.scanTotal,
