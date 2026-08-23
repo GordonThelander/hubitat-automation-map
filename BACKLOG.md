@@ -1481,3 +1481,168 @@ benefit.
 Not re-open by guessing a different batch size without a reason to expect the earlier
 measurement was noise. If revisited, measure against a same-session baseline (not a remembered
 number from a different day) before drawing a conclusion.
+
+### Remote-access reload loop and duplicate-scan race (2.0.7, implemented on dev 2026-08-23, not yet hub-tested)
+
+**Source:** Community feedback (Steve/oldcomputerwiz - dev branch ran well at scale, 460 apps/342
+devices in 58s, but flagged discrepancies; stable/main "would not rescan" over Remote Admin until
+reinstalled, then took 14m30s with elevated hub load once forced). Separately, Gordon's own Dev
+hub logs showed two `/scan endpoint reached` hits 13 seconds apart followed by contradictory
+registry-fetch outcomes within a ~2.4s window, and Gordon reported the settings page reloading
+several times over Remote Admin on the current dev build.
+
+Two real, distinct bugs found. The reload cascade is scoped to code added earlier this session and
+does not exist in production's v2.0.4. The read-then-act scan-start race and the warning-level
+`/scan endpoint reached` log line, however, are not new - production carries the same caller-level
+`scanRunning` check and the same log statement, inherited unchanged. Promoting this fix to main is
+therefore expected to resolve both there too, not just extend a dev-only fix.
+
+1. **Reload cascade.** `amProgressPoll()`'s cloud/Remote-Admin branch could not read cross-origin
+   `/scan-status` (CORS), so it scheduled its own `location.reload()` after 4 seconds. Every reload
+   re-rendered the page while `state.scanRunning` was still true, which re-entered
+   `amProgressPoll()` on load and rescheduled another reload - an unbounded 4-second reload chain
+   for the whole scan over remote access, not the single fallback the old comment described. Fixed
+   by removing the self-scheduled reload entirely; the page's own `refreshInterval: 60` (already
+   present) is the sole remote fallback now. Separately, `amStartScan()`'s own initial 4-second
+   reload after launching the cloud iframe can still land before `startScan()`'s two synchronous
+   HTTP calls finish and `scanRunning` commits, rendering a stale page (button looks enabled, no
+   polling starts) with nothing left to recover it. A `sessionStorage` marker set before the iframe
+   navigation allows exactly one bounded extra reload (not a chain - a counter caps it at one) if
+   the next page load still doesn't show the scan as running; it's cleared the moment a page
+   actually observes `scanRunning == true`.
+
+2. **TOCTOU double-scan race.** `scanMapping()`'s (and `scheduledScanHandler()`'s) guard read
+   `state.scanRunning` before acting on it - a plain read-then-act check. `startScan()` does not
+   set `state.scanRunning = true` until after two synchronous HTTP calls (`probeCompatibility()`,
+   `fetchDeviceListBulk()`), and Hubitat only commits `state` durably at the end of a whole
+   execution. A second `/scan` request landing anywhere in that window read the still-uncommitted
+   `false` and also called `startScan()`, producing two independent `scanId`s racing each other -
+   consistent with Gordon's log evidence (one generation's `fetchRegistry` succeeding while
+   another's own 45s watchdog found it still pending, 2.4s apart), though logs alone cannot rule out
+   a user re-click or a relay-level retry as the trigger for the second request. Fixed with an atomic
+   `SCAN_LOCKS` single-flight lock acquired at the top of `startScan()` itself rather than at each
+   caller, so every entry point is covered without needing its own copy of the check.
+
+   The lock's value is a unique per-attempt token, not a plain boolean, and every release goes
+   through one centralized `markScanFinished(token, error)` helper using `remove(key, exactToken)` -
+   caught in review before this went anywhere near a hub: an unconditional `remove(key)` has no
+   ownership identity, so a late execution belonging to an OLDER scan generation (a delayed
+   watchdog or finalizer) could otherwise remove a NEWER generation's still-legitimate lock if it
+   fired after that newer generation had already acquired the same app id. The token is carried
+   forward explicitly the whole way through the pipeline - as a parameter into `startAppPhase()`,
+   on the device/app phase's own `DEVICE_SCANS`/`APP_SCANS` accumulator for the watchdog/finalizer
+   paths, and through `runIn()`'s own `data` payload all the way to the registry/graph-build tail
+   (`fetchRegistry`/`finishScan`) - never read back from a shared `state` field by any of them. An
+   earlier draft of this fix took the shortcut of stashing the token in `state.scanLockToken` for
+   the registry/finish tail specifically, reasoning that those two already trust state directly as
+   single-owner scheduled executions; caught in a second review pass as the same identity-adoption
+   bug one layer down - any of these are themselves separately scheduled executions that could fire
+   late after their own generation was abandoned and a newer one has since overwritten that shared
+   field with its own value, letting the late execution silently adopt the newer generation's
+   identity. `clearAbandonedScan()`'s own recovery path is the one deliberate exception to "always
+   carry your own token" - it snapshots whatever `SCAN_LOCKS` currently holds and conditionally
+   removes exactly that, since its whole job is recovering whatever generation is actually stuck
+   right now, not trusting a value written earlier that the malfunction itself might have made
+   stale.
+
+   Also caught in the same review pass: `markScanFinished()` itself was removing the lock
+   conditionally but still mutating `state.scanRunning`/`state.scanError` unconditionally underneath
+   that check - safe for the lock, but a late execution from an abandoned generation could still
+   stomp a legitimately-running newer generation's status even though it could no longer touch that
+   generation's lock entry. Reordered so the conditional removal's own success/failure is the single
+   gate for every mutation in the function, not just the lock: only the execution that still
+   verifiably owns the lock may write anything at all.
+
+   An explicit ownership-transfer flag (`released`) means an unhandled exception during the
+   pre-dispatch bootstrap still releases the lock rather than wedging it - a plain `finally` would
+   wrongly release it on the success path too, which needs to keep holding it for the whole scan.
+   Also caught in review: the empty-device-queue path originally set `released = true` before
+   calling `startAppPhase()`, not after - an exception thrown before `startAppPhase()` installs its
+   own recovery machinery would have left the lock held with the outer catch already believing it
+   was someone else's responsibility. Reordered so this path is caught the same as every other.
+
+   A third review pass caught two more gaps in the same area, both about a LATE execution belonging
+   to an already-abandoned generation A still touching state that legitimately belongs to a newer
+   generation B, even with every fix above in place. First: `markScanFinished()`'s successful case
+   released the lock, then the caller kept writing more state afterward (`finishScan()`'s own
+   graph/counter publication) - the release and the publish were not atomic, so B could acquire and
+   start resetting state while A's `finishScan()` was still mid-write. Fixed with an atomic
+   ownership-to-finishing transition (`SCAN_LOCKS.replace(key, token, "${token}-finishing")`): only
+   the verified current owner can begin terminal publication, the finishing sentinel keeps occupying
+   the slot (blocking any new acquisition) for the whole publish, and the real release
+   (`state.scanRunning = false` plus `SCAN_LOCKS.remove(key, finishingToken)`) is the LAST thing that
+   happens, after every write. `clearAbandonedScan()` now recognizes a `-finishing` value and leaves
+   it alone entirely - it's actively wrapping up, not stuck, and recovering it would race the publish
+   already in flight. Second: several separately-scheduled handlers (`finalizeDevicePhase()`,
+   `finalizeAppPhase()`, `startAppPhase()`, `fetchRegistry()`) hand off to the NEXT phase on success
+   without ever calling `markScanFinished()` at all, so token propagation alone didn't stop a late
+   execution from writing intermediate state before it ever reached a terminal call it might lose.
+   Added an explicit `ownsLock(token)` check before the first state write in each - re-checked again
+   after any HTTP call in the middle (`fetchInstalledAppIds()` in `startAppPhase()`, the registry
+   fetch itself in `fetchRegistry()`), since abandonment and a fresh acquisition can interleave in
+   that gap exactly as easily as around a terminal release.
+
+   A fourth review pass found the terminal protocol itself still had three gaps and asked for one
+   unified implementation covering success and failure alike, rather than `markScanFinished()` and
+   `finishScan()`'s success path drifting into two different mechanisms. Replaced both with a single
+   `finishGeneration(token, error, publishWork)`: atomically claims `original -> "finishing:<token>:
+   <since>"` via `SCAN_LOCKS.replace()` FIRST, runs the optional `publishWork` closure only if that
+   claim succeeds, then releases - `state.scanRunning = false` and removing the sentinel - as the
+   literal last statement, inside a `finally` so an exception inside `publishWork` still releases
+   rather than stranding the slot. `markScanFinished()` is now a thin wrapper (`finishGeneration(token,
+   error, null)`) so the nine existing failure/watchdog call sites needed no further changes.
+   `finishScan()` was restructured so nothing touches `state` before the claim at all, not even the
+   heartbeat stamp or the PENDING-registry-becomes-FAILED bookkeeping - both are computed into local
+   variables first (harmless if this execution turns out to be stale, since the claim will simply
+   fail and the locals get discarded) and only written inside the `publishWork` closure. The finishing
+   value now carries a timestamp specifically because a `finally` cannot cover the execution being
+   killed outright (a platform timeout, a hub reboot mid-publish) rather than merely throwing -
+   `clearAbandonedScan()` parses that timestamp and, past `FINISHING_RECOVERY_SEC` (60s, generous
+   against publish work that is pure in-memory writes with no HTTP calls), treats the sentinel as
+   stranded and recovers it.
+
+   A fifth review pass caught two more instances of exactly the mistake this whole area of the code
+   has been converging away from. First: `finishScan()`'s "local" `regMeta` was a local variable NAME,
+   not a local copy - `state.registryMeta` returns the same live Map object state already holds, so
+   mutating it in place (`regMeta.state = 'FAILED'`) touched shared data before `finishGeneration()`
+   ever checked ownership, regardless of whether the later, properly-gated reassignment happened.
+   Fixed with a real defensive copy (`new LinkedHashMap(...)`) before any mutation. Second: the
+   stranded-finishing recovery path added in the fourth pass was itself a plain
+   `SCAN_LOCKS.remove()` followed by unconditional `state` writes - the identical remove-then-mutate
+   race the unified protocol exists to close, reintroduced in the one path that didn't go through it.
+   A brand new scan could acquire in the gap between the remove succeeding and the writes running,
+   and recovery would then stomp its just-started state. Fixed by having recovery itself claim a
+   distinct `"recovering:<value>:<since>"` sentinel first (still blocking new acquisition), writing
+   the recovery state while that holds, then releasing last in a `finally` - not routed back through
+   `finishGeneration()`, since recovering an already-stranded value is not a normal token handoff and
+   must not itself claim a fresh `finishing:` transition, which would nest and break the parsing on a
+   future pass.
+
+   The losing caller gets a truthful `running:true, alreadyStarting:true` response instead of one
+   built from its own stale `state.scanRunning` snapshot, which could otherwise read false even
+   while the winner's scan was genuinely starting - but only the genuine CAS-loss case gets that
+   override. An ordinary request arriving while a scan is already fully running (the common case)
+   reports its real, current progress with `alreadyStarting:false`; the first draft of this
+   conflated the two situations and forced the override onto both.
+
+Also fixed as part of the same pass: `/scan endpoint reached` downgraded from `warn` to `info` (it
+was alarming testers who read it as an error - it is unconditional instrumentation proving the
+request reached the app, not a failure signal); and a Dev install now defaults its overnight scan
+to 01:00 instead of 00:30 when the time is left blank, since Gordon runs both instances on the same
+hub and they were competing for the same loopback endpoints at the same second every night
+(explicitly chosen times on either instance are untouched).
+
+Reading `main` directly (not just reasoning from dev's code) confirmed production's own 4-second
+`refreshInterval` reload-during-scan and the same caller-level `scanRunning` race already exist
+there too, by design/inheritance - not introduced by this session's work, and not something this
+fix touches on its own. Promoting 2.0.7 to main is expected to resolve both as a side effect of
+replacing the old refresh-driven flow, not via a separate v2.0.4 hotfix. Steve's "would not rescan
+until reinstall" report remains un-reproduced on Gordon's own hub and is not being chased without
+logs.
+
+Implemented on dev only, local working tree, not yet pushed to GitHub or tested on the Dev hub.
+Reviewed for correctness before any hub test; two real defects were caught and fixed in that pass
+(the unconditional lock-release ownership gap and the premature `released` flag on the empty-device
+path, both described above) plus the `alreadyStarting` conflation. Validation still required before
+either push: local/remote/simultaneous-request behavior, the full graph-comparison regression
+against the last known-good baseline, and the schedule-stagger default on a fresh install.
