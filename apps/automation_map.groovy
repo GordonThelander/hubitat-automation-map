@@ -692,22 +692,14 @@ void clearAbandonedScan() {
         return
     }
 
-    // The batch-reading work itself can finish - queue empty, every app
-    // already read into appInfo - while the scheduled finalization
-    // (fetchRegistry -> finishScan, or its 45-second watchdog) never runs at
-    // all. runIn() is already known to be unreliable on this platform - see
-    // the Scan button's own comment on why it does not use
-    // appButtonHandler - and this is the same failure class landing on a
-    // different scheduled call. finishScan() itself makes no HTTP calls - it
-    // is buildGraph() over data this app already collected, plus
-    // bookkeeping - so calling it directly here, synchronously, cannot fail
-    // the same way a scheduled job can. By this point asyncAppScanActive is
-    // already known false, so an empty queue in the app phase specifically
-    // means the async pipeline finished and only the registry/graph-build
-    // handoff got stuck, not that it is still running.
-    List queue = (state.scanQueue ?: []) as List
-    if (!queue && state.scanPhase == 'apps') {
-        log.warn "${app.label}: scan batches finished but finalization never ran - finishing now instead of discarding it"
+    // Once the async app accumulator is gone, durable appResultsReady is the
+    // only proof that finalizeAppPhase committed the complete appInfo map.
+    // state.scanQueue is always empty in this async implementation, including
+    // before the first app result is published, so it must never be used as a
+    // completion invariant. Reproduced live in v2.0.8: updating the app code
+    // erased APP_SCANS/SCAN_LOCKS, recovery saw an empty queue, and published
+    // the still-empty state.appInfo as a successful zero-app graph.
+    if (state.scanPhase == 'apps') {
         // Live SCAN_LOCKS snapshot, not a remembered token - same reasoning
         // as this function's own genuinely-abandoned branch below: this is a
         // recovery path, so it trusts the freshest ground truth for "what is
@@ -730,7 +722,17 @@ void clearAbandonedScan() {
             if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
             currentToken = recoveryToken
         }
-        finishScan([lockToken: currentToken])
+        if (state.appResultsReady == true) {
+            log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
+            finishScan([lockToken: currentToken])
+        } else {
+            // The async results lived only in the lost static accumulator and
+            // cannot be reconstructed safely. Terminate truthfully and require
+            // a new scan rather than publish a valid-looking empty/partial map.
+            log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
+            markScanFinished(currentToken,
+                'The scan working data was lost before it could be published. Press Scan to run it again.')
+        }
         return
     }
 
@@ -1112,6 +1114,12 @@ Map startScan() {
     state.scanHeartbeat = now()
     state.appIds = []
     state.appInfo = [:]
+    // Durable proof that the async app accumulator has been published in
+    // full. state.scanQueue is deliberately always empty in the async design,
+    // so it cannot distinguish "all apps committed" from "the @Field static
+    // accumulator disappeared on a code reload". Recovery may build a graph
+    // only after this marker is committed true by finalizeAppPhase.
+    state.appResultsReady = false
     state.graphVersion = null
     // Dropped, not merely marked stale. Holding the previous graph while
     // appInfo fills doubles peak state for the whole scan - this is Gordon's
@@ -1568,7 +1576,13 @@ void finalizeDevicePhase(String scanId) {
 void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
-    fetchInstalledAppIds().each { String appId ->
+    Map appListing = fetchInstalledAppIds()
+    if (appListing.error) {
+        log.warn "${app.label}: app phase could not start: ${appListing.error}"
+        markScanFinished(lockToken, "Could not list installed apps: ${appListing.error}")
+        return
+    }
+    (appListing.ids as List).each { String appId ->
         if (appId != selfId) appIds << appId
     }
     // Re-checked here, not only trusted from the caller's own earlier check -
@@ -1587,6 +1601,9 @@ void startAppPhase(String lockToken) {
     state.scanQueue = []
 
     if (appIds.isEmpty()) {
+        // A genuinely app-less hub has a complete empty result. Commit the
+        // same invariant finalizeAppPhase sets for a non-empty app scan.
+        state.appResultsReady = true
         beginRegistryAndFinish(lockToken)
         return
     }
@@ -1940,6 +1957,10 @@ void finalizeAppPhase(String scanId) {
         state.otherEngines = others
 
         state.scanDone = scan.total as Integer
+        // Last app-result write in this execution. Hubitat commits the whole
+        // state snapshot atomically when the execution returns, so recovery
+        // can never observe true with only a partial appInfo publication.
+        state.appResultsReady = true
         state.scanHeartbeat = now()
     } catch (Exception ex) {
         log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
@@ -2229,20 +2250,33 @@ Map fetchDeviceListBulk() {
 // Parents nest arbitrarily - Button Controllers holds a Button Controller,
 // which holds four Button Rules - so it has to be walked recursively rather
 // than read one level deep.
-List fetchInstalledAppIds() {
+Map fetchInstalledAppIds() {
     List ids = []
+    Map out = [ids: ids, error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/appsList", 30)
     if (!result.ok) {
-        // Deliberately not a scan error. Losing this costs completeness, not
-        // correctness: every app found through a device is still found. An
-        // older firmware without the endpoint should degrade to the previous
-        // behaviour rather than fail the scan.
-        log.warn "${app.label}: could not list installed apps, falling back to device-led discovery only: ${result.error}"
-    } else {
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        collectAppIds(data.apps, ids)
+        // The old comment claimed this could fall back to device-led app
+        // discovery. That path was removed by the async rewrite, so returning
+        // [] here silently publishes a zero-app map. Fail visibly instead.
+        out.error = result.error ?: 'the hub returned no error detail'
+        return out
     }
-    return ids.unique()
+    if (!(result.data instanceof Map) || !((result.data as Map).apps instanceof List)) {
+        out.error = 'the hub returned an unexpected apps-list response'
+        return out
+    }
+    collectAppIds((result.data as Map).apps, ids)
+    ids = ids.unique()
+    // This app is necessarily installed and /hub2/appsList is the complete
+    // installed-app inventory. Its absence proves the response is empty or
+    // incomplete, even on a hub with no other user apps.
+    String selfId = "${app.id}"
+    if (!ids.contains(selfId)) {
+        out.error = "the installed-app listing omitted Automation Map (${selfId})"
+        return out
+    }
+    out.ids = ids
+    return out
 }
 
 // Iterative rather than recursive on purpose. A self-calling method inside a
