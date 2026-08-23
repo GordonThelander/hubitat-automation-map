@@ -357,7 +357,7 @@ Map main() {
 
         if (!ready) {
             section {
-                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.</b></span>'
+                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes well under a minute, even on a large hub. Open the app again to watch it and to view the map.</b></span>'
                 paragraph '<span style="opacity:0.75">There is nothing to configure. Every device on the hub is scanned, and the apps are found by asking each device which apps use it.</span>'
             }
         }
