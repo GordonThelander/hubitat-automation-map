@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.9'
+@Field static final String APP_VERSION = '2.0.10'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -335,7 +335,7 @@ Map main() {
                         href(
                             name: 'mapLink', title: 'View Automation Map',
                             description: 'Open the relationship graph',
-                            url: getLocalURL('automation-map.html'),
+                            url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                             style: 'embedded', state: 'complete', required: false,
                         )
                         paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'>Automation Map community thread</a> for setup advice, known issues, and support."
