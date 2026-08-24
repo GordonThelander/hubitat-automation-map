@@ -3999,6 +3999,24 @@ Map buildGraph() {
         }
     }
 
+    // Device discovery is hub-wide, while the role pass above only encounters
+    // devices referenced by an app. Preserve every existing referenced device
+    // node exactly as built above, then append only discovered devices that had
+    // no relationship. This keeps existing node order, icons and edges stable
+    // while making the graph, Focus device list and AI export agree with the
+    // scan's device count.
+    labels.each { String devId, label ->
+        String devNodeId = "d${devId}"
+        if (nodes[devNodeId]) return
+
+        nodes[devNodeId] = nodeEntry(devNodeId, (label ?: "Device ${devId}") as String, 'device')
+        nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
+            autoDetectIconKeyForDevice((label ?: '') as String, deviceCaps[devId] as List,
+                                       deviceTypes[devId] as String)
+        String note = (iconNotes[devId] as String)?.trim()
+        if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
+    }
+
     // App-to-app edges are emitted in a second pass, so a link is still drawn
     // when it points at a rule that came later in the scan than the rule
     // pointing at it.
