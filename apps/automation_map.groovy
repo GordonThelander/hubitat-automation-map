@@ -339,7 +339,6 @@ Map main() {
                             url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                             style: 'embedded', state: 'complete', required: false,
                         )
-                        paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'>Automation Map community thread</a> for setup advice, known issues, and support."
                     }
                 }
                 href(
@@ -366,6 +365,7 @@ Map main() {
   link.setAttribute('rel', 'noopener noreferrer');
 })();
 </script>'''
+                paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for Community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
                 input name: 'autoScanEnabled', type: 'bool',
