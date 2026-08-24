@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.10'
+@Field static final String APP_VERSION = '2.0.11'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -419,11 +419,20 @@ String scanButtonHtml() {
 // origin, not guessed once at page-render time on the server, because the
 // server has no reliable way to know which origin THIS page request came in
 // on for a native Hubitat-rendered page.
-function amPickURL(localPath, cloudUrl) {
+function amIsLocalAccess() {
   try {
-    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+    return new URL('${getLocalOrigin()}').hostname === window.location.hostname;
   } catch (ignore) { }
-  return cloudUrl;
+  return false;
+}
+function amPickURL(localPath, cloudUrl) {
+  return amIsLocalAccess() ? localPath : cloudUrl;
+}
+function amShowRemoteProgress() {
+  var el = document.getElementById('amProgress');
+  if (el) el.textContent = 'Remote scanning, this page will refresh once done.';
+  var msg = document.getElementById('amScanMsg');
+  if (msg) msg.textContent = '';
 }
 function amStartScan() {
   var b = document.getElementById('amScanBtn');
@@ -458,7 +467,9 @@ function amStartScan() {
   // the truth via the page's own state, the same way the success path
   // already relies on a reload rather than reading the response.
   if (scanUrl.indexOf('http') === 0) {
-    m.textContent = 'Starting via Hubitat cloud - this page will reload in a few seconds to show the result.';
+    m.textContent = 'Remote scanning, this page will refresh once done.';
+    var remoteProgress = document.getElementById('amProgress');
+    if (remoteProgress) remoteProgress.textContent = m.textContent;
     var f = document.createElement('iframe');
     f.style.display = 'none';
     f.src = scanUrl;
@@ -585,8 +596,13 @@ if (${state.scanRunning ? 'true' : 'false'}) {
   // Confirmed now, so the pending-retry marker below has done its job.
   try { sessionStorage.removeItem('amScanPending'); } catch (ignore) { }
   amSawRunning = true;
-  document.addEventListener('DOMContentLoaded', amProgressPoll);
-  if (document.readyState !== 'loading') amProgressPoll();
+  if (amIsLocalAccess()) {
+    document.addEventListener('DOMContentLoaded', amProgressPoll);
+    if (document.readyState !== 'loading') amProgressPoll();
+  } else {
+    document.addEventListener('DOMContentLoaded', amShowRemoteProgress);
+    if (document.readyState !== 'loading') amShowRemoteProgress();
+  }
 } else {
   // Bounded retry for the amStartScan() cloud path's own fixed 4-second
   // reload, which can legitimately land before startScan()'s two HTTP
@@ -1116,7 +1132,6 @@ Map startScan() {
     // the whole group - see fetchDeviceListBulk's comment for why this is
     // safe (capabilities are a driver property, verified identical within a
     // driver on this hub).
-    state.deviceTypeGroups = bulk.typeGroups as Map
     List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
     state.scanQueue = []
     // state.scanTotal is the representative/driver-type count dispatchDeviceOne
@@ -2220,10 +2235,10 @@ void finishScan(data = null) {
 // Also groups devices by deviceTypeId (driver): capabilities are a property
 // of the driver, not the individual device, and every device sharing a
 // driver was confirmed (sampled) to report identical capabilities - see the
-// scan-speed item in BACKLOG.md. typeGroups (stored as state.deviceTypeGroups)
-// holds one representative device id per driver, mapped to every device id
-// sharing that driver; deviceFetchCb fetches capabilities for the
-// representative only and applies the result to the whole group.
+// scan-speed item in BACKLOG.md. typeGroups remains scan-local: it holds one
+// representative device id per driver, mapped to every device id sharing
+// that driver; deviceFetchCb fetches capabilities for the representative
+// only and applies the result to the whole group.
 Map fetchDeviceListBulk() {
     Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
@@ -3645,39 +3660,15 @@ String stripStatusMarkup(String s) {
 // Graph building
 // ===================================================================================================================
 
-// Label only, for a rule named as the target of a rule-to-rule link that the
-// device-driven scan never reached. Failure is not an error - the node is still
-// drawn, just with its id for a name.
-Map fetchAppName(String appId) {
-    Map out = [label: null, type: null, drawLabel: null, missing: false]
-    try {
-        Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 10)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        Map installedApp = data.installedApp as Map
-        if (installedApp?.label || installedApp?.name) {
-            String rawLabel = (installedApp?.label ?: installedApp?.name) as String
-            out.label = stripTags(rawLabel)
-            out.drawLabel = stripStatusMarkup(rawLabel)
-            out.type = installedApp?.name
-        } else {
-            // A deleted app still answers 200 here, with an empty shell
-            // rather than a 404. So a rule naming a rule that no longer
-            // exists is not an error to swallow, it is a dangling
-            // reference worth showing: the action stays in the calling
-            // rule and silently does nothing.
-            out.missing = true
-        }
-    } catch (Exception ex) {
-        log.warn "${app.label}: could not name linked rule ${appId}: ${ex.message}"
-    }
-    return out
-}
-
-// Name (and deleted status) of a rule referenced by another rule. Prefers what
-// the scan already read, falls back to a direct lookup, and finally to the
-// bare id. Cached because a rule can be both a flowchart target and a graph
-// edge target.
+// Name (and deleted status) of a rule referenced by another rule. The app
+// phase creates an appInfo entry for every id returned by the complete
+// /hub2/appsList inventory, including an explicit fallback entry when an
+// app's relationship endpoint is unreadable. Therefore a target absent from
+// appInfo was not installed at scan time and is a dangling/deleted reference.
+// Resolving that fact from the completed inventory keeps buildGraph entirely
+// in-memory: graph finalization and abandoned-scan recovery can never stall on
+// a sequence of synchronous 10-second loopback lookups. Cached because a rule
+// can be both a flowchart target and a graph edge target.
 //
 // Returns [label, missing] rather than a bare label. The label alone used to
 // be the only record of a deleted target - "Rule 2328 - deleted" - which meant
@@ -3690,16 +3681,10 @@ Map linkedRuleName(String targetId, Map appInfo, Map cache) {
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
     String draw = target?.drawLabel as String
-    boolean missing = false
-    if (!label) {
-        Map named = fetchAppName(targetId)
-        label = named.label as String
-        draw = named.drawLabel as String
-        missing = named.missing as boolean
-        // Named so the user can act on it. "Rule 2328" invites a hunt for a
-        // rule that is not there; saying so turns it into a finding.
-        if (!label && missing) label = "Rule ${targetId} - deleted"
-    }
+    boolean missing = !appInfo.containsKey(targetId)
+    // Named so the user can act on it. "Rule 2328" invites a hunt for a
+    // rule that is not there; saying so turns it into a finding.
+    if (!label && missing) label = "Rule ${targetId} - deleted"
     if (!label) label = "Rule ${targetId}"
     // Falls back to the full label, which is what a scan from before drawLabel
     // existed will have stored, and what a bare "Rule 2328" needs anyway.
@@ -4193,16 +4178,10 @@ Map buildGraph() {
     return [nodes: nodes.values().toList(), edges: edges, flows: flows]
 }
 
-// Scheduled rather than called inline from a save handler, for the same reason
-// the scan chain schedules its own graph build instead of running it in the
-// batch that finishes the scan: buildGraph() can make its own loopback HTTP
-// calls resolving unresolved rule-to-rule targets (linkedRuleName ->
-// fetchAppName), unbounded in count on a hub with many dangling references.
-// Doing that inside the web request that handles a POST leaves the browser
-// waiting on hub-to-hub HTTP calls it has no reason to know about, for a
-// request that is otherwise just persisting a row. Scheduling it 1 second
-// out, the same pattern beginRegistryAndFinish already uses for fetchRegistry, answers the
-// POST immediately and lets the rebuild happen off the request entirely.
+// Scheduled rather than called inline from a save handler so the web request
+// is limited to persisting the user's change. Scheduling it 1 second out, the
+// same pattern beginRegistryAndFinish already uses for fetchRegistry, answers
+// the POST immediately and lets the rebuild happen independently.
 // Runs by handler name, so two saves close together simply reschedule the
 // same job rather than queuing two rebuilds.
 void rebuildStoredGraph() {
@@ -4545,9 +4524,8 @@ Map externalsSaveMapping() {
     state.userRegistry = incoming
     // Rebuilt from stored scan data rather than rescanning - the declarations
     // changed, the hub did not - and rebuilt off the request entirely (see
-    // rebuildStoredGraph()) rather than inline, since buildGraph() can make
-    // its own unbounded HTTP calls. externalsJson() below does not read
-    // state.graph, so the response is unaffected by the rebuild being
+    // rebuildStoredGraph()) rather than inline. externalsJson() below does not
+    // read state.graph, so the response is unaffected by the rebuild being
     // deferred.
     runIn(1, 'rebuildStoredGraph')
     log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
@@ -4793,6 +4771,26 @@ String scanStatusJson(boolean forceRunning = false) {
 }
 
 Map renderMapMapping() {
+    // The settings-page link is already hidden during a scan, but an existing
+    // tab, bookmark or copied URL can still request this endpoint directly.
+    // startScan deliberately retains the previous graph while the replacement
+    // is assembled, and its supporting state maps are being replaced phase by
+    // phase, so rendering during that window produces an internally mixed map.
+    // Refuse the endpoint until publication finishes rather than presenting
+    // stale and current data as one coherent result.
+    if (state.scanRunning) {
+        return render(
+            status: 200,
+            contentType: 'text/html',
+            data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map - scan in progress</title></head>
+<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<h2>Scan in progress</h2>
+<p>The map is temporarily unavailable while Automation Map discovers and publishes the new data.</p>
+<p>Return to the Automation Map app when the scan has completed, then open the map again.</p>
+<button type="button" onclick="history.back()" style="padding:0.65em 1em; cursor:pointer">Back</button>
+</body></html>"""
+        )
+    }
     if (graphIsStale()) {
         return render(
             status: 200,
