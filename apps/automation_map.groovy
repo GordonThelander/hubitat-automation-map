@@ -133,6 +133,7 @@ definition(
 
 preferences {
     page name: 'main'
+    page name: 'baselineComparisonPage'
 }
 
 void installed() {
@@ -341,6 +342,11 @@ Map main() {
                         paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'>Automation Map community thread</a> for setup advice, known issues, and support."
                     }
                 }
+                href(
+                    name: 'baselineComparisonLink', title: 'Baseline Comparison',
+                    description: 'Compare discovered apps and devices between two Automation Map exports',
+                    page: 'baselineComparisonPage', style: 'button', required: false,
+                )
             }
             section {
                 input name: 'autoScanEnabled', type: 'bool',
@@ -360,6 +366,22 @@ Map main() {
                 paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes well under a minute, even on a large hub. Open the app again to watch it and to view the map.</b></span>'
                 paragraph '<span style="opacity:0.75">There is nothing to configure. Every device on the hub is scanned, and the apps are found by asking each device which apps use it.</span>'
             }
+        }
+    }
+}
+
+Map baselineComparisonPage() {
+    return dynamicPage(name: 'baselineComparisonPage', title: '<b>Baseline Comparison</b>',
+                       install: false, uninstall: false) {
+        section {
+            href(
+                name: 'baselineComparisonBack', title: 'Back to Automation Map',
+                description: 'Return to the Automation Map main page',
+                page: 'main', style: 'button', required: false,
+            )
+        }
+        section {
+            paragraph comparatorFrameHtml()
         }
     }
 }
@@ -7787,4 +7809,418 @@ document.getElementById('exitMapBtn').addEventListener('click', function () {
 </body>
 </html>
 """
+}
+
+String comparatorFrameHtml() {
+    // Hubitat inserts paragraph HTML after the host page has loaded. Browsers do
+    // not execute script elements added that way, so render the comparator as a
+    // standalone iframe document whose script is parsed and executed normally.
+    String document = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body>${comparatorHtml()}</body>
+</html>"""
+    String sourceDocument = document
+        .replace('&', '&amp;')
+        .replace('"', '&quot;')
+    return """<iframe title="Automation Map Export Comparator" srcdoc="${sourceDocument}"
+        style="display:block;width:100%;height:900px;border:0;background:#fff;"></iframe>"""
+}
+
+String comparatorHtml() {
+    return '''
+<style>
+  #amc-root { max-width: 1180px; color: #252525; font-family: Arial, sans-serif; }
+  #amc-root * { box-sizing: border-box; }
+  #amc-root .amc-note { margin: 0 0 16px; color: #555; line-height: 1.45; }
+  #amc-root .amc-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+  #amc-root .amc-card { border: 1px solid #d7dce2; border-radius: 7px; padding: 14px; background: #fff; }
+  #amc-root .amc-card h3 { margin: 0 0 9px; font-size: 16px; }
+  #amc-root .amc-file { width: 100%; padding: 8px; border: 1px solid #c8ced6; border-radius: 5px; background: #f8f9fa; }
+  #amc-root .amc-meta { margin-top: 8px; min-height: 38px; color: #58616b; font-size: 13px; line-height: 1.4; }
+  #amc-root .amc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0; }
+  #amc-root button { border: 0; border-radius: 5px; padding: 9px 14px; background: #1976d2; color: #fff; cursor: pointer; font-weight: 600; }
+  #amc-root button:disabled { opacity: .48; cursor: default; }
+  #amc-root button.amc-secondary { background: #58616b; }
+  #amc-root .amc-filter { display: inline-flex; align-items: center; gap: 5px; margin-left: 5px; font-size: 13px; }
+  #amc-root .amc-error { display: none; margin: 12px 0; padding: 10px 12px; border-left: 4px solid #c62828; background: #ffebee; color: #8e1717; white-space: pre-wrap; }
+  #amc-root .amc-summary { display: none; margin: 14px 0; }
+  #amc-root .amc-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 9px; }
+  #amc-root .amc-stat { padding: 11px; border-radius: 6px; background: #f1f4f7; }
+  #amc-root .amc-stat strong { display: block; font-size: 21px; margin-bottom: 3px; }
+  #amc-root .amc-stat span { color: #58616b; font-size: 12px; }
+  #amc-root .amc-scope { margin: 10px 0; color: #58616b; font-size: 13px; }
+  #amc-root .amc-table-wrap { display: none; overflow-x: auto; border: 1px solid #d7dce2; border-radius: 7px; }
+  #amc-root table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #amc-root th { position: sticky; top: 0; background: #eef2f6; text-align: left; padding: 9px; border-bottom: 1px solid #cdd3da; white-space: nowrap; }
+  #amc-root td { padding: 9px; border-bottom: 1px solid #e4e7eb; vertical-align: top; }
+  #amc-root tr:last-child td { border-bottom: 0; }
+  #amc-root .amc-added { color: #1b7f37; font-weight: 700; }
+  #amc-root .amc-removed { color: #b3261e; font-weight: 700; }
+  #amc-root .amc-changed { color: #9a6700; font-weight: 700; }
+  #amc-root .amc-unchanged { color: #66717d; }
+  #amc-root .amc-detail { min-width: 260px; line-height: 1.45; }
+  #amc-root .amc-empty { padding: 20px; color: #58616b; text-align: center; }
+  @media (max-width: 760px) {
+    #amc-root .amc-grid { grid-template-columns: 1fr; }
+    #amc-root .amc-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+
+<div id="amc-root">
+  <p class="amc-note">
+    Select two Automation Map AI-friendly JSON exports. Comparison happens entirely in this browser;
+    the files are not uploaded to the hub or sent anywhere else. Only discovered app and device
+    inventory is compared. Relationships, flows, insights, external systems and other derived data
+    are deliberately ignored.
+  </p>
+
+  <div class="amc-grid">
+    <div class="amc-card">
+      <h3>Earlier or baseline export</h3>
+      <input id="amc-left-file" class="amc-file" type="file" accept="application/json,.json">
+      <div id="amc-left-meta" class="amc-meta">No file selected.</div>
+    </div>
+    <div class="amc-card">
+      <h3>Later or comparison export</h3>
+      <input id="amc-right-file" class="amc-file" type="file" accept="application/json,.json">
+      <div id="amc-right-meta" class="amc-meta">No file selected.</div>
+    </div>
+  </div>
+
+  <div class="amc-actions">
+    <button id="amc-compare" type="button" disabled>Compare discovered items</button>
+    <button id="amc-csv" class="amc-secondary" type="button" disabled>Export differences to CSV</button>
+    <label class="amc-filter"><input id="amc-show-apps" type="checkbox" checked> Apps</label>
+    <label class="amc-filter"><input id="amc-show-devices" type="checkbox" checked> Devices</label>
+    <label class="amc-filter"><input id="amc-show-unchanged" type="checkbox"> Include unchanged</label>
+  </div>
+
+  <div id="amc-error" class="amc-error"></div>
+
+  <div id="amc-summary" class="amc-summary">
+    <div class="amc-summary-grid">
+      <div class="amc-stat"><strong id="amc-added-count">0</strong><span>Added</span></div>
+      <div class="amc-stat"><strong id="amc-removed-count">0</strong><span>Removed</span></div>
+      <div class="amc-stat"><strong id="amc-changed-count">0</strong><span>Changed</span></div>
+      <div class="amc-stat"><strong id="amc-same-count">0</strong><span>Unchanged</span></div>
+    </div>
+    <div id="amc-scope" class="amc-scope"></div>
+  </div>
+
+  <div id="amc-table-wrap" class="amc-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Result</th>
+          <th>Stable ID</th>
+          <th>Baseline</th>
+          <th>Comparison</th>
+          <th>Direct field differences</th>
+        </tr>
+      </thead>
+      <tbody id="amc-rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script type="text/javascript">
+function amcInit() {
+  'use strict';
+
+  var left = null;
+  var right = null;
+  var results = [];
+
+  var byId = function (id) { return document.getElementById(id); };
+  var compareButton = byId('amc-compare');
+  var csvButton = byId('amc-csv');
+  var errorBox = byId('amc-error');
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function readJsonFile(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        try { resolve(JSON.parse(reader.result)); }
+        catch (e) { reject(new Error('Invalid JSON: ' + e.message)); }
+      };
+      reader.onerror = function () { reject(new Error('The browser could not read this file.')); };
+      reader.readAsText(file);
+    });
+  }
+
+  function validateExport(data, filename) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error(filename + ' is not a JSON object.');
+    }
+    if (!Array.isArray(data.apps) || !Array.isArray(data.devices)) {
+      throw new Error(filename + ' is not an Automation Map export with apps[] and devices[].');
+    }
+    return {
+      filename: filename,
+      generatedBy: String(data.generatedBy || 'Unknown Automation Map version'),
+      generatedAt: String(data.generatedAt || ''),
+      exportSchemaVersion: data.exportSchemaVersion,
+      apps: data.apps,
+      devices: data.devices
+    };
+  }
+
+  function metaText(x) {
+    var when = x.generatedAt ? ' | ' + x.generatedAt : '';
+    return x.generatedBy + when + '<br>' + x.apps.length + ' apps, ' + x.devices.length + ' devices';
+  }
+
+  function setError(message) {
+    errorBox.textContent = message || '';
+    errorBox.style.display = message ? 'block' : 'none';
+  }
+
+  function onFile(side, file, metaId) {
+    setError('');
+    if (!file) {
+      if (side === 'left') left = null; else right = null;
+      byId(metaId).textContent = 'No file selected.';
+      compareButton.disabled = !(left && right);
+      return;
+    }
+    readJsonFile(file).then(function (data) {
+      var parsed = validateExport(data, file.name);
+      if (side === 'left') left = parsed; else right = parsed;
+      byId(metaId).innerHTML = metaText(parsed);
+      compareButton.disabled = !(left && right);
+    }).catch(function (e) {
+      if (side === 'left') left = null; else right = null;
+      byId(metaId).textContent = 'Could not use this file.';
+      compareButton.disabled = true;
+      setError(e.message);
+    });
+  }
+
+  function scalar(value) {
+    return value == null ? '' : String(value);
+  }
+
+  function sortedStrings(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map(function (x) { return String(x); }).sort();
+  }
+
+  function directFields(type, item) {
+    if (type === 'app') {
+      return {
+        name: scalar(item.name),
+        appType: scalar(item.appType),
+        status: scalar(item.status),
+        parentId: scalar(item.parentId),
+        childIds: sortedStrings(item.childIds)
+      };
+    }
+    return {
+      name: scalar(item.name),
+      room: scalar(item.room),
+      capabilities: sortedStrings(item.capabilities)
+    };
+  }
+
+  function displayName(item) {
+    return item && item.name ? String(item.name) : '';
+  }
+
+  function indexItems(items, type, sourceName) {
+    var index = Object.create(null);
+    items.forEach(function (item, position) {
+      if (!item || item.id == null || String(item.id).trim() === '') {
+        throw new Error(sourceName + ' has a discovered ' + type + ' without an ID at position ' + position + '.');
+      }
+      var id = String(item.id);
+      if (index[id]) throw new Error(sourceName + ' contains duplicate ' + type + ' ID ' + id + '.');
+      index[id] = item;
+    });
+    return index;
+  }
+
+  function equalValue(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function valueForDisplay(value) {
+    if (Array.isArray(value)) return value.join(' | ');
+    return scalar(value);
+  }
+
+  function compareType(type, leftItems, rightItems) {
+    var a = indexItems(leftItems, type, left.filename);
+    var b = indexItems(rightItems, type, right.filename);
+    var ids = Object.keys(a).concat(Object.keys(b)).filter(function (id, i, all) {
+      return all.indexOf(id) === i;
+    }).sort(function (x, y) {
+      var xn = displayName(a[x] || b[x]).toLowerCase();
+      var yn = displayName(a[y] || b[y]).toLowerCase();
+      return xn.localeCompare(yn) || x.localeCompare(y);
+    });
+
+    return ids.map(function (id) {
+      var oldItem = a[id] || null;
+      var newItem = b[id] || null;
+      if (!oldItem) {
+        return { type: type, change: 'added', id: id, oldItem: null, newItem: newItem, differences: [] };
+      }
+      if (!newItem) {
+        return { type: type, change: 'removed', id: id, oldItem: oldItem, newItem: null, differences: [] };
+      }
+      var oldFields = directFields(type, oldItem);
+      var newFields = directFields(type, newItem);
+      var differences = Object.keys(oldFields).filter(function (field) {
+        return !equalValue(oldFields[field], newFields[field]);
+      }).map(function (field) {
+        return { field: field, oldValue: oldFields[field], newValue: newFields[field] };
+      });
+      return {
+        type: type,
+        change: differences.length ? 'changed' : 'unchanged',
+        id: id,
+        oldItem: oldItem,
+        newItem: newItem,
+        differences: differences
+      };
+    });
+  }
+
+  function render() {
+    var showApps = byId('amc-show-apps').checked;
+    var showDevices = byId('amc-show-devices').checked;
+    var showUnchanged = byId('amc-show-unchanged').checked;
+    var visible = results.filter(function (r) {
+      return (r.type === 'app' ? showApps : showDevices) && (showUnchanged || r.change !== 'unchanged');
+    });
+    var body = byId('amc-rows');
+    if (!visible.length) {
+      body.innerHTML = '<tr><td class="amc-empty" colspan="6">No items match the current filters.</td></tr>';
+    } else {
+      body.innerHTML = visible.map(function (r) {
+        var detail = '';
+        if (r.change === 'added') detail = 'Present only in the comparison export.';
+        else if (r.change === 'removed') detail = 'Present only in the baseline export.';
+        else if (r.change === 'unchanged') detail = 'Direct discovery fields match.';
+        else detail = r.differences.map(function (d) {
+          return '<b>' + escapeHtml(d.field) + '</b>: ' + escapeHtml(valueForDisplay(d.oldValue)) +
+                 ' &rarr; ' + escapeHtml(valueForDisplay(d.newValue));
+        }).join('<br>');
+        return '<tr>' +
+          '<td>' + (r.type === 'app' ? 'App' : 'Device') + '</td>' +
+          '<td class="amc-' + r.change + '">' + r.change.charAt(0).toUpperCase() + r.change.slice(1) + '</td>' +
+          '<td>' + escapeHtml(r.id) + '</td>' +
+          '<td>' + escapeHtml(displayName(r.oldItem)) + '</td>' +
+          '<td>' + escapeHtml(displayName(r.newItem)) + '</td>' +
+          '<td class="amc-detail">' + detail + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+  }
+
+  function compare() {
+    setError('');
+    try {
+      results = compareType('app', left.apps, right.apps)
+        .concat(compareType('device', left.devices, right.devices));
+      var counts = { added: 0, removed: 0, changed: 0, unchanged: 0 };
+      results.forEach(function (r) { counts[r.change] += 1; });
+      byId('amc-added-count').textContent = counts.added;
+      byId('amc-removed-count').textContent = counts.removed;
+      byId('amc-changed-count').textContent = counts.changed;
+      byId('amc-same-count').textContent = counts.unchanged;
+      byId('amc-scope').textContent = left.generatedBy + ' (' + left.apps.length + ' apps, ' + left.devices.length +
+        ' devices) compared with ' + right.generatedBy + ' (' + right.apps.length + ' apps, ' + right.devices.length +
+        ' devices). Stable IDs are used for matching.';
+      byId('amc-summary').style.display = 'block';
+      byId('amc-table-wrap').style.display = 'block';
+      csvButton.disabled = !results.some(function (r) { return r.change !== 'unchanged'; });
+      render();
+    } catch (e) {
+      results = [];
+      csvButton.disabled = true;
+      setError(e.message);
+    }
+  }
+
+  function csvCell(value) {
+    var s = scalar(value).replace(/\\r?\\n/g, ' ');
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+
+  function exportCsv() {
+    var rows = [[
+      'itemType', 'change', 'stableId', 'baselineVersion', 'comparisonVersion',
+      'baselineName', 'comparisonName', 'field', 'baselineValue', 'comparisonValue'
+    ]];
+    results.filter(function (r) { return r.change !== 'unchanged'; }).forEach(function (r) {
+      if (r.change === 'changed') {
+        r.differences.forEach(function (d) {
+          rows.push([
+            r.type, r.change, r.id, left.generatedBy, right.generatedBy,
+            displayName(r.oldItem), displayName(r.newItem), d.field,
+            valueForDisplay(d.oldValue), valueForDisplay(d.newValue)
+          ]);
+        });
+      } else {
+        rows.push([
+          r.type, r.change, r.id, left.generatedBy, right.generatedBy,
+          displayName(r.oldItem), displayName(r.newItem), 'presence',
+          r.oldItem ? 'present' : 'absent', r.newItem ? 'present' : 'absent'
+        ]);
+      }
+    });
+    var csv = '\\ufeff' + rows.map(function (row) { return row.map(csvCell).join(','); }).join('\\r\\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'automation-map-discovery-diff-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  byId('amc-left-file').addEventListener('change', function () {
+    onFile('left', this.files && this.files[0], 'amc-left-meta');
+  });
+  byId('amc-right-file').addEventListener('change', function () {
+    onFile('right', this.files && this.files[0], 'amc-right-meta');
+  });
+  compareButton.addEventListener('click', compare);
+  csvButton.addEventListener('click', exportCsv);
+  byId('amc-show-apps').addEventListener('change', render);
+  byId('amc-show-devices').addEventListener('change', render);
+  byId('amc-show-unchanged').addEventListener('change', render);
+}
+
+// Hubitat can evaluate a paragraph's inline script before it has inserted the
+// paragraph's HTML into the document. Initialising immediately then sees null
+// controls and attaches no file-change listeners. Wait briefly for the root,
+// whether this runs before DOMContentLoaded or during later DOM insertion.
+var amcBootAttempts = 0;
+function amcBoot() {
+  var root = document.getElementById('amc-root');
+  if (!root) {
+    amcBootAttempts += 1;
+    if (amcBootAttempts < 50) setTimeout(amcBoot, 50);
+    return;
+  }
+  if (root.getAttribute('data-amc-ready') === 'true') return;
+  root.setAttribute('data-amc-ready', 'true');
+  amcInit();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', amcBoot);
+setTimeout(amcBoot, 0);
+</script>
+'''
 }
