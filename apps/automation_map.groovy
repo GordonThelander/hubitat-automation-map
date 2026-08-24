@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.11'
+@Field static final String APP_VERSION = '2.0.12'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -334,7 +334,7 @@ Map main() {
                             "${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
                         paragraph compatibilitySummary()
                         href(
-                            name: 'mapLink', title: 'View Automation Map',
+                            name: 'mapLink', title: "<span style='color:#1976d2'>View Automation Map</span>",
                             description: 'Open the relationship graph',
                             url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                             style: 'embedded', state: 'complete', required: false,
@@ -343,10 +343,29 @@ Map main() {
                     }
                 }
                 href(
-                    name: 'baselineComparisonLink', title: 'Baseline Comparison',
+                    name: 'baselineComparisonLink', title: "<span style='color:#1976d2'>Baseline Comparison</span>",
                     description: 'Compare discovered apps and devices between two Automation Map exports',
-                    page: 'baselineComparisonPage', style: 'button', required: false,
+                    page: 'baselineComparisonPage', style: 'embedded', required: false,
                 )
+                href(
+                    name: 'communityUtilitiesLink', title: "<span style='color:#1976d2'>Community Utilities</span>",
+                    description: 'Open the Hubitat Community Utilities site',
+                    url: 'https://gordonthelander.github.io/HPM_Manifest_Crawl/',
+                    style: 'embedded', required: false,
+                )
+                // Hubitat's external href style calls openWindow(), which
+                // creates a sized popup rather than the full browser tab the
+                // user requested. Keep the normal full-width href row, then
+                // make its real anchor an ordinary target=_blank link.
+                paragraph '''<script type="text/javascript">
+(function () {
+  var link = document.querySelector('a[href="https://gordonthelander.github.io/HPM_Manifest_Crawl/"]');
+  if (!link) return;
+  link.removeAttribute('onclick');
+  link.setAttribute('target', '_blank');
+  link.setAttribute('rel', 'noopener noreferrer');
+})();
+</script>'''
             }
             section {
                 input name: 'autoScanEnabled', type: 'bool',
@@ -379,6 +398,20 @@ Map baselineComparisonPage() {
                 description: 'Return to the Automation Map main page',
                 page: 'main', style: 'button', required: false,
             )
+            // A Hubitat dynamic subpage adds its own bottom-right Done/Cancel
+            // action even though this page has nothing to save. On the tall
+            // comparator page that control is both misleading and far away
+            // from the requested navigation. The explicit Back control above
+            // is the only page-exit action this page needs.
+            paragraph '''<style type="text/css">
+button.cancel, button.done, button[name="_action_done"] { display:none !important; }
+button[name^="_action_href_baselineComparisonBack|"] {
+  background:#2e7d32 !important;
+  border-color:#2e7d32 !important;
+  color:#fff !important;
+}
+button[name^="_action_href_baselineComparisonBack|"] span { color:#fff !important; }
+</style>'''
         }
         section {
             paragraph comparatorFrameHtml()
