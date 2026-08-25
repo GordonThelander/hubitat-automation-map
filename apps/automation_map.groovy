@@ -8074,8 +8074,7 @@ function amcInit() {
         name: scalar(item.name),
         appType: scalar(item.appType),
         status: scalar(item.status),
-        parentId: scalar(item.parentId),
-        childIds: sortedStrings(item.childIds)
+        parentId: scalar(item.parentId)
       };
     }
     return {
