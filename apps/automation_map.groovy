@@ -2287,7 +2287,7 @@ Map fetchDeviceListBulk() {
         if (!d || d.id == null) return
         String devId = "${d.id}"
         if (d.name) out.labels[devId] = "${d.name}"
-        if (d.roomName) out.rooms[devId] = "${d.roomName}"
+        if (d.roomName) out.rooms[devId] = "${d.roomName}".trim()
         if (d.type) out.types[devId] = "${d.type}"
         String typeKey = "${d.deviceTypeId}"
         List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
@@ -4649,7 +4649,7 @@ String iconOverridesJson() {
         [
             id: devId,
             name: label,
-            room: rooms[devId] ?: '',
+            room: rooms[devId] == null ? '' : "${rooms[devId]}".trim(),
             detected: autoDetectIconKeyForDevice(label as String, caps[devId] as List, types[devId] as String),
             override: overrides[devId] ?: 'auto',
             note: notes[devId] ?: '',
@@ -8036,12 +8036,12 @@ function amcInit() {
   }
 
   function scalar(value) {
-    return value == null ? '' : String(value);
+    return value == null ? '' : String(value).trim();
   }
 
   function sortedStrings(value) {
     if (!Array.isArray(value)) return [];
-    return value.map(function (x) { return String(x); }).sort();
+    return value.map(function (x) { return String(x).trim(); }).sort();
   }
 
   function directFields(type, item) {
