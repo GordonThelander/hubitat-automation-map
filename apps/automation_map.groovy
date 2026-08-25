@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.12'
+@Field static final String APP_VERSION = '2.0.13'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1244,6 +1244,12 @@ Map startScan() {
     scan.finalizeScheduleGuard = new AtomicInteger(0)
     scan.finalizeGuard = new AtomicInteger(0)
     scan.capsByDev = new ConcurrentHashMap<String, List>()
+    // Seeded from the bulk response and completed by callbacks for devices
+    // whose bulk row omitted roomName. Those devices are deliberately queued
+    // as one-device groups by fetchDeviceListBulk(), so their fullJson response
+    // can recover a room the bulk endpoint omitted without guessing whether an
+    // actually blank room means "unassigned".
+    scan.roomsByDev = new ConcurrentHashMap<String, String>((bulk.rooms ?: [:]) as Map)
     scan.unreadableDevs = new ConcurrentHashMap<String, Boolean>()
     scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
     // Copied in, not read from state by a callback - callbacks and reapers
@@ -1389,7 +1395,20 @@ void deviceFetchCb(resp, data) {
         if (resp?.status == 200) {
             Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
             Map dev = respData.device as Map
-            caps = dev ? (dev.capabilities ?: []) as List : []
+            if (dev) {
+                caps = (dev.capabilities ?: []) as List
+                if (dev.roomName) {
+                    String room = "${dev.roomName}".trim()
+                    // A room belongs to this device, not to its driver. Normal
+                    // capability groups contain many devices whose rooms differ,
+                    // so broadcasting the representative's room corrupts every
+                    // peer in that group. Missing-bulk-room devices are already
+                    // queued as singleton groups; writing only repId recovers
+                    // their fullJson room without touching any other device.
+                    ConcurrentHashMap roomsByDev = scan.roomsByDev as ConcurrentHashMap
+                    if (room && !roomsByDev.containsKey(repId)) roomsByDev[repId] = room
+                }
+            }
         }
     } catch (Exception ex) {
         log.warn "${app.label}: device ${repId} lookup failed: ${ex.message}"
@@ -1612,6 +1631,7 @@ void finalizeDevicePhase(String scanId) {
 
     try {
         state.deviceCapabilities = new LinkedHashMap(scan.capsByDev as Map)
+        state.deviceRooms = new LinkedHashMap(scan.roomsByDev as Map)
 
         List unreadable = []
         (scan.unreadableDevs as ConcurrentHashMap).keySet().each { String devId -> unreadable << devId }
@@ -2271,7 +2291,10 @@ void finishScan(data = null) {
 // scan-speed item in BACKLOG.md. typeGroups remains scan-local: it holds one
 // representative device id per driver, mapped to every device id sharing
 // that driver; deviceFetchCb fetches capabilities for the representative
-// only and applies the result to the whole group.
+// only and applies the result to the whole group. The exception is a device
+// whose bulk row omits roomName: it gets a one-device group so fullJson can
+// recover an endpoint-omitted room (or confirm it is genuinely unassigned)
+// without broadcasting one atypical response across its whole driver group.
 Map fetchDeviceListBulk() {
     Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
@@ -2287,9 +2310,10 @@ Map fetchDeviceListBulk() {
         if (!d || d.id == null) return
         String devId = "${d.id}"
         if (d.name) out.labels[devId] = "${d.name}"
-        if (d.roomName) out.rooms[devId] = "${d.roomName}".trim()
+        String room = d.roomName == null ? '' : "${d.roomName}".trim()
+        if (room) out.rooms[devId] = room
         if (d.type) out.types[devId] = "${d.type}"
-        String typeKey = "${d.deviceTypeId}"
+        String typeKey = room ? "${d.deviceTypeId}" : "room:${devId}"
         List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
         group << devId
     }
