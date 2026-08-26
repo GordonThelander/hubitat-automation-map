@@ -7715,7 +7715,7 @@ function buildExportPayload(ext, icons, failedFetches) {
     recommendedAiBehaviour: recommendedAiBehaviour,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
-      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device.',
+      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
       apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - schema 4 (v2.0.14): every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules read or write. A variable found only via a decoded reference, with no matching inventory entry (inventory was unavailable for this scan), has identitySource "reference-derived" instead - a weaker guarantee: it was found in a decoded rule configuration at scan time, not confirmed against the authoritative variable list the hub itself reports. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations).',
@@ -8268,9 +8268,12 @@ String comparatorHtml() {
 <div id="amc-root">
   <p class="amc-note">
     Select two Automation Map AI-friendly JSON exports. Comparison happens entirely in this browser;
-    the files are not uploaded to the hub or sent anywhere else. Only discovered app and device
-    inventory is compared. Relationships, flows, insights, external systems and other derived data
-    are deliberately ignored.
+    the files are not uploaded to the hub or sent anywhere else. Only discovered apps, devices,
+    Connectors, and Hub Variables are compared. A Hub Variable Connector is shown as its own
+    Connector category, separate from Devices, since it represents synchronized shared state and
+    not an independent physical device. Relationships, flows, insights, external systems and other
+    derived data are deliberately ignored. An export from before Hub Variables existed compares with
+    zero Connectors and Hub Variables rather than failing.
   </p>
 
   <div class="amc-grid">
@@ -8291,6 +8294,8 @@ String comparatorHtml() {
     <button id="amc-csv" class="amc-secondary" type="button" disabled>Export differences to CSV</button>
     <label class="amc-filter"><input id="amc-show-apps" type="checkbox" checked> Apps</label>
     <label class="amc-filter"><input id="amc-show-devices" type="checkbox" checked> Devices</label>
+    <label class="amc-filter"><input id="amc-show-connectors" type="checkbox" checked> Connectors</label>
+    <label class="amc-filter"><input id="amc-show-hubvariables" type="checkbox" checked> Hub Variables</label>
     <label class="amc-filter"><input id="amc-show-unchanged" type="checkbox"> Include unchanged</label>
   </div>
 
@@ -8331,6 +8336,12 @@ function amcInit() {
   var right = null;
   var results = [];
 
+  var TYPE_LABELS = { app: 'App', device: 'Device', connector: 'Connector', hubVariable: 'Hub Variable' };
+  var TYPE_FILTER_IDS = {
+    app: 'amc-show-apps', device: 'amc-show-devices',
+    connector: 'amc-show-connectors', hubVariable: 'amc-show-hubvariables'
+  };
+
   var byId = function (id) { return document.getElementById(id); };
   var compareButton = byId('amc-compare');
   var csvButton = byId('amc-csv');
@@ -8361,19 +8372,30 @@ function amcInit() {
     if (!Array.isArray(data.apps) || !Array.isArray(data.devices)) {
       throw new Error(filename + ' is not an Automation Map export with apps[] and devices[].');
     }
+    // A Connector device is real in devices[] (iconCategory "connector") but is
+    // split out here into its own bucket rather than left mixed into devices -
+    // it represents synchronized shared state, not an independent physical
+    // device. hubVariables[] does not exist on an export from before it shipped
+    // (schema 3 or earlier); treated as empty rather than a validation failure,
+    // so an old baseline still compares on apps/devices/connectors.
+    var realDevices = data.devices.filter(function (d) { return d.iconCategory !== 'connector'; });
+    var connectorDevices = data.devices.filter(function (d) { return d.iconCategory === 'connector'; });
     return {
       filename: filename,
       generatedBy: String(data.generatedBy || 'Unknown Automation Map version'),
       generatedAt: String(data.generatedAt || ''),
       exportSchemaVersion: data.exportSchemaVersion,
       apps: data.apps,
-      devices: data.devices
+      devices: realDevices,
+      connectors: connectorDevices,
+      hubVariables: Array.isArray(data.hubVariables) ? data.hubVariables : []
     };
   }
 
   function metaText(x) {
     var when = x.generatedAt ? ' | ' + x.generatedAt : '';
-    return x.generatedBy + when + '<br>' + x.apps.length + ' apps, ' + x.devices.length + ' devices';
+    return x.generatedBy + when + '<br>' + x.apps.length + ' apps, ' + x.devices.length + ' devices, ' +
+      x.connectors.length + ' connectors, ' + x.hubVariables.length + ' hub variables';
   }
 
   function setError(message) {
@@ -8420,6 +8442,16 @@ function amcInit() {
         parentId: scalar(item.parentId)
       };
     }
+    if (type === 'hubVariable') {
+      return {
+        name: scalar(item.name),
+        variableType: scalar(item.variableType),
+        connectorDeviceId: scalar(item.connector ? item.connector.deviceId : null),
+        connectorType: scalar(item.connector ? item.connector.connectorType : null)
+      };
+    }
+    // device and connector share this shape - a Connector is a real entry in
+    // devices[] before validateExport() splits it into its own bucket above.
     return {
       name: scalar(item.name),
       room: scalar(item.room),
@@ -8492,11 +8524,13 @@ function amcInit() {
   }
 
   function render() {
-    var showApps = byId('amc-show-apps').checked;
-    var showDevices = byId('amc-show-devices').checked;
+    var showByType = {};
+    Object.keys(TYPE_FILTER_IDS).forEach(function (type) {
+      showByType[type] = byId(TYPE_FILTER_IDS[type]).checked;
+    });
     var showUnchanged = byId('amc-show-unchanged').checked;
     var visible = results.filter(function (r) {
-      return (r.type === 'app' ? showApps : showDevices) && (showUnchanged || r.change !== 'unchanged');
+      return showByType[r.type] && (showUnchanged || r.change !== 'unchanged');
     });
     var body = byId('amc-rows');
     if (!visible.length) {
@@ -8512,7 +8546,7 @@ function amcInit() {
                  ' &rarr; ' + escapeHtml(valueForDisplay(d.newValue));
         }).join('<br>');
         return '<tr>' +
-          '<td>' + (r.type === 'app' ? 'App' : 'Device') + '</td>' +
+          '<td>' + TYPE_LABELS[r.type] + '</td>' +
           '<td class="amc-' + r.change + '">' + r.change.charAt(0).toUpperCase() + r.change.slice(1) + '</td>' +
           '<td>' + escapeHtml(r.id) + '</td>' +
           '<td>' + escapeHtml(displayName(r.oldItem)) + '</td>' +
@@ -8527,7 +8561,9 @@ function amcInit() {
     setError('');
     try {
       results = compareType('app', left.apps, right.apps)
-        .concat(compareType('device', left.devices, right.devices));
+        .concat(compareType('device', left.devices, right.devices))
+        .concat(compareType('connector', left.connectors, right.connectors))
+        .concat(compareType('hubVariable', left.hubVariables, right.hubVariables));
       var counts = { added: 0, removed: 0, changed: 0, unchanged: 0 };
       results.forEach(function (r) { counts[r.change] += 1; });
       byId('amc-added-count').textContent = counts.added;
@@ -8535,8 +8571,10 @@ function amcInit() {
       byId('amc-changed-count').textContent = counts.changed;
       byId('amc-same-count').textContent = counts.unchanged;
       byId('amc-scope').textContent = left.generatedBy + ' (' + left.apps.length + ' apps, ' + left.devices.length +
-        ' devices) compared with ' + right.generatedBy + ' (' + right.apps.length + ' apps, ' + right.devices.length +
-        ' devices). Stable IDs are used for matching.';
+        ' devices, ' + left.connectors.length + ' connectors, ' + left.hubVariables.length +
+        ' hub variables) compared with ' + right.generatedBy + ' (' + right.apps.length + ' apps, ' +
+        right.devices.length + ' devices, ' + right.connectors.length + ' connectors, ' +
+        right.hubVariables.length + ' hub variables). Stable IDs are used for matching.';
       byId('amc-summary').style.display = 'block';
       byId('amc-table-wrap').style.display = 'block';
       csvButton.disabled = !results.some(function (r) { return r.change !== 'unchanged'; });
@@ -8597,6 +8635,8 @@ function amcInit() {
   csvButton.addEventListener('click', exportCsv);
   byId('amc-show-apps').addEventListener('change', render);
   byId('amc-show-devices').addEventListener('change', render);
+  byId('amc-show-connectors').addEventListener('change', render);
+  byId('amc-show-hubvariables').addEventListener('change', render);
   byId('amc-show-unchanged').addEventListener('change', render);
 }
 
