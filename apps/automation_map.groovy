@@ -5370,11 +5370,12 @@ String buildMapHtml() {
   }
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; max-width:340px; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.8em; display:flex; flex-direction:column; gap:6px; width:230px; }
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; max-width:340px; }
+  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:230px; }
   #controls label { display:block; margin-bottom:2px; }
   #controls select { width:100%; box-sizing:border-box; }
   #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
+  #controls button, #controls select, #controls option { font-size:14px; font-family:inherit; }
   #controls button { margin-top:2px; cursor:pointer; }
   #network { width:100%; height:100vh; }
   /* Sits behind the network canvas (earlier in DOM order, no z-index of its
@@ -5425,7 +5426,7 @@ String buildMapHtml() {
   .ln-dashdot { background:repeating-linear-gradient(to right, currentColor 0 12px, transparent 12px 15px, currentColor 15px 17px, transparent 17px 22px); }
   .ln-thick { height:3px; }
   .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
-  .note { opacity:0.75; font-size:0.9em; margin-top:6px; line-height:1.35; }
+  .note { opacity:0.75; font-size:14px; margin-top:6px; line-height:1.35; }
   /* Was easy to miss entirely - same dark background as the page itself,
      no border, tucked in a corner. A first-time visitor's eye has nowhere
      else to land on page load but the graph, so this needs to actually
