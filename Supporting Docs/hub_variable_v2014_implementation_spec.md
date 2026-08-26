@@ -150,11 +150,17 @@ a development hub under separate authorization"):
   reference only), Connector present, Connector missing, duplicated device label disambiguated only
   by ID (the `writeSource` correction's reason for existing), reserved-token collision, and the type
   spellings not yet observed live (Number/Decimal/Boolean/DateTime).
-- **Live-verification release gates, not fixture-able:** the Connector-present case must be
-  confirmed against a real Connector Gordon creates on his dev hub (section 2 item 7); declared-type
-  mapping for anything beyond `string` should be spot-checked live if Gordon has or creates a
-  variable of another type; whether `getAllGlobalVars()` throws or degrades gracefully on any
-  firmware/config edge case a fixture can't simulate.
+- **Declared-type mapping - confirmed live 2026-08-26.** Gordon created `TestNumber`/`TestDecimal`/
+  `TestBoolean`/`TestDateTime` via MCP and exported twice. The first export caught a real bug:
+  `getAllGlobalVars()` returns Groovy runtime type names, not the UI's declared labels -
+  `"integer"`/`"bigdecimal"`, not `"number"`/`"decimal"` - so Number/Decimal came back
+  `variableType: null` (the safe fallback, not a crash) while Boolean/DateTime matched directly.
+  Fixed and reconfirmed in the second export: all five canonical types now normalize correctly.
+- **Still a live-verification release gate, not fixture-able:** the Connector-present case. Three
+  `hub_create_connector` attempts (two variable types, two connectorType values) all failed with
+  "wizard completed but still has no deviceId" - an issue with that MCP tool's automation on this
+  hub, not yet resolved. No orphaned devices were left behind. Waiting on a working creation path
+  or a manually-created Connector before this can be confirmed.
 - Never log or export a variable's `value` outside the explicit-opt-in path that doesn't exist yet
   - same discipline as every test this effort has run so far.
 
