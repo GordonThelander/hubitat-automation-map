@@ -7737,6 +7737,9 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   document.getElementById('flowTitle').textContent = 'Automation health';
   document.getElementById('flowSub').textContent = '';
   flowChart.innerHTML = buildInsights();
+  // Every other write to flowChart pairs it with this - Insights was the one
+  // gap, leaving a previously-focused app's community card visible under it.
+  renderCommunityCard(null);
   bringToFront(flowPanel);
 });
 
