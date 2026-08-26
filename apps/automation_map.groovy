@@ -5472,39 +5472,53 @@ String buildMapHtml() {
   #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Insights. Rendered into #flowChart, so it inherits #flow typography and
      only what is specific to the dashboard layout lives here. */
+  /* An explicit readable base in px, then sizes at or near 1em of it. The
+     first version stacked fractional em on fractional em - .insMeta landed
+     around 0.74em and a .sub inside .insPlain around 0.62em, roughly 10px -
+     and Gordon could not read it. Anchoring here stops the compounding, and
+     the .sub rule below neutralises #flow's own 0.78em so a nested caption
+     cannot shrink twice. */
+  #insRoot { font-size:14px; line-height:1.5; }
+  /* Explicit px, not em. An em here still compounds against whatever the
+     ancestor resolved to - a .sub inside .insPlain measured 10.7px even after
+     the base was set, because #flow's own .sub rule was applying to it first.
+     13px is the floor for everything secondary in this panel. */
+  #insRoot .sub, #insRoot .insPlain .sub, #insRoot .insDetail .sub { font-size:13px; }
   #insRoot .insCards { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:0 0 10px 0; }
-  #insRoot .insCard { background:#0d2630; border:1px solid #2a4a57; border-radius:5px; padding:8px 6px; cursor:pointer;
-                      color:#e8f2f6; font-family:inherit; text-align:center; display:flex; flex-direction:column; gap:2px; }
+  #insRoot .insCard { background:#0d2630; border:1px solid #2a4a57; border-radius:5px; padding:10px 6px; cursor:pointer;
+                      color:#e8f2f6; font-family:inherit; text-align:center; display:flex; flex-direction:column; gap:3px; }
   #insRoot .insCard:hover { border-color:#4a7a94; }
-  #insRoot .insCard b { font-size:1.5em; line-height:1.1; }
-  #insRoot .insCard span { font-size:0.72em; opacity:0.8; }
+  #insRoot .insCard b { font-size:1.75em; line-height:1.1; }
+  #insRoot .insCard span { font-size:13px; opacity:0.85; line-height:1.25; }
   #insRoot .insCardZero b { opacity:0.35; }
   #insRoot .insCardAlert { border-color:#a5563f; }
   #insRoot .insCardAlert b { color:#e0a95f; }
-  #insRoot .insNote { font-size:0.72em; opacity:0.6; margin:0 0 12px 0; line-height:1.4; }
+  #insRoot .insNote { font-size:13px; opacity:0.65; margin:0 0 12px 0; line-height:1.45; }
   #insRoot .insSec { border-top:1px solid #16323c; }
   #insRoot .insHead { width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; cursor:pointer;
-                      color:#cfe3ea; font-family:inherit; font-size:0.9em; font-weight:600; padding:9px 2px; text-align:left; }
+                      color:#cfe3ea; font-family:inherit; font-size:1.08em; font-weight:600; padding:10px 2px; text-align:left; }
   #insRoot .insHead:hover { color:#fff; }
   #insRoot .insTitle { flex:1; }
-  #insRoot .insChev { opacity:0.7; font-size:0.85em; }
-  #insRoot .insBadge { background:#1c3540; color:#9fb4bc; border-radius:9px; padding:1px 8px; font-size:0.8em; }
+  #insRoot .insChev { opacity:0.7; font-size:0.9em; }
+  #insRoot .insBadge { background:#1c3540; color:#9fb4bc; border-radius:9px; padding:1px 9px; font-size:0.9em; }
   #insRoot .insBadgeZero { opacity:0.4; }
   #insRoot .insBody { padding:0 0 10px 0; }
-  #insRoot .insOk { font-size:0.78em; opacity:0.65; margin:0 0 4px 2px; }
-  #insRoot .insLead { font-size:0.78em; opacity:0.8; margin:6px 0 6px 2px; line-height:1.45; }
-  #insRoot .insRow { display:flex; align-items:center; gap:8px; padding:4px 2px; border-bottom:1px solid #10262e; font-size:0.82em; }
+  #insRoot .insOk { font-size:13.5px; opacity:0.7; margin:0 0 6px 2px; }
+  #insRoot .insLead { font-size:13.5px; opacity:0.85; margin:8px 0 6px 2px; line-height:1.5; }
+  #insRoot .insRow { display:flex; align-items:center; gap:9px; padding:6px 2px; border-bottom:1px solid #10262e; font-size:1em; }
   #insRoot .insName { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #insRoot .insMeta { opacity:0.6; font-size:0.9em; white-space:nowrap; }
+  #insRoot .insMeta { opacity:0.65; font-size:13px; white-space:nowrap; }
   #insRoot .insBtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer;
-                     padding:1px 7px; font-size:0.9em; font-family:inherit; white-space:nowrap; }
+                     padding:3px 9px; font-size:13px; font-family:inherit; white-space:nowrap; }
   #insRoot .insBtn:hover { border-color:#4a7a94; color:#cfe3ea; }
-  #insRoot .insChevPad { display:inline-block; width:22px; }
-  #insRoot .insDetail { padding:4px 2px 8px 10px; border-left:2px solid #1c3540; margin:0 0 6px 4px; }
-  #insRoot .insDetail p { margin:3px 0; font-size:0.78em; line-height:1.45; }
-  #insRoot .insShowAll { margin:8px 0 2px 2px; }
-  #insRoot .insPlain { margin:4px 0 4px 18px; padding:0; font-size:0.8em; }
-  #insRoot .insPlain li { margin:2px 0; }
+  #insRoot .insChevPad { display:inline-block; width:26px; }
+  #insRoot .insDetail { padding:6px 2px 9px 12px; border-left:2px solid #1c3540; margin:0 0 6px 4px; }
+  #insRoot .insDetail p { margin:4px 0; font-size:13.5px; line-height:1.5; }
+  #insRoot .insShowAll { margin:9px 0 2px 2px; }
+  #insRoot .insPlain { margin:5px 0 5px 18px; padding:0; font-size:13.5px; }
+  /* #flow li sets 0.85em and overrides inheritance from the ul, which pulled
+     these list items back down to 11.5px on their own. */
+  #insRoot .insPlain li { margin:3px 0; font-size:13.5px; }
   #insRoot a { color:#7fb6d6; text-decoration:none; }
   #insRoot a:hover { text-decoration:underline; }
   @media (max-width: 1100px) { #insRoot .insCards { grid-template-columns:repeat(2, 1fr); } }
