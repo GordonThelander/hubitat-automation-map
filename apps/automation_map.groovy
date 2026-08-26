@@ -5339,6 +5339,7 @@ String buildMapHtml() {
 <div id="controls">
   <label>Focus app<input id="appSearch" type="search" placeholder="search apps..." autocomplete="off"><select id="appFilter" size="1"><option value="__all__">All apps</option></select></label>
   <label>Focus device<input id="deviceSearch" type="search" placeholder="search devices..." autocomplete="off"><select id="deviceFilter" size="1"><option value="__all__">All devices</option></select></label>
+  <label>Focus hub variable<input id="hubVarSearch" type="search" placeholder="search hub variables..." autocomplete="off"><select id="hubVarFilter" size="1"><option value="__all__">All hub variables</option></select></label>
   <label>Show<select id="kindFilter">
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
@@ -5986,6 +5987,7 @@ function neighborhood(nodeId, edgePool) {
 function applyFilters() {
   const appVal = document.getElementById('appFilter').value;
   const devVal = document.getElementById('deviceFilter').value;
+  const hubVarVal = document.getElementById('hubVarFilter').value;
   const kindVal = document.getElementById('kindFilter').value;
 
   let pool = ALL_EDGES;
@@ -5997,7 +5999,7 @@ function applyFilters() {
 
   let ids = null;
   let shownEdges = pool;
-  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : null);
+  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : null));
   if (focusId) {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
@@ -7765,6 +7767,7 @@ document.getElementById('pivotClose').addEventListener('click', function () {
 
 const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
 const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
+const hubVarSelect = fillSelect('hubVarFilter', 'hubVarSearch', 'hubVariable', 'All hub variables');
 
 // Clicking a node is the first thing anyone tries, so it drills in: click an
 // app to see what it uses, click one of those devices to see everything else
@@ -7809,6 +7812,7 @@ function focusLabel(id) {
 function currentFocus() {
   if (appSelect.value !== '__all__') return appSelect.value;
   if (deviceSelect.value !== '__all__') return deviceSelect.value;
+  if (hubVarSelect.value !== '__all__') return hubVarSelect.value;
   return null;
 }
 
@@ -7852,6 +7856,7 @@ function closeSecondaryPanels() {
 function exitToWholeMap() {
   appSelect.value = '__all__';
   deviceSelect.value = '__all__';
+  hubVarSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
   closeSecondaryPanels();
@@ -7906,6 +7911,7 @@ function focusNode(id) {
   if (node.group === 'app') {
     forceSelect(appSelect, node.id, node.title);
     deviceSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
     // An inert app has no edges by definition, so filtering the graph down to
     // its neighbourhood - what applyFilters does for every other app - leaves
     // nothing to draw: the whole map collapses to that one square. Nothing is
@@ -7919,9 +7925,21 @@ function focusNode(id) {
     // for inert nodes.
     if (!node.inert && !node.unreadable) applyFilters();
     showFlow(node.id);
+  } else if (node.group === 'hubVariable') {
+    // Own branch, not the device else below - a Hub Variable used to fall
+    // into that branch by default (forceSelect(deviceSelect, ...)), which
+    // worked visually but mis-filed it as a device selection. Split out once
+    // this dropdown existed to give it somewhere correct to go.
+    forceSelect(hubVarSelect, node.id, node.title);
+    appSelect.value = '__all__';
+    deviceSelect.value = '__all__';
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
   } else {
     forceSelect(deviceSelect, node.id, node.title);
     appSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
@@ -7958,6 +7976,7 @@ window.addEventListener('popstate', function (ev) {
     } else {
       appSelect.value = '__all__';
       deviceSelect.value = '__all__';
+      hubVarSelect.value = '__all__';
       flowPanel.style.display = 'none';
       syncLegendVisibility();
       applyFilters();
@@ -7981,6 +8000,7 @@ network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') {
     deviceSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
     closeSecondaryPanels();
   }
   applyFilters();
@@ -7994,6 +8014,17 @@ appSelect.addEventListener('change', function () {
 deviceSelect.addEventListener('change', function () {
   if (deviceSelect.value !== '__all__') {
     appSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
+    closeSecondaryPanels();
+  }
+  flowPanel.style.display = 'none';
+  syncLegendVisibility();
+  applyFilters();
+});
+hubVarSelect.addEventListener('change', function () {
+  if (hubVarSelect.value !== '__all__') {
+    appSelect.value = '__all__';
+    deviceSelect.value = '__all__';
     closeSecondaryPanels();
   }
   flowPanel.style.display = 'none';
