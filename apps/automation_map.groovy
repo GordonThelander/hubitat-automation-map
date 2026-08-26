@@ -5381,8 +5381,20 @@ String buildMapHtml() {
   #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Same "one panel's own CSS" convention as #ext/#pivot/#icons above, not a
      reused class - see those panels' own comments for why. */
+  /* An explicit width, not just max-width like the other panels here - this
+     one needs it for a real reason, not copied without thought. The others
+     size themselves from their own content (a table's natural column
+     widths); an iframe has none of its own the browser can see, so
+     "width:100%" on it had nothing concrete to resolve against inside a
+     shrink-to-fit, width-less parent and silently fell back to a browser
+     default around 300px regardless of max-width - confirmed live, this is
+     exactly what was cramping the chart, not the CSS gap that later comment
+     used to describe as the whole story. Matches #pivot's own max-width
+     figure - the widest existing panel - which also happens to match the
+     spec's own stated upper design bound of 1100 CSS pixels
+     (community_release_activity_embed_spec.md section 3.3). */
   #releaseActivity { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(74vw, 700px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+           width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
   #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
