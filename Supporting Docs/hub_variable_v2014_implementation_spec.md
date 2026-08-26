@@ -156,11 +156,25 @@ a development hub under separate authorization"):
   `"integer"`/`"bigdecimal"`, not `"number"`/`"decimal"` - so Number/Decimal came back
   `variableType: null` (the safe fallback, not a crash) while Boolean/DateTime matched directly.
   Fixed and reconfirmed in the second export: all five canonical types now normalize correctly.
-- **Still a live-verification release gate, not fixture-able:** the Connector-present case. Three
-  `hub_create_connector` attempts (two variable types, two connectorType values) all failed with
-  "wizard completed but still has no deviceId" - an issue with that MCP tool's automation on this
-  hub, not yet resolved. No orphaned devices were left behind. Waiting on a working creation path
-  or a manually-created Connector before this can be confirmed.
+- **Connector-present case - confirmed live 2026-08-26, with a real platform finding.**
+  `hub_create_connector` needed the native Settings -> Hub Variables page opened once in a real
+  browser before it would work (four automated attempts failed identically before that; the fifth,
+  after Gordon opened the page, succeeded immediately - consistent with some Hubitat native apps
+  not fully initializing dynamicPage state until a human loads them once). Three real Connectors
+  were then created (String/Boolean/Number types, one via `connectorType=Humidity`).
+  Live-verifying them surfaced a genuine platform gap this spec had not anticipated: Hub Variable
+  Connector devices do not appear in `/hub2/devicesList`, the bulk endpoint this app's own device
+  discovery already relies on - confirmed via a temporary diagnostic log across three consecutive
+  scans, `labels.containsKey` stayed false for all three known-real connector device IDs the whole
+  time. Fixed by trusting `getGlobalVar()`'s own reported `deviceId` directly (an ID-based
+  reference, not the display-name join parent spec 7.2 warns against) and synthesizing a minimal
+  device node when independent discovery did not find it, rather than requiring both sources to
+  agree. Confirmed live: node/edge counts and the connector count in the main-page summary moved
+  exactly as expected once deployed. Known, accepted trade-off: a Connector device manually deleted
+  out from under its variable (bypassing the proper remove-connector flow) would now render as a
+  synthesized node instead of surfacing in `unresolvedConnectors` - no live evidence this happens,
+  and re-verifying per-device before trusting the platform's own reported ID was judged not worth
+  the extra per-device call this scan's architecture is built to avoid.
 - Never log or export a variable's `value` outside the explicit-opt-in path that doesn't exist yet
   - same discipline as every test this effort has run so far.
 
