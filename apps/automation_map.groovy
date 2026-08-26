@@ -7067,15 +7067,14 @@ function ccExplorerUrl(name) {
   return COMMUNITY_EXPLORER_URL + '?query=' + encodeURIComponent(name);
 }
 
-// Constant, never carrying app or hub identity in its query string (spec
-// 3.3's No match row) - a plain link to the
-// general tool, for the reader to search by hand, not a deep link.
-const COMMUNITY_IDENTITY_RESOLVER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/identity-resolver/';
-function ccIdentityResolverLinkHtml() {
-  return '<p class="ccLinks"><a href="' + COMMUNITY_IDENTITY_RESOLVER_URL + '" target="_blank" rel="noopener noreferrer">Search the Identity Resolver</a></p>';
+// Package Explorer, not the Identity Resolver: the resolver takes no query
+// parameter, so a link there opens a page that searches for nothing.
+function ccSearchLinkHtml(name) {
+  if (!name) return '';
+  return '<p class="ccLinks"><a href="' + ccExplorerUrl(name) + '" target="_blank" rel="noopener noreferrer">Search Community Utilities for this app</a></p>';
 }
 
-function ccCardHtml(result, snapshotGenerated) {
+function ccCardHtml(result, snapshotGenerated, searchName) {
   let html = '<h4>Community information</h4>';
   let clickUrl = null;
   if (result.state === 'confirmed') {
@@ -7085,7 +7084,7 @@ function ccCardHtml(result, snapshotGenerated) {
     // Spec 3.3: a flagged identity should not read
     // as a plain clean match with nowhere else to check it - the reader can
     // go verify it themselves, not just take this card's word for it.
-    if (result.identityMismatch) html += ccIdentityResolverLinkHtml();
+    if (result.identityMismatch) html += ccSearchLinkHtml(searchName);
   } else if (result.state === 'ambiguous') {
     html += '<p class="sub">More than one Community Utilities record matches this app by name. None is shown as confirmed - click through to investigate.</p><ul>';
     result.records.slice(0, 5).forEach(function (r) {
@@ -7094,13 +7093,13 @@ function ccCardHtml(result, snapshotGenerated) {
         ' <span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[r.authority] || r.authority) + '</span></li>';
     });
     html += '</ul>';
-    html += ccIdentityResolverLinkHtml();
+    html += ccSearchLinkHtml(searchName);
     const first = result.records[0];
     const name = first && (first.displayName || first.packageName);
     if (name) clickUrl = ccExplorerUrl(name);
   } else {
     html += '<p class="sub">No community information found for this app.</p>';
-    html += ccIdentityResolverLinkHtml();
+    html += ccSearchLinkHtml(searchName);
   }
   if (snapshotGenerated) {
     html += '<p class="sub ccSnapshot">Catalogue snapshot: ' + extEsc(ccFormatDate(snapshotGenerated)) +
@@ -7138,11 +7137,15 @@ function renderCommunityCard(node) {
   if (!box) return;
   const seq = ++communityCardRequestSeq;
   if (!node || node.group !== 'app') { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  // A child app is an instance the user built inside an engine - a rule, a
+  // button rule, a notifier. No community package exists for one, so the card
+  // could only ever say "nothing found". Show nothing instead.
+  if (node.parent) { box.innerHTML = ''; ccApplyClickable(box, null); return; }
   box.innerHTML = '<h4>Community information</h4><p class="sub">Checking Community Utilities...</p>';
   ccApplyClickable(box, null);
   loadCommunityContext().then(function (data) {
     if (seq !== communityCardRequestSeq) return;
-    const rendered = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated);
+    const rendered = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated, node.appType);
     box.innerHTML = rendered.html;
     ccApplyClickable(box, rendered.clickUrl);
   }).catch(function (e) {
