@@ -25,13 +25,9 @@
  * via a self-request to 127.0.0.1 - an established community technique, not a
  * public API:
  *
- *   /device/fullJson/<id>         parentApp + appsUsing (NOT appsUsingForDialog,
- *                                 which the hub caps at five entries per device
- *                                 with only a count of the remainder), used to
- *                                 DISCOVER which app ids exist
+ *   /device/fullJson/<id>         device metadata and relationship evidence
  *   /hub2/appsList                the complete installed-app tree in one call,
- *                                 unioned with device-led discovery so an app
- *                                 that touches no device is not invisible
+ *                                 including apps that touch no device
  *   /installedapp/statusJson/<id> the real relationship data per app:
  *                                 childDevices, eventSubscriptions, and every
  *                                 setting that resolves to devices
@@ -72,6 +68,9 @@
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.util.regex.Pattern
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String APP_NAME = 'Automation Map'
 // Every build of this app excludes all of its own variants from the map,
@@ -79,7 +78,7 @@ import java.util.regex.Pattern
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.4'
+@Field static final String APP_VERSION = '2.0.15'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -90,14 +89,8 @@ import java.util.regex.Pattern
 // rescan that already exists for exactly this situation.
 @Field static final String GRAPH_SCHEMA = '5'
 
-// A once-a-year decoration, embedded as a data URI rather than hosted -
-// this app has no other place to serve an asset from, and a ~29KB addition
-// to the page for five days a year is not worth standing up file storage
-// for. Source PNG is 21.7KB.
-@Field static final String SANTA_PNG_B64 = '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'
-
-// Confirmed on a live preview 2026-08-14 (placement, size and caption all
-// checked against the actual rendered page before this gate went in).
+// Gates the watermark's Dec 20-25 swap to the Christmas tree image
+// (see hubWatermark below) - the only thing showSanta() controls now.
 boolean showSanta() {
     Calendar cal = Calendar.getInstance(location.timeZone)
     cal.setTime(new Date())
@@ -121,8 +114,6 @@ boolean showSanta() {
 // and touching its group indices to add a second capture risks breaking the
 // local-path case for every user to fix a case that only affects some.
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
-@Field static final Integer DEVICE_BATCH_SIZE = 15
-@Field static final Integer APP_BATCH_SIZE = 3
 
 definition(
     name: APP_NAME,
@@ -138,6 +129,7 @@ definition(
 
 preferences {
     page name: 'main'
+    page name: 'baselineComparisonPage'
 }
 
 void installed() {
@@ -162,12 +154,16 @@ void updated() {
     scheduleAutoScan()
 }
 
-// On by default (00:30) - the app-wide scan-first-then-explore experience
-// this app is built around is better served by a map that keeps itself
-// current than by one that goes stale until someone remembers to press Scan.
-// The toggle below is still there to opt out entirely. Rescheduled (not just
-// scheduled once) every time this runs, so turning the toggle off actually
-// cancels a previously-running schedule rather than leaving it firing.
+// On by default (00:30 production, 01:00 Dev when the time is left blank) -
+// the app-wide scan-first-then-explore experience this app is built around
+// is better served by a map that keeps itself current than by one that goes
+// stale until someone remembers to press Scan. The two defaults differ only
+// so a Dev install running alongside production on the same hub doesn't
+// compete with it for the same loopback endpoints at the same second - an
+// explicitly chosen time on either instance is never overridden. The toggle
+// below is still there to opt out entirely. Rescheduled (not just scheduled
+// once) every time this runs, so turning the toggle off actually cancels a
+// previously-running schedule rather than leaving it firing.
 void scheduleAutoScan() {
     unschedule('scheduledScanHandler')
     if (!settings.autoScanEnabled) return
@@ -176,11 +172,20 @@ void scheduleAutoScan() {
         // and reschedules it daily - standard, documented platform pattern,
         // not yet confirmed live against this specific input on this hub.
         schedule(settings.autoScanTime as String, 'scheduledScanHandler')
+    } else if (APP_NAME.contains('(Dev)')) {
+        // A Dev install sitting on its own explicit "01:00 (default)" text
+        // (see the settings page) - kept off production's 00:30 so the two
+        // don't compete for the same hub CPU/loopback endpoints at the same
+        // second when both are installed side by side, as they are on
+        // Gordon's own hub. Only the blank-time fallback differs; an
+        // explicitly chosen time on either instance is untouched above.
+        schedule('0 0 1 * * ?', 'scheduledScanHandler')
     } else {
         // Cron default: 00:30:00 every day (sec min hour day month weekday).
         schedule('0 30 0 * * ?', 'scheduledScanHandler')
     }
-    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: '00:30 (default)'}"
+    String defaultLabel = APP_NAME.contains('(Dev)') ? '01:00 (default)' : '00:30 (default)'
+    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
 }
 
 // Guarded against overlapping a scan already in progress - a manual press
@@ -194,7 +199,12 @@ void scheduledScanHandler() {
         return
     }
     log.info "${app.label}: starting scheduled overnight scan"
-    startScan()
+    // state.scanRunning above is a fast-path check only, harmless if stale -
+    // startScan()'s own atomic lock is what actually decides this correctly.
+    Map result = startScan()
+    if (!result.acquired) {
+        log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
+    }
 }
 
 Map main() {
@@ -221,8 +231,16 @@ Map main() {
     // A full scan takes a couple of minutes. Without this the page looked frozen
     // - the progress line only moved if you closed and reopened it, which reads
     // as a hang rather than as work in progress.
+    // Live progress now comes from amProgressPoll() below (a lightweight
+    // fetch of /scan-status updating one span in place), not from Hubitat's
+    // own full-page refreshInterval - a scan now typically finishes in
+    // 15-25s, and a 4-second full-page reload against that window produced
+    // 2-3 jarring whole-page flashes rather than a smooth progress display.
+    // A long fallback interval is kept, not removed entirely, in case the
+    // JS poll itself ever fails to start or silently stalls - the same
+    // belt-and-suspenders reasoning as the async pipeline's own watchdogs.
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && state.scanRunning) ? 4 : 0) {
+                       refreshInterval: (ready && state.scanRunning) ? 60 : 0) {
         // Scan status, the map link and the Scan button all sit ABOVE the device
         // picker. The picker renders as a list of every device on the hub, so
         // anything below it is off the bottom of the screen - which is where the
@@ -237,29 +255,56 @@ Map main() {
                 // rather than from a Hubitat button. runIn() called out of
                 // appButtonHandler does not reliably schedule anything: on a
                 // clean install the queue was populated, scanRunning was true,
-                // no job was scheduled, and scanBatch never ran even once - its
-                // heartbeat was never written. Driving it through the endpoint
+                // no job was scheduled, and the async pipeline never advanced
+                // even once - its heartbeat was never written. Driving it through the endpoint
                 // runs the scan in an ordinary app execution, which works.
                 paragraph scanButtonHtml()
                 if (state.scanTotal) {
-                    Integer done = (state.scanDone ?: 0) as Integer
+                    // state.scanDone is only ever written once per phase now
+                    // (by the phase-starting execution and by its finalize) -
+                    // callbacks/reapers stay entirely state-free, so this
+                    // would read frozen at 0 for the whole active phase
+                    // without reading the live scan accumulator instead. Same
+                    // fix as scanStatusJson().
+                    ConcurrentHashMap liveScan = null
+                    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
+                    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+                    Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: 0) as Integer
                     Integer total = (state.scanTotal ?: 1) as Integer
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
-                    String phase = state.scanPhase == 'apps' ? 'Reading apps' : 'Reading devices'
-                    String progress = "${phase}: ${done} of ${total} (${pct}%)"
+                    boolean isDevicePhase = state.scanPhase != 'apps'
+                    // total/done during the device phase count driver-type
+                    // representatives (34 on this hub), not individual devices
+                    // (194) - dispatchDeviceOne fetches capabilities once per
+                    // representative and applies the result to its whole group,
+                    // so there is no finer-grained "device 47 of 194" progress
+                    // to report even in principle. Labelled and shown alongside
+                    // the real device count instead of mislabelling the
+                    // representative count as a device count.
+                    String phase = isDevicePhase ? 'Reading device types' : 'Reading apps'
+                    Integer realDeviceTotal = (state.deviceScanTotal ?: 0) as Integer
+                    String deviceContext = (isDevicePhase && realDeviceTotal > 0) ? " (${realDeviceTotal} devices)" : ''
+                    String progress = "${phase}: ${done} of ${total}${deviceContext} (${pct}%)"
                     if (state.scanRunning) {
-                        progress += ' - this page updates itself, no need to reload.'
+                        progress += ' - updating live, no need to reload.'
                     } else {
                         // scanHeartbeat is stamped at the start of finishScan(), so it lands a
                         // few seconds ahead of this page reporting the scan as finished - close
                         // enough for a "when did this last run" display. Same value already
-                        // backs the AI export's lastScanCompletedAt.
+                        // backs the AI export's lastScanCompletedAt. Counts moved out of this
+                        // line entirely - see the "Map contains" paragraph below, which covers
+                        // apps/devices/nodes/relationships together in one place instead of
+                        // splitting apps in here and nodes/edges down there.
                         String when = state.scanHeartbeat ?
-                            new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : null
-                        progress = "Last scan: ${done} of ${total} ${state.scanPhase == 'apps' ? 'apps' : 'devices'}" +
-                            (when ? " - ${when}" : '') + '.'
+                            new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : 'unknown'
+                        progress = "Last scan : <span style='color:#2e7d32'>${when}</span>"
                     }
-                    paragraph progress
+                    // Wrapped in an id'd span, not a bare paragraph - amProgressPoll()
+                    // below replaces this element's text in place once JS takes over,
+                    // rather than needing a full page reload to show new numbers. This
+                    // server-rendered text is still the correct first paint and the
+                    // no-JS fallback, not dead markup.
+                    paragraph "<span id='amProgress'>${progress}</span>"
                 }
                 if (state.scanError) {
                     paragraph "<b style='color:#c0392b'>Scan error: ${state.scanError}</b>"
@@ -281,36 +326,91 @@ Map main() {
                         // as uncoloured edges rather than failing visibly.
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
-                        paragraph "Map ready: ${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
+                        paragraph "Map contains: ${(state.appInfo ?: [:]).size()} apps, ${(state.deviceLabels ?: [:]).size()} devices, " +
+                            "${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
                         paragraph compatibilitySummary()
                         href(
-                            name: 'mapLink', title: 'View Automation Map',
+                            name: 'mapLink', title: "<span style='color:#1976d2'>View Automation Map</span>",
                             description: 'Open the relationship graph',
-                            url: getLocalURL('automation-map.html'),
+                            url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                             style: 'embedded', state: 'complete', required: false,
-                        )
-                        paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'>Automation Map community thread</a> for setup advice, known issues, and support."
+                       )
                     }
                 }
+                href(
+                    name: 'baselineComparisonLink', title: "<span style='color:#1976d2'>Baseline Comparison</span>",
+                    description: 'Compare discovered apps and devices between two Automation Map exports',
+                    page: 'baselineComparisonPage', style: 'embedded', required: false,
+               )
+                href(
+                    name: 'communityUtilitiesLink', title: "<span style='color:#1976d2'>Community Utilities</span>",
+                    description: 'Open the Hubitat Community Utilities site',
+                    url: 'https://gordonthelander.github.io/HPM_Manifest_Crawl/',
+                    style: 'embedded', required: false,
+               )
+                // Hubitat's external href style calls openWindow(), which
+                // creates a sized popup rather than the full browser tab the
+                // user requested. Keep the normal full-width href row, then
+                // make its real anchor an ordinary target=_blank link.
+                paragraph '''<script type="text/javascript">
+(function () {
+  var link = document.querySelector('a[href="https://gordonthelander.github.io/HPM_Manifest_Crawl/"]');
+  if (!link) return;
+  link.removeAttribute('onclick');
+  link.setAttribute('target', '_blank');
+  link.setAttribute('rel', 'noopener noreferrer');
+})();
+</script>'''
+                paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for Community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    description: 'On by default at 00:30. Turn off if you would rather press Scan yourself.',
+                    description: "On by default at ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}. Turn off if you would rather press Scan yourself.",
                     defaultValue: true, submitOnChange: true
                 if (settings.autoScanEnabled) {
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
-                        description: 'Leave blank for 00:30.', required: false
+                        description: "Leave blank for ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}.", required: false
                 }
             }
         }
 
         if (!ready) {
             section {
-                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes a couple of minutes on a large hub. Open the app again to watch it and to view the map.</b></span>'
-                paragraph '<span style="opacity:0.75">There is nothing to configure. Every device on the hub is scanned, and the apps are found by asking each device which apps use it.</span>'
+                paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes well under a minute, even on a large hub. Open the app again to watch it and to view the map.</b></span>'
+                paragraph '''<span style="opacity:0.75">There is nothing to configure. Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.</span>'''
             }
+        }
+    }
+}
+
+Map baselineComparisonPage() {
+    return dynamicPage(name: 'baselineComparisonPage', title: '<b>Baseline Comparison</b>',
+                       install: false, uninstall: false) {
+        section {
+            href(
+                name: 'baselineComparisonBack', title: 'Back to Automation Map',
+                description: 'Return to the Automation Map main page',
+                page: 'main', style: 'button', required: false,
+           )
+            // A Hubitat dynamic subpage adds its own bottom-right Done/Cancel
+            // action even though this page has nothing to save. On the tall
+            // comparator page that control is both misleading and far away
+            // from the requested navigation. The explicit Back control above
+            // is the only page-exit action this page needs.
+            paragraph '''<style type="text/css">
+button.cancel, button.done, button[name="_action_done"] { display:none !important; }
+button[name^="_action_href_baselineComparisonBack|"] {
+  background:#2e7d32 !important;
+  border-color:#2e7d32 !important;
+  color:#fff !important;
+}
+button[name^="_action_href_baselineComparisonBack|"] span { color:#fff !important; }
+</style>'''
+        }
+        section {
+            paragraph comparatorFrameHtml()
         }
     }
 }
@@ -348,11 +448,20 @@ String scanButtonHtml() {
 // origin, not guessed once at page-render time on the server, because the
 // server has no reliable way to know which origin THIS page request came in
 // on for a native Hubitat-rendered page.
-function amPickURL(localPath, cloudUrl) {
+function amIsLocalAccess() {
   try {
-    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+    return new URL('${getLocalOrigin()}').hostname === window.location.hostname;
   } catch (ignore) { }
-  return cloudUrl;
+  return false;
+}
+function amPickURL(localPath, cloudUrl) {
+  return amIsLocalAccess() ? localPath : cloudUrl;
+}
+function amShowRemoteProgress() {
+  var el = document.getElementById('amProgress');
+  if (el) el.textContent = 'Remote scanning, this page will refresh once done.';
+  var msg = document.getElementById('amScanMsg');
+  if (msg) msg.textContent = '';
 }
 function amStartScan() {
   var b = document.getElementById('amScanBtn');
@@ -363,7 +472,7 @@ function amStartScan() {
   // session cookie makes the hub treat this as part of the open UI transaction,
   // and scheduled jobs created inside one are discarded - startScan() would
   // populate the queue and set scanRunning, then runIn() would silently
-  // schedule nothing and scanBatch would never execute. Authenticating with the
+  // schedule nothing and the async pipeline would never execute. Authenticating with the
   // access token alone runs it as an ordinary request, which schedules.
   // Reads the body as TEXT and parses it here, rather than calling r.json()
   // and letting the browser throw. A raw "Unexpected token '<'" tells you only
@@ -387,11 +496,21 @@ function amStartScan() {
   // the truth via the page's own state, the same way the success path
   // already relies on a reload rather than reading the response.
   if (scanUrl.indexOf('http') === 0) {
-    m.textContent = 'Starting via Hubitat cloud - this page will reload in a few seconds to show the result.';
+    m.textContent = 'Remote scanning, this page will refresh once done.';
+    var remoteProgress = document.getElementById('amProgress');
+    if (remoteProgress) remoteProgress.textContent = m.textContent;
     var f = document.createElement('iframe');
     f.style.display = 'none';
     f.src = scanUrl;
     document.body.appendChild(f);
+    // Marks a scan as pending-confirmation, read by the bootstrap retry
+    // block below on the NEXT page load. startScan() runs two real HTTP
+    // calls before it commits scanRunning=true, so this fixed 4-second
+    // reload can legitimately land before that commit - without this
+    // marker, that reload would render from stale pre-scan state (button
+    // enabled, no polling started) and just sit there, stale, until the
+    // user notices and reloads again by hand.
+    try { sessionStorage.setItem('amScanPending', '0'); } catch (ignore) { }
     setTimeout(function () { location.reload(); }, 4000);
     return;
   }
@@ -420,7 +539,7 @@ function amStartScan() {
         return d;
       });
     })
-    .then(function () { m.textContent = 'Scanning - this page updates itself.'; setTimeout(function () { location.reload(); }, 2000); })
+    .then(function () { m.textContent = 'Scanning - progress below updates live.'; amSawRunning = true; amProgressPoll(); })
     .catch(function (e) {
       b.disabled = false;
       var where = '(could not parse the attempted URL)';
@@ -428,7 +547,114 @@ function amStartScan() {
       m.textContent = 'Could not start the scan: ' + e.message + ' | tried: ' + where;
     });
 }
+// Live progress for the span scanButtonHtml's caller renders as
+// <span id="amProgress">. Reuses amPickURL's same local/cloud origin
+// detection amStartScan already relies on - the cloud/CORS case has no live
+// polling available for the same documented reason amStartScan falls back
+// to a hidden-iframe navigation, so it does nothing further here and leaves
+// the page's own refreshInterval (see dynamicPage below) as the sole
+// fallback. amSawRunning is the guard against reloading a page that was
+// never actually watching a live scan - only a poll that itself observed
+// running:true, in THIS page view, triggers the one-time reload once the
+// scan finishes; a page opened after the fact just shows the static
+// "Last scan" text with no polling at all.
+//
+// Previously scheduled its own setTimeout(reload, 4000) here on the cloud
+// path. Every reload re-renders the page while scanRunning is still true,
+// which re-enters this same function on load and reschedules another
+// reload - an unbounded four-second reload chain for the whole scan, not
+// the single fallback the old comment claimed. Caught in review before this
+// shipped past dev.
+var amPolling = false;
+var amSawRunning = false;
+function amProgressPoll() {
+  if (amPolling) return;
+  amPolling = true;
+  var statusUrl = amPickURL('${getLocalURL('scan-status')}', '${getCloudURL('scan-status')}');
+  if (statusUrl.indexOf('http') === 0) {
+    amPolling = false;
+    return;
+  }
+  fetch(statusUrl, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      amPolling = false;
+      var el = document.getElementById('amProgress');
+      if (!el) return;
+      if (d.running) {
+        amSawRunning = true;
+        var isDevicePhase = d.phase !== 'apps';
+        if (!isDevicePhase && d.total > 0 && d.done >= d.total) {
+          // Every app is read, but scanRunning is still true - fetchRegistry
+          // and finishScan (the graph build) are their own separately
+          // scheduled executions after this, not instant. Without this the
+          // page sat on "106 of 106 (100%)" looking finished for that whole
+          // gap, which read as stuck rather than as the next real step.
+          el.textContent = 'Building map - please wait...';
+        } else {
+          var phaseLabel = isDevicePhase ? 'Reading device types' : 'Reading apps';
+          var deviceContext = (isDevicePhase && d.devices) ? ' (' + d.devices + ' devices)' : '';
+          var pct = d.total > 0 ? Math.floor((d.done * 100) / d.total) : 0;
+          el.textContent = phaseLabel + ': ' + d.done + ' of ' + d.total + deviceContext +
+                            ' (' + pct + '%) - updating live, no need to reload.';
+        }
+        setTimeout(amProgressPoll, 1500);
+      } else if (amSawRunning) {
+        // Live-updating this one span cannot reveal the map link/insights
+        // sections, which only render at all when state.graph exists in the
+        // page's original server-rendered HTML - one reload is still needed
+        // to show those, just once, at the actual end, not every 4 seconds
+        // for the whole scan.
+        el.textContent = 'Scan complete - reloading...';
+        location.reload();
+      }
+    })
+    .catch(function () {
+      amPolling = false;
+      // Silent - the 60s refreshInterval fallback still covers a poll that
+      // keeps failing, and a transient failure just gets retried below. Not
+      // worth a user-visible error for a background progress poll.
+      setTimeout(amProgressPoll, 3000);
+    });
+}
 ${autoScanScript()}
+if (${state.scanRunning ? 'true' : 'false'}) {
+  // A scan was already running when this page was rendered (reopened mid-
+  // scan, or the 60s fallback refreshInterval fired) - resume live polling
+  // immediately rather than wait for the user to notice and reload again.
+  // Confirmed now, so the pending-retry marker below has done its job.
+  try { sessionStorage.removeItem('amScanPending'); } catch (ignore) { }
+  amSawRunning = true;
+  if (amIsLocalAccess()) {
+    document.addEventListener('DOMContentLoaded', amProgressPoll);
+    if (document.readyState !== 'loading') amProgressPoll();
+  } else {
+    document.addEventListener('DOMContentLoaded', amShowRemoteProgress);
+    if (document.readyState !== 'loading') amShowRemoteProgress();
+  }
+} else {
+  // Bounded retry for the amStartScan() cloud path's own fixed 4-second
+  // reload, which can legitimately land before startScan()'s two HTTP
+  // calls finish and scanRunning commits. Without this, that one reload
+  // renders from stale pre-scan state and never gets another chance -
+  // the amProgressPoll cascade this file used to have was the wrong fix
+  // for that (see amProgressPoll's own comment), but leaving the page
+  // permanently stale is not the right fix either. One extra reload only,
+  // not a chain: the counter caps it, and scanRunning true above (not
+  // this branch) is what takes over once the scan is actually confirmed.
+  try {
+    var amPendingRaw = sessionStorage.getItem('amScanPending');
+    if (amPendingRaw !== null) {
+      var amPendingAttempts = parseInt(amPendingRaw, 10) || 0;
+      if (amPendingAttempts < 1) {
+        sessionStorage.setItem('amScanPending', String(amPendingAttempts + 1));
+        setTimeout(function () { location.reload(); }, 3000);
+      } else {
+        sessionStorage.removeItem('amScanPending');
+      }
+    }
+  } catch (ignore) { }
+}
 </script>"""
 }
 
@@ -452,8 +678,11 @@ boolean graphIsStale() {
 // button and shows a progress line that never moves - the app looks permanently
 // mid-scan with no way back. That happens if the hub restarts or the app is
 // updated mid-scan, and it happened to anyone who pressed Scan before the app
-// finished installing. scanBatch stamps a heartbeat every batch, so a scan whose
-// heartbeat has stopped advancing is over whatever its flag says.
+// finished installing. state.scanHeartbeat is stamped once, when a phase
+// starts, not refreshed by callbacks/reapers any more - those stay entirely
+// state-free. Whether a scan is genuinely still active is answered below by
+// checking DEVICE_SCANS/APP_SCANS for a live entry, not by heartbeat
+// recency; the 90s check is only a cheap first filter before that lookup.
 void clearAbandonedScan() {
     if (!state.scanRunning) return
     Long beat = (state.scanHeartbeat ?: 0) as Long
@@ -476,15 +705,122 @@ void clearAbandonedScan() {
     // Previously this branch discarded a fully-read scan and told the user
     // to start over from zero; now it finishes the one step that never got
     // the chance to run.
-    List queue = (state.scanQueue ?: []) as List
-    if (!queue && state.scanPhase == 'apps') {
-        log.warn "${app.label}: scan batches finished but finalization never ran - finishing now instead of discarding it"
-        finishScan()
+    //
+    // Callbacks and reapers never write state.scanHeartbeat any more (see
+    // deviceFetchCb/appFetchCb - it moved to a scan-local timestamp field,
+    // scanStatusJson reads it live). So the staleness check above no longer
+    // means "no progress in 90s" during an active async phase - it just
+    // means "90s since this scan STARTED", which fires on every long-running
+    // scan whether it is healthy or not. Deferring to whichever phase's own
+    // watchdog/reaper is live is therefore not a belt-and-suspenders
+    // addition any more, it is the only thing standing between a perfectly
+    // healthy in-progress scan and this function marking it abandoned.
+    boolean asyncDeviceScanActive = state.scanPhase == 'devices' && DEVICE_SCANS.containsKey(state.deviceScanId as String)
+    boolean asyncAppScanActive = state.scanPhase == 'apps' && APP_SCANS.containsKey(state.appScanId as String)
+    if (asyncDeviceScanActive || asyncAppScanActive) return
+
+    // A "finishing:<token>:<since>" value means finishGeneration() is
+    // already mid-publish for the current generation (see its own comment) -
+    // actively wrapping up, not stuck. Recovering it here on sight would
+    // race the in-flight publish, and finishGeneration()'s own finally is
+    // about to release it as its very next real step regardless - UNLESS
+    // the execution holding it was killed outright (platform timeout, hub
+    // reboot) rather than merely throwing, which no in-process finally can
+    // cover. FINISHING_RECOVERY_SEC bounds how long this function trusts
+    // "actively finishing" before treating it as stranded instead.
+    String currentLock = SCAN_LOCKS.get("${app.id}") as String
+    if (currentLock != null && currentLock.startsWith('finishing:')) {
+        List parts = currentLock.split(':') as List
+        Long finishingSince = parts.size() >= 3 ? (parts[2] as Long) : 0L
+        if ((now() - finishingSince) < (FINISHING_RECOVERY_SEC * 1000)) return
+        log.warn "${app.label}: clearing a stranded finishing marker (${((now() - finishingSince) / 1000).intValue()}s old)"
+        // Not a direct remove-then-mutate - caught in review as the exact
+        // race the unified terminal protocol exists to remove, reintroduced
+        // in this one recovery-only path: after a plain conditional remove,
+        // a brand new scan C could acquire before the writes below ran, and
+        // recovery would then stomp C's just-started state. Atomically
+        // replaces the exact aged value with a distinct "recovering:"
+        // sentinel first - still occupying the slot, still blocking a new
+        // acquisition - writes the recovery state while that sentinel
+        // holds, then removes it last, in a finally. Not routed through
+        // finishGeneration()/markScanFinished(): this is recovering an
+        // already-stranded value, not a normal generation's own token
+        // handoff, and must not itself claim a fresh "finishing:" transition
+        // (which would nest and break this same parsing on a future pass).
+        String recoveryValue = "recovering:${currentLock}:${now()}"
+        if (SCAN_LOCKS.replace("${app.id}", currentLock, recoveryValue)) {
+            try {
+                state.scanError = 'The previous scan stopped before it finished. Press Scan to run it again.'
+                state.scanRunning = false
+            } finally {
+                SCAN_LOCKS.remove("${app.id}", recoveryValue)
+            }
+        }
         return
     }
 
-    state.scanRunning = false
-    state.scanError = 'The previous scan stopped before it finished. Press Scan to run it again.'
+    // Once the async app accumulator is gone, durable appResultsReady is the
+    // only proof that finalizeAppPhase committed the complete appInfo map.
+    // state.scanQueue is always empty in this async implementation, including
+    // before the first app result is published, so it must never be used as a
+    // completion invariant. Reproduced live in v2.0.8: updating the app code
+    // erased APP_SCANS/SCAN_LOCKS, recovery saw an empty queue, and published
+    // the still-empty state.appInfo as a successful zero-app graph.
+    if (state.scanPhase == 'apps') {
+        // Live SCAN_LOCKS snapshot, not a remembered token - same reasoning
+        // as this function's own genuinely-abandoned branch below: this is a
+        // recovery path, so it trusts the freshest ground truth for "what is
+        // the currently active generation" rather than a value written
+        // earlier that could have gone stale by the time recovery runs.
+        String currentToken = SCAN_LOCKS.get("${app.id}") as String
+        if (currentToken == null) {
+            // Reproduced live 2026-08-24: an app code reload resets the
+            // static SCAN_LOCKS map to empty, but durable state.scanRunning
+            // survives the reload untouched, so this branch kept re-entering
+            // with a null token. finishScan()'s own claim always correctly
+            // rejected that null and discarded the graph it had just built -
+            // but with no token left to hand it, nothing ever recovered, and
+            // every status poll repeated the entire wasted rebuild forever.
+            // No original generation to reclaim ownership FROM here, so
+            // putIfAbsent claims the empty slot fresh instead of replace()
+            // transitioning an existing value - only one concurrent recovery
+            // attempt can win it.
+            String recoveryToken = "recovered-${now()}-${(int)(Math.random() * 999999)}"
+            if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
+            currentToken = recoveryToken
+        }
+        if (state.appResultsReady == true) {
+            log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
+            finishScan([lockToken: currentToken])
+        } else {
+            // The async results lived only in the lost static accumulator and
+            // cannot be reconstructed safely. Terminate truthfully and require
+            // a new scan rather than publish a valid-looking empty/partial map.
+            log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
+            markScanFinished(currentToken,
+                'The scan working data was lost before it could be published. Press Scan to run it again.')
+        }
+        return
+    }
+
+    // Snapshot-then-conditional-remove, not a remembered token - this path
+    // exists specifically for "something is stuck, recover it", so it uses
+    // the freshest possible ground truth (whatever SCAN_LOCKS currently
+    // holds) rather than trusting a value written earlier that the very
+    // malfunction being recovered from might have left stale.
+    String abandonedToken = SCAN_LOCKS.get("${app.id}") as String
+    if (abandonedToken == null) {
+        // Still claim the empty slot before touching durable state. A plain
+        // lock-free clear has a TOCTOU gap: a new scan can acquire after the
+        // null read but before these writes, and this stale recovery execution
+        // would then clear the new scan. putIfAbsent either gives recovery
+        // exclusive ownership or proves another execution got there first.
+        String recoveryToken = "recovered-abandon-${now()}-${(int)(Math.random() * 999999)}"
+        if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
+        abandonedToken = recoveryToken
+    }
+    markScanFinished(abandonedToken,
+        'The previous scan stopped before it finished. Press Scan to run it again.')
     log.warn "${app.label}: clearing an abandoned scan"
 }
 
@@ -509,14 +845,6 @@ String compatibilitySummary() {
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} flow(s)."
 
-    // Said out loud because the number is usually small and sometimes zero, and
-    // a scan that quietly claims completeness it did not earn is the thing this
-    // whole discovery change exists to prevent.
-    int listed = (state.appsFromListing ?: 0) as Integer
-    if (listed > 0) {
-        s << " ${listed} of them reference no device and would not have been found by walking devices alone."
-    }
-
     // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
     // and said nothing about the difference, so the summary, the Focus app list
     // and the map itself disagreed with each other. They are reconciled here
@@ -531,6 +859,19 @@ String compatibilitySummary() {
         s << " Found ${links} rule-to-rule link(s)."
     } else {
         s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
+    }
+
+    // v2.0.14: only shown when the authoritative inventory itself succeeded
+    // (complete or complete-with-gaps) - a failed/not-supported inventory has
+    // no real count to report, and showing 0 would misrepresent "could not
+    // ask the hub" as "the hub has none".
+    Map hubVarInv = (state.hubVariableInventory ?: [:]) as Map
+    String hubVarInvStatus = "${hubVarInv.status}"
+    if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
+        int hubVarCount = (hubVarInv.count ?: 0) as Integer
+        int hubVarConnCount = (state.hubVariableConnectorCount ?: 0) as Integer
+        s << " Found ${hubVarCount} Hub Variable(s)"
+        s << (hubVarConnCount > 0 ? ", ${hubVarConnCount} with a Connector." : ".")
     }
 
     int skipped = (state.rulesSkipped ?: 0) as Integer
@@ -556,9 +897,10 @@ String compatibilitySummary() {
 // one place that shape is written now.
 //
 // data comes back exactly as the response sent it, not coerced to Map here -
-// fetchAllDeviceIds needs a List, so that decision stays with whoever
-// actually knows their own endpoint's shape. extraOpts exists only for
-// fetchRegistry's contentType; every loopback caller passes none.
+// different endpoints return different top-level shapes (a bare List or a
+// Map), so that decision stays with whoever actually knows their own
+// endpoint's shape. extraOpts exists only for fetchRegistry's contentType;
+// every loopback caller passes none.
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     Map out = [ok: false, data: null, error: null]
     try {
@@ -575,6 +917,92 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
 // The one thing every loopback caller shares - not shared with fetchRegistry,
 // which hits REGISTRY_URL on GitHub instead.
 @Field static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
+
+// Hardened async dispatch pipeline (v2.0.5) - reintroduces the
+// concurrent-fetch work from the reverted 2.0.5 attempt, this time with
+// the fixes verified against the live hub in the isolated dispatch-test
+// harness: try/catch rollback around every asynchttpGet call, per-item
+// claim/attempt-token tracking, a claim reaper for callbacks that never
+// arrive at all, atomic conditional-removal ownership so a callback and
+// the reaper can never both resolve the same attempt, exact completion
+// invariants, exactly-once finalization, and a fail-closed watchdog that
+// marks a stalled scan failed rather than publish a partial result
+// labeled complete. See BACKLOG.md and the Bucket/ collaboration record
+// for the full history of what was found and why each piece exists.
+@Field static final int DEVICE_ASYNC_MAX_INFLIGHT = 8
+@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   // Hubitat's documented concurrent-async-per-app cap
+// Bounded retry for a synchronous dispatch throw or an aged, unresolved
+// claim - not for an ordinary HTTP-level failure, which already resolves
+// in a single callback with no dangling claim and needs no retry.
+@Field static final int ATTEMPT_CAP = 2
+@Field static final int CLAIM_REAP_INTERVAL_SEC = 10
+// Must exceed the longest real request timeout used by either phase
+// (device fetch: 10s, app fetch: 20s) plus scheduling margin - a
+// deadline shorter than a real request's own timeout makes premature
+// reaping possible by construction, not just by bad luck. Confirmed as
+// a real defect at 8000ms (below the test harness's own 10s "good"
+// timeout) during the isolated test's second review round; raised well
+// clear of this pipeline's real 20s maximum.
+@Field static final long CLAIM_REAP_DEADLINE_MS = 25000
+// Both phases share the same claim deadline/reap interval/attempt cap, so
+// the worst-case time to terminally resolve one item is the same for
+// either phase: ATTEMPT_CAP reap cycles, each up to (deadline + one poll
+// interval) before the next attempt even starts - here, 2 * (25s + 10s) =
+// 70s. A watchdog shorter than that envelope can fail a pipeline that is
+// behaving exactly as designed - confirmed as a real defect (60s device
+// watchdog against this same ~70s worst case) during the production-diff
+// review, not just a theoretical gap. 60s of real margin added on top of
+// the 70s envelope, not just clearing the minimum: 130s each.
+//
+// Written as plain literals, not computed from ATTEMPT_CAP/
+// CLAIM_REAP_DEADLINE_MS/CLAIM_REAP_INTERVAL_SEC above - the hub's own
+// loader rejects one @Field static final referencing another one's value
+// ("was found in a static scope but doesn't refer to a local variable,
+// static field or class"), even though local groovyc accepts it and even
+// though the referenced field is declared earlier in the file. Confirmed
+// against the hub directly, not assumed. If either the deadline, the
+// interval, or the attempt cap above ever changes, these two must be
+// recalculated by hand and this comment's math updated to match.
+@Field static final int DEVICE_ASYNC_WATCHDOG_SEC = 130
+@Field static final int APP_ASYNC_WATCHDOG_SEC = 130
+// How long a "finishing" SCAN_LOCKS sentinel (see finishGeneration()) may
+// occupy the slot before clearAbandonedScan() treats it as stranded rather
+// than actively in progress. Generous relative to the actual work done under
+// that sentinel (in-memory state writes only, no HTTP calls) - this bound
+// exists for the case a language-level finally cannot cover at all: the
+// execution itself being killed outright (platform timeout, hub reboot)
+// mid-publish, not an ordinary thrown exception.
+@Field static final int FINISHING_RECOVERY_SEC = 60
+// Per-scan accumulator, keyed by scanId - never read from or written to
+// state directly by a callback. Callbacks only ever touch these static
+// maps; state is written exactly once per phase, by finalizeDevicePhase/
+// finalizeAppPhase, in a single execution. This is what avoids the
+// concurrent-write race this whole design exists to avoid: Hubitat's
+// last-write-wins state persistence means two callbacks racing to write
+// state directly could silently drop whichever wrote last.
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
+// Single-flight lock keyed by app instance id. state.scanRunning alone cannot
+// serve this role: two scanMapping()/scheduledScanHandler() executions can
+// each read it before either one's own state commit lands (state only
+// commits durably at the end of a whole execution), so both proceed into
+// startScan(). putIfAbsent() is checked against this live, shared map
+// instead - not subject to that per-execution commit delay - so only one
+// concurrent caller can ever win it.
+//
+// The value is a unique per-attempt token, not a plain boolean - caught in
+// review before this shipped: a boolean lock's release (SCAN_LOCKS.remove)
+// has no ownership identity, so a LATE execution belonging to an OLDER scan
+// generation (a delayed watchdog, a delayed finalizer) could unconditionally
+// remove a NEWER generation's still-legitimate lock if it fires after that
+// newer generation has already acquired the same app id. Every release must
+// go through markScanFinished(token, ...) using the token THAT execution's
+// own generation was given at acquire time - remove(key, exactToken) then
+// only succeeds if this generation is still the current owner, and safely
+// no-ops otherwise. Reading SCAN_LOCKS's current value fresh at release time
+// instead of using a remembered token would defeat this entirely - that is
+// exactly how a late execution could adopt a newer generation's identity.
+@Field static final ConcurrentHashMap<String, String> SCAN_LOCKS = new ConcurrentHashMap<>()
 
 // Everything this app knows comes from undocumented hub endpoints, so on a hub
 // unlike the one it was written against it must say WHY it found nothing rather
@@ -595,7 +1023,114 @@ Map probeCompatibility() {
     return out
 }
 
-void startScan() {
+// The sole place any scan generation's ownership actually ends - every
+// failure/watchdog/bootstrap-exception path (no data to publish, via the
+// markScanFinished() wrapper below) and finishScan()'s own success path
+// (graph/counters to publish, via the publishWork closure) alike, so the
+// two can never drift into separately-safe terminal protocols. Caught in
+// review across several rounds before this went near a hub:
+//
+// - An early version removed the lock conditionally but mutated
+//   state.scanRunning/state.scanError unconditionally underneath that
+//   check - safe for the lock, not for state a late execution could still
+//   stomp on a legitimately-running newer generation.
+// - A later version fixed that ordering but still released the lock BEFORE
+//   a caller's own further publish writes (finishScan's graph/counters) -
+//   a brand new scan could acquire and start resetting state while the old
+//   one was still mid-publish.
+// - Fixed by claiming an atomic original->finishing transition FIRST -
+//   nothing here or in publishWork touches state until this token is
+//   confirmed to still be the current owner at that exact instant. The
+//   finishing sentinel then continues occupying the slot for the whole of
+//   publishWork, blocking any new acquisition, and the real release -
+//   state.scanRunning=false, then removing the sentinel - is the LAST
+//   thing that happens, inside a finally, so an exception inside
+//   publishWork still releases rather than stranding the slot.
+//
+// The finishing value carries a timestamp (see FINISHING_RECOVERY_SEC) -
+// finally cannot cover the execution being killed outright (platform
+// timeout, hub reboot) mid-publish, only an ordinary thrown exception, so
+// clearAbandonedScan() has a bounded, timestamp-gated path to recover a
+// truly stranded sentinel rather than trusting the string forever.
+//
+// token must be the exact value this caller's own generation was given at
+// acquire time (see SCAN_LOCKS's comment for why a fresh re-read is not
+// safe here) - clearAbandonedScan() is the one deliberate exception, since
+// its whole job is recovering whatever generation is CURRENTLY stuck, and it
+// snapshots SCAN_LOCKS's live value itself before calling this.
+//
+// Returns true if this call actually became the one to terminate the
+// generation, false if the token no longer owns the lock - a stale/
+// superseded caller, correctly discarded, not an error.
+boolean finishGeneration(String token, String error = null, Closure publishWork = null) {
+    if (token == null) return false
+    String finishingValue = "finishing:${token}:${now()}"
+    if (!SCAN_LOCKS.replace("${app.id}", token, finishingValue)) return false
+    try {
+        if (publishWork != null) publishWork()
+        if (error != null) state.scanError = error
+    } catch (Exception ex) {
+        log.warn "${app.label}: scan termination failed: ${ex.message}"
+        state.scanError = "${ex.message}"
+    } finally {
+        state.scanRunning = false
+        SCAN_LOCKS.remove("${app.id}", finishingValue)
+    }
+    return true
+}
+
+// Thin wrapper for every terminal path with nothing to publish - kept as
+// the name the rest of the file already calls, so none of those nine call
+// sites needed to change again for this round.
+void markScanFinished(String token, String error = null) {
+    finishGeneration(token, error, null)
+}
+
+// Cheap "is my token still the current owner" check - caught in review as
+// the other half of the terminal-release fix above: token propagation only
+// prevents identity ADOPTION, it does nothing by itself to stop a late
+// execution belonging to an abandoned generation from mutating state on its
+// way TO a terminal call. Every separately-scheduled, late-capable handler
+// that publishes intermediate state (not just a terminal markScanFinished)
+// must check this before its first write, and again after any HTTP call in
+// between - abandonment and a fresh acquisition can interleave in that gap
+// exactly as easily as around the terminal release itself.
+boolean ownsLock(String token) {
+    return token != null && SCAN_LOCKS.get("${app.id}") == token
+}
+
+// Returns [acquired: true] once this call has won the single-flight lock and
+// (successfully or not) run the scan to its next state, or [acquired: false]
+// if another execution already holds it - callers must not treat that as an
+// error, and must not assume state.scanRunning reflects it (state.scanRunning
+// is this LOSING execution's own stale snapshot, not the winner's).
+Map startScan() {
+    // Generated before the acquire attempt, not after - putIfAbsent needs
+    // the value ready to insert. Carried forward explicitly from here on -
+    // as a parameter into startAppPhase(), on the DEVICE_SCANS/APP_SCANS
+    // accumulator for the watchdog/finalizer paths, and through runIn()'s
+    // own data payload for the registry/finish tail - never stashed in
+    // state for a later execution to read back. A late execution reading
+    // "the current token" from state instead of carrying its OWN generation's
+    // token is exactly how it could adopt a newer generation's identity;
+    // see markScanFinished()'s comment for the full reasoning.
+    String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
+    if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) return [acquired: false]
+    // The one unambiguous "a scan genuinely began" line, at the single choke
+    // point every entry path (manual /scan, the scheduled overnight trigger,
+    // any future caller) already funnels through - distinct from "/scan
+    // endpoint reached", which only proves the HTTP request arrived and says
+    // nothing about whether it actually started one (it may have lost the
+    // race, or found one already running).
+    log.info "${app.label}: scan started"
+    // Ownership-transfer flag, not an unconditional finally - success must
+    // keep holding the lock for the whole scan, not release it here. Flipped
+    // true only once responsibility has genuinely passed to markScanFinished
+    // (an early failure) or to the scheduled watchdog/reaper machinery (a
+    // real dispatch was handed off) - an exception before either point means
+    // this call is the only thing that will ever release the lock.
+    boolean released = false
+    try {
     Map compat = probeCompatibility()
     state.compatOk = compat.ok
     state.compatDetail = compat.detail
@@ -603,268 +1138,971 @@ void startScan() {
     // was still allowed into phases that depend on that exact endpoint,
     // rather than failing here where the cause is still known.
     if (!compat.ok) {
-        state.scanError = "${compat.detail}"
-        state.scanRunning = false
-        return
+        markScanFinished(lockToken, "${compat.detail}")
+        released = true
+        return [acquired: true]
     }
     state.appsDecoded = 0
     state.appsUnreadable = 0
     state.rulesDecoded = 0
     state.rulesSkipped = 0
     state.ruleLinks = 0
-    state.appsFromListing = 0
     state.appsInert = 0
     state.otherEngines = []
-    // Cleared BEFORE fetchAllDeviceIds runs, not after. That call sets
+    // Cleared BEFORE fetchDeviceListBulk runs, not after. That call sets
     // scanError itself on failure - clearing it afterward silently erased
     // the one error a user most needed to see, the enumeration that made
     // the whole scan pointless before a single app was even queued.
     state.scanError = null
-    // Also cleared here, not down with the rest of the reset block below -
-    // that block sits after the scanError abort check, so on a failed
-    // enumeration it never runs and this count would otherwise still be
-    // whatever an unrelated earlier scan left behind, read back out through
-    // compatibilitySummary/scanStatusJson/AI friendly export as if it described
-    // the scan that just failed to even start.
     state.deviceIdsUnreadable = []
-    state.scanQueue = fetchAllDeviceIds()
-    // fetchAllDeviceIds sets scanError itself and returns [] on failure -
-    // checked here, not assumed handled downstream. Before this check, a
-    // failed enumeration still fell through into a full scan with zero
-    // devices queued: scanRunning went true, the app phase ran anyway, and
-    // a graph with no devices and no device relationships could be stamped
-    // as a normal, complete result, with the one error a user needed to
-    // see left to be found only by reading scanError separately rather
-    // than the scan visibly having stopped.
-    if (state.scanError) {
-        state.scanRunning = false
-        return
+    Map bulk = fetchDeviceListBulk()
+    if (bulk.error) {
+        markScanFinished(lockToken, "Could not list devices from the hub: ${bulk.error}")
+        released = true
+        return [acquired: true]
     }
-    state.scanTotal = (state.scanQueue as List).size()
+    // Label/room/type are already known for every device from this one call -
+    // NOT batched, unlike capabilities below. Only capabilities need a
+    // per-driver-type follow-up fetch.
+    state.deviceLabels = bulk.labels as Map
+    state.deviceRooms = bulk.rooms as Map
+    state.deviceTypes = bulk.types as Map
+    state.deviceCapabilities = [:]
+    // Map of representative device id -> every device id sharing its driver
+    // (deviceTypeId), including the representative itself. dispatchDeviceOne
+    // fetches capabilities once per representative and applies the result to
+    // the whole group - see fetchDeviceListBulk's comment for why this is
+    // safe (capabilities are a driver property, verified identical within a
+    // driver on this hub).
+    List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
+    state.scanQueue = []
+    // state.scanTotal is the representative/driver-type count dispatchDeviceOne
+    // actually iterates over (34 on this hub, not 194) - correct for the
+    // dispatch/invariant machinery, but showing it labelled as a device count
+    // on the settings page reads as "only 34 devices found", which is wrong
+    // and confusing. deviceScanTotal is the real device count, kept
+    // separately purely for that display - see main()'s progress paragraph.
+    state.deviceScanTotal = (bulk.labels as Map).size()
+    state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
     state.scanRunning = true
-    // Stamped here as well as in scanBatch, so a scan that never manages to run
-    // a single batch still has a timestamp for clearAbandonedScan to age out.
+    // Stamped here as well as in the async callbacks, so a scan that never
+    // manages to land a single callback still has a timestamp for
+    // clearAbandonedScan to age out.
     state.scanHeartbeat = now()
-    state.deviceLabels = [:]
-    // NOT state.deviceIconOverrides or state.deviceIconNotes - both are the
-    // user's own input (a correction, and a freeform note on an
-    // unrecognised device), same category as state.userRegistry for
-    // external systems, and must survive a rescan the same way those
-    // declarations do.
-    state.deviceCapabilities = [:]
-    state.deviceRooms = [:]
-    state.deviceTypes = [:]
     state.appIds = []
     state.appInfo = [:]
+    // Durable proof that the async app accumulator has been published in
+    // full. state.scanQueue is deliberately always empty in the async design,
+    // so it cannot distinguish "all apps committed" from "the @Field static
+    // accumulator disappeared on a code reload". Recovery may build a graph
+    // only after this marker is committed true by finalizeAppPhase.
+    state.appResultsReady = false
     state.graphVersion = null
     // Dropped, not merely marked stale. Holding the previous graph while
-    // appInfo fills doubles peak state for the whole scan, and on a 74-app hub
-    // that was enough to kill a scan two apps from the end: no error logged, no
-    // job scheduled, just a heartbeat that stopped. The old graph is unusable
-    // during a scan anyway, since graphVersion is cleared on the line above.
+    // appInfo fills doubles peak state for the whole scan - this is Gordon's
+    // own hub, and on 2026-08-13, at 74 apps, that was enough to kill a scan
+    // two apps from the end: no error logged, no job scheduled, just a
+    // heartbeat that stopped (see commits 9ef2359/95a2a10). The old graph is
+    // unusable during a scan anyway, since graphVersion is cleared above.
+    //
+    // Deliberately not attempting double-buffering (holding the old graph
+    // live in state while a new one fills) as part of this hardening pass -
+    // that is exactly the pattern the 2026-08-13 fix removed, not an
+    // untested scale question. This hub is now at 105 apps, larger than the
+    // 74 that crashed it, and has run cleanly under the current drop-not-hold
+    // design repeatedly, including this hardening pass's own dev-soak test.
+    // Re-introducing double buffering would be a real, different design
+    // change, and would need its own peak-memory measurement before trusting
+    // it - not because this hub is too small to have exercised the old
+    // failure at all, but because nothing here has re-tested holding two
+    // copies since the fix that stopped doing that.
     state.graph = null
-    // All three unscheduled together. Only scanBatch is guaranteed pending at
-    // any given moment, but a scan restarted while a previous one's last
-    // batch had already scheduled fetchRegistry/finishScan otherwise leaves
-    // those two jobs orphaned - one fires mid-way into THIS scan, builds a
-    // graph from whatever appInfo the new scan has managed to populate so
-    // far, and stamps it complete. The map then reads as finished while the
-    // real scan is still running, silently, with nothing on screen to say
-    // so.
-    unschedule('scanBatch')
     unschedule('fetchRegistry')
     unschedule('finishScan')
-    runIn(1, 'scanBatch')
+
+    if (repIds.isEmpty()) {
+        // No devices at all - go straight to the app phase, same as an
+        // empty representative queue would after finishing normally.
+        // released is set AFTER startAppPhase() returns, not before - caught
+        // in review: startAppPhase() installs its own recovery machinery
+        // (an app accumulator/watchdog, or the registry/finish handoff)
+        // partway through its own body, not at its very first line. An
+        // exception thrown before that point must still be caught by THIS
+        // execution's own catch below, or the lock would be left permanently
+        // held with nothing left to ever release it.
+        startAppPhase(lockToken)
+        released = true
+        return [acquired: true]
+    }
+
+    String scanId = "devices-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total = repIds.size()
+    scan.inFlight = new AtomicInteger(0)
+    scan.processed = new AtomicInteger(0)
+    scan.pending = new ConcurrentLinkedQueue(repIds)
+    scan.claims = new ConcurrentHashMap()
+    scan.tokenSeq = new AtomicInteger(0)
+    // Two separate guards, deliberately not one - finalizeScheduleGuard only
+    // proves "a scheduling runIn() was issued", finalizeGuard only proves
+    // "the actual state publish happened". Conflating them would let a
+    // scheduled job that never runs permanently block the watchdog's own
+    // recovery path from ever publishing.
+    scan.finalizeScheduleGuard = new AtomicInteger(0)
+    scan.finalizeGuard = new AtomicInteger(0)
+    scan.capsByDev = new ConcurrentHashMap<String, List>()
+    // Seeded from the bulk response and completed by callbacks for devices
+    // whose bulk row omitted roomName. Those devices are deliberately queued
+    // as one-device groups by fetchDeviceListBulk(), so their fullJson response
+    // can recover a room the bulk endpoint omitted without guessing whether an
+    // actually blank room means "unassigned".
+    scan.roomsByDev = new ConcurrentHashMap<String, String>((bulk.rooms ?: [:]) as Map)
+    scan.unreadableDevs = new ConcurrentHashMap<String, Boolean>()
+    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
+    // Copied in, not read from state by a callback - callbacks and reapers
+    // must never touch state at all, not even to read. typeGroups was
+    // written once, moments ago, in this same execution, so this copy is
+    // exactly as current as a read would have been, with none of the
+    // question of whether a concurrent execution can safely read state.
+    scan.typeGroups = new ConcurrentHashMap((bulk.typeGroups ?: [:]) as Map)
+    // This generation's single-flight lock token, so deviceAsyncWatchdog and
+    // finalizeDevicePhase - both callback/reap-adjacent contexts that must
+    // never touch state - can release the correct lock without reading state.
+    scan.lockToken = lockToken
+    DEVICE_SCANS[scanId] = scan
+    state.deviceScanId = scanId
+
+    // Single-scan-at-a-time within this app instance: reapers/watchdogs are
+    // scheduled and unscheduled by handler name, and Hubitat's runIn()
+    // replaces rather than stacks a prior job under the same name. Automation
+    // Map already enforces one live scan via the UI/clearAbandonedScan, so
+    // this matches an existing constraint rather than introducing a new one.
+    runIn(DEVICE_ASYNC_WATCHDOG_SEC, 'deviceAsyncWatchdog', [data: [scanId: scanId]])
+    runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
+    // Handed off here, before dispatch - the watchdog/reaper just scheduled
+    // above are what recover this scan from this point on, including if
+    // refillDevicePipeline() itself throws on its very first synchronous
+    // call. A stall they can't explain is exactly deviceAsyncWatchdog's own
+    // existing job, not a new failure mode this lock introduces.
+    released = true
+    refillDevicePipeline(scanId)
+    return [acquired: true]
+    } catch (Exception ex) {
+        if (!released) markScanFinished(lockToken, "Unexpected error starting scan: ${ex.message}")
+        throw ex
+    }
 }
 
-void scanBatch() {
-    // Anything thrown out of this method is fatal to the whole scan: Hubitat
-    // discards the state written during a failed execution, so the queue would
-    // never advance AND no follow-up job would be scheduled, leaving the app
-    // stuck at "scanning" with no error recorded. Every stage is therefore
-    // guarded separately, and the reschedule happens no matter what.
-    state.scanHeartbeat = now()
-    boolean advanced = false
+void refillDevicePipeline(String scanId) {
+    // Iterative, not recursive: dispatchDeviceOne() returns true whenever it
+    // made progress (a successful dispatch, or a rollback+requeue/terminal-fail
+    // after a synchronous throw), so looping here bounds the work to the
+    // pending queue's size instead of growing the call stack on repeated
+    // synchronous failures. Verified against real repeated synchronous
+    // failures in the isolated dispatch-test harness before being relied on
+    // here.
+    while (dispatchDeviceOne(scanId)) { /* keep refilling */ }
+}
+
+// CAS-bounded dispatch: reserves a slot in the in-flight pool (<=
+// DEVICE_ASYNC_MAX_INFLIGHT), pops the next pending representative device id
+// (or requeued retry, carrying its prior attempt count), records a claim
+// before ever calling asynchttpGet, and issues an async fullJson fetch for
+// that representative's capabilities. Every failure path below rolls back
+// the reservation and the claim via conditional removal - see the isolated
+// test's dispatch-throw/claim-reaper findings for why an unconditional
+// remove is not safe once callbacks and the reaper can genuinely overlap.
+boolean dispatchDeviceOne(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return false
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {
+        int n = inFlight.get()
+        if (n >= DEVICE_ASYNC_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    def raw = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (raw == null) {
+        inFlight.decrementAndGet()
+        return false
+    }
+    String repId = (raw instanceof Map) ? (raw as Map).id as String : raw as String
+    int attemptCount = ((raw instanceof Map) ? ((raw as Map).attemptCount ?: 0) as Integer : 0) + 1
+
+    String attemptToken = "tok-${(scan.tokenSeq as AtomicInteger).incrementAndGet()}"
+    Map myClaim = [attemptToken: attemptToken, dispatchedAt: now(), attemptCount: attemptCount]
+    (scan.claims as ConcurrentHashMap)[repId] = myClaim
+
     try {
-        if (state.scanPhase == 'devices') {
-            scanDeviceBatch()
-        } else {
-            scanAppBatch()
-        }
-        advanced = true
+        asynchttpGet('deviceFetchCb',
+            [uri: "${LOOPBACK_BASE}/device/fullJson/${repId}", contentType: 'application/json', timeout: 10],
+            [scanId: scanId, repId: repId, attemptToken: attemptToken])
+        return true
     } catch (Exception ex) {
-        log.warn "${app.label}: scanBatch failed: ${ex.message}"
-        state.scanError = "${ex.message}"
-        state.scanQueue = []
-        // Stops here rather than falling into the block below, which decides
-        // what runs next on the assumption the batch succeeded. An empty
-        // queue after a genuine failure used to read exactly like an empty
-        // queue after finishing normally, and the scan would proceed straight
-        // into fetchRegistry/finishScan - building and stamping a graph from
-        // data a failed batch never finished collecting.
-        state.scanRunning = false
+        log.warn "${app.label}: device ${repId} dispatch threw: ${ex.message}"
+        // Ownership proven the same way the callback/reaper prove it below -
+        // only this execution could plausibly hold this exact claim object
+        // (nothing else has had a chance to touch it since it was created a
+        // few lines above), but the conditional remove costs nothing and
+        // keeps every retirement path in this pipeline consistent.
+        boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, myClaim)
+        if (owned) inFlight.decrementAndGet()
+        if (owned) {
+            scan.lastProgressAt = now()
+            if (attemptCount < ATTEMPT_CAP) {
+                (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
+            } else {
+                // Every device sharing this representative's driver, not just
+                // the representative itself - a driver-group capability
+                // failure is a failure for the whole group, same as the real
+                // callback path below marks it.
+                deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+                (scan.processed as AtomicInteger).incrementAndGet()
+            }
+        }
+        maybeFinalizeDevicePhase(scanId)
+        return true   // made progress; refillDevicePipeline's loop tries again
+    }
+}
+
+// Shared by dispatchDeviceOne's terminal-throw path, deviceFetchCb, and
+// reapDeviceClaim's terminal path - every device sharing repId's driver,
+// from the scan-local copy of typeGroups (never state - see the comment
+// where scan.typeGroups is populated in startScan).
+List deviceGroupFor(ConcurrentHashMap scan, String repId) {
+    Map typeGroups = (scan.typeGroups ?: [:]) as Map
+    return (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
+}
+
+// Async callback for /device/fullJson/{representative id}. Applies the
+// result to every device sharing that representative's driver, releases the
+// claim and the in-flight slot (only if this execution actually owns the
+// claim - see the ownership note in dispatchDeviceOne), then refills and
+// checks for completion.
+void deviceFetchCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return  // callback from a prior, already-finalized scan
+
+    String repId = data.repId as String
+    String attemptToken = data.attemptToken as String
+    Map claim = (scan.claims as ConcurrentHashMap)[repId] as Map
+
+    if (claim == null || claim.attemptToken != attemptToken) return   // stale or duplicate
+
+    boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, claim)
+    if (!owned) return   // lost the race - deviceClaimReaper already retired this exact attempt
+
+    List group = deviceGroupFor(scan, repId)
+
+    List caps = null
+    try {
+        if (resp?.status == 200) {
+            Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
+            Map dev = respData.device as Map
+            if (dev) {
+                caps = (dev.capabilities ?: []) as List
+                if (dev.roomName) {
+                    String room = "${dev.roomName}".trim()
+                    // A room belongs to this device, not to its driver. Normal
+                    // capability groups contain many devices whose rooms differ,
+                    // so broadcasting the representative's room corrupts every
+                    // peer in that group. Missing-bulk-room devices are already
+                    // queued as singleton groups; writing only repId recovers
+                    // their fullJson room without touching any other device.
+                    ConcurrentHashMap roomsByDev = scan.roomsByDev as ConcurrentHashMap
+                    if (room && !roomsByDev.containsKey(repId)) roomsByDev[repId] = room
+                }
+            }
+        }
+    } catch (Exception ex) {
+        log.warn "${app.label}: device ${repId} lookup failed: ${ex.message}"
+    }
+
+    if (caps == null) {
+        group.each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+    } else {
+        group.each { String devId -> (scan.capsByDev as ConcurrentHashMap)[devId] = caps }
+    }
+
+    (scan.processed as AtomicInteger).incrementAndGet()
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    // Scan-local progress marker, not state - see the top-of-pipeline
+    // comment on why callbacks/reapers never write state at all, not even a
+    // best-effort progress field. scanStatusJson() reads this live.
+    scan.lastProgressAt = now()
+
+    refillDevicePipeline(scanId)
+    maybeFinalizeDevicePhase(scanId)
+}
+
+// Active recovery for claims that were dispatched but never got any callback
+// at all - not a per-item HTTP failure (those already resolve in one
+// callback via caps==null above), but genuine platform-level silence.
+// Self-reschedules via runIn every CLAIM_REAP_INTERVAL_SEC until the phase
+// finalizes. Ownership is proven via conditional removal against a claim
+// value snapshotted at scan time, exactly as verified in the isolated
+// dispatch-test harness - see that harness's claimReaper()/reapOne() for the
+// full reasoning this mirrors.
+void deviceClaimReaper(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+    if ((scan.finalizeGuard as AtomicInteger).get() == 1) return
+
+    long nowMs = now()
+    Map claims = scan.claims as ConcurrentHashMap
+    List<Map> staleCandidates = []
+    claims.each { repId, claim ->
+        long dispatchedAt = (claim as Map).dispatchedAt as Long
+        if (nowMs - dispatchedAt >= CLAIM_REAP_DEADLINE_MS) {
+            staleCandidates << [repId: repId as String, claim: claim as Map]
+        }
+    }
+    staleCandidates.each { c -> reapDeviceClaim(scanId, c.repId as String, c.claim as Map) }
+
+    ConcurrentHashMap scan2 = DEVICE_SCANS[scanId]
+    if (scan2 != null && (scan2.finalizeGuard as AtomicInteger).get() != 1) {
+        runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
+    }
+}
+
+void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+
+    long ageMs = now() - (candidateClaim.dispatchedAt as Long)
+    if (ageMs < CLAIM_REAP_DEADLINE_MS) return
+
+    Map claims = scan.claims as ConcurrentHashMap
+    boolean owned = claims.remove(repId, candidateClaim)
+    if (!owned) return   // resolved or replaced since the scan - not this attempt's to reap
+
+    int attemptCount = candidateClaim.attemptCount as Integer
+    log.warn "${app.label}: device ${repId} claim reaped after ${ageMs}ms with no callback (attempt ${attemptCount})"
+
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    scan.lastProgressAt = now()
+
+    if (attemptCount < ATTEMPT_CAP) {
+        (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
+    } else {
+        // Whole driver group, not just the representative - same reasoning
+        // as dispatchDeviceOne's terminal-throw path.
+        deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
+        (scan.processed as AtomicInteger).incrementAndGet()
+    }
+
+    refillDevicePipeline(scanId)
+    maybeFinalizeDevicePhase(scanId)
+}
+
+// Diagnostic-only safety net for a pipeline that has stalled well past what
+// any real callback or reap cycle should take. Deliberately does NOT
+// finalize with whatever was collected - see finalizeDevicePhase/
+// maybeFinalizeDevicePhase for why publishing a partial result labeled
+// complete is worse than failing visibly. Marks the scan failed instead.
+void deviceAsyncWatchdog(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return   // already finalized normally, nothing to do
+
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total) {
+        // Invariants already satisfied - this is just the watchdog and the
+        // last legitimate resolution landing at nearly the same moment.
+        // finalizeDevicePhase is itself exactly-once via finalizeGuard, so
+        // calling it here is safe either way.
+        finalizeDevicePhase(scanId)
+        return
+    }
+    if (processed > total) {
+        log.warn "${app.label}: device-phase scan ${scanId} invariant violation - processed=${processed} exceeds total=${total}"
+    }
+
+    // CAS the same guard finalizeDevicePhase uses, BEFORE writing anything -
+    // a legitimate finalize from a callback/reap landing concurrently with
+    // this watchdog execution must win this race, not have its successful
+    // publication overwritten by this failure path landing after it. If the
+    // CAS fails, a real finalize already happened or is in progress and this
+    // execution has nothing left to do.
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+
+    log.warn "${app.label}: device-phase async scan ${scanId} did not finish within ${DEVICE_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
+    DEVICE_SCANS.remove(scanId)
+    unschedule('deviceClaimReaper')
+    // Honest, not "kept the previous map" - startScan already wiped
+    // state.graph/appInfo/deviceCapabilities before this scan's first
+    // dispatch even went out, so there is no previous map left to retain by
+    // this point, only that no NEW, possibly-incomplete one gets published
+    // in its place. Real retention (double buffering) is deliberately not
+    // attempted - see BACKLOG.md.
+    markScanFinished(scan.lockToken as String, "Device scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
+}
+
+// Called once invariants are exactly satisfied, from whichever path notices
+// that first (a callback or a reap). Deliberately does NOT call
+// finalizeDevicePhase() inline - this function still runs as part of a
+// callback/reap execution, and per the production-diff review, even a
+// terminal callback with zero other callbacks outstanding is still an async
+// execution whose own state snapshot could be stale relative to some other
+// concurrent execution. Schedules a fresh, dedicated execution to do the
+// actual publish instead, the same discipline this app already uses for the
+// registry/graph-build handoff (see beginRegistryAndFinish). finalizeSchedule
+// Guard only proves "a scheduling runIn() was issued" - it is not the
+// publish-ownership proof, that is still finalizeGuard, checked again inside
+// the scheduled execution itself.
+void maybeFinalizeDevicePhase(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    if (processed > total) {
+        log.warn "${app.label}: device-phase scan ${scanId} invariant violation - processed=${processed} exceeds total=${total}"
+        return
+    }
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total) {
+        if ((scan.finalizeScheduleGuard as AtomicInteger).compareAndSet(0, 1)) {
+            runIn(1, 'finalizeDevicePhaseScheduled', [data: [scanId: scanId]])
+        }
+    }
+}
+
+// The dedicated execution maybeFinalizeDevicePhase schedules - re-verifies
+// invariants (state may only have improved since scheduling, since claims
+// only ever get reaped/resolved, never added back once the pending queue is
+// drained, but re-checking costs nothing and matches step 2/5 of the
+// reviewed design) before handing off to finalizeDevicePhase's own
+// finalizeGuard CAS, which remains the actual exactly-once publish proof.
+void finalizeDevicePhaseScheduled(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    if (!(pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total)) {
+        log.warn "${app.label}: device-phase scan ${scanId} no longer satisfies invariants at scheduled finalize (pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding} processed=${processed} total=${total}) - leaving it to the watchdog"
+        return
+    }
+    finalizeDevicePhase(scanId)
+}
+
+// Merges the scan's static-accumulated capability results into state in one
+// single execution via plain assignment - never putAll onto whatever state
+// already held. A merge can only ever add entries, never correct a bad
+// starting state; this specific mistake (putAll instead of =) was the second
+// confirmed bug behind the data-integrity finding that led to this whole
+// rewrite. Guarded exactly-once via finalizeGuard so the scheduled finalizer
+// and the watchdog's own already-satisfied recovery path can never both run
+// this - both are freshly scheduled executions, never called inline from a
+// callback/reap.
+void finalizeDevicePhase(String scanId) {
+    ConcurrentHashMap scan = DEVICE_SCANS[scanId]
+    if (scan == null) return
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   // already finalized
+
+    // finalizeGuard only proves this is the one execution allowed to attempt
+    // publishing THIS scanId's results - it says nothing about whether this
+    // scanId's generation is still the CURRENT one for the app instance.
+    // clearAbandonedScan() can release this generation's lock without
+    // touching DEVICE_SCANS or unscheduling its watchdog/reaper, so a late
+    // finalize for an already-abandoned generation can still reach here
+    // after a newer one has started. Checked before the first state write,
+    // not just relied on at an eventual markScanFinished() call - this path
+    // hands off to startAppPhase() on success and never calls
+    // markScanFinished() at all in that case.
+    if (!ownsLock(scan.lockToken as String)) {
+        log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
+        DEVICE_SCANS.remove(scanId)
+        unschedule('deviceAsyncWatchdog')
+        unschedule('deviceClaimReaper')
         return
     }
 
+    DEVICE_SCANS.remove(scanId)
+    unschedule('deviceAsyncWatchdog')
+    unschedule('deviceClaimReaper')
+
     try {
-        if (state.scanQueue) {
-            runIn(1, 'scanBatch')
-        } else if (advanced && state.scanPhase == 'devices') {
-            startAppPhase()
-        } else {
-            // Scheduled rather than called, so the graph build gets an
-            // execution to itself. fetchRegistry chains on to finishScan.
-            //
-            // Called inline it ran in the same execution as the last batch of
-            // app fetches, so one execution did up to three 20-second HTTP
-            // fetches, then built a 285-node graph, then made up to three more
-            // HTTP calls naming deleted rules, then wrote the whole state. That
-            // execution died on a 74-app hub: no error, no scheduled job, just a
-            // heartbeat that stopped two apps from the end.
-            //
-            // Splitting it also means the batch work is already committed if
-            // the build itself fails.
-            //
-            // The PENDING marker is written HERE, not inside fetchRegistry,
-            // because state is only committed at the END of an execution. An
-            // execution that dies mid-fetch discards everything it wrote, so
-            // fetchRegistry structurally cannot record that it started. Without
-            // this marker, "never ran" and "died trying" look identical from the
-            // outside, and the page told a user who had just run a scan that the
-            // registry had never been fetched.
-            state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
-                                  matched: 0, error: null, schemaVersion: null]
-            runIn(1, 'fetchRegistry')
-            // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
-            // dies takes the graph build down with it and the scan never
-            // completes at all. Scheduling finishScan again for the same handler
-            // replaces this job, so the normal path cancels the watchdog simply
-            // by rescheduling it one second out.
-            runIn(45, 'finishScan')
-        }
+        state.deviceCapabilities = new LinkedHashMap(scan.capsByDev as Map)
+        state.deviceRooms = new LinkedHashMap(scan.roomsByDev as Map)
+
+        List unreadable = []
+        (scan.unreadableDevs as ConcurrentHashMap).keySet().each { String devId -> unreadable << devId }
+        state.deviceIdsUnreadable = unreadable
+
+        state.scanDone = scan.total as Integer
+        state.scanHeartbeat = now()
     } catch (Exception ex) {
-        log.warn "${app.label}: scan could not continue: ${ex.message}"
-        state.scanError = "${ex.message}"
-        state.scanRunning = false
+        log.warn "${app.label}: device-phase finalization failed: ${ex.message}"
+        markScanFinished(scan.lockToken as String, "${ex.message}")
+        return
     }
+
+    startAppPhase(scan.lockToken as String)
 }
 
-void scanDeviceBatch() {
-    List queue = state.scanQueue as List
-    Map labels = state.deviceLabels as Map
-    Map capsByDev = (state.deviceCapabilities ?: [:]) as Map
-    Map roomsByDev = (state.deviceRooms ?: [:]) as Map
-    Map typesByDev = (state.deviceTypes ?: [:]) as Map
-    // LinkedHashSet, not List: appId membership is checked once per device app
-    // reference across the whole scan, and a linear contains() over a growing
-    // List made that quadratic. Preserves insertion order like the List did.
+// Apps are discovered entirely from /hub2/appsList - device-led discovery
+// (walking appsUsing on every device) was dropped from the device-phase
+// fetch, verified on this hub to contribute zero apps the listing didn't
+// already have. state.appIds is therefore always empty entering this
+// function.
+//
+// lockToken is passed explicitly by both callers, deliberately not read
+// back from a shared/state field here - caught in review: this function can
+// run from finalizeDevicePhase(), a separately scheduled execution that
+// could in principle fire late, after its own generation was abandoned and
+// a NEWER one has since started. Reading "the current token" from anywhere
+// shared at that point would let this late execution build an app-phase
+// accumulator labelled with the WRONG (newer) generation's token, which
+// could then legitimately release a scan it has nothing to do with.
+// Carrying the caller's own remembered token instead closes that.
+void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
-    int size = queue.size() < DEVICE_BATCH_SIZE ? queue.size() : DEVICE_BATCH_SIZE
-
-    // This app's own device picker references every selected device, which would
-    // otherwise draw ~200 meaningless "acts on" edges from Automation Map itself.
-    String selfId = "${app.id}"
-
-    // Same distinction already drawn for apps below: only a genuine fetch
-    // failure counts as unreadable, tracked by id so the export/UI can name
-    // which devices were missed, not just how many. Before this, a failed
-    // device.fullJson call was indistinguishable from a device that simply
-    // had nothing to report - the device silently dropped out of the scan
-    // (no label, no capabilities, no room, and any app only discoverable
-    // through it could be missed too) with the finished scan still able to
-    // report no top-level error at all.
-    List unreadable = (state.deviceIdsUnreadable ?: []) as List
-    queue.take(size).each { String devId ->
-        Map info = fetchDeviceApps(devId)
-        if (info.error) {
-            if (!unreadable.contains(devId)) unreadable << devId
-        } else {
-            if (info.label) labels[devId] = info.label
-            capsByDev[devId] = info.capabilities
-            if (info.room) roomsByDev[devId] = info.room
-            if (info.type) typesByDev[devId] = info.type
-            (info.appIds as List).each { String appId ->
-                if (appId != selfId) appIds << appId
-            }
-        }
+    // Best-effort, not fatal - see fetchAppTypeNamespaces()'s own comment.
+    // Fetched once here rather than per-app, same reasoning as appsList.
+    Map appTypeNamespaceResult = fetchAppTypeNamespaces()
+    if (appTypeNamespaceResult.error) {
+        log.info "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
     }
-
-    state.deviceLabels = labels
-    state.deviceCapabilities = capsByDev
-    state.deviceRooms = roomsByDev
-    state.deviceTypes = typesByDev
-    state.deviceIdsUnreadable = unreadable
-    state.appIds = appIds as List
-    state.scanQueue = queue.drop(size)
-    state.scanDone = (state.scanDone ?: 0) + size
-}
-
-void startAppPhase() {
-    // The device walk is finished, so this is the point where the two discovery
-    // channels are merged. Done here rather than before the device phase so a
-    // failure of either one still leaves a usable scan.
-    //
-    // Order matters only for readability of the queue. Device-found ids stay
-    // first, so the apps that will actually be drawn are read first and a scan
-    // interrupted part way through has the useful half.
-    // LinkedHashSet, not List: same quadratic-contains() fix as scanDeviceBatch,
-    // and it preserves the device-found-ids-first order this comment relies on.
-    Set appIds = new LinkedHashSet(state.appIds as List)
-    String selfId = "${app.id}"
-    int fromDevices = appIds.size()
-    fetchInstalledAppIds().each { String appId ->
-        if (appId != selfId) appIds << appId
+    Map appListing = fetchInstalledAppIds()
+    if (appListing.error) {
+        log.warn "${app.label}: app phase could not start: ${appListing.error}"
+        markScanFinished(lockToken, "Could not list installed apps: ${appListing.error}")
+        return
+    }
+    // Own app.id included, not skipped: it fetches and processes through the
+    // same pipeline as any other app, and the out.type check below is what
+    // suppresses its relationship data.
+    appIds.addAll(appListing.ids as List)
+    // Re-checked here, not only trusted from the caller's own earlier check -
+    // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
+    // fresh acquisition can interleave during it exactly as easily as around
+    // any other gap in this pipeline.
+    if (!ownsLock(lockToken)) {
+        log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
+        return
     }
     state.appIds = appIds as List
-    // Kept for the scan summary. The count is the honest way to describe what
-    // this bought: on a hub where every app touches a device it is zero, and
-    // saying so is better than implying the map gained something it did not.
-    state.appsFromListing = appIds.size() - fromDevices
 
     state.scanPhase = 'apps'
-    state.scanQueue = appIds
     state.scanTotal = appIds.size()
     state.scanDone = 0
-    runIn(1, 'scanBatch')
-}
+    state.scanQueue = []
 
-void scanAppBatch() {
-    List queue = state.scanQueue as List
-    Map appInfo = state.appInfo as Map
-    Map labels = state.deviceLabels as Map
-    int size = queue.size() < APP_BATCH_SIZE ? queue.size() : APP_BATCH_SIZE
-
-    queue.take(size).each { String appId ->
-        Map info = fetchAppRelationships(appId, labels)
-        appInfo[appId] = info
-        // Only a genuine fetch failure counts as unreadable. An app with no
-        // roles was read perfectly well - it simply has no device relationships
-        // to draw, which is also true of Automation Map itself once it excludes
-        // itself. Counting those as failures made every scan report "1 app
-        // could not be read", which is what it does to its own entry.
-        if (info.error) {
-            state.appsUnreadable = (state.appsUnreadable ?: 0) + 1
-        } else {
-            state.appsDecoded = (state.appsDecoded ?: 0) + 1
-        }
-        if (info.flow) {
-            state.rulesDecoded = (state.rulesDecoded ?: 0) + 1
-        } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
-            // A rule engine this version does not decode. Counted so it is
-            // reported rather than looking like a rule with nothing in it.
-            List others = (state.otherEngines ?: []) as List
-            if (!others.contains("${info.type}")) others << "${info.type}"
-            state.otherEngines = others
-            state.rulesSkipped = (state.rulesSkipped ?: 0) + 1
-        }
+    if (appIds.isEmpty()) {
+        // A genuinely app-less hub has a complete empty result. Commit the
+        // same invariant finalizeAppPhase sets for a non-empty app scan.
+        state.appResultsReady = true
+        beginRegistryAndFinish(lockToken)
+        return
     }
 
-    state.appInfo = appInfo
-    state.deviceLabels = labels
-    state.scanQueue = queue.drop(size)
-    state.scanDone = (state.scanDone ?: 0) + size
+    String scanId = "apps-${now()}-${(int)(Math.random() * 9999)}"
+    ConcurrentHashMap scan = new ConcurrentHashMap()
+    scan.total = appIds.size()
+    scan.inFlight = new AtomicInteger(0)
+    scan.processed = new AtomicInteger(0)
+    scan.pending = new ConcurrentLinkedQueue(appIds)
+    scan.claims = new ConcurrentHashMap()
+    scan.tokenSeq = new AtomicInteger(0)
+    // Two separate guards - see the device-scan creation comment on why
+    // scheduling proof and publish proof must not share one CAS.
+    scan.finalizeScheduleGuard = new AtomicInteger(0)
+    scan.finalizeGuard = new AtomicInteger(0)
+    scan.appInfo = new ConcurrentHashMap<String, Map>()
+    // Seeded from the device phase's complete bulk label inventory, not an
+    // empty map - the device phase already correctly found every device's
+    // label; app callbacks only ever ADD to or improve on that (a device
+    // referenced by an app setting, childDevice or subscription), they never
+    // need to be the sole source. Seeding from a fresh copy of what
+    // finalizeDevicePhase just published avoids the alternative bug: an
+    // empty starting map here meant finalizeAppPhase's plain-assignment
+    // replace of state.deviceLabels would DROP every device not referenced
+    // by any app, even though the bulk fetch had correctly found it. This
+    // is not the same "merge onto possibly-stale state" hazard the appInfo/
+    // capsByDev replace-not-merge fix guards against - this copy is taken
+    // from data this exact scan generation just finished publishing, not
+    // from whatever an unrelated earlier scan left behind.
+    scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
+    scan.appTypeNamespaces = new ConcurrentHashMap<String, String>((appTypeNamespaceResult.namespaces ?: [:]) as Map)
+    scan.decoded = new AtomicInteger(0)
+    scan.unreadable = new AtomicInteger(0)
+    scan.rulesDecoded = new AtomicInteger(0)
+    scan.rulesSkipped = new AtomicInteger(0)
+    scan.otherEngines = new ConcurrentHashMap<String, Boolean>()
+    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
+    // The caller's own remembered token, carried forward - see this
+    // function's own comment for why it is deliberately never read back
+    // from anywhere shared/mutable instead.
+    scan.lockToken = lockToken
+    APP_SCANS[scanId] = scan
+    state.appScanId = scanId
+
+    runIn(APP_ASYNC_WATCHDOG_SEC, 'appAsyncWatchdog', [data: [scanId: scanId]])
+    runIn(CLAIM_REAP_INTERVAL_SEC, 'appClaimReaper', [data: [scanId: scanId]])
+    refillAppPipeline(scanId)
+}
+
+void refillAppPipeline(String scanId) {
+    while (dispatchAppOne(scanId)) { /* keep refilling */ }
+}
+
+// CAS-bounded dispatch, same shape and same rollback/claim discipline as
+// dispatchDeviceOne above - see that function's comment for the full
+// reasoning, not repeated per phase.
+boolean dispatchAppOne(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return false
+
+    AtomicInteger inFlight = scan.inFlight as AtomicInteger
+    while (true) {
+        int n = inFlight.get()
+        if (n >= APP_ASYNC_MAX_INFLIGHT) return false
+        if (inFlight.compareAndSet(n, n + 1)) break
+    }
+
+    def raw = (scan.pending as ConcurrentLinkedQueue).poll()
+    if (raw == null) {
+        inFlight.decrementAndGet()
+        return false
+    }
+    String appId = (raw instanceof Map) ? (raw as Map).id as String : raw as String
+    int attemptCount = ((raw instanceof Map) ? ((raw as Map).attemptCount ?: 0) as Integer : 0) + 1
+
+    String attemptToken = "tok-${(scan.tokenSeq as AtomicInteger).incrementAndGet()}"
+    Map myClaim = [attemptToken: attemptToken, dispatchedAt: now(), attemptCount: attemptCount]
+    (scan.claims as ConcurrentHashMap)[appId] = myClaim
+
+    try {
+        asynchttpGet('appFetchCb',
+            [uri: "${LOOPBACK_BASE}/installedapp/statusJson/${appId}", contentType: 'application/json', timeout: 20],
+            [scanId: scanId, appId: appId, attemptToken: attemptToken])
+        return true
+    } catch (Exception ex) {
+        log.warn "${app.label}: app ${appId} dispatch threw: ${ex.message}"
+        boolean owned = (scan.claims as ConcurrentHashMap).remove(appId, myClaim)
+        if (owned) inFlight.decrementAndGet()
+        if (owned) {
+            scan.lastProgressAt = now()
+            if (attemptCount < ATTEMPT_CAP) {
+                (scan.pending as ConcurrentLinkedQueue) << [id: appId, attemptCount: attemptCount]
+            } else {
+                Map info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
+                            ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                            error: "dispatch threw ${attemptCount}x: ${ex.message}"]
+                (scan.appInfo as ConcurrentHashMap)[appId] = info
+                (scan.unreadable as AtomicInteger).incrementAndGet()
+                (scan.processed as AtomicInteger).incrementAndGet()
+            }
+        }
+        maybeFinalizeAppPhase(scanId)
+        return true
+    }
+}
+
+// Async callback for /installedapp/statusJson/{id}. Runs the same
+// processAppRelationships() the old synchronous batch used, then releases
+// the claim and slot (only if this execution actually owns the claim).
+void appFetchCb(resp, data) {
+    String scanId = data.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+
+    String appId = data.appId as String
+    String attemptToken = data.attemptToken as String
+    Map claim = (scan.claims as ConcurrentHashMap)[appId] as Map
+
+    if (claim == null || claim.attemptToken != attemptToken) return
+
+    boolean owned = (scan.claims as ConcurrentHashMap).remove(appId, claim)
+    if (!owned) return
+
+    Map info
+    try {
+        if (resp?.status == 200) {
+            Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
+            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap, scan.appTypeNamespaces as Map)
+        } else {
+            info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
+                    ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                    error: "HTTP ${resp?.status ?: 'n/a'}"]
+        }
+    } catch (Exception ex) {
+        info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
+                ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: "${ex.message}"]
+    }
+    (scan.appInfo as ConcurrentHashMap)[appId] = info
+
+    if (info.error) {
+        (scan.unreadable as AtomicInteger).incrementAndGet()
+    } else {
+        (scan.decoded as AtomicInteger).incrementAndGet()
+    }
+    if (info.flow) {
+        (scan.rulesDecoded as AtomicInteger).incrementAndGet()
+    } else if ("${info.type}".startsWith('Rule-') && "${info.type}" != SUPPORTED_RULE_ENGINE) {
+        (scan.otherEngines as ConcurrentHashMap)["${info.type}"] = true
+        (scan.rulesSkipped as AtomicInteger).incrementAndGet()
+    }
+
+    (scan.processed as AtomicInteger).incrementAndGet()
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    // Scan-local progress marker, not state - callbacks/reapers never write
+    // state at all. scanStatusJson() reads this live.
+    scan.lastProgressAt = now()
+
+    refillAppPipeline(scanId)
+    maybeFinalizeAppPhase(scanId)
+}
+
+// Active recovery for app claims that never got any callback - mirrors
+// deviceClaimReaper/reapDeviceClaim exactly, see those for the full
+// reasoning.
+void appClaimReaper(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+    if ((scan.finalizeGuard as AtomicInteger).get() == 1) return
+
+    long nowMs = now()
+    Map claims = scan.claims as ConcurrentHashMap
+    List<Map> staleCandidates = []
+    claims.each { appId, claim ->
+        long dispatchedAt = (claim as Map).dispatchedAt as Long
+        if (nowMs - dispatchedAt >= CLAIM_REAP_DEADLINE_MS) {
+            staleCandidates << [appId: appId as String, claim: claim as Map]
+        }
+    }
+    staleCandidates.each { c -> reapAppClaim(scanId, c.appId as String, c.claim as Map) }
+
+    ConcurrentHashMap scan2 = APP_SCANS[scanId]
+    if (scan2 != null && (scan2.finalizeGuard as AtomicInteger).get() != 1) {
+        runIn(CLAIM_REAP_INTERVAL_SEC, 'appClaimReaper', [data: [scanId: scanId]])
+    }
+}
+
+void reapAppClaim(String scanId, String appId, Map candidateClaim) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+
+    long ageMs = now() - (candidateClaim.dispatchedAt as Long)
+    if (ageMs < CLAIM_REAP_DEADLINE_MS) return
+
+    Map claims = scan.claims as ConcurrentHashMap
+    boolean owned = claims.remove(appId, candidateClaim)
+    if (!owned) return
+
+    int attemptCount = candidateClaim.attemptCount as Integer
+    log.warn "${app.label}: app ${appId} claim reaped after ${ageMs}ms with no callback (attempt ${attemptCount})"
+
+    (scan.inFlight as AtomicInteger).decrementAndGet()
+    scan.lastProgressAt = now()
+
+    if (attemptCount < ATTEMPT_CAP) {
+        (scan.pending as ConcurrentLinkedQueue) << [id: appId, attemptCount: attemptCount]
+    } else {
+        Map info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
+                    ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
+                    error: "no callback within ${CLAIM_REAP_DEADLINE_MS}ms (attempt ${attemptCount})"]
+        (scan.appInfo as ConcurrentHashMap)[appId] = info
+        (scan.unreadable as AtomicInteger).incrementAndGet()
+        (scan.processed as AtomicInteger).incrementAndGet()
+    }
+
+    refillAppPipeline(scanId)
+    maybeFinalizeAppPhase(scanId)
+}
+
+// Diagnostic-only safety net, same fail-closed shape as deviceAsyncWatchdog -
+// see that function's comment for the full reasoning behind not finalizing
+// with a partial result.
+void appAsyncWatchdog(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    int appInfoSize = (scan.appInfo as Map).size()
+    int decoded = (scan.decoded as AtomicInteger).get()
+    int unreadable = (scan.unreadable as AtomicInteger).get()
+
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total
+            && appInfoSize == total && decoded + unreadable == total) {
+        finalizeAppPhase(scanId)
+        return
+    }
+    if (processed > total || appInfoSize > total) {
+        log.warn "${app.label}: app-phase scan ${scanId} invariant violation - processed=${processed} appInfo=${appInfoSize} total=${total}"
+    }
+
+    // CAS the same guard finalizeAppPhase uses, BEFORE writing anything - see
+    // deviceAsyncWatchdog's comment for the full race this closes.
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+
+    log.warn "${app.label}: app-phase async scan ${scanId} did not finish within ${APP_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
+    APP_SCANS.remove(scanId)
+    unschedule('appClaimReaper')
+    // Honest, not "kept the previous map" - see deviceAsyncWatchdog's
+    // comment; the same applies here, state.appInfo was already wiped to
+    // [:] in startScan before this scan's first dispatch went out.
+    markScanFinished(scan.lockToken as String, "App scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
+}
+
+// Does NOT call finalizeAppPhase() inline - see maybeFinalizeDevicePhase's
+// comment for why, identical reasoning applies here.
+void maybeFinalizeAppPhase(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    int appInfoSize = (scan.appInfo as Map).size()
+    int decoded = (scan.decoded as AtomicInteger).get()
+    int unreadable = (scan.unreadable as AtomicInteger).get()
+    if (processed > total || appInfoSize > total) {
+        log.warn "${app.label}: app-phase scan ${scanId} invariant violation - processed=${processed} appInfo=${appInfoSize} total=${total}"
+        return
+    }
+    if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total
+            && appInfoSize == total && decoded + unreadable == total) {
+        if ((scan.finalizeScheduleGuard as AtomicInteger).compareAndSet(0, 1)) {
+            runIn(1, 'finalizeAppPhaseScheduled', [data: [scanId: scanId]])
+        }
+    }
+}
+
+// The dedicated execution maybeFinalizeAppPhase schedules - see
+// finalizeDevicePhaseScheduled's comment, identical reasoning and structure.
+void finalizeAppPhaseScheduled(data) {
+    String scanId = data?.scanId as String
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    int pending = (scan.pending as ConcurrentLinkedQueue).size()
+    int inFlight = (scan.inFlight as AtomicInteger).get()
+    int claimsOutstanding = (scan.claims as Map).size()
+    int processed = (scan.processed as AtomicInteger).get()
+    int total = scan.total as Integer
+    int appInfoSize = (scan.appInfo as Map).size()
+    int decoded = (scan.decoded as AtomicInteger).get()
+    int unreadable = (scan.unreadable as AtomicInteger).get()
+    if (!(pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total
+            && appInfoSize == total && decoded + unreadable == total)) {
+        log.warn "${app.label}: app-phase scan ${scanId} no longer satisfies invariants at scheduled finalize (pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding} processed=${processed} appInfo=${appInfoSize} total=${total}) - leaving it to the watchdog"
+        return
+    }
+    finalizeAppPhase(scanId)
+}
+
+// Merges the scan's static-accumulated results into state in one single
+// execution via plain assignment - never putAll. See finalizeDevicePhase's
+// comment; the same confirmed bug applied here, on state.appInfo, and is
+// fixed the same way. CAS-guarded exactly-once via finalizeGuard - the
+// scheduled finalizer and the watchdog's own already-satisfied recovery path
+// are both freshly scheduled executions, never called inline from a
+// callback/reap.
+void finalizeAppPhase(String scanId) {
+    ConcurrentHashMap scan = APP_SCANS[scanId]
+    if (scan == null) return
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
+
+    // See finalizeDevicePhase()'s identical comment - finalizeGuard proves
+    // only exactly-once for THIS scanId, not that this generation is still
+    // current, and this path hands off to beginRegistryAndFinish() on
+    // success without ever calling markScanFinished().
+    if (!ownsLock(scan.lockToken as String)) {
+        log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
+        APP_SCANS.remove(scanId)
+        unschedule('appAsyncWatchdog')
+        unschedule('appClaimReaper')
+        return
+    }
+
+    APP_SCANS.remove(scanId)
+    unschedule('appAsyncWatchdog')
+    unschedule('appClaimReaper')
+
+    try {
+        state.appInfo = new LinkedHashMap(scan.appInfo as Map)
+        state.deviceLabels = new LinkedHashMap(scan.labels as Map)
+
+        // Plain values, not accumulation - scan.decoded.get() etc. are
+        // already the COMPLETE count for this scan (every callback in the
+        // pipeline incremented the same counter), not a delta to add onto
+        // whatever state already held. += here was the first confirmed bug
+        // behind the data-integrity finding: caught live when two scan
+        // generations overlapped during testing and appsDecoded ended up
+        // reading higher than the total app count on the hub.
+        state.appsDecoded = (scan.decoded as AtomicInteger).get()
+        state.appsUnreadable = (scan.unreadable as AtomicInteger).get()
+        state.rulesDecoded = (scan.rulesDecoded as AtomicInteger).get()
+        state.rulesSkipped = (scan.rulesSkipped as AtomicInteger).get()
+        List others = []
+        (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> others << eng }
+        state.otherEngines = others
+
+        state.scanDone = scan.total as Integer
+        // Last app-result write in this execution. Hubitat commits the whole
+        // state snapshot atomically when the execution returns, so recovery
+        // can never observe true with only a partial appInfo publication.
+        state.appResultsReady = true
+        state.scanHeartbeat = now()
+    } catch (Exception ex) {
+        log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
+        markScanFinished(scan.lockToken as String, "${ex.message}")
+        return
+    }
+
+    beginRegistryAndFinish(scan.lockToken as String)
+}
+
+// The registry-fetch-then-graph-build handoff, shared by the normal
+// end-of-app-phase path and the empty-app-list path in startAppPhase.
+//
+// lockToken travels through runIn()'s own data payload from here all the
+// way to fetchRegistry and finishScan, rather than either of them reading
+// a value back from state - both are separately scheduled executions that could
+// in principle fire late, after their own generation was abandoned and a
+// newer one has since overwritten state with its own token. Carrying the
+// value forward explicitly means a late execution still only ever knows
+// its OWN generation's token, never whatever happens to be current by the
+// time it runs - see startAppPhase()'s comment for the identical reasoning
+// one hop earlier in this same chain.
+void beginRegistryAndFinish(String lockToken) {
+    // The PENDING marker is written here, not inside fetchRegistry, because
+    // state is only committed at the END of an execution - an execution
+    // that dies mid-fetch discards everything it wrote, so fetchRegistry
+    // structurally cannot record that it started.
+    state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
+                          matched: 0, error: null, schemaVersion: null]
+    runIn(1, 'fetchRegistry', [data: [lockToken: lockToken]])
+    // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
+    // dies takes the graph build down with it and the scan never completes
+    // at all. Scheduling finishScan again for the same handler replaces
+    // this job, so the normal path cancels the watchdog simply by
+    // rescheduling it one second out.
+    runIn(45, 'finishScan', [data: [lockToken: lockToken]])
 }
 
 // Runs as its own scheduled execution between the app phase and the graph
@@ -875,7 +2113,16 @@ void scanAppBatch() {
 // Failure here is not fatal. The registry is a convenience; the user's own
 // declarations are the authority, and an unclassified app type is an explicit,
 // visible state rather than a silent absence.
-void fetchRegistry() {
+void fetchRegistry(jobData = null) {
+    String lockToken = jobData?.lockToken as String
+    // Checked before the very first write, including the heartbeat stamp -
+    // this is a separately scheduled execution that can in principle fire
+    // late, after its own generation was abandoned and a newer one has
+    // since started.
+    if (!ownsLock(lockToken)) {
+        log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
+        return
+    }
     state.scanHeartbeat = now()
     List types = discoveredAppTypes()
     List matches = []
@@ -914,76 +2161,134 @@ void fetchRegistry() {
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
+    // Re-checked here, not only trusted from the entry check above - the
+    // registry fetch is a real 30-second-timeout HTTP call, and abandonment
+    // plus a fresh acquisition can interleave during it exactly as easily as
+    // around any other gap in this pipeline.
+    if (!ownsLock(lockToken)) {
+        log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
+        return
+    }
+
     // Only on success, so a failed fetch keeps the last good set rather than
     // silently emptying the map of everything the registry contributed.
     if (!meta.error) state.registryMatches = matches
     state.registryMeta = meta
     log.info "${app.label}: registry ${meta.error ? 'unavailable' : "gave ${meta.matched} dependency match(es) from ${meta.entries} entries"}"
-    runIn(1, 'finishScan')
+    runIn(1, 'finishScan', [data: [lockToken: lockToken]])
 }
 
-void finishScan() {
-    // Runs as its own scheduled execution, so a failure here leaves the scan
-    // data intact and reports itself, rather than silently stranding the app
-    // mid-scan the way an inline call did.
-    state.scanHeartbeat = now()
+// data.lockToken travels from beginRegistryAndFinish() via fetchRegistry(),
+// or (when clearAbandonedScan() calls this directly, bypassing the
+// scheduler entirely) is a live SCAN_LOCKS snapshot taken at that call
+// site, the same recovery-path reasoning as clearAbandonedScan()'s other
+// branch - see markScanFinished()'s comment.
+void finishScan(data = null) {
+    String lockToken = data?.lockToken as String
+    // Nothing is written to state above this point, deliberately - caught
+    // in review: an earlier version stamped state.scanHeartbeat and
+    // conditionally rewrote state.registryMeta before ever checking
+    // ownership, so a stale/superseded execution could still corrupt a
+    // newer generation's registry status even though it would correctly
+    // fail the finishing claim moments later and publish nothing else.
+    // Read-and-compute-locally is fine before the claim (nothing is
+    // committed by it), only writing state is not.
 
     // Still PENDING means fetchRegistry never reached its own bookkeeping, so
     // this execution is the watchdog firing rather than the normal chain. Say
     // so. The alternative is what shipped before: an app that had tried and
     // failed reporting that it had never tried, which is worse than an error.
-    Map regMeta = (state.registryMeta ?: [:]) as Map
-    if ("${regMeta.state}" == 'PENDING') {
+    // Computed here, written only inside the protected publish below - a real
+    // defensive copy, not just a local variable NAME. Caught in review:
+    // `state.registryMeta` returns the SAME live Map object state already
+    // holds, not a snapshot, so mutating it in place (even before ever
+    // reassigning state.registryMeta = regMeta) risks the same "mutate a
+    // state-held collection directly" hazard this file already treats as a
+    // confirmed bug class elsewhere (see the appInfo/capsByDev
+    // replace-not-merge comments) - a stale execution could alter a NEWER
+    // generation's registry status through this shared reference before its
+    // own finishGeneration() claim ever gets checked, let alone fails.
+    Map regMeta = new LinkedHashMap((state.registryMeta ?: [:]) as Map)
+    boolean registryStalled = "${regMeta.state}" == 'PENDING'
+    if (registryStalled) {
         regMeta.state = 'FAILED'
         regMeta.error = 'the registry fetch did not complete'
-        state.registryMeta = regMeta
-        log.warn "${app.label}: registry fetch did not complete, continuing without it"
     }
 
-    Map graph = [:]
-    try {
-        graph = buildGraph()
-    } catch (Exception ex) {
-        log.warn "${app.label}: graph build failed: ${ex.message}"
-        state.scanError = "Graph build failed: ${ex.message}"
-        state.scanRunning = false
-        return
-    }
-    state.scanRunning = false
-    state.graph = graph
-    state.graphVersion = GRAPH_SCHEMA
+    // buildGraph() moved INSIDE the protected closure below, not run before
+    // the claim - caught in review (reproduced live 2026-08-24): ownership
+    // was previously claimed only once building finished, so nothing
+    // stopped every 1.5s status poll's own recovery attempt from building
+    // the same graph redundantly in parallel, all racing for one claim that
+    // at most one of them could ever win. Worse, when the static lock had
+    // been reset entirely (an app code reload wipes @Field state but not
+    // durable state.scanRunning) every single attempt lost the claim, so
+    // the graph was rebuilt and discarded forever with no path to recovery.
+    // Claiming first means at most one execution ever runs buildGraph() at
+    // all for a given generation; every other concurrent caller's claim
+    // fails immediately and does no work.
+    boolean finished = finishGeneration(lockToken, null) {
+        // v2.0.14: authoritative Hub Variable inventory. A synchronous,
+        // in-process call (getAllGlobalVars()) with no
+        // async round trip of its own, so it is called and published here,
+        // inside the same protected closure as buildGraph()/state.graph below
+        // - never outside it. A failed inventory
+        // still publishes (status: 'failed'), so buildGraph() always has a
+        // definite, current-generation answer to read rather than stale state
+        // from a previous scan.
+        state.hubVariableInventory = fetchHubVariableInventory()
+        Map graph = buildGraph()
+        state.scanHeartbeat = now()
+        if (registryStalled) {
+            state.registryMeta = regMeta
+            log.warn "${app.label}: registry fetch did not complete, continuing without it"
+        }
+        state.graph = graph
+        state.graphVersion = GRAPH_SCHEMA
 
-    // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
-    // 61KB of a 244KB state on this hub, a quarter of everything stored, held
-    // twice for no reason. buildGraph falls back to the existing graph.flows on
-    // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
-    Map appInfo = (state.appInfo ?: [:]) as Map
-    appInfo.each { String appId, info ->
-        if (info instanceof Map) (info as Map).remove('flow')
-    }
-    state.appInfo = appInfo
-    // Counted from the finished graph rather than tallied during the scan.
-    // A rule that sets another rule's Private Boolean both true and false is
-    // two actions but one relationship, so a running tally reported 8 where
-    // the map drew 7.
-    int links = 0
-    ((graph.edges ?: []) as List).each { e ->
-        // Compared through a String-typed local: a GString never matches a
-        // String in contains(), because their hash codes differ.
-        String kind = "${(e as Map).kind}"
-        if (RULE_LINK_KIND_NAMES.contains(kind)) links++
-    }
-    state.ruleLinks = links
+        // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
+        // 61KB of a 244KB state on this hub, a quarter of everything stored, held
+        // twice for no reason. buildGraph falls back to the existing graph.flows on
+        // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
+        Map appInfo = (state.appInfo ?: [:]) as Map
+        appInfo.each { String appId, info ->
+            if (info instanceof Map) (info as Map).remove('flow')
+        }
+        state.appInfo = appInfo
+        // Counted from the finished graph rather than tallied during the scan.
+        // A rule that sets another rule's Private Boolean both true and false is
+        // two actions but one relationship, so a running tally reported 8 where
+        // the map drew 7.
+        int links = 0
+        ((graph.edges ?: []) as List).each { e ->
+            // Compared through a String-typed local: a GString never matches a
+            // String in contains(), because their hash codes differ.
+            String kind = "${(e as Map).kind}"
+            if (RULE_LINK_KIND_NAMES.contains(kind)) links++
+        }
+        state.ruleLinks = links
 
-    // Counted off the built graph rather than off appInfo, so the summary can
-    // only ever describe nodes that are really on the map.
-    int inertCount = 0
-    ((graph.nodes ?: []) as List).each { n ->
-        if ((n as Map).inert == true) inertCount++
-    }
-    state.appsInert = inertCount
+        // Counted off the built graph rather than off appInfo, so the summary can
+        // only ever describe nodes that are really on the map.
+        int inertCount = 0
+        ((graph.nodes ?: []) as List).each { n ->
+            if ((n as Map).inert == true) inertCount++
+        }
+        state.appsInert = inertCount
 
-    log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+        // v2.0.14: read by compatibilitySummary() for the "N with a Connector"
+        // count. Captured from the built graph the same way ruleLinks/appsInert
+        // above are, rather than recomputed at page-render time.
+        state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
+
+        log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+    }
+    if (!finished) {
+        // The claim is now checked before buildGraph() runs, so a
+        // superseded generation never builds a graph at all any more - it
+        // just loses the claim immediately and does nothing further.
+        log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
+    }
 }
 
 // Every device on the hub.
@@ -999,18 +2304,51 @@ void finishScan() {
 // on a user action rather than on the hub.
 //
 // The capability parameter is required. Without it the endpoint returns [].
-List fetchAllDeviceIds() {
-    List ids = []
-    Map result = httpFetch("${LOOPBACK_BASE}/device/listJson?capability=capability.*", 30)
+// Bulk device enumeration. Replaces the old fetchAllDeviceIds() + per-device
+// fetchDeviceApps() pair for everything except capabilities: this one call
+// carries label, room and driver name for every device at once - fields that
+// previously cost a /device/fullJson round trip each. Verified field mapping
+// against the per-device endpoint for the same device before relying on it:
+// data.name is the device's LABEL (not its type - a different bulk endpoint,
+// /device/list/data, calls the label "label" and puts the type in "name",
+// the opposite way round), data.type is the driver name, data.roomName is the
+// room. Confirmed flat - no nested children - and enumerates the identical
+// device set as the old /device/listJson?capability=capability.* call.
+//
+// Also groups devices by deviceTypeId (driver): capabilities are a property
+// of the driver, not the individual device, and every device sharing a
+// driver was confirmed (sampled) to report identical capabilities - see the
+// scan-speed item in BACKLOG.md. typeGroups remains scan-local: it holds one
+// representative device id per driver, mapped to every device id sharing
+// that driver; deviceFetchCb fetches capabilities for the representative
+// only and applies the result to the whole group. The exception is a device
+// whose bulk row omits roomName: it gets a one-device group so fullJson can
+// recover an endpoint-omitted room (or confirm it is genuinely unassigned)
+// without broadcasting one atypical response across its whole driver group.
+Map fetchDeviceListBulk() {
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
-        state.scanError = "Could not list devices from the hub: ${result.error}"
-    } else if (result.data instanceof List) {
-        (result.data as List).each { d ->
-            if (d instanceof Map && d.id != null) ids << "${d.id}"
-        }
+        out.error = result.error
+        return out
     }
-    return ids.unique()
+    Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+    Map typeGroups = [:]
+    (data.devices ?: []).each { entry ->
+        Map d = (entry instanceof Map) ? (entry.data as Map) : null
+        if (!d || d.id == null) return
+        String devId = "${d.id}"
+        if (d.name) out.labels[devId] = "${d.name}"
+        String room = d.roomName == null ? '' : "${d.roomName}".trim()
+        if (room) out.rooms[devId] = room
+        if (d.type) out.types[devId] = "${d.type}"
+        String typeKey = room ? "${d.deviceTypeId}" : "room:${devId}"
+        List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
+        group << devId
+    }
+    out.typeGroups = typeGroups
+    return out
 }
 
 // Every installed app on the hub, in one request, whether or not it references
@@ -1036,20 +2374,33 @@ List fetchAllDeviceIds() {
 // Parents nest arbitrarily - Button Controllers holds a Button Controller,
 // which holds four Button Rules - so it has to be walked recursively rather
 // than read one level deep.
-List fetchInstalledAppIds() {
+Map fetchInstalledAppIds() {
     List ids = []
+    Map out = [ids: ids, error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/appsList", 30)
     if (!result.ok) {
-        // Deliberately not a scan error. Losing this costs completeness, not
-        // correctness: every app found through a device is still found. An
-        // older firmware without the endpoint should degrade to the previous
-        // behaviour rather than fail the scan.
-        log.warn "${app.label}: could not list installed apps, falling back to device-led discovery only: ${result.error}"
-    } else {
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        collectAppIds(data.apps, ids)
+        // The old comment claimed this could fall back to device-led app
+        // discovery. That path was removed by the async rewrite, so returning
+        // [] here silently publishes a zero-app map. Fail visibly instead.
+        out.error = result.error ?: 'the hub returned no error detail'
+        return out
     }
-    return ids.unique()
+    if (!(result.data instanceof Map) || !((result.data as Map).apps instanceof List)) {
+        out.error = 'the hub returned an unexpected apps-list response'
+        return out
+    }
+    collectAppIds((result.data as Map).apps, ids)
+    ids = ids.unique()
+    // This app is necessarily installed and /hub2/appsList is the complete
+    // installed-app inventory. Its absence proves the response is empty or
+    // incomplete, even on a hub with no other user apps.
+    String selfId = "${app.id}"
+    if (!ids.contains(selfId)) {
+        out.error = "the installed-app listing omitted Automation Map (${selfId})"
+        return out
+    }
+    out.ids = ids
+    return out
 }
 
 // Iterative rather than recursive on purpose. A self-calling method inside a
@@ -1077,68 +2428,47 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
-// Phase 1: only needs the app ids this device is attached to. Also harvests
-// capabilities and room from the same response for the device icon feature -
-// this is a field already sitting in a request this function was making
-// anyway, not a new HTTP call.
-Map fetchDeviceApps(String devId) {
-    Map out = [label: null, appIds: [], capabilities: [], room: null, type: null, error: null]
-    try {
-        Map result = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 10)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        String breadcrumb = data.extraBreadcrumb as String
-        if (breadcrumb) out.label = stripTags(breadcrumb)
-
-        Map dev = data.device as Map
-        if (dev) {
-            out.capabilities = (dev.capabilities ?: []) as List
-            if (dev.roomName) out.room = dev.roomName as String
-            // deviceTypeName is the driver name (e.g. "CoCoHue Scene"), not
-            // anything the user named the device - a reliable signal
-            // capability alone cannot give (a Scene device declares
-            // PushableButton same as a real button/remote does).
-            if (dev.deviceTypeName) out.type = dev.deviceTypeName as String
-        }
-
-        List ids = []
-        Map parentApp = data.parentApp as Map
-        if (parentApp?.id != null) ids << "${parentApp.id}"
-
-        // appsUsing, NOT appsUsingForDialog.
-        //
-        // appsUsingForDialog is capped at five entries on every device, with
-        // appsUsingForDialogMore holding only a COUNT of the remainder, not
-        // the ids. It exists to render a dialog, not to enumerate anything.
-        // appsUsing sits beside it in the same response and is complete: on
-        // one device here it holds 29 entries where the dialog field holds
-        // five.
-        //
-        // Reading the dialog field made every app beyond the fifth on a
-        // shared device invisible, which is not the rare edge case it sounds
-        // like. A rule using only popular devices was missed entirely, and
-        // was noticed only because another rule named it as a target.
-        List using = (data.appsUsing ?: data.appsUsingForDialog ?: []) as List
-        using.each { u ->
-            if (u instanceof Map && u.id != null) ids << "${u.id}"
-        }
-        out.appIds = ids.unique()
-    } catch (Exception ex) {
-        log.warn "${app.label}: device ${devId} lookup failed: ${ex.message}"
-        out.error = "${ex.message}"
+// installedApp itself carries no namespace (confirmed live 2026-08-26 against
+// this hub's /installedapp/statusJson/{id}). It does carry
+// appTypeId, which /hub2/userAppTypes - a separate, definition-level bulk
+// endpoint, one call regardless of app count - maps to the real namespace.
+// Failure here degrades to every app having a null namespace rather than
+// failing the scan; namespace is an enhancement for the Community Context
+// Card match, not something core scanning depends on.
+Map fetchAppTypeNamespaces() {
+    Map out = [status: 'ok', error: null, namespaces: [:]]
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/userAppTypes", 30)
+    if (!result.ok) {
+        out.status = 'failed'
+        out.error = result.error ?: 'the hub returned no error detail'
+        return out
     }
+    if (!(result.data instanceof List)) {
+        out.status = 'failed'
+        out.error = 'the hub returned an unexpected userAppTypes response'
+        return out
+    }
+    Map namespaces = [:]
+    (result.data as List).each { entry ->
+        if (!(entry instanceof Map)) return
+        Map e = entry as Map
+        if (e.id == null || !e.namespace) return
+        namespaces["${e.id}"] = "${e.namespace}"
+    }
+    out.namespaces = namespaces
     return out
 }
 
-// Phase 2: the real relationship data. Also harvests device labels for devices
-// the user did not select, since settings carry {id: name} maps.
-Map fetchAppRelationships(String appId, Map labels) {
-    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
+// Pure processing, split out of fetchAppRelationships so the async scan
+// pipeline's callback can run it directly on data it already has, with no
+// second fetch. Mutates labels in place, same as before the split - the
+// async pipeline gives each concurrent callback its own per-scan labels map
+// to mutate safely, merged into state.deviceLabels only at finalization, not
+// state.deviceLabels itself (concurrent callbacks racing on state directly
+// is exactly the failure mode this whole rewrite exists to avoid).
+Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
+    Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
-        Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 20)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.label = stripTags(rawLabel)
@@ -1147,6 +2477,11 @@ Map fetchAppRelationships(String appId, Map labels) {
             // across the canvas. See nodeEntry for which form goes where.
             out.drawLabel = stripStatusMarkup(rawLabel)
             out.type = stripReplacementChar(installedApp?.name as String)
+            // definitionName's namespace, for the Community Context Card match
+            // only (spec section 4.1) - never added to the AI-friendly export.
+            if (installedApp?.appTypeId != null) {
+                out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
+            }
             // Stored for EVERY app, not only the empty ones, because it is read
             // in the opposite direction from the one it is written in. A
             // container needs the names of its children, and a child is the only
@@ -1286,7 +2621,7 @@ Map fetchAppRelationships(String appId, Map labels) {
             }
     } catch (Exception ex) {
         out.error = ex.message
-        log.warn "${app.label}: app ${appId} lookup failed: ${ex.message}"
+        log.warn "${app.label}: app ${appId} processing failed: ${ex.message}"
     }
     return out
 }
@@ -1421,11 +2756,21 @@ List extractHubVariableWrites(Map data) {
 
     Map settingValues = [:]
     Map settingDevices = [:]
+    // Device-list KEYS (Hubitat device IDs), parallel to settingDevices'
+    // stripped-label values, same iteration order (LinkedHashMap). Added for
+    // v2.0.14's writeSource (confirmed against this
+    // exact code 2026-08-26): settingDevices alone only ever held the display
+    // label, so write.sourceDevice could never be joined authoritatively to
+    // devices[] - schema 4 forbids joining writeSource by display name.
+    Map settingDeviceIds = [:]
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
         String n = "${s.name}"
         Map dl = s.deviceList as Map
-        if (dl) settingDevices[n] = dl.values().collect { stripTags("${it}") }
+        if (dl) {
+            settingDevices[n] = dl.values().collect { stripTags("${it}") }
+            settingDeviceIds[n] = dl.keySet().collect { "${it}" }
+        }
         if (s.value != null && "${s.value}") settingValues[n] = "${s.value}"
     }
 
@@ -1434,10 +2779,10 @@ List extractHubVariableWrites(Map data) {
         Map act = (actVal instanceof Map) ? (actVal as Map) : [:]
         String method = (act.method ?: settingValues["actSubType.${num}"] ?: '') as String
         if (method != 'getSetVariable') return
-        // Trailing period observed on the one fixture verified so far (rule
-        // 2981, "TestHubUptime.") - not yet confirmed as universal, so strip
-        // rather than assume it is always present. See handoff.md Section 22.
-        String varName = ("${settingValues["xVarV.${num}"] ?: ''}").replaceAll(/\.$/, '')
+        // Preserve the name exactly. A trailing period can be part of the
+        // actual Hub Variable name, as confirmed by the authoritative hub
+        // inventory, so stripping it disconnects valid reads and writes.
+        String varName = "${settingValues["xVarV.${num}"] ?: ''}"
         if (!varName) return
         Map write = [variable: varName]
         // Only the device-attribute source has been observed. A fixed value or
@@ -1447,9 +2792,15 @@ List extractHubVariableWrites(Map data) {
         if (settingValues["valStringOp.${num}"] == 'Device attribute') {
             String attr = settingValues["tCustomAttr.${num}"]
             List srcDevices = settingDevices["customDev.${num}"] ?: []
+            List srcDeviceIds = settingDeviceIds["customDev.${num}"] ?: []
             if (attr && srcDevices) {
                 write.sourceDevice = srcDevices[0]
                 write.sourceAttr = attr
+                // ID-based, for the structured writeSource edge field. May be
+                // absent even when sourceDevice/sourceAttr are present (an
+                // older cached scan, or a shape this has not seen) - the
+                // structured field is only ever emitted when this resolves.
+                if (srcDeviceIds) write.sourceDeviceId = srcDeviceIds[0]
             }
         }
         out << write
@@ -1506,7 +2857,7 @@ List extractHubVariableReads(Map data) {
         (expr instanceof List ? expr as List : []).each { item ->
             String s = "${item}"
             if (settingValues["rCapab_${s}"] != 'Variable') return
-            String varName = ("${settingValues["xVar_${s}"] ?: ''}").replaceAll(/\.$/, '')
+            String varName = "${settingValues["xVar_${s}"] ?: ''}"
             if (varName) found[varName] = true
         }
     }
@@ -1521,7 +2872,7 @@ List extractHubVariableReads(Map data) {
     settingValues.keySet().findAll { it ==~ /^tCapab\d+$/ }.each { String capabKey ->
         if (settingValues[capabKey] != 'Variable') return
         String num = capabKey.replaceAll('^tCapab', '')
-        String varName = ("${settingValues["xVar${num}"] ?: ''}").replaceAll(/\.$/, '')
+        String varName = "${settingValues["xVar${num}"] ?: ''}"
         if (varName) found[varName] = true
     }
 
@@ -2219,6 +3570,15 @@ String prettyMethod(String method) {
     // resolves it to 'buttons', and its own name ("Dining - Relax") carries
     // no hint either.
     [key: 'scene',     label: 'Scene',                caps: []],
+    // Empty caps, detected off deviceType like 'scene' above - v2.0.14's
+    // synthesized Connector device nodes (buildGraph(), for a Hub Variable
+    // Connector Hubitat's own /hub2/devicesList does not list - see
+    // Supporting Docs/hub_variable_v2014_implementation_spec.md) hardcode this
+    // key directly, since the caller already knows it is a connector. A real,
+    // independently-discovered Connector device would also match here via its
+    // driver name containing "Connector" (Hubitat's own Variable Connector
+    // driver family), the same deviceType-substring pattern 'scene' uses.
+    [key: 'connector', label: 'Hub Variable connector', caps: []],
 ]
 
 // Name-based hints, checked BEFORE capability - added at Gordon's explicit
@@ -2271,6 +3631,7 @@ List nameWords(String name) {
 // being a scene at all, so neither of the other two signals can find them.
 String autoDetectIconKeyForDevice(String name, List capabilities, String deviceType = null) {
     if (deviceType && deviceType.toLowerCase().contains('scene')) return 'scene'
+    if (deviceType && deviceType.toLowerCase().contains('connector')) return 'connector'
     List words = nameWords(name)
     for (hint in ICON_NAME_HINTS) {
         Map h = hint as Map
@@ -2330,7 +3691,7 @@ String autoDetectIconKeyForDevice(String name, List capabilities, String deviceT
     'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
     'cameras', 'shades', 'broker', 'climate', 'lighting', 'security', 'media',
     'switches', 'energy', 'environmental', 'sensor', 'hub', 'ai', 'appliance',
-    'network', 'display', 'scene', 'unknown',
+    'network', 'display', 'scene', 'connector', 'unknown',
 ]
 
 // Nothing in ICON_RULES matched - not a guess, an honest "this app does not
@@ -2448,39 +3809,15 @@ String stripStatusMarkup(String s) {
 // Graph building
 // ===================================================================================================================
 
-// Label only, for a rule named as the target of a rule-to-rule link that the
-// device-driven scan never reached. Failure is not an error - the node is still
-// drawn, just with its id for a name.
-Map fetchAppName(String appId) {
-    Map out = [label: null, type: null, drawLabel: null, missing: false]
-    try {
-        Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", 10)
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        Map installedApp = data.installedApp as Map
-        if (installedApp?.label || installedApp?.name) {
-            String rawLabel = (installedApp?.label ?: installedApp?.name) as String
-            out.label = stripTags(rawLabel)
-            out.drawLabel = stripStatusMarkup(rawLabel)
-            out.type = installedApp?.name
-        } else {
-            // A deleted app still answers 200 here, with an empty shell
-            // rather than a 404. So a rule naming a rule that no longer
-            // exists is not an error to swallow, it is a dangling
-            // reference worth showing: the action stays in the calling
-            // rule and silently does nothing.
-            out.missing = true
-        }
-    } catch (Exception ex) {
-        log.warn "${app.label}: could not name linked rule ${appId}: ${ex.message}"
-    }
-    return out
-}
-
-// Name (and deleted status) of a rule referenced by another rule. Prefers what
-// the scan already read, falls back to a direct lookup, and finally to the
-// bare id. Cached because a rule can be both a flowchart target and a graph
-// edge target.
+// Name (and deleted status) of a rule referenced by another rule. The app
+// phase creates an appInfo entry for every id returned by the complete
+// /hub2/appsList inventory, including an explicit fallback entry when an
+// app's relationship endpoint is unreadable. Therefore a target absent from
+// appInfo was not installed at scan time and is a dangling/deleted reference.
+// Resolving that fact from the completed inventory keeps buildGraph entirely
+// in-memory: graph finalization and abandoned-scan recovery can never stall on
+// a sequence of synchronous 10-second loopback lookups. Cached because a rule
+// can be both a flowchart target and a graph edge target.
 //
 // Returns [label, missing] rather than a bare label. The label alone used to
 // be the only record of a deleted target - "Rule 2328 - deleted" - which meant
@@ -2493,16 +3830,10 @@ Map linkedRuleName(String targetId, Map appInfo, Map cache) {
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
     String draw = target?.drawLabel as String
-    boolean missing = false
-    if (!label) {
-        Map named = fetchAppName(targetId)
-        label = named.label as String
-        draw = named.drawLabel as String
-        missing = named.missing as boolean
-        // Named so the user can act on it. "Rule 2328" invites a hunt for a
-        // rule that is not there; saying so turns it into a finding.
-        if (!label && missing) label = "Rule ${targetId} - deleted"
-    }
+    boolean missing = !appInfo.containsKey(targetId)
+    // Named so the user can act on it. "Rule 2328" invites a hunt for a
+    // rule that is not there; saying so turns it into a finding.
+    if (!label && missing) label = "Rule ${targetId} - deleted"
     if (!label) label = "Rule ${targetId}"
     // Falls back to the full label, which is what a scan from before drawLabel
     // existed will have stored, and what a bare "Rule 2328" needs anyway.
@@ -2601,6 +3932,67 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     return 'references nothing'
 }
 
+// Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API,
+// NOT an HTTP endpoint - confirmed live 2026-08-26 after a dedicated search for
+// a loopback endpoint came back seven 404s. Called only
+// from finishScan()'s finishGeneration() closure, synchronously, so a failed or
+// stale inventory is published or discarded atomically with the rest of that
+// scan generation - never mixed into a different generation's graph.
+Map fetchHubVariableInventory() {
+    try {
+        Map allVars = getAllGlobalVars()
+        if (allVars == null) {
+            return [status: 'failed', error: 'getAllGlobalVars() returned null', count: 0,
+                    source: 'authoritative-hub-inventory', variables: [:]]
+        }
+        return [status: 'complete', error: null, count: allVars.size(),
+                source: 'authoritative-hub-inventory', variables: allVars]
+    } catch (Exception e) {
+        log.warn "${app.label}: getAllGlobalVars() failed - ${e.message}"
+        return [status: 'failed', error: "${e.message}", count: 0,
+                source: 'authoritative-hub-inventory', variables: [:]]
+    }
+}
+
+// Map a platform Hub Variable type spelling to the canonical schema-4 value,
+// case-insensitively. Confirmed live 2026-08-26 against real test variables of
+// all five types (a v2.0.14 export of TestNumber/
+// TestDecimal/TestBoolean/TestDateTime for the rest): getAllGlobalVars()
+// returns Groovy runtime type names, not the UI's declared-type labels -
+// "integer" for Number, "bigdecimal" for Decimal, "boolean" and "datetime"
+// matching directly. The first live export (schema 4) showed variableType:
+// null for TestNumber/TestDecimal because this mapping only recognized
+// "number"/"decimal" at the time - the safe fallback worked exactly as
+// designed (no crash, no wrong guess), and this is
+// the confirmed correction, not a guess. Unrecognized input still returns
+// null.
+String normalizeHubVariableType(String rawType) {
+    switch ("${rawType}".toLowerCase()) {
+        case 'integer': return 'Number'
+        case 'bigdecimal': return 'Decimal'
+        case 'string': return 'String'
+        case 'boolean': return 'Boolean'
+        case 'datetime': return 'DateTime'
+        default: return null
+    }
+}
+
+// Resolve stored references against the authoritative inventory. Exact identity
+// wins; the trailing-period fallback applies only to one unambiguous match.
+String canonicalHubVariableName(String rawName, Map inventoryVars) {
+    String raw = rawName ?: ''
+    if (!raw || !inventoryVars) return raw
+    if (inventoryVars.containsKey(raw)) return raw
+
+    String comparable = raw.endsWith('.') ? raw.substring(0, raw.length() - 1) : raw
+    List matches = inventoryVars.keySet().findAll { Object key ->
+        String candidate = "${key}"
+        String candidateComparable = candidate.endsWith('.') ? candidate.substring(0, candidate.length() - 1) : candidate
+        candidateComparable == comparable
+    } as List
+    return matches.size() == 1 ? "${matches[0]}" : raw
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -2627,12 +4019,70 @@ Map buildGraph() {
     // cannot be trusted alone - Rule Machine's own %device%/%time%/%date%
     // notification tokens match the same pattern as a real Hub Variable
     // reference and are not one.
+    Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
+    Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
     Set confirmedVarNames = []
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        (appMap.hubVarWrites ?: []).each { Map w -> if (w.variable) confirmedVarNames << "${w.variable}" }
-        (appMap.hubVarReads ?: []).each { Map r -> if (r.variable && r.confirmed) confirmedVarNames << "${r.variable}" }
+        (appMap.hubVarWrites ?: []).each { Map w ->
+            if (w.variable) confirmedVarNames << canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
+        }
+        (appMap.hubVarReads ?: []).each { Map r ->
+            if (r.variable && r.confirmed) confirmedVarNames << canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
+        }
+    }
+
+    // Authoritative Hub Variable inventory (v2.0.14), published by finishScan()
+    // into state.hubVariableInventory inside its finishGeneration() closure -
+    // read here as already-durable, generation-consistent state, the same way
+    // appInfo/deviceLabels above are. Seeded into `nodes` BEFORE the per-app
+    // write/read loop below, so that loop's existing `if (!nodes[varNodeId])`
+    // guards naturally treat an inventory-sourced node as already present
+    // (parent spec 6.3 reconciliation) instead of overwriting it.
+    boolean hubVarInventoryComplete = "${hubVarInventory.status}" == 'complete'
+    // Findings: a proven structured reference to a name absent from a COMPLETE
+    // inventory (not promoted to a node - parent spec 6.3, a design review
+    // point 5). There is no equivalent "Connector missing" finding: a
+    // reported Connector deviceId is trusted unconditionally below (confirmed
+    // against live hub data), so no code path can
+    // ever fail to resolve one - see the synthesized-node comment just below
+    // for why, and the orphan/stale-ID limitation this trade-off leaves.
+    List unresolvedHubVarReferences = []
+    int hubVarConnectorCount = 0
+    hubVarInventoryVars.each { String varName, meta ->
+        if (!varName) return
+        String varNodeId = "v${varName}"
+        Map m = (meta instanceof Map) ? (meta as Map) : [:]
+        nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+        nodes[varNodeId].variableType = normalizeHubVariableType(m.type as String)
+        nodes[varNodeId].identitySource = 'hub-inventory'
+        String connDevId = m.deviceId ? "${m.deviceId}" : null
+        if (connDevId) {
+            // Connector devices do not appear in /hub2/devicesList, so
+            // getGlobalVar()'s deviceId is trusted directly - an ID-based
+            // reference, not the display-name join spec 7.2 warns against.
+            // When bulk discovery does find the device its real label is
+            // used; otherwise a minimal node is synthesized. Never write to
+            // `labels`: it may share state.deviceLabels' backing object.
+            String devNodeId = "d${connDevId}"
+            boolean discovered = labels.containsKey(connDevId)
+            if (!discovered && !nodes[devNodeId]) {
+                nodes[devNodeId] = nodeEntry(devNodeId, "${varName} Connector" as String, 'device')
+                // Hardcoded, not autoDetectIconKeyForDevice() - this call site
+                // already knows it is a connector (that is why the node was
+                // synthesized at all), so there is nothing to detect.
+                nodes[devNodeId].icon = 'connector'
+            }
+            nodes[varNodeId].connectorDeviceId = connDevId
+            nodes[varNodeId].connectorType = (deviceTypes[connDevId] as String) ?: (m.attribute as String) ?: null
+            hubVarConnectorCount++
+            String connEdgeKey = "${varNodeId}|${devNodeId}|synchronizedWith"
+            if (!seen.contains(connEdgeKey)) {
+                seen << connEdgeKey
+                edges << [from: varNodeId, to: devNodeId, kind: 'synchronizedWith']
+            }
+        }
     }
 
     appInfo.each { String appId, info ->
@@ -2664,14 +4114,11 @@ Map buildGraph() {
         // must not itself count as a relationship, or an app with only a
         // false-positive candidate would be wrongly called non-inert too.
         boolean hasVarRelationship = (appMap.hubVarWrites ?: []) ||
-            (appMap.hubVarReads ?: []).any { Map r -> r.confirmed == true || confirmedVarNames.contains("${r.variable}") }
+            (appMap.hubVarReads ?: []).any { Map r ->
+                String canonical = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
+                r.confirmed == true || confirmedVarNames.contains(canonical)
+            }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
-        // This app's own instances are the one exception, and stay hidden. They
-        // are excluded from the graph deliberately, so drawing them as apps that
-        // reference nothing would be actively misleading: they reference the
-        // whole hub.
-        if (inert && "${appMap.type}".startsWith(APP_FAMILY)) return
-
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
         // [paused] is this app's own annotation, not the hub's, so it belongs on
@@ -2682,8 +4129,12 @@ Map buildGraph() {
         // An inert app's subtitle carries why it is empty instead of its engine.
         // The engine is the less useful of the two here: "Rule Machine" on a
         // square with no edges raises the question, "holds 46 apps" answers it.
+        // This app's own instances are a fixed exception: they read the whole
+        // hub rather than driving anything, which is a fact about what they
+        // are, not an absence to explain the way an empty container is.
+        boolean isSelfFamily = "${appMap.type}".startsWith(APP_FAMILY)
         String subtitle = unreadable ? 'could not be read' :
-            (inert ? inertReason(appMap.inert as Map, appInfo, appMap.parent as String) : (appMap.type as String))
+            (inert ? (isSelfFamily ? 'reads the whole hub, drives nothing' : inertReason(appMap.inert as Map, appInfo, appMap.parent as String)) : (appMap.type as String))
         nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
         // The raw underlying type, unconditionally - subtitle above is
         // overwritten with the inert/unreadable reason for those nodes, so it
@@ -2693,6 +4144,10 @@ Map buildGraph() {
         // rule reached only as another rule's target counted the same as
         // LIFX Light Manager.
         nodes[appNodeId].appType = "${appMap.type}"
+        // Browser-local Community Context Card matching only (spec section
+        // 4.1) - deliberately absent from buildExportPayload()'s apps[]
+        // mapping, so it never reaches the AI-friendly export.
+        if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (unreadable) {
             nodes[appNodeId].unreadable = true
@@ -2787,15 +4242,33 @@ Map buildGraph() {
         // so unlike a device the node is identified by name, not by an id the
         // scan discovered it under.
         (appMap.hubVarWrites ?: []).each { Map w ->
-            String varName = "${w.variable}"
+            String varName = canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
             if (!varName) return
             String varNodeId = "v${varName}"
-            if (!nodes[varNodeId]) nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+            // A proven structured write naming a variable absent from a
+            // COMPLETE authoritative inventory is an unresolved reference, not
+            // a node - it is not promoted (parent spec 6.3, a design review
+            // point 5). When inventory failed/is absent, behaviour below is
+            // unchanged from before v2.0.14 (reference-derived fallback).
+            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
+                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'write']
+                return
+            }
+            if (!nodes[varNodeId]) {
+                nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+                nodes[varNodeId].identitySource = 'reference-derived'
+            }
             String key = "${appNodeId}|${varNodeId}|write"
             if (seen.contains(key)) return
             seen << key
             Map edge = [from: appNodeId, to: varNodeId, kind: 'write']
             if (w.sourceDevice && w.sourceAttr) edge.detail = "from ${w.sourceDevice}.${w.sourceAttr}"
+            // Structured, ID-based writeSource - only emitted when the source
+            // device ID resolves in the discovered device set, never joined by
+            // display label alone (parent spec 7.2).
+            if (w.sourceDeviceId && w.sourceAttr && labels.containsKey("${w.sourceDeviceId}")) {
+                edge.writeSource = [kind: 'deviceAttribute', deviceId: "${w.sourceDeviceId}", attribute: "${w.sourceAttr}"]
+            }
             edges << edge
         }
         // Stored from-app-to-variable the same as a write, NOT reversed, even
@@ -2807,7 +4280,7 @@ Map buildGraph() {
         // 'trigger'/'constraint'/'monitor' in the JS inbound list so the
         // arrowhead still points at the app despite `from` being the app.
         (appMap.hubVarReads ?: []).each { Map r ->
-            String varName = "${r.variable}"
+            String varName = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
             if (!varName) return
             // An unconfirmed (free-text-only) candidate is only drawn if
             // some app, anywhere on the hub, confirms the same name via a
@@ -2816,12 +4289,43 @@ Map buildGraph() {
             // silently rather than drawn as a guess.
             if (r.confirmed != true && !confirmedVarNames.contains(varName)) return
             String varNodeId = "v${varName}"
-            if (!nodes[varNodeId]) nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+            // Same unresolved-reference reconciliation as writes above.
+            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
+                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'read']
+                return
+            }
+            if (!nodes[varNodeId]) {
+                nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+                nodes[varNodeId].identitySource = 'reference-derived'
+            }
             String key = "${appNodeId}|${varNodeId}|read"
             if (seen.contains(key)) return
             seen << key
-            edges << [from: appNodeId, to: varNodeId, kind: 'read']
+            // usageRole: 'unknown-read' for every currently-decoded read; this
+            // app does not yet classify trigger/condition/action-input/
+            // text-substitution roles. Parent spec 6.2 explicitly prefers
+            // unknown-read over an invented role - first-class inventory is
+            // not delayed on complete role classification.
+            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']
         }
+    }
+
+    // Device discovery is hub-wide, while the role pass above only encounters
+    // devices referenced by an app. Preserve every existing referenced device
+    // node exactly as built above, then append only discovered devices that had
+    // no relationship. This keeps existing node order, icons and edges stable
+    // while making the graph, Focus device list and AI export agree with the
+    // scan's device count.
+    labels.each { String devId, label ->
+        String devNodeId = "d${devId}"
+        if (nodes[devNodeId]) return
+
+        nodes[devNodeId] = nodeEntry(devNodeId, (label ?: "Device ${devId}") as String, 'device')
+        nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
+            autoDetectIconKeyForDevice((label ?: '') as String, deviceCaps[devId] as List,
+                                       deviceTypes[devId] as String)
+        String note = (iconNotes[devId] as String)?.trim()
+        if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
     }
 
     // App-to-app edges are emitted in a second pass, so a link is still drawn
@@ -2887,8 +4391,14 @@ Map buildGraph() {
     List externals = []
     List userRows = userRegistry()
     List userTypes = classifiedTypes()
+    List reviewedRows = reviewedExternalDefaults()
+    List reviewedTypes = reviewedRows.collect { Object row -> "${(row as Map).type}" }.unique()
     registryMatches().each { row ->
         if (!(row instanceof Map)) return
+        String t = "${(row as Map).type}"
+        if (!userTypes.contains(t) && !reviewedTypes.contains(t)) externals << row
+    }
+    reviewedRows.each { row ->
         String t = "${(row as Map).type}"
         if (!userTypes.contains(t)) externals << row
     }
@@ -2975,19 +4485,15 @@ Map buildGraph() {
         }
     }
 
-    return [nodes: nodes.values().toList(), edges: edges, flows: flows]
+    return [nodes: nodes.values().toList(), edges: edges, flows: flows,
+            hubVariableUnresolvedReferences: unresolvedHubVarReferences,
+            hubVariableConnectorCount: hubVarConnectorCount]
 }
 
-// Scheduled rather than called inline from a save handler, for the same reason
-// the scan chain schedules its own graph build instead of running it in the
-// batch that finishes the scan: buildGraph() can make its own loopback HTTP
-// calls resolving unresolved rule-to-rule targets (linkedRuleName ->
-// fetchAppName), unbounded in count on a hub with many dangling references.
-// Doing that inside the web request that handles a POST leaves the browser
-// waiting on hub-to-hub HTTP calls it has no reason to know about, for a
-// request that is otherwise just persisting a row. Scheduling it 1 second
-// out, the same pattern scanBatch already uses for fetchRegistry, answers the
-// POST immediately and lets the rebuild happen off the request entirely.
+// Scheduled rather than called inline from a save handler so the web request
+// is limited to persisting the user's change. Scheduling it 1 second out, the
+// same pattern beginRegistryAndFinish already uses for fetchRegistry, answers
+// the POST immediately and lets the rebuild happen independently.
 // Runs by handler name, so two saves close together simply reschedule the
 // same job rather than queuing two rebuilds.
 void rebuildStoredGraph() {
@@ -3030,6 +4536,56 @@ void rebuildStoredGraph() {
 // Distinct from never having been classified, which is the point: the map must
 // be able to say "nothing needed" separately from "nobody has said".
 @Field static final String EXTERNAL_NONE = '__none__'
+
+// First-party assessments for Hubitat's own automation apps, kept as their
+// own provenance tier rather than presented as reviewed community evidence.
+//
+// An explicit allow-list, NOT a namespace rule: Google Home, Chromecast, Hub
+// Mesh and Maker API are built-ins with real external relationships. Anything
+// not named here stays unassessed. A user declaration always wins.
+@Field static final Map BUILTIN_INTERNAL_ONLY = [
+    'Rule Machine'             : 'Hub-local rule engine.',
+    'Basic Rules'              : 'Hub-local rule engine.',
+    'Visual Rules Builder'     : 'Hub-local rule engine.',
+    'Button Controllers'       : 'Hub-local button handling.',
+    'Basic Button Controllers' : 'Hub-local button handling.',
+    'Groups and Scenes'        : 'Hub-local device grouping.',
+    'Notifications'            : 'Sends to notification devices on this hub.',
+    'Export/Import/Clone'      : 'Hub-local app management.',
+]
+
+// Reviewed community and deployment-specific hub-only assessments. Explicit
+// user declarations remain higher priority than these defaults.
+@Field static final Map REVIEWED_INTERNAL_ONLY = [
+    'MCP Rule Server'                    : 'Runs on this hub.',
+    'Presence Manager'                   : 'Uses participating devices already represented on this hub.',
+    'Rebooter'                           : 'Runs on this hub.',
+    'Rule References Rule Table'         : 'Runs on this hub.',
+    'AI (MCP) Connector Integration'     : 'Runs on this hub.',
+    'Averaging Master'                   : 'Uses participating devices already represented on this hub.',
+    'Critical Device Monitor'            : 'Uses participating devices already represented on this hub.',
+    'Hub Diagnostics'                    : 'Runs on this hub.',
+    'Hubitat® Dashboard'                 : 'Runs on this hub.',
+    'Kasa Integration'                   : 'Assessed for this deployment as hub-only.',
+    'Maker API'                          : 'Assessed for this deployment as hub-only.',
+    'Notification Proxy'                 : 'Runs on this hub.',
+    'Zigbee Map 3.0.4'                   : 'Runs on this hub.',
+    'mDNS Device Discovery'              : 'Runs on this hub.',
+]
+
+// Reviewed dependency defaults remain separate from saved user declarations,
+// which stay portable and higher priority.
+@Field static final List REVIEWED_EXTERNAL_DEFAULTS = [
+    [type: 'CoCoHue - Hue Bridge Integration', name: 'Hue Bridge',        kind: 'local_bridge', crit: 'RUNTIME'],
+    [type: 'LIFX Light Manager',               name: 'LIFX Cloud',        kind: 'internet',     crit: 'MANAGEMENT'],
+    [type: 'Sensibo Integration',              name: 'Sensibo Cloud',     kind: 'internet',     crit: 'RUNTIME'],
+    [type: 'Tapo Integration',                 name: 'Tapo Cloud',        kind: 'internet',     crit: 'RUNTIME'],
+    [type: 'BOM Weather Alerts',               name: 'Weather Services',  kind: 'internet',     crit: 'RUNTIME'],
+    [type: 'Chromecast Integration',           name: 'Google Chromecast', kind: 'local_device', crit: 'RUNTIME'],
+    [type: 'Google Home',                      name: 'Google Home',       kind: 'platform',     crit: 'RUNTIME'],
+    [type: 'Hubitat Package Manager',          name: 'GitHub',            kind: 'internet',     crit: 'MANAGEMENT'],
+    [type: 'Meross MSG100 Garage Door Setup',  name: 'Meross Cloud',      kind: 'internet',     crit: 'SETUP_ONLY'],
+]
 
 // ===================================================================================================================
 // Shared registry
@@ -3164,6 +4720,16 @@ List userRegistry() {
     return (state.userRegistry ?: []) as List
 }
 
+List reviewedExternalDefaults() {
+    return REVIEWED_EXTERNAL_DEFAULTS.collect { Object row -> new LinkedHashMap(row as Map) }
+}
+
+Map reviewedInternalOnly() {
+    Map out = new LinkedHashMap(BUILTIN_INTERNAL_ONLY)
+    out.putAll(REVIEWED_INTERNAL_ONLY)
+    return out
+}
+
 List registryMatches() {
     return (state.registryMatches ?: []) as List
 }
@@ -3222,13 +4788,96 @@ List discoveredAppTypes() {
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
         if (!t || t == 'null') return
-        // This app and its dev twin are already excluded from the graph.
-        // Offering them for classification asks the user to declare what
-        // Automation Map depends on, which is nothing and not their problem.
+        // This app and its dev twin have no external dependency to declare -
+        // offering them here would ask the user to classify what Automation
+        // Map depends on, which is nothing.
         if (t.startsWith(APP_FAMILY)) return
         if (!types.contains(t)) types << t
     }
     return types.sort()
+}
+
+// Identity and hierarchy per app type, so External Systems classifies the
+// ROOT integration rather than every definition independently.
+// discoveredAppTypes() reduces everything to a type name and discards both
+// namespace and parent, which is what fills the panel with child rule types.
+//
+// Returns type -> [type, namespace, count, rootType, isRoot, identities].
+Map appTypeIdentities() {
+    Map info = (state.appInfo ?: [:]) as Map
+    Map byIdentity = [:]
+    info.each { String appId, v ->
+        if (!(v instanceof Map)) return
+        Map m = v as Map
+        String t = "${m.type}"
+        if (!t || t == 'null') return
+        if (t.startsWith(APP_FAMILY)) return
+
+        // Walk to the root. Bounded and cycle-guarded on purpose: this is
+        // persisted state that outlives the apps it points at, so a stale
+        // parentAppId referring to a deleted app is possible even though none
+        // exists on this hub today. Either way the walk stops and the app is
+        // treated as its own root rather than looping.
+        Map cur = m
+        Set seen = ["${appId}" as String]
+        int hops = 0
+        while (cur?.parent && hops < 12) {
+            String pid = "${cur.parent}"
+            if (seen.contains(pid)) break
+            seen << pid
+            Object p = info[pid]
+            if (!(p instanceof Map)) break
+            cur = p as Map
+            hops++
+        }
+        String rootType = "${cur?.type}"
+        if (!rootType || rootType == 'null') rootType = t
+
+        // Accumulate per {type, namespace}, NOT per type (a design review
+        // point 1). Two definitions sharing a type name across namespaces are
+        // different things: merging them pools their counts and lets one
+        // namespace's child status erase another namespace's root.
+        String ns = m.namespace ? "${m.namespace}" : ''
+        String key = "${t}||${ns}"
+        Map e = byIdentity[key] as Map
+        if (e == null) {
+            e = [type: t, namespace: (ns ?: null), count: 0, rootType: t, isRoot: true]
+            byIdentity[key] = e
+        }
+        e.count = ((e.count ?: 0) as Integer) + 1
+        if (rootType != t) {
+            e.isRoot = false
+            e.rootType = rootType
+        }
+    }
+
+    // Collapsed to type keys for the panel, because user declarations are
+    // type-keyed and must keep working - but the
+    // per-identity records travel with it so nothing is lost, and an old
+    // type-only declaration is understood to apply to every identity sharing
+    // that name.
+    Map out = [:]
+    byIdentity.each { String key, Object v ->
+        Map e = v as Map
+        Map agg = out[e.type] as Map
+        if (agg == null) {
+            agg = [type: e.type, namespace: null, count: 0, rootType: e.rootType, isRoot: false, identities: []]
+            out[e.type] = agg
+        }
+        agg.count = ((agg.count ?: 0) as Integer) + ((e.count ?: 0) as Integer)
+        (agg.identities as List) << e
+        if (!agg.namespace && e.namespace) agg.namespace = e.namespace
+        // A root under ANY namespace makes the type a root. The previous rule
+        // was the inverse - one child instance demoted the whole type - which
+        // is what could hide a genuine root definition.
+        if (e.isRoot) {
+            agg.isRoot = true
+            agg.rootType = e.type
+        } else if (!agg.isRoot) {
+            agg.rootType = e.rootType
+        }
+    }
+    return out
 }
 
 // The declarations for one app type. Returns [] for an unclassified type and
@@ -3330,9 +4979,8 @@ Map externalsSaveMapping() {
     state.userRegistry = incoming
     // Rebuilt from stored scan data rather than rescanning - the declarations
     // changed, the hub did not - and rebuilt off the request entirely (see
-    // rebuildStoredGraph()) rather than inline, since buildGraph() can make
-    // its own unbounded HTTP calls. externalsJson() below does not read
-    // state.graph, so the response is unaffected by the rebuild being
+    // rebuildStoredGraph()) rather than inline. externalsJson() below does not
+    // read state.graph, so the response is unaffected by the rebuild being
     // deferred.
     runIn(1, 'rebuildStoredGraph')
     log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
@@ -3342,6 +4990,9 @@ Map externalsSaveMapping() {
 String externalsJson() {
     List types = discoveredAppTypes()
     List classified = classifiedTypes()
+    List reviewed = reviewedExternalDefaults()
+    List reviewedTypes = reviewed.collect { Object row -> "${(row as Map).type}" }.unique()
+    Map internalOnly = reviewedInternalOnly()
     List reg = registryMatches()
     List regTypes = []
     reg.each { r -> String t = "${(r as Map).type}"; if (t && !regTypes.contains(t)) regTypes << t }
@@ -3352,9 +5003,18 @@ String externalsJson() {
         criticality: EXTERNAL_CRITICALITY,
         noneMarker: EXTERNAL_NONE,
         appTypes: types,
+        // Identity and hierarchy alongside the flat type list, not instead of
+        // it: user declarations are keyed by type string and must keep
+        // working unchanged.
+        appTypeInfo: appTypeIdentities(),
+        builtinInternal: internalOnly,
+        reviewed: reviewed,
         // Unclassified means nobody has said, by user OR registry. An app type
         // the registry covers is not a gap the user needs to fill.
-        unclassified: types.findAll { !classified.contains(it) && !regTypes.contains(it) },
+        unclassified: types.findAll {
+            !classified.contains(it) && !reviewedTypes.contains(it) &&
+                !regTypes.contains(it) && !internalOnly.containsKey(it)
+        },
         entries: userRegistry(),
         registry: reg,
         registryMeta: (state.registryMeta ?: [:]),
@@ -3423,7 +5083,7 @@ String iconOverridesJson() {
         [
             id: devId,
             name: label,
-            room: rooms[devId] ?: '',
+            room: rooms[devId] == null ? '' : "${rooms[devId]}".trim(),
             detected: autoDetectIconKeyForDevice(label as String, caps[devId] as List, types[devId] as String),
             override: overrides[devId] ?: 'auto',
             note: notes[devId] ?: '',
@@ -3463,7 +5123,7 @@ Map scanMapping() {
     // Logging only from the catch below could not prove that - a throw in the
     // success path (scanStatusJson/render) would also leave the log silent while
     // Hubitat returned its HTML error page.
-    log.warn "${app.label}: /scan endpoint reached"
+    log.info "${app.label}: /scan endpoint reached"
     try {
         // Guarded the same way scheduledScanHandler() already is - a repeat
         // GET while a scan is running must not restart it. Restarting orphans
@@ -3472,15 +5132,43 @@ Map scanMapping() {
         // calls now guard against; skipping here closes the other half of
         // that same gap. Answering with the current status instead of an
         // error keeps the page's poll loop working unchanged either way.
+        //
+        // state.scanRunning here is a fast-path check only, harmless if
+        // stale - startScan()'s own atomic lock is the real guard. A second
+        // execution can read this as false before the winner's own commit
+        // lands (state only commits durably at the end of a whole
+        // execution), call startScan(), and lose that lock instead - not a
+        // failure, just this execution finding out it isn't the owner, and
+        // worth its own distinct log line rather than folding into the
+        // fast-path message below.
+        //
+        // casLost is tracked separately from "did this request skip
+        // starting a scan" - caught in review: an ordinary request arriving
+        // while a scan is already fully running (the state.scanRunning==true
+        // branch) is NOT the same situation as losing the CAS race, and must
+        // not be forced into the same "alreadyStarting" response. Only the
+        // genuine race case needs the override; the ordinary case already
+        // has an accurate live state.scanRunning to report as-is.
+        boolean casLost = false
         if (state.scanRunning) {
             log.info "${app.label}: /scan reached while a scan is already running, not restarting"
         } else {
-            startScan()
+            Map result = startScan()
+            if (!result.acquired) {
+                casLost = true
+                log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
+            }
         }
         // Inside the try, not after it. Left outside, an exception in
         // scanStatusJson() or render() escaped this handler entirely and
         // produced the same unexplained HTML page the handler exists to stop.
-        return render(status: 200, contentType: 'application/json', data: scanStatusJson())
+        //
+        // forceRunning (the casLost case) exists because this execution's
+        // own state.scanRunning can still read false here even though a
+        // scan genuinely is starting - it is the LOSING execution's stale
+        // snapshot, not the winner's, and scanStatusJson() would otherwise
+        // report a truthfully-wrong "running:false".
+        return render(status: 200, contentType: 'application/json', data: scanStatusJson(casLost))
     } catch (Exception ex) {
         log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
         // Serialised to a String, not passed as a Map. Every other render() in
@@ -3508,13 +5196,31 @@ Map scanStatusMapping() {
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
-String scanStatusJson() {
+// forceRunning exists for exactly one caller: scanMapping() when this
+// execution lost the startScan() single-flight lock to a concurrent one.
+// This execution's own state.scanRunning is that losing execution's stale
+// pre-commit snapshot, not the winner's - reporting it as false would be a
+// truthfully-wrong "nothing is happening" while a scan genuinely starts.
+String scanStatusJson(boolean forceRunning = false) {
+    // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
+    // the phase-starting execution itself - never by a callback or reaper,
+    // which must stay entirely state-free. During an active phase the true
+    // live counters are DEVICE_SCANS/APP_SCANS[scanId]'s own accumulator;
+    // read directly from there rather than report a frozen, misleadingly-
+    // early snapshot for the whole phase.
+    ConcurrentHashMap liveScan = null
+    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
+    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
+    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : state.scanDone
+    def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
-        running: state.scanRunning as boolean,
+        running: forceRunning || (state.scanRunning as boolean),
+        alreadyStarting: forceRunning,
         phase: state.scanPhase,
-        done: state.scanDone,
+        done: done,
         total: state.scanTotal,
-        queued: (state.scanQueue ?: []).size(),
+        queued: queued,
         apps: (state.appInfo ?: [:]).size(),
         devices: (state.deviceLabels ?: [:]).size(),
         error: state.scanError,
@@ -3526,12 +5232,32 @@ String scanStatusJson() {
         rulesDecoded: state.rulesDecoded,
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
-        heartbeat: state.scanHeartbeat,
+        heartbeat: heartbeat,
         graphVersion: state.graphVersion,
     ])
 }
 
 Map renderMapMapping() {
+    // The settings-page link is already hidden during a scan, but an existing
+    // tab, bookmark or copied URL can still request this endpoint directly.
+    // startScan deliberately retains the previous graph while the replacement
+    // is assembled, and its supporting state maps are being replaced phase by
+    // phase, so rendering during that window produces an internally mixed map.
+    // Refuse the endpoint until publication finishes rather than presenting
+    // stale and current data as one coherent result.
+    if (state.scanRunning) {
+        return render(
+            status: 200,
+            contentType: 'text/html',
+            data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map - scan in progress</title></head>
+<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<h2>Scan in progress</h2>
+<p>The map is temporarily unavailable while Automation Map discovers and publishes the new data.</p>
+<p>Return to the Automation Map app when the scan has completed, then open the map again.</p>
+<button type="button" onclick="history.back()" style="padding:0.65em 1em; cursor:pointer">Back</button>
+</body></html>"""
+       )
+    }
     if (graphIsStale()) {
         return render(
             status: 200,
@@ -3543,7 +5269,7 @@ Map renderMapMapping() {
 Relationship types have changed since then, so the graph would render without role colours.</p>
 <p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
 </body></html>"""
-        )
+       )
     }
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
@@ -3571,28 +5297,29 @@ String buildMapHtml() {
     // blob above does not carry on its own. Built the same safe way GRAPH
     // is (JsonOutput, not manual string splicing) so an exception message
     // in scanError can never break out of the embedding script tag.
+    // v2.0.14: schema 4 - hubVariables changes meaning from an inferred
+    // referenced subset to an authoritative inventory when available, plus
+    // Connector topology and completeness metadata (parent spec 11.1). Not a
+    // dual-export mode - schema 3 files remain readable by their own
+    // consumers, but this app now generates schema 4 only (a design review
+    // point 4).
+    Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 3,
+        exportSchemaVersion: 4,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
         appsUnreadable: state.appsUnreadable ?: 0,
         devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
+        // Inventory completeness kept separate from relationship-decoder
+        // completeness (parent spec 6.1) - a consumer must not assume one
+        // implies the other.
+        hubVariableInventoryStatus: hubVarInventoryMeta.status ?: 'not-supported',
+        hubVariableInventoryError: hubVarInventoryMeta.error,
+        hubVariableInventoryCount: hubVarInventoryMeta.count ?: 0,
+        hubVariableInventorySource: hubVarInventoryMeta.source,
     ]
     String scanMetaJsonStr = jsonForScriptEmbed(scanMeta)
-    // Positioned in the empty gap between the status box and the controls
-    // panel, where Gordon pointed at it - not overlapping either.
-    String santaHtml = showSanta() ?
-        '<img id="santa" src="data:image/png;base64,' + SANTA_PNG_B64 + '" alt="Merry Christmas" ' +
-        'style="position:absolute; top:6px; right:330px; width:150px; z-index:9; pointer-events:none;">' +
-        // Source PNG is exactly square, so at width:150px its rendered
-        // height is also 150px - the caption sits right at that bottom
-        // edge (top 6 + height 150 + a small gap) rather than a value
-        // guessed from how the image happens to look.
-        '<div id="santaCaption" style="position:absolute; top:162px; right:330px; width:150px; ' +
-        'text-align:center; color:#c0392b; font-weight:bold; font-size:0.85em; z-index:9; pointer-events:none;">' +
-        'Wishing you a Blessed Christmas</div>' : ''
-
     return """\
 <!doctype html>
 <html>
@@ -3733,8 +5460,36 @@ String buildMapHtml() {
   #flow ul { margin:4px 0 10px 0; padding-left:18px; }
   #flow li { margin:2px 0; font-size:0.85em; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Below whatever showFlow()/showInertPanel() put in #flowChart, not inside
+     it - #flowChart gets fully overwritten on every re-render (a fresh
+     mermaid SVG, or a fresh inert-app summary), which would wipe this out if
+     it shared that container. Most of its typography rides #flow's own
+     h4/p/.sub/a rules above; only what is specific to this card is added
+     here. */
+  /* Deliberately lighter than the surrounding #flow panel's near-black, not
+     just a lighter accent within it - visually this is public, external
+     evidence about the package, not something the hub itself reported (spec
+     3.1's "cannot be mistaken for data read from the hub"), and the contrast
+     against #flow's own dark theme is the clearest way to say so at a glance.
+     Overrides every #flow-inherited color (h4/.sub/a) that would otherwise
+     stay light-on-light here. */
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; }
+  #communityCard h4 { color:#1a2733; margin-top:0; }
+  #communityCard .sub { color:#4a5a63; }
+  #communityCard a { color:#1565c0; }
+  #communityCard .ccBadge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:0.75em; margin:0 6px 6px 0; background:#d7e6ea; color:#2c4a55; }
+  #communityCard .ccCaution { color:#a05a1f; }
+  #communityCard .ccLinks a { margin-right:12px; }
+  #communityCard.ccClickable { cursor:pointer; }
+  #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
-     through as ghost text across the middle of the table. */
+     through as ghost text across the middle of the table. Marker just above:
+     the whole <style> block is one unbroken GString literal (no interpolation
+     anywhere in it) - the JVM caps a single compiled string constant at 65535
+     UTF-8 code units, and this block is close enough to that ceiling that
+     adding this card's CSS crossed it. This empty interpolation splits the
+     constant in two without changing anything rendered; needed again if this
+     block grows much further. */
   #ext { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
          max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
@@ -3743,6 +5498,8 @@ String buildMapHtml() {
   #ext th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #ext td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   #ext tr.unclassified td { background:rgba(217,83,79,0.09); }
+  #ext tr.grouphdr td { background:#0a2029; border-top:1px solid #2a4a57; padding-top:9px; padding-bottom:7px; }
+  #ext tr.grouphdr .sub { opacity:0.65; font-weight:400; }
   #ext .tag { display:inline-block; padding:1px 6px; border-radius:3px; font-size:0.88em; }
   #ext .tag-none { background:#2c3e44; color:#9fb4bc; }
   #ext .tag-unset { background:#5a2b29; color:#f0b8b5; }
@@ -3790,11 +5547,98 @@ String buildMapHtml() {
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #icons .msg { font-size:0.8em; margin-left:6px; }
   #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Insights. Rendered into #flowChart, so it inherits #flow typography and
+     only what is specific to the dashboard layout lives here. */
+  /* An explicit readable base in px, then sizes at or near 1em of it. The
+     first version stacked fractional em on fractional em - .insMeta landed
+     around 0.74em and a .sub inside .insPlain around 0.62em, roughly 10px -
+     and Gordon could not read it. Anchoring here stops the compounding, and
+     the .sub rule below neutralises #flow's own 0.78em so a nested caption
+     cannot shrink twice. */
+  #insRoot { font-size:14px; line-height:1.5; }
+  /* Explicit px, not em. An em here still compounds against whatever the
+     ancestor resolved to - a .sub inside .insPlain measured 10.7px even after
+     the base was set, because #flow's own .sub rule was applying to it first.
+     13px is the floor for everything secondary in this panel. */
+  #insRoot .sub, #insRoot .insPlain .sub, #insRoot .insDetail .sub { font-size:13px; }
+  #insRoot .insCards { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:0 0 10px 0; }
+  #insRoot .insCard { background:#0d2630; border:1px solid #2a4a57; border-radius:5px; padding:10px 6px; cursor:pointer;
+                      color:#e8f2f6; font-family:inherit; text-align:center; display:flex; flex-direction:column; gap:3px; }
+  #insRoot .insCard:hover { border-color:#4a7a94; }
+  #insRoot .insCard b { font-size:1.75em; line-height:1.1; }
+  #insRoot .insCard span { font-size:13px; opacity:0.85; line-height:1.25; }
+  #insRoot .insCardZero b { opacity:0.35; }
+  #insRoot .insCardAlert { border-color:#a5563f; }
+  #insRoot .insCardAlert b { color:#e0a95f; }
+  #insRoot .insNote { font-size:13px; opacity:0.65; margin:0 0 12px 0; line-height:1.45; }
+  #insRoot .insStart { background:#0d2630; border:1px solid #2a4a57; border-left:3px solid #4a7a94; border-radius:4px;
+                       padding:8px 10px; margin:0 0 12px 0; font-size:13.5px; line-height:1.45; }
+  #insRoot .insSec { border-top:1px solid #16323c; }
+  #insRoot .insHead { width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; cursor:pointer;
+                      color:#cfe3ea; font-family:inherit; font-size:1.08em; font-weight:600; padding:10px 2px; text-align:left; }
+  #insRoot .insHead:hover { color:#fff; }
+  #insRoot .insHeading { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+  #insRoot .insTitle { display:block; }
+  #insRoot .insSummary { display:block; color:#9fb4bc; font-size:13px; font-weight:400; line-height:1.35; }
+  #insRoot .insChev { opacity:0.7; font-size:0.9em; }
+  #insRoot .insBadge { background:#1c3540; color:#9fb4bc; border-radius:9px; padding:1px 9px; font-size:0.9em; }
+  #insRoot .insBadgeZero { opacity:0.4; }
+  #insRoot .insBody { padding:0 0 10px 0; }
+  #insRoot .insOk { font-size:13.5px; opacity:0.7; margin:0 0 6px 2px; }
+  #insRoot .insLead { font-size:13.5px; opacity:0.85; margin:8px 0 6px 2px; line-height:1.5; }
+  #insRoot .insRow { display:flex; align-items:center; gap:9px; padding:6px 2px; border-bottom:1px solid #10262e; font-size:1em; }
+  #insRoot .insName { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #insRoot .insMeta { opacity:0.65; font-size:13px; white-space:nowrap; }
+  #insRoot .insBtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer;
+                     padding:3px 9px; font-size:13px; font-family:inherit; white-space:nowrap; }
+  #insRoot .insBtn:hover { border-color:#4a7a94; color:#cfe3ea; }
+  #insRoot .insChevPad { display:inline-block; width:26px; }
+  #insRoot .insDetail { padding:6px 2px 9px 12px; border-left:2px solid #1c3540; margin:0 0 6px 4px; }
+  #insRoot .insDetail p { margin:4px 0; font-size:13.5px; line-height:1.5; }
+  #insRoot .insDetail b { color:#cfe3ea; }
+  #insRoot .insShowAll { margin:9px 0 2px 2px; }
+  #insRoot .insPlain { margin:5px 0 5px 18px; padding:0; font-size:13.5px; }
+  /* #flow li sets 0.85em and overrides inheritance from the ul, which pulled
+     these list items back down to 11.5px on their own. */
+  #insRoot .insPlain li { margin:3px 0; font-size:13.5px; }
+  #insRoot a { color:#7fb6d6; text-decoration:none; }
+  #insRoot a:hover { text-decoration:underline; }
+  @media (max-width: 1100px) { #insRoot .insCards { grid-template-columns:repeat(2, 1fr); } }
+  /* Same "one panel's own CSS" convention as #ext/#pivot/#icons above, not a
+     reused class - see those panels' own comments for why. */
+  /* An explicit width, not just max-width like the other panels here - this
+     one needs it for a real reason, not copied without thought. The others
+     size themselves from their own content (a table's natural column
+     widths); an iframe has none of its own the browser can see, so
+     "width:100%" on it had nothing concrete to resolve against inside a
+     shrink-to-fit, width-less parent and silently fell back to a browser
+     default around 300px regardless of max-width - confirmed live, this is
+     exactly what was cramping the chart, not the CSS gap that later comment
+     used to describe as the whole story. Matches #pivot's own max-width
+     figure - the widest existing panel - which also happens to match the
+     spec's own stated upper design bound of 1100 CSS pixels
+     (community_release_activity_embed_spec.md section 3.3). */
+  /* Centered, unlike #flow/#ext/#pivot/#icons' shared top:100px/left:10px
+     corner placement - a deliberate departure for this one panel, not an
+     oversight of the convention. A rule flowchart or a data table reads
+     fine pinned to a corner; a wide chart the user is meant to actually
+     look at does not. 92vw (up from 80vw) reaches the 1100px cap on more
+     realistic window widths - the cap itself stays at 1100px, the embed's
+     own stated design bound (section 3.3), since widening the panel past
+     what the chart itself was built and tested for would add empty space
+     around it, not a bigger chart. */
+  #releaseActivity { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+           width:min(92vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
+  #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
+  #releaseActivity a { color:#7fb6d6; text-decoration:none; }
+  #releaseActivity a:hover { text-decoration:underline; }
+  #releaseActivityClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }${''}
 </style>
 </head>
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
-${santaHtml}
 <div id="legend">
   <div id="legend-head"><button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body">&#9662;</button><span>Legend</span></div>
   <div id="legend-body">
@@ -3869,6 +5713,7 @@ ${santaHtml}
 <div id="controls">
   <label>Focus app<input id="appSearch" type="search" placeholder="search apps..." autocomplete="off"><select id="appFilter" size="1"><option value="__all__">All apps</option></select></label>
   <label>Focus device<input id="deviceSearch" type="search" placeholder="search devices..." autocomplete="off"><select id="deviceFilter" size="1"><option value="__all__">All devices</option></select></label>
+  <label>Focus hub variable<input id="hubVarSearch" type="search" placeholder="search hub variables..." autocomplete="off"><select id="hubVarFilter" size="1"><option value="__all__">All hub variables</option></select></label>
   <label>Show<select id="kindFilter">
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
@@ -3886,13 +5731,15 @@ ${santaHtml}
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
   <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+  <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
   <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
+<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="communityCard"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
+<div id="releaseActivity"><button id="releaseActivityClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -3943,6 +5790,10 @@ const ICON_GLYPHS = {
   // rendered page - if this shows as a blank box instead of a glyph, the
   // codepoint is wrong and needs picking again from the actual font file.
   scene: '\uf1de',
+  // fa-link (stable FA4-6 codepoint) - chosen for the same reason ICON_RULES'
+  // 'connector' entry exists: a Hub Variable Connector device, distinct from
+  // an ordinary physical/integration device.
+  connector: '\uf0c1',
   unknown: '\uf059',
 };
 
@@ -4177,6 +6028,13 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   const edge = {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     crit: e.crit || null,
+    // v2.0.14, schema 4: carried through explicitly, same as every other
+    // field here - this object is a fresh rendering-specific literal, not a
+    // spread of `e`, so a field not listed here is silently dropped
+    // (buildExportPayload's edges mapping reads these off ALL_EDGES, not
+    // GRAPH.edges directly).
+    usageRole: e.usageRole || null,
+    writeSource: e.writeSource || null,
     arrows: inbound ? 'from' : 'to',
     dashes: dashes,
     color: roleColors[e.kind] || '#999',
@@ -4509,6 +6367,7 @@ function neighborhood(nodeId, edgePool) {
 function applyFilters() {
   const appVal = document.getElementById('appFilter').value;
   const devVal = document.getElementById('deviceFilter').value;
+  const hubVarVal = document.getElementById('hubVarFilter').value;
   const kindVal = document.getElementById('kindFilter').value;
 
   let pool = ALL_EDGES;
@@ -4520,7 +6379,7 @@ function applyFilters() {
 
   let ids = null;
   let shownEdges = pool;
-  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : null);
+  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : null));
   if (focusId) {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
@@ -4856,10 +6715,21 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // still tall enough to run behind panel content (the original "ghost text
 // across the table" problem this hiding was built for). Hint has no
 // collapsed form, so it keeps hiding for any open panel same as before.
+${''}
+// Single source of truth for panel coordination - bringToFront,
+// syncLegendVisibility and closeSecondaryPanels all read it, so a new panel is
+// coordinated everywhere at once. Functions rather than a const array so
+// declaration order does not matter.
+//
+// flowPanel is deliberately outside secondaryPanels(): its callers hide it
+// themselves, since several re-open it a moment later with new content.
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel]; }
+function allPanels() { return [flowPanel].concat(secondaryPanels()); }
+
 function syncLegendVisibility() {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
-  const panelOpen = [flowPanel, extPanel, pivotPanel, iconsPanel].some(function (p) {
+  const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
   if (lg) lg.style.visibility = (panelOpen && !lg.classList.contains('collapsed')) ? 'hidden' : '';
@@ -4873,7 +6743,7 @@ function syncLegendVisibility() {
 // way, and only in one place.
 let panelTopZ = 30;
 function bringToFront(panel) {
-  [flowPanel, extPanel, pivotPanel, iconsPanel].forEach(function (p) {
+  allPanels().forEach(function (p) {
     if (p && p !== panel) p.style.display = 'none';
   });
   panelTopZ += 1;
@@ -4962,19 +6832,30 @@ function showInertPanel(node) {
       focusNode(a.getAttribute('data-node'));
     });
   });
+  renderCommunityCard(node);
   bringToFront(flowPanel);
 }
 
 function showFlow(appId) {
-  const target = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
-  if (target && (target.inert || target.unreadable)) { showInertPanel(target); return; }
+  // Captured after focusNode() has already bumped it for the selection that
+  // led here - see focusGenerationSeq's own comment for why this exists.
+  const mySelectionSeq = focusGenerationSeq;
+  const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
+  if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
   const steps = FLOWS[appId];
   if (!steps || !steps.length || !window.mermaid) {
-    flowPanel.style.display = 'none';
-    syncLegendVisibility();
+    // No decoded flow to draw is not the same as nothing to say - the
+    // Community Context Card below still applies to every app, decoded flow
+    // or not (this used to just hide the panel and show nothing at all,
+    // which is exactly what selecting an app like LIFX Light Manager did
+    // before the card existed).
+    document.getElementById('flowTitle').textContent = node ? node.title : 'App details';
+    document.getElementById('flowSub').textContent = 'This app has no decoded rule flow to show.';
+    flowChart.innerHTML = '';
+    renderCommunityCard(node);
+    bringToFront(flowPanel);
     return;
   }
-  const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
   // backslash-escaped quote is consumed by Groovy and ends the JS string early -
@@ -4983,10 +6864,18 @@ function showFlow(appId) {
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
+    // A newer selection (any type - another app, a device, a hub variable)
+    // has already started since this render began. Writing flowChart or
+    // re-opening the panel now would silently restore this stale selection
+    // over whatever the user has actually picked since.
+    if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
+    renderCommunityCard(node);
     bringToFront(flowPanel);
   }).catch(function (err) {
+    if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
+    renderCommunityCard(node);
     bringToFront(flowPanel);
   });
 }
@@ -4996,6 +6885,352 @@ if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () {
     flowPanel.style.display = 'none';
     syncLegendVisibility();
+  });
+}
+
+// Community Context Card (Supporting Docs/community_context_card_spec.md,
+// published contract). A read-only, browser-only lookup
+// against a public HPM_Manifest_Crawl projection - never told which app is
+// selected, never affects scanning, the map or the export. Lazy-loaded once
+// per page view (spec 3.2) and cached in memory only; a failed or invalid
+// response degrades this one card to "unavailable", nothing else.
+const COMMUNITY_CONTEXT_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/integrations/automation-map/community_context_index.json';
+// Generation targets 750 KiB (spec 5.4); this is a client-side ceiling on
+// what a response is even allowed to be before it is parsed, not the
+// generator's own budget - deliberately looser so a modest catalogue growth
+// between Automation Map releases does not start failing this check.
+const COMMUNITY_CONTEXT_MAX_BYTES = 1536 * 1024;
+// Well above today's 476 records - a bound against a compact response
+// carrying an unreasonable number of tiny records (a design review point
+// 1), not a forecast of real catalogue growth.
+const COMMUNITY_CONTEXT_MAX_RECORDS = 5000;
+const COMMUNITY_CONTEXT_TIMEOUT_MS = 8000;
+const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
+  HUBITAT_BUILT_IN: 'Hubitat built-in',
+  HPM_PACKAGE: 'HPM package',
+  REVIEWED_MANUAL_PROJECT: 'Reviewed manual project',
+  COMMUNITY_CATALOGUE_LISTING: 'Community catalogue listing'
+};
+const COMMUNITY_CONTEXT_LINK_LABELS = { record: 'Full record', documentation: 'Documentation', community: 'Community support', source: 'Source' };
+let communityContextPromise = null;
+let communityCardRequestSeq = 0;
+// Bumped once per focusNode() call, any selection type. Guards showFlow()'s
+// async Mermaid render: that promise can still be pending when a later
+// selection has changed the screen, and letting it write flowChart or reopen
+// the panel would silently restore a stale selection.
+let focusGenerationSeq = 0;
+
+// One request for the whole page view, whichever app is selected first -
+// later selections reuse this same promise (spec 3.2 steps 2-4).
+function loadCommunityContext() {
+  if (communityContextPromise) return communityContextPromise;
+  communityContextPromise = new Promise(function (resolve, reject) {
+    const controller = ('AbortController' in window) ? new AbortController() : null;
+    const timer = controller ? setTimeout(function () { controller.abort(); }, COMMUNITY_CONTEXT_TIMEOUT_MS) : null;
+    fetch(COMMUNITY_CONTEXT_URL, { credentials: 'omit', signal: controller ? controller.signal : undefined })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function (text) {
+        // Bytes, not JS string length - text.length undercounts a multi-byte
+        // UTF-8 response, the exact case a size gate exists to catch.
+        if (new Blob([text]).size > COMMUNITY_CONTEXT_MAX_BYTES) throw new Error('response exceeds the size gate');
+        const data = JSON.parse(text);
+        if (!data || typeof data !== 'object') throw new Error('not a JSON object');
+        if (data.schemaVersion !== '1.0') throw new Error('unsupported schemaVersion ' + data.schemaVersion);
+        if (data.dataset !== 'automation-map-community-context') throw new Error('unexpected dataset ' + data.dataset);
+        if (!Array.isArray(data.records)) throw new Error('missing records[]');
+        // recordCount must itself be a genuine non-negative integer, not
+        // merely "a number" - NaN, Infinity and a negative value all pass a
+        // bare typeof check.
+        if (typeof data.recordCount !== 'number' || !isFinite(data.recordCount) ||
+            data.recordCount < 0 || Math.floor(data.recordCount) !== data.recordCount) {
+          throw new Error('recordCount is not a non-negative integer');
+        }
+        if (data.records.length !== data.recordCount) {
+          throw new Error('recordCount ' + data.recordCount + ' does not match records.length ' + data.records.length);
+        }
+        if (data.recordCount > COMMUNITY_CONTEXT_MAX_RECORDS) {
+          throw new Error('recordCount ' + data.recordCount + ' exceeds the maximum allowed');
+        }
+        resolve(data);
+      })
+      .catch(reject)
+      .finally(function () { if (timer) clearTimeout(timer); });
+  });
+  // Deliberately NOT reset on rejection: a page reload is the retry boundary.
+  // Resetting meant every selection after a failure re-fetched and waited out
+  // the full timeout again. A cached rejection resolves instantly.
+  return communityContextPromise;
+}
+
+// Definition identity only (spec section 4), never the user-editable
+// instance label - node.appType/node.namespace come from
+// processAppRelationships()'s installedApp.name/namespace-via-appTypeId
+// join, not node.title (which is the label the user sees and can rename).
+// A trailing whitespace-separated version number, optionally "v"-prefixed -
+// "Zigbee Map 3.0.4" -> "Zigbee Map", but "Rule Machine Manager" (no
+// trailing digits) is untouched. Confirmed live and necessary: this
+// installed app's own definitionName IS "Zigbee Map 3.0.4" (the author bakes
+// the version into the app's own declared name), while the catalogue's
+// manifestIdentity for the same real package - correct namespace and all -
+// is plain "Zigbee Map". Deliberately narrow (a numeric-version pattern, not
+// word-similarity) so it does not relax spec section 6's "do not infer
+// identity from a similar-looking label" rule for anything else.
+function ccStripVersionSuffix(name) {
+  // No regex literal here at all, on purpose - this whole block is a Groovy
+  // GString, and a JS-side regex needs backslash escapes doubled or Groovy's
+  // own escape processing consumes the single backslash before the browser
+  // ever sees it (check_template.sh's whitelist documents this same doubling
+  // for the file's other JS-side regexes, one entry per pattern). Plain
+  // character checks sidestep the whole class of hazard rather than adding
+  // one more pattern to keep track of.
+  function isAllDigits(s) {
+    if (!s.length) return false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charAt(i);
+      if (c < '0' || c > '9') return false;
+    }
+    return true;
+  }
+  const idx = name.lastIndexOf(' ');
+  if (idx < 0) return name;
+  const tail = name.slice(idx + 1);
+  const parts = tail.split('.');
+  if (!parts.length || parts.length > 4) return name;
+  const versionLike = parts.every(function (p, i) {
+    const body = (i === 0 && (p.charAt(0) === 'v' || p.charAt(0) === 'V')) ? p.slice(1) : p;
+    return isAllDigits(body);
+  });
+  return versionLike ? name.slice(0, idx) : name;
+}
+
+function ccRunMatchLadder(name, namespace, records) {
+  function identitiesMatchingName(r) {
+    return (r.definitionIdentities || []).filter(function (di) {
+      return String(di.name || '').trim().toLowerCase() === name;
+    });
+  }
+  function confirmed(record) {
+    const mismatch = (record.qualityFlags || []).indexOf('IDENTITY_MISMATCH') >= 0;
+    return { state: 'confirmed', record: record, identityMismatch: mismatch };
+  }
+
+  // Tier 1 (spec 6.1): built-in, exact name only - a built-in has no
+  // namespace to match against.
+  const builtIns = records.filter(function (r) {
+    return r.authority === 'HUBITAT_BUILT_IN' && identitiesMatchingName(r).length > 0;
+  });
+  if (builtIns.length === 1) return confirmed(builtIns[0]);
+  if (builtIns.length > 1) return { state: 'ambiguous', records: builtIns };
+
+  const nameMatches = records.filter(function (r) { return identitiesMatchingName(r).length > 0; });
+
+  if (namespace) {
+    // Tier 2 (spec 6.2): exact name and exact namespace.
+    const nsMatches = nameMatches.filter(function (r) {
+      return identitiesMatchingName(r).some(function (di) {
+        return di.namespace && String(di.namespace).trim().toLowerCase() === namespace;
+      });
+    });
+    if (nsMatches.length === 1) return confirmed(nsMatches[0]);
+    if (nsMatches.length > 1) return { state: 'ambiguous', records: nsMatches };
+    // Tier 3 (spec 6.3) explicitly requires namespace to be absent - it does
+    // not apply here. A same-named app under a different namespace is not
+    // evidence of the same identity, so this does not fall back to bare-name
+    // uniqueness; that would risk a false confident match.
+    return { state: 'none' };
+  }
+
+  // Tier 3: namespace absent on our side - bare name uniqueness is the last
+  // confirming tier. Tier 4 (ambiguous) otherwise.
+  if (nameMatches.length === 1) return confirmed(nameMatches[0]);
+  if (nameMatches.length > 1) return { state: 'ambiguous', records: nameMatches };
+  return { state: 'none' };
+}
+
+function matchCommunityContext(data, node) {
+  const name = String(node.appType || '').trim().toLowerCase();
+  if (!name) return { state: 'none' };
+  const namespace = node.namespace ? String(node.namespace).trim().toLowerCase() : null;
+
+  const result = ccRunMatchLadder(name, namespace, data.records);
+  if (result.state !== 'none') return result;
+
+  const strippedName = ccStripVersionSuffix(name);
+  if (strippedName === name) return result;
+  return ccRunMatchLadder(strippedName, namespace, data.records);
+}
+${''}
+// Empty interpolation above: this entire embedded <script> is one unbroken
+// GString literal from const SCAN_META down to the next real interpolation,
+// well over a thousand lines with no split point anywhere in it - close
+// enough to the JVM's 65535-UTF-8-code-unit single-constant ceiling already
+// that this feature's own JS pushed the whole style block over it (see the
+// matching marker in <style> above). Splitting here defensively rather than
+// waiting for a second failed deploy to prove it was needed.
+function ccHumanizeCheckKey(k) {
+  // A replacer function, not a numbered-backreference replacement string -
+  // this whole block is a Groovy GString, so a literal backreference marker
+  // in JS source is consumed as an attempted Groovy interpolation and fails
+  // to compile. Same hazard class as this file's known apostrophe trap.
+  return String(k).replace(/([a-z0-9])([A-Z])/g, function (m, a, b) { return a + ' ' + b; })
+    .replace(/^./, function (c) { return c.toUpperCase(); });
+}
+
+// https-only (spec section 7) checked again here regardless of what the
+// projection already filtered server-side - defense in depth, not the sole
+// enforcement point. Iterates the object's own keys rather than a fixed
+// four, since the schema leaves links open-ended (additionalProperties).
+function ccSafeLinks(links) {
+  const out = [];
+  Object.keys(links || {}).forEach(function (key) {
+    const value = links[key];
+    try {
+      if (value && new URL(value).protocol === 'https:') {
+        out.push({ label: COMMUNITY_CONTEXT_LINK_LABELS[key] || key, url: value });
+      }
+    } catch (e) { /* not a valid absolute URL - silently skipped, not shown broken */ }
+  });
+  return out;
+}
+
+function ccIsStale(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return false;
+  return (Date.now() - t) > (7 * 24 * 60 * 60 * 1000);
+}
+
+function ccFormatDate(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function ccRecordHtml(record, identityMismatch) {
+  let html = '<span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[record.authority] || record.authority) + '</span>';
+  if (identityMismatch) {
+    html += '<p class="sub ccCaution">Community Utilities flagged this package - its declared identity did not match its own source code at last check. Treat this match with extra care.</p>';
+  }
+  html += '<p><b>' + extEsc(record.displayName || record.packageName || 'Unnamed') + '</b>' +
+    (record.author ? ' &middot; ' + extEsc(record.author) : '') + '</p>';
+  if (record.summary) html += '<p class="sub">' + extEsc(record.summary) + '</p>';
+  if (record.evidenceChecks) {
+    const checks = Object.keys(record.evidenceChecks).map(function (k) {
+      return extEsc(ccHumanizeCheckKey(k)) + ': ' + extEsc(record.evidenceChecks[k]);
+    });
+    if (checks.length) html += '<p class="sub">Evidence checks - ' + checks.join(', ') + '</p>';
+  }
+  if (record.networkEvidence) {
+    html += '<p class="sub">Network evidence: ' + extEsc(record.networkEvidence.classification) +
+      (record.networkEvidence.reviewed ? ' (reviewed)' : ' (not yet reviewed)') + '</p>';
+  }
+  const links = ccSafeLinks(record.links);
+  if (links.length) {
+    html += '<p class="ccLinks">' + links.map(function (l) {
+      return '<a href="' + extEsc(l.url) + '" target="_blank" rel="noopener noreferrer">' + extEsc(l.label) + '</a>';
+    }).join('') + '</p>';
+  }
+  return html;
+}
+
+// Package Explorer supports a plain ?query= filter (verified against its own
+// app.js: matches() requires every query token present in the record's
+// searchable text, score() gives an exact name match top relevance) - safer
+// than deep-linking by record id, since this projection's ids
+// ("hpm:...", "manifest:...") are not the same id space Package Explorer's
+// own dataset uses, confirmed by comparing both directly rather than assumed.
+const COMMUNITY_EXPLORER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/package-explorer/';
+function ccExplorerUrl(name) {
+  return COMMUNITY_EXPLORER_URL + '?query=' + encodeURIComponent(name);
+}
+
+// Package Explorer, not the Identity Resolver: the resolver takes no query
+// parameter, so a link there opens a page that searches for nothing.
+function ccSearchLinkHtml(name) {
+  if (!name) return '';
+  return '<p class="ccLinks"><a href="' + ccExplorerUrl(name) + '" target="_blank" rel="noopener noreferrer">Search Community Utilities for this app</a></p>';
+}
+
+function ccCardHtml(result, snapshotGenerated, searchName) {
+  let html = '<h4>Community information</h4>';
+  let clickUrl = null;
+  if (result.state === 'confirmed') {
+    html += ccRecordHtml(result.record, result.identityMismatch);
+    const name = result.record.displayName || result.record.packageName;
+    if (name) clickUrl = ccExplorerUrl(name);
+    // Spec 3.3: a flagged identity should not read
+    // as a plain clean match with nowhere else to check it - the reader can
+    // go verify it themselves, not just take this card's word for it.
+    if (result.identityMismatch) html += ccSearchLinkHtml(searchName);
+  } else if (result.state === 'ambiguous') {
+    html += '<p class="sub">More than one Community Utilities record matches this app by name. None is shown as confirmed - click through to investigate.</p><ul>';
+    result.records.slice(0, 5).forEach(function (r) {
+      html += '<li>' + extEsc(r.displayName || r.packageName || 'Unnamed') +
+        (r.author ? ' &middot; ' + extEsc(r.author) : '') +
+        ' <span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[r.authority] || r.authority) + '</span></li>';
+    });
+    html += '</ul>';
+    html += ccSearchLinkHtml(searchName);
+    const first = result.records[0];
+    const name = first && (first.displayName || first.packageName);
+    if (name) clickUrl = ccExplorerUrl(name);
+  } else {
+    html += '<p class="sub">No community information found for this app.</p>';
+    html += ccSearchLinkHtml(searchName);
+  }
+  if (snapshotGenerated) {
+    html += '<p class="sub ccSnapshot">Catalogue snapshot: ' + extEsc(ccFormatDate(snapshotGenerated)) +
+      (ccIsStale(snapshotGenerated) ? ' - may be out of date' : '') + '</p>';
+  }
+  html += '<p class="sub">External community evidence - not read from your hub, and never affects the map above.</p>';
+  if (clickUrl) html += '<p class="sub">Click this card to open it on the Community Utilities site.</p>';
+  return { html: html, clickUrl: clickUrl };
+}
+
+// Called for every app selection (spec 3.1: "below Automation Map's own
+// discovered facts", for every app, not only ones with a decoded flow or an
+// inert reason). communityCardRequestSeq makes a late response from a
+// PREVIOUS selection a no-op once a newer one has started (spec section 7's
+// race-safety requirement) without needing a second AbortController per
+// card - loadCommunityContext()'s single in-flight fetch is shared, only
+// which selection gets to use its result changes.
+function ccApplyClickable(box, url) {
+  // Direct property assignment, not addEventListener - this box is reused
+  // across every selection, and a plain assignment always replaces whatever
+  // handler (or none) the previous render left behind, with nothing to leak
+  // or double-fire the way accumulating listeners would.
+  box.classList.toggle('ccClickable', !!url);
+  box.onclick = url ? function (ev) {
+    // A click landing on one of this card's own links (Source, etc.) must
+    // still just follow that link - only a click on the card background
+    // itself opens the explorer.
+    if (ev.target.closest('a')) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  } : null;
+}
+
+function renderCommunityCard(node) {
+  const box = document.getElementById('communityCard');
+  if (!box) return;
+  const seq = ++communityCardRequestSeq;
+  if (!node || node.group !== 'app') { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  // A child app is an instance the user built inside an engine - a rule, a
+  // button rule, a notifier. No community package exists for one, so the card
+  // could only ever say "nothing found". Show nothing instead.
+  if (node.parent) { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  box.innerHTML = '<h4>Community information</h4><p class="sub">Checking Community Utilities...</p>';
+  ccApplyClickable(box, null);
+  loadCommunityContext().then(function (data) {
+    if (seq !== communityCardRequestSeq) return;
+    const rendered = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated, node.appType);
+    box.innerHTML = rendered.html;
+    ccApplyClickable(box, rendered.clickUrl);
+  }).catch(function (e) {
+    if (seq !== communityCardRequestSeq) return;
+    console.warn('Community information unavailable: ' + e.message);
+    box.innerHTML = '<h4>Community information</h4><p class="sub">Community information is temporarily unavailable.</p>';
+    ccApplyClickable(box, null);
   });
 }
 
@@ -5061,7 +7296,8 @@ const DEVICE_ICON_TAGS = {
   broker: 'BRK',
   hub: 'HUB',
   network: 'NET',
-  scene: 'SCN'
+  scene: 'SCN',
+  connector: 'CON'
 };
 function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
@@ -5121,126 +7357,452 @@ function fillSelect(selectId, searchId, group, allLabel) {
 // usual cause of automations fighting each other), and which devices nothing
 // commands at all.
 // ---------------------------------------------------------------------------
-function buildInsights() {
-  const nameOf = {};
-  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
-
-  // A node this hub cannot resolve at all - the id was named by a rule-to-rule
-  // link but the target no longer exists. Built from node.missing rather than
-  // string-matching a "- deleted" label, so it survives whatever the display
-  // label happens to say.
+${''}
+// Single derivation of every finding, as plain data with no rendering in it,
+// feeding both the Insights panel and the AI export so the two cannot drift.
+// Returns raw ids and maps: the panel wants display names and the export
+// wants {id,name} refs, so formatting stays with each renderer.
+function deriveInsightData() {
   const missingIds = {};
   ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
-  const referencesTo = {};   // deleted target -> apps that still reference it
+  const referencesTo = {};
   ALL_EDGES.forEach(function (e) {
     if (!missingIds[e.to]) return;
     if (!referencesTo[e.to]) referencesTo[e.to] = [];
     if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
   });
-  const brokenTargets = Object.keys(missingIds);
 
-  const commanders = {};   // device -> apps that can leave it in a lasting state
-  const touched = {};      // device -> any relationship at all
+  // statefulCommanders answers contention; anyCommanders answers "is this ever
+  // driven at all". Using one map for both is what made read-only wrong.
+  const statefulCommanders = {};
+  const anyCommanders = {};
+  const touched = {};
+  const hubVarReaders = {};
+  const hubVarWriters = {};
   ALL_EDGES.forEach(function (e) {
     touched[e.to] = true;
-    // Only stateful commands can conflict. Two apps notifying the same phone
-    // is normal; two apps driving the same light is what you want to find.
-    if (e.kind === 'action' && e.stateful) {
-      if (!commanders[e.to]) commanders[e.to] = [];
-      if (commanders[e.to].indexOf(e.from) < 0) commanders[e.to].push(e.from);
+    if (e.kind === 'read') {
+      if (!hubVarReaders[e.to]) hubVarReaders[e.to] = [];
+      if (hubVarReaders[e.to].indexOf(e.from) < 0) hubVarReaders[e.to].push(e.from);
+    } else if (e.kind === 'write') {
+      if (!hubVarWriters[e.to]) hubVarWriters[e.to] = [];
+      if (hubVarWriters[e.to].indexOf(e.from) < 0) hubVarWriters[e.to].push(e.from);
     }
+    if (e.kind !== 'action') return;
+    if (!anyCommanders[e.to]) anyCommanders[e.to] = [];
+    if (anyCommanders[e.to].indexOf(e.from) < 0) anyCommanders[e.to].push(e.from);
+    if (!e.stateful) return;
+    if (!statefulCommanders[e.to]) statefulCommanders[e.to] = [];
+    if (statefulCommanders[e.to].indexOf(e.from) < 0) statefulCommanders[e.to].push(e.from);
   });
 
-  const contested = Object.keys(commanders)
-    .filter(function (d) { return commanders[d].length > 1; })
-    .sort(function (a, b) { return commanders[b].length - commanders[a].length; });
+  const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; });
+  const hubVarIds = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) { return n.id; });
 
-  const untouched = ALL_NODES
-    .filter(function (n) { return n.group === 'device' && !touched[n.id]; })
-    .map(function (n) { return n.id; });
+  return {
+    missingIds: missingIds,
+    referencesTo: referencesTo,
+    statefulCommanders: statefulCommanders,
+    anyCommanders: anyCommanders,
+    touched: touched,
+    brokenTargets: Object.keys(missingIds),
+    contested: Object.keys(statefulCommanders)
+      .filter(function (d) { return statefulCommanders[d].length > 1; })
+      .sort(function (a, b) { return statefulCommanders[b].length - statefulCommanders[a].length; }),
+    untouched: devices.filter(function (n) { return !touched[n.id]; }).map(function (n) { return n.id; }),
+    readOnly: devices.filter(function (n) { return touched[n.id] && !anyCommanders[n.id]; }).map(function (n) { return n.id; }),
+    notifiedOnly: devices.filter(function (n) {
+      return touched[n.id] && anyCommanders[n.id] && !statefulCommanders[n.id];
+    }).map(function (n) { return n.id; }),
+    inertNodes: ALL_NODES.filter(function (n) { return n.inert; }),
+    unreadableNodes: ALL_NODES.filter(function (n) { return n.unreadable; }),
+    hubVar: {
+      readers: hubVarReaders,
+      writers: hubVarWriters,
+      noDecodedUsage: hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id]; }),
+      readersWithoutDecodedWriter: hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; }),
+      writersWithoutDecodedReader: hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; }),
+      multipleWriters: hubVarIds.filter(function (id) { return hubVarWriters[id] && hubVarWriters[id].length > 1; }),
+      unresolvedReferences: (GRAPH.hubVariableUnresolvedReferences || [])
+    },
+    scan: {
+      status: SCAN_META.scanError ? 'failed'
+        : ((SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0) ? 'complete-with-gaps' : 'complete'),
+      appsUnreadable: SCAN_META.appsUnreadable || 0,
+      devicesUnreadable: SCAN_META.devicesUnreadable || 0,
+      error: SCAN_META.scanError || null
+    }
+  };
+}
 
-  const readOnly = ALL_NODES.filter(function (n) {
-    if (n.group !== 'device' || !touched[n.id]) return false;
-    return !commanders[n.id];
-  }).map(function (n) { return n.id; });
+// Shared panel/export interpretation of the facts derived above. Guidance does
+// not alter classification and never authorises a hub change.
+function insightGuidance() {
+  return {
+    categories: {
+      attention: {
+        label: 'Needs attention',
+        summary: 'Incomplete scans or references to targets that no longer exist.',
+        next: 'Resolve these first because they can hide data or leave an automation action doing nothing.'
+      },
+      review: {
+        label: 'Shared control to confirm',
+        summary: 'Shared device control and Hub Variable use that may be entirely intentional.',
+        next: 'Confirm that the participants, timing and intended winner are what you expect.'
+      },
+      cleanup: {
+        label: 'Possibly unused',
+        summary: 'Devices or apps with no relationship the scan could prove.',
+        next: 'Check external integrations, dashboards and schedules before removing anything.'
+      },
+      normal: {
+        label: 'Expected patterns',
+        summary: 'Common structures that usually need no action.',
+        next: 'Use these explanations to understand the map, not as a cleanup list.'
+      }
+    },
+    findings: {
+      scanIncomplete: {
+        meaning: 'The last scan did not produce a complete snapshot, so other findings may be missing items.',
+        next: 'Run the scan again. If the same gap remains, check the Hubitat logs for the named unreadable app or device.'
+      },
+      brokenRuleReference: {
+        meaning: 'A rule still names an app or rule target that is no longer installed. That action runs but cannot do anything.',
+        next: 'Open each referencing rule and either select the intended replacement or remove the obsolete action.'
+      },
+      contestedDevice: {
+        meaning: 'Several automations can leave this device in a lasting state, so the last one to run decides the result.',
+        normal: 'Motion, schedules, scenes and manual overrides often share the same light or switch deliberately.',
+        next: 'Check whether their triggers can overlap and which automation should win when they do.'
+      },
+      multipleVariableWriters: {
+        meaning: 'More than one decoded rule writes this Hub Variable.',
+        normal: 'Shared state can legitimately be updated from several places. This alone does not prove a race condition.',
+        next: 'Check whether the writers can run close together and whether the final value depends on their order.'
+      },
+      variableReadersWithoutWriter: {
+        meaning: 'Decoded rules read this Hub Variable, but no decoded rule writes it.',
+        normal: 'It may be set manually, through a Connector, by an external integration or by an app engine this scan cannot decode.',
+        next: 'Confirm where its value is expected to come from before treating the missing writer as a gap.'
+      },
+      variableWritersWithoutReader: {
+        meaning: 'Decoded rules write this Hub Variable, but no decoded rule reads it.',
+        normal: 'A dashboard, Connector or external integration may consume it without producing a decoded read edge.',
+        next: 'Confirm whether anything outside the decoded rules still uses the value before removing the writer or variable.'
+      },
+      unresolvedVariableReference: {
+        meaning: 'A decoded rule names a Hub Variable that is absent from the hub inventory.',
+        next: 'Open the referencing rule and check whether the variable was renamed or deleted. Re-scan first if the inventory was incomplete.'
+      },
+      unreferencedDevice: {
+        meaning: 'No scanned app owns, watches or drives this device.',
+        normal: 'Dashboards, voice assistants, Maker API, external automations and disabled or unsupported apps may still use it.',
+        next: 'Check those external uses and the physical device before deciding it is safe to remove.'
+      },
+      inertApp: {
+        meaning: 'The scan found no device relationship, rule link or child app held by this app.',
+        normal: 'Schedule-only apps, API integrations and unsupported automation engines can look inactive to this scan.',
+        next: 'Open the app and check its status, schedules and external purpose before deciding it is unused.'
+      },
+      notificationOnly: {
+        meaning: 'These devices receive only momentary notifications, chimes or speech commands.',
+        normal: 'This is expected for phones, speakers and notification brokers.',
+        next: 'No action is normally required unless a lasting-state command was expected.'
+      },
+      monitoredOnly: {
+        meaning: 'These devices are read as triggers, conditions or monitored inputs but are never commanded.',
+        normal: 'This is expected for sensors and other input-only devices.',
+        next: 'No action is normally required unless an automation was meant to control the device.'
+      },
+      containerApp: {
+        meaning: 'This app organises or owns child apps rather than touching devices directly.',
+        normal: 'That is the expected structure for parent apps such as rule containers.',
+        next: 'Review its child apps if you need detail. The parent itself is not a cleanup candidate.'
+      },
+      variableWithoutDecodedUsage: {
+        meaning: 'No decoded rule reads or writes this Hub Variable.',
+        normal: 'It may be unused, manually maintained, externally consumed or used by an app engine this scan cannot decode.',
+        next: 'Check Connectors, dashboards and external integrations before deciding it is obsolete.'
+      }
+    }
+  };
+}
 
-  let html = '<h3>Insights</h3>';
-  html += '<div class="sub">Derived from the current scan. "Commanded by" counts apps with an action relationship.</div>';
+function buildInsights() {
+  const nameOf = {};
+  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
+  const D = deriveInsightData();
+  const GUIDE = insightGuidance();
 
-  html += '<h4>Contested devices (' + contested.length + ')</h4>';
-  if (!contested.length) {
-    html += '<p class="sub">No device is commanded by more than one app.</p>';
-  } else {
-    html += '<p class="sub">More than one app can leave these in a lasting state. Where two disagree, the last to run wins. Notifications and chimes are excluded - repeating those is not a conflict.</p><ul>';
-    contested.slice(0, 40).forEach(function (d) {
-      html += '<li><b>' + extEsc(nameOf[d]) + '</b> &mdash; ' + commanders[d].length + ' apps<br><span class="sub">' +
-        commanders[d].map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
-    });
-    html += '</ul>';
+  // Progressive disclosure, not a report (from Gordon's own
+  // verdict on the previous version: a checklist of waffle nobody would read).
+  // The whole result has to be legible in the first viewport, so the summary
+  // carries counts only - deliberately no device or app names up here - and
+  // every name lives behind a section the reader chose to open.
+  function row(id, metaText, detailHtml) {
+    let h = '<div class="insRow" data-row>';
+    h += '<span class="insName">' + extEsc(nameOf[id] || id) + '</span>';
+    h += '<span class="insMeta">' + extEsc(metaText) + '</span>';
+    h += '<button type="button" class="insBtn" data-focus="' + extEsc(id) + '">Show on map</button>';
+    h += detailHtml ? '<button type="button" class="insBtn insChev" data-toggle-row aria-expanded="false" title="More">&#9656;</button>' : '<span class="insChevPad"></span>';
+    h += '</div>';
+    if (detailHtml) h += '<div class="insDetail" hidden>' + detailHtml + '</div>';
+    return h;
   }
 
-  html += '<h4>Devices nothing references (' + untouched.length + ')</h4>';
-  if (!untouched.length) {
-    html += '<p class="sub">Every device in the map is referenced by at least one app.</p>';
-  } else {
-    html += '<p class="sub">No app owns, watches or drives these. Candidates for removal, or gaps in automation.</p><ul>';
-    untouched.slice(0, 60).forEach(function (d) { html += '<li>' + extEsc(nameOf[d]) + '</li>'; });
-    html += '</ul>';
+  // Names of the apps behind a row, as focus links rather than dead text -
+  // reaching any detail in one click is the point of the redesign.
+  function appLinks(ids) {
+    return (ids || []).map(function (a) {
+      return '<a href="#" data-focus="' + extEsc(a) + '">' + extEsc(nameOf[a] || a) + '</a>';
+    }).join(' &middot; ');
   }
 
-  html += '<h4>Read but never driven (' + readOnly.length + ')</h4>';
-  html += '<p class="sub">Referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
-
-  // Grouped by the reason rather than listed flat. Eleven containers and two
-  // genuine orphans in one alphabetical list reads as thirteen problems; split
-  // by reason it reads as one problem and twelve explanations.
-  const inertNodes = ALL_NODES.filter(function (n) { return n.inert; });
-  html += '<h4>Apps with no device or rule relationship (' + inertNodes.length + ')</h4>';
-  if (!inertNodes.length) {
-    html += '<p class="sub">Every app on the map references at least one device or rule.</p>';
-  } else {
-    html += '<p class="sub">These are installed and were read, but touch no device, link to no rule and publish no endpoint. Most are containers holding other apps, which is expected. The ones giving no reason at all are the ones worth a look.</p>';
-    const byReason = {};
-    inertNodes.forEach(function (n) {
-      const reason = n.reason || 'no reason recorded';
-      if (!byReason[reason]) byReason[reason] = [];
-      byReason[reason].push(n);
-    });
-    // "references nothing" last: it is the finding, and a finding reads better
-    // after the things that explain themselves.
-    const reasons = Object.keys(byReason).sort(function (a, b) {
-      if (a === 'references nothing') return 1;
-      if (b === 'references nothing') return -1;
-      return a.localeCompare(b);
-    });
-    html += '<ul>';
-    reasons.forEach(function (r) {
-      html += '<li><b>' + extEsc(r) + '</b><br><span class="sub">' +
-        byReason[r].map(function (n) { return extEsc(nameOf[n.id]); }).join(' &middot; ') + '</span></li>';
-    });
-    html += '</ul>';
+  function advice(key) {
+    const g = GUIDE.findings[key];
+    if (!g) return '';
+    let h = '<p><b>What this means:</b> ' + extEsc(g.meaning) + '</p>';
+    if (g.normal) h += '<p><b>Why it may be normal:</b> ' + extEsc(g.normal) + '</p>';
+    h += '<p><b>Check next:</b> ' + extEsc(g.next) + '</p>';
+    return h;
   }
 
-  html += '<h4>Broken rule references (' + brokenTargets.length + ')</h4>';
-  if (!brokenTargets.length) {
-    html += '<p class="sub">No rule references a target that no longer exists.</p>';
-  } else {
-    html += '<p class="sub">These rule/action/pause/private-boolean targets no longer resolve to anything. The referencing action still runs and silently does nothing.</p><ul>';
-    brokenTargets.forEach(function (id) {
-      html += '<li><b>' + extEsc(nameOf[id]) + '</b><br><span class="sub">Referenced by ' +
-        (referencesTo[id] || []).map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
-    });
-    html += '</ul>';
+  const PAGE = 5;
+  function rows(ids, metaFor, detailFor) {
+    let h = '';
+    ids.slice(0, PAGE).forEach(function (id) { h += row(id, metaFor(id), detailFor ? detailFor(id) : ''); });
+    if (ids.length > PAGE) {
+      h += '<div class="insMore" hidden>';
+      ids.slice(PAGE).forEach(function (id) { h += row(id, metaFor(id), detailFor ? detailFor(id) : ''); });
+      h += '</div>';
+      h += '<button type="button" class="insBtn insShowAll" data-show-all>Show all ' + ids.length + '</button>';
+    }
+    return h;
   }
 
+  function section(key, title, count, summary, openByDefault, bodyHtml, healthyText) {
+    const open = openByDefault && count > 0;
+    let h = '<section class="insSec" data-sec="' + key + '">';
+    h += '<button type="button" class="insHead" data-toggle-sec aria-expanded="' + (open ? 'true' : 'false') + '">';
+    h += '<span class="insChev">' + (open ? '&#9662;' : '&#9656;') + '</span>';
+    h += '<span class="insHeading"><span class="insTitle">' + extEsc(title) + '</span>';
+    h += '<span class="insSummary">' + extEsc(summary) + '</span></span>';
+    h += '<span class="insBadge' + (count ? '' : ' insBadgeZero') + '">' + count + '</span>';
+    h += '</button>';
+    h += '<div class="insBody"' + (open ? '' : ' hidden') + '>';
+    h += count ? bodyHtml : '<p class="insOk">' + extEsc(healthyText) + '</p>';
+    h += '</div></section>';
+    return h;
+  }
+
+  // --- Needs attention: only things genuinely wrong -----------------------
+  const scanBad = D.scan.status !== 'complete';
+  const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0);
+  let attentionBody = '';
+  if (scanBad) {
+    const what = D.scan.status === 'failed'
+      ? 'The last scan did not finish, so everything below is incomplete.'
+      : 'The last scan finished but could not read ' + D.scan.appsUnreadable + ' app(s) and ' + D.scan.devicesUnreadable + ' device(s). Findings below may be missing those.';
+    attentionBody += '<p class="insLead">' + extEsc(what) + '</p>' + advice('scanIncomplete');
+  }
+  if (D.brokenTargets.length) {
+    attentionBody += '<p class="insLead">' + D.brokenTargets.length + ' rule target(s) no longer exist. The referencing action still runs and silently does nothing.</p>';
+    attentionBody += rows(D.brokenTargets,
+      function (id) { return (D.referencesTo[id] || []).length + ' referencing'; },
+      function (id) { return advice('brokenRuleReference') + '<p class="sub"><b>Referenced by:</b> ' + appLinks(D.referencesTo[id]) + '</p>'; });
+  }
+
+  // --- Shared control to confirm: review prompts, not faults ---------------
+  const hv = D.hubVar;
+  const hubVarWorth = hv.multipleWriters.length + hv.readersWithoutDecodedWriter.length +
+    hv.writersWithoutDecodedReader.length + hv.unresolvedReferences.length;
+  const reviewCount = D.contested.length + hubVarWorth;
+  let reviewBody = '<p class="insLead">' + D.contested.length + ' device(s) have shared control. This is often intentional.</p>';
+  reviewBody += rows(D.contested,
+    function (id) { return D.statefulCommanders[id].length + ' automations'; },
+    function (id) {
+      return advice('contestedDevice') + '<p class="sub"><b>Controlling apps:</b> ' + appLinks(D.statefulCommanders[id]) + '</p>';
+    });
+  if (hv.multipleWriters.length) {
+    reviewBody += '<p class="insLead">' + hv.multipleWriters.length + ' hub variable(s) have more than one writer. Shared state, not automatically a race.</p>';
+    reviewBody += rows(hv.multipleWriters,
+      function (id) { return hv.writers[id].length + ' writers'; },
+      function (id) { return advice('multipleVariableWriters') + '<p class="sub"><b>Written by:</b> ' + appLinks(hv.writers[id]) + '</p>'; });
+  }
+  if (hv.readersWithoutDecodedWriter.length) {
+    reviewBody += '<p class="insLead">' + hv.readersWithoutDecodedWriter.length + ' hub variable(s) are read but have no decoded rule writer.</p>';
+    reviewBody += rows(hv.readersWithoutDecodedWriter,
+      function (id) { return hv.readers[id].length + ' readers'; },
+      function (id) { return advice('variableReadersWithoutWriter') + '<p class="sub"><b>Read by:</b> ' + appLinks(hv.readers[id]) + '</p>'; });
+  }
+  if (hv.writersWithoutDecodedReader.length) {
+    reviewBody += '<p class="insLead">' + hv.writersWithoutDecodedReader.length + ' hub variable(s) are written but have no decoded rule reader.</p>';
+    reviewBody += rows(hv.writersWithoutDecodedReader,
+      function (id) { return hv.writers[id].length + ' writers'; },
+      function (id) { return advice('variableWritersWithoutReader') + '<p class="sub"><b>Written by:</b> ' + appLinks(hv.writers[id]) + '</p>'; });
+  }
+  if (hv.unresolvedReferences.length) {
+    reviewBody += '<p class="insLead">' + hv.unresolvedReferences.length + ' rule reference(s) name a hub variable that is not in the hub inventory.</p>' + advice('unresolvedVariableReference') + '<ul class="insPlain">';
+    hv.unresolvedReferences.slice(0, 10).forEach(function (r) {
+      reviewBody += '<li>' + extEsc(r.name) + ' <span class="sub">' + extEsc(r.kind || '') + ' by ' + extEsc(nameOf[r.appId] || r.appId || 'an app') + '</span></li>';
+    });
+    reviewBody += '</ul>';
+    if (hv.unresolvedReferences.length > 10) {
+      reviewBody += '<p class="sub">Showing 10 of ' + hv.unresolvedReferences.length + '.</p>';
+    }
+  }
+
+  // --- Possibly unused ----------------------------------------------------
+  const orphanApps = D.inertNodes.filter(function (n) { return !n.holds && !(n.kids && n.kids.length); });
+  const cleanupCount = D.untouched.length + orphanApps.length;
+  let cleanupBody = '';
+  if (D.untouched.length) {
+    cleanupBody += '<p class="insLead">' + D.untouched.length + ' device(s) are not referenced by any scanned app.</p>';
+    cleanupBody += rows(D.untouched, function () { return 'no mapped references'; }, function () { return advice('unreferencedDevice'); });
+  }
+  if (orphanApps.length) {
+    cleanupBody += '<p class="insLead">' + orphanApps.length + ' app(s) touch no device, link to no rule and hold nothing.</p>';
+    cleanupBody += rows(orphanApps.map(function (n) { return n.id; }),
+      function (id) {
+        const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
+        return (n && n.reason) ? n.reason : 'no reason recorded';
+      }, function () { return advice('inertApp'); });
+  }
+
+  // --- Normal patterns: explanations, not findings -------------------------
+  const containers = D.inertNodes.filter(function (n) { return n.holds || (n.kids && n.kids.length); });
+  const normalCount = D.readOnly.length + D.notifiedOnly.length + containers.length + hv.noDecodedUsage.length;
+  let normalBody = '';
+  if (D.notifiedOnly.length) {
+    normalBody += '<p class="insLead">' + D.notifiedOnly.length + ' device(s) are commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
+    normalBody += rows(D.notifiedOnly,
+      function (id) { return D.anyCommanders[id].length + ' automations'; },
+      function (id) { return advice('notificationOnly') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.anyCommanders[id]) + '</p>'; });
+  }
+  if (D.readOnly.length) {
+    normalBody += '<p class="insLead">' + D.readOnly.length + ' device(s) are never commanded in any form - referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+    normalBody += rows(D.readOnly, function () { return 'monitored only'; }, function () { return advice('monitoredOnly'); });
+  }
+  if (containers.length) {
+    normalBody += '<p class="insLead">' + containers.length + ' app(s) hold other apps rather than touching devices themselves. Expected.</p>';
+    normalBody += rows(containers.map(function (n) { return n.id; }),
+      function (id) {
+        const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
+        const held = n ? (n.holds || (n.kids || []).length) : 0;
+        return 'holds ' + held;
+      }, function () { return advice('containerApp'); });
+  }
+  if (hv.noDecodedUsage.length) {
+    normalBody += '<p class="insLead">' + hv.noDecodedUsage.length + ' hub variable(s) have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode.</p>';
+    normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, function () { return advice('variableWithoutDecodedUsage'); });
+  }
+
+  // --- Assemble ------------------------------------------------------------
+  const cards = [
+    { key: 'attention', label: GUIDE.categories.attention.label, count: attentionCount },
+    { key: 'review', label: 'Shared control', count: reviewCount },
+    { key: 'cleanup', label: GUIDE.categories.cleanup.label, count: cleanupCount },
+    { key: 'normal', label: GUIDE.categories.normal.label, count: normalCount }
+  ];
+  let html = '<div id="insRoot">';
+  html += '<div class="insCards">';
+  cards.forEach(function (c) {
+    html += '<button type="button" class="insCard' + (c.count ? '' : ' insCardZero') + (c.key === 'attention' && c.count ? ' insCardAlert' : '') +
+      '" data-jump="' + c.key + '"><b>' + c.count + '</b><span>' + extEsc(c.label) + '</span></button>';
+  });
+  html += '</div>';
+  const firstCategory = attentionCount ? GUIDE.categories.attention
+    : (reviewCount ? GUIDE.categories.review : (cleanupCount ? GUIDE.categories.cleanup : GUIDE.categories.normal));
+  html += '<div class="insStart"><b>Start here:</b> ' + extEsc(firstCategory.next) + '</div>';
+  html += '<p class="insNote">Counts are review prompts, not faults, and can include more than one finding for the same item. Open a row for what it means and what to check next.</p>';
+
+  html += section('attention', GUIDE.categories.attention.label, attentionCount, GUIDE.categories.attention.summary, true, attentionBody,
+    'Scan completed cleanly and every rule reference resolves.');
+  html += section('review', GUIDE.categories.review.label, reviewCount, GUIDE.categories.review.summary, !attentionCount, reviewBody,
+    'No shared lasting-state control and no hub variable worth a second look.');
+  html += section('cleanup', GUIDE.categories.cleanup.label, cleanupCount, GUIDE.categories.cleanup.summary, !attentionCount && !reviewCount, cleanupBody,
+    'Every device is referenced and every app does something.');
+  html += section('normal', GUIDE.categories.normal.label, normalCount, GUIDE.categories.normal.summary, !attentionCount && !reviewCount && !cleanupCount, normalBody,
+    'Nothing to explain here.');
+  html += '</div>';
   return html;
 }
 
 document.getElementById('insightsBtn').addEventListener('click', function () {
-  document.getElementById('flowTitle').textContent = '';
+  document.getElementById('flowTitle').textContent = 'Automation health';
   document.getElementById('flowSub').textContent = '';
   flowChart.innerHTML = buildInsights();
   bringToFront(flowPanel);
+});
+
+// One delegated listener on the panel rather than listeners bound per row.
+// The panel is rebuilt wholesale on every open and can hold several hundred
+// rows; binding individually would both leak across rebuilds and cost more
+// than the delegation lookup ever does.
+flowChart.addEventListener('click', function (ev) {
+  const root = ev.target.closest ? ev.target.closest('#insRoot') : null;
+  if (!root) return;
+
+  // Focus an entity on the map. Closing the panel is deliberate: the point of
+  // the control is to look at the thing, and leaving the panel covering the
+  // map would defeat it. focusNode() opens its own panel for an app anyway.
+  const focusEl = ev.target.closest('[data-focus]');
+  if (focusEl) {
+    ev.preventDefault();
+    const id = focusEl.getAttribute('data-focus');
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    focusNode(id);
+    return;
+  }
+
+  const secHead = ev.target.closest('[data-toggle-sec]');
+  if (secHead) {
+    const body = secHead.parentNode.querySelector('.insBody');
+    const open = secHead.getAttribute('aria-expanded') === 'true';
+    secHead.setAttribute('aria-expanded', open ? 'false' : 'true');
+    const chev = secHead.querySelector('.insChev');
+    if (chev) chev.innerHTML = open ? '&#9656;' : '&#9662;';
+    if (body) body.hidden = open;
+    return;
+  }
+
+  const rowChev = ev.target.closest('[data-toggle-row]');
+  if (rowChev) {
+    const detail = rowChev.parentNode.nextElementSibling;
+    if (detail && detail.classList.contains('insDetail')) {
+      const open = rowChev.getAttribute('aria-expanded') === 'true';
+      rowChev.setAttribute('aria-expanded', open ? 'false' : 'true');
+      rowChev.innerHTML = open ? '&#9656;' : '&#9662;';
+      detail.hidden = open;
+    }
+    return;
+  }
+
+  const showAll = ev.target.closest('[data-show-all]');
+  if (showAll) {
+    const more = showAll.parentNode.querySelector('.insMore');
+    if (more) { more.hidden = false; showAll.remove(); }
+    return;
+  }
+
+  // A summary card opens its section and scrolls to it, so the cards are a
+  // route into the detail rather than decoration.
+  const jump = ev.target.closest('[data-jump]');
+  if (jump) {
+    const key = jump.getAttribute('data-jump');
+    const sec = root.querySelector('[data-sec="' + key + '"]');
+    if (!sec) return;
+    const head = sec.querySelector('[data-toggle-sec]');
+    const body = sec.querySelector('.insBody');
+    if (head && head.getAttribute('aria-expanded') !== 'true') {
+      head.setAttribute('aria-expanded', 'true');
+      const chev = head.querySelector('.insChev');
+      if (chev) chev.innerHTML = '&#9662;';
+      if (body) body.hidden = false;
+    }
+    sec.scrollIntoView({ block: 'start' });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -5388,7 +7950,16 @@ function extLoad() {
   extBody.innerHTML = '<h3>External systems</h3><p class="sub">Loading...</p>';
   fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
-    .then(function (d) { EXT = d; extRender(''); })
+    .then(function (d) {
+      EXT = d;
+      extRender('');
+      // Evidence is an enhancement, so the table is rendered first and
+      // re-rendered only if the lookup succeeds. A slow or failed Community
+      // Utilities fetch must never delay or break the panel.
+      extLoadEvidence().then(function (m) {
+        if (m && Object.keys(m).length && extPanel.style.display !== 'none') extRender('');
+      });
+    })
     .catch(function (e) {
       extBody.innerHTML = '<h3>External systems</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
     });
@@ -5398,12 +7969,102 @@ function extRowsFor(type) {
   return (EXT.entries || []).filter(function (e) { return e.type === type; });
 }
 
-// Rows the shared registry supplied, shown only where the user has said
-// nothing about that app type. The moment they do, theirs replaces these.
-function extRegistryFor(type) {
+function extReviewedFor(type) {
   const claimed = (EXT.entries || []).some(function (e) { return e.type === type; });
   if (claimed) return [];
+  return (EXT.reviewed || []).filter(function (e) { return e.type === type; });
+}
+
+// Rows the shared registry supplied, shown only where the user has said
+// nothing and no reviewed local default exists for that app type.
+function extRegistryFor(type) {
+  const claimed = (EXT.entries || []).some(function (e) { return e.type === type; });
+  const reviewed = (EXT.reviewed || []).some(function (e) { return e.type === type; });
+  if (claimed || reviewed) return [];
   return (EXT.registry || []).filter(function (e) { return e.type === type; });
+}
+
+function extDefaultsFor(type) {
+  const reviewed = extReviewedFor(type);
+  return reviewed.length ? reviewed : extRegistryFor(type);
+}
+
+// Which group an app type belongs in. Order matters: the first source that
+// answers wins, and a user declaration always outranks the rest.
+function extClassify(type) {
+  const info = (EXT.appTypeInfo || {})[type] || {};
+  if ((EXT.entries || []).some(function (e) { return e.type === type; })) return { group: 'declared', info: info };
+  if ((EXT.reviewed || []).some(function (e) { return e.type === type; })) return { group: 'reviewed', info: info };
+  // Registry is checked BEFORE inheritance. With
+  // the order reversed, a child type carrying its own reviewed dependency was
+  // filed as inherited and dropped from the confirmed table - while the graph
+  // still drew that dependency, because registryMatches() attaches it by
+  // type. The panel would have said "inherits its parent assessment" about a
+  // relationship visible on the map beside it. Only a child with neither a
+  // declaration nor its own reviewed dependency should inherit.
+  if ((EXT.registry || []).some(function (e) { return e.type === type; })) return { group: 'registry', info: info };
+  if (info.isRoot === false) return { group: 'inherited', info: info };
+  if ((EXT.builtinInternal || {})[type]) return { group: 'internal', info: info };
+  return { group: 'unknown', info: info };
+}
+
+// Network evidence for an unknown root, from the projection the Context Card
+// already downloads once per page view - no second fetch (a design review
+// point 3). Strictly a review aid: LAN/CLOUD/BOTH names no dependency and
+// must never create a graph node on its own, so it is shown as a badge and
+// nothing here offers to accept it.
+let EXT_EVIDENCE = null;
+function extLoadEvidence() {
+  if (EXT_EVIDENCE) return Promise.resolve(EXT_EVIDENCE);
+  return loadCommunityContext().then(function (data) {
+    // Every candidate per name, not just the first.
+    // Keeping only the first meant that if it carried the wrong namespace and
+    // a later record was the exact match, the valid evidence was thrown away
+    // before anything could compare namespaces.
+    const byName = {};
+    (data.records || []).forEach(function (r) {
+      (r.definitionIdentities || []).forEach(function (di) {
+        const k = String(di.name || '').trim().toLowerCase();
+        if (!k) return;
+        if (!byName[k]) byName[k] = [];
+        byName[k].push({ record: r, namespace: di.namespace || null });
+      });
+    });
+    EXT_EVIDENCE = byName;
+    return byName;
+  }).catch(function () { EXT_EVIDENCE = {}; return EXT_EVIDENCE; });
+}
+
+function extEvidenceBadge(type) {
+  if (!EXT_EVIDENCE) return '';
+  const info = (EXT.appTypeInfo || {})[type] || {};
+  const cands = EXT_EVIDENCE[String(type).trim().toLowerCase()];
+  if (!cands || !cands.length) return '';
+
+  // Namespace strengthens a match but its absence never proves anything
+  // - it can equally mean the join produced
+  // nothing. Where both sides declare one, require an exact match; anything
+  // still ambiguous after that shows no badge rather than picking a winner.
+  let pool = cands;
+  const ourNs = info.namespace ? String(info.namespace).trim().toLowerCase() : null;
+  if (ourNs) {
+    const exact = cands.filter(function (c) {
+      return c.namespace && String(c.namespace).trim().toLowerCase() === ourNs;
+    });
+    if (!exact.length) return '';
+    pool = exact;
+  }
+  // Distinct records only: one record can supply several identities with the
+  // same name, and that is not ambiguity.
+  const distinct = [];
+  pool.forEach(function (c) { if (distinct.indexOf(c.record) < 0) distinct.push(c.record); });
+  if (distinct.length !== 1) return '';
+  const rec = distinct[0];
+
+  const ne = rec.networkEvidence;
+  if (!ne || !ne.classification) return '';
+  return '<span class="tag tag-reg" title="Community Utilities network evidence. Names no dependency - review before declaring one.">' +
+    extEsc(ne.classification) + (ne.reviewed ? ', reviewed' : ', not reviewed') + '</span>';
 }
 
 function extRender(message) {
@@ -5411,15 +8072,96 @@ function extRender(message) {
   const crits = EXT.criticality || {};
   const none = EXT.noneMarker;
 
+  // Classify every discovered type once, then render three groups instead of
+  // one flat list where 57 inherited rule instances drown the handful of real
+  // integrations.
+  const groups = { declared: [], reviewed: [], registry: [], unknown: [], inherited: [], internal: [] };
+  (EXT.appTypes || []).forEach(function (t) { groups[extClassify(t).group].push(t); });
+  // Suggestions are split out of unknown so the two are visibly different
+  // tasks: one has evidence to weigh, the other has nothing yet.
+  const suggested = groups.unknown.filter(function (t) { return !!extEvidenceBadge(t); });
+  const bare = groups.unknown.filter(function (t) { return !extEvidenceBadge(t); });
+
   let h = '<h3>External systems</h3>';
   h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
        'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
 
+  // Everything already answered, collapsed to a count rather than listed:
+  // these are not tasks, and listing them is what buried the ones that are.
+  const autoParts = [];
+  if (groups.internal.length) {
+    autoParts.push(groups.internal.length + ' app type(s) assessed as needing nothing outside the hub');
+  }
+  if (groups.inherited.length) {
+    const instances = groups.inherited.reduce(function (n, t) {
+      return n + (((EXT.appTypeInfo || {})[t] || {}).count || 0);
+    }, 0);
+    autoParts.push(groups.inherited.length + ' child type(s) covering ' + instances +
+      ' installed app(s) inheriting a parent assessment');
+  }
+  if (autoParts.length) {
+    h += '<p class="sub"><b>Classified automatically:</b> ' + extEsc(autoParts.join('; ')) + '. ' +
+         '<button class="rowbtn" id="extShowAuto" type="button">Show these</button></p>';
+    if (groups.inherited.length) {
+      h += '<div id="extAutoList" style="display:none"><p class="sub">Inheriting a parent: ' +
+           extEsc(groups.inherited.map(function (t) {
+             const i = (EXT.appTypeInfo || {})[t] || {};
+             return t + ' (under ' + (i.rootType || 'a parent') + ')';
+           }).join(', ')) + '. Classify the parent to change these.</p></div>';
+    }
+  }
+
   h += '<table><thead><tr><th>App type</th><th>Needs</th><th>Kind</th><th>Needed for</th><th></th></tr></thead><tbody>';
 
-  (EXT.appTypes || []).forEach(function (type) {
+  // Three groups, as headed sections rather than an ordered flat list - the
+  // previous pass ordered these correctly but rendered them as one
+  // undifferentiated table, which did not deliver the grouping at all.
+  const sections = [
+    { label: 'Confirmed external relationships', types: groups.declared.concat(groups.reviewed, groups.registry),
+      note: 'Declared by you, supplied by a reviewed default, or matched in the reviewed registry.' },
+    { label: 'Suggestions to review', types: suggested,
+      note: 'Community Utilities reports network activity. It does not name a dependency - confirm before declaring one.' },
+    { label: 'Not assessed', types: bare,
+      note: 'Nobody has reviewed these yet.' },
+    // Hidden until "Show these", but rendered as real rows rather than a text
+    // list, so an Automation Map assessment stays overridable exactly like a
+    // registry match. User declarations must always be able to win.
+    { label: 'Assessed as internal only', types: groups.internal, auto: true,
+      note: 'Reviewed app types that run entirely on the hub. Override any of these if your setup differs.' }
+  ];
+
+  sections.forEach(function (sec) {
+    const hide = sec.auto ? ' class="autorow" style="display:none"' : '';
+    h += (sec.auto ? '<tr class="autorow grouphdr" style="display:none">' : '<tr class="grouphdr">') +
+      '<td colspan="5"><b>' + extEsc(sec.label) + ' (' + sec.types.length + ')</b>' +
+      (sec.note ? ' <span class="sub">' + extEsc(sec.note) + '</span>' : '') + '</td></tr>';
+    if (!sec.types.length) {
+      h += '<tr' + hide + '><td colspan="5"><span class="sub">None.</span></td></tr>';
+      return;
+    }
+    sec.types.forEach(function (type) {
+      if (sec.auto) {
+        const why = (EXT.builtinInternal || {})[type] || '';
+        h += '<tr class="autorow" style="display:none"><td>' + extEsc(type) + '</td>' +
+             '<td colspan="3"><span class="tag tag-none">nothing external needed</span> <span class="sub">' + extEsc(why) + '</span></td>' +
+             '<td><button class="rowbtn" data-add="' + extEsc(type) + '">override</button></td></tr>';
+        return;
+      }
     const rows = extRowsFor(type);
     if (!rows.length) {
+      const fromReviewed = extReviewedFor(type);
+      if (fromReviewed.length) {
+        fromReviewed.forEach(function (r, i) {
+          h += '<tr class="fromreg"><td>' + (i === 0 ? extEsc(type) : '') + '</td>' +
+               '<td>' + extEsc(r.name) + '</td>' +
+               '<td>' + extEsc(kinds[r.kind] || r.kind) + '</td>' +
+               '<td>' + extEsc(crits[r.crit] || r.crit) + '</td>' +
+               '<td>' + (i === 0 ? '<span class="tag tag-reg">reviewed default</span>' +
+                                   '<button class="rowbtn" data-over="' + extEsc(type) + '">override</button>' : '') +
+               '</td></tr>';
+        });
+        return;
+      }
       const fromRegistry = extRegistryFor(type);
       if (fromRegistry.length) {
         fromRegistry.forEach(function (r, i) {
@@ -5433,8 +8175,15 @@ function extRender(message) {
         });
         return;
       }
-      h += '<tr class="unclassified"><td>' + extEsc(type) + '</td>' +
-           '<td colspan="3"><span class="tag tag-unset">not classified</span></td>' +
+      // "Not assessed" rather than "not classified": nobody has reviewed this
+      // identity, which is a different and more honest statement than the app
+      // being unclassifiable. Any network evidence
+      // is shown beside it as a review aid, never as an answer.
+      const nsInfo = (EXT.appTypeInfo || {})[type] || {};
+      const badge = extEvidenceBadge(type);
+      h += '<tr class="unclassified"><td>' + extEsc(type) +
+           (nsInfo.namespace ? '<br><span class="sub">' + extEsc(nsInfo.namespace) + '</span>' : '') + '</td>' +
+           '<td colspan="3"><span class="tag tag-unset">not assessed</span> ' + badge + '</td>' +
            '<td><button class="rowbtn" data-add="' + extEsc(type) + '">add</button>' +
            '<button class="rowbtn" data-none="' + extEsc(type) + '">needs nothing</button></td></tr>';
       return;
@@ -5462,6 +8211,7 @@ function extRender(message) {
         h += '<button class="rowbtn" data-add="' + extEsc(type) + '">add</button>';
       }
       h += '</td></tr>';
+    });
     });
   });
   h += '</tbody></table>';
@@ -5496,6 +8246,17 @@ function extRender(message) {
 }
 
 function extWire() {
+  const showAuto = document.getElementById('extShowAuto');
+  if (showAuto) {
+    showAuto.addEventListener('click', function () {
+      const list = document.getElementById('extAutoList');
+      const rows = extBody.querySelectorAll('.autorow');
+      const hidden = rows.length ? rows[0].style.display === 'none' : (list && list.style.display === 'none');
+      rows.forEach(function (r) { r.style.display = hidden ? '' : 'none'; });
+      if (list) list.style.display = hidden ? '' : 'none';
+      showAuto.textContent = hidden ? 'Hide these' : 'Show these';
+    });
+  }
   extBody.querySelectorAll('input[data-f], select[data-f]').forEach(function (el) {
     el.addEventListener('change', function () {
       const rows = extRowsFor(el.getAttribute('data-t'));
@@ -5522,12 +8283,12 @@ function extWire() {
     });
   });
 
-  // Overriding seeds the user's rows from the registry's, so correcting one
-  // value does not mean retyping the rest.
+  // Overriding seeds the user's rows from the reviewed default or registry, so
+  // correcting one value does not mean retyping the rest.
   extBody.querySelectorAll('[data-over]').forEach(function (b) {
     b.addEventListener('click', function () {
       const type = b.getAttribute('data-over');
-      (EXT.registry || []).filter(function (e) { return e.type === type; })
+      extDefaultsFor(type)
         .forEach(function (r) {
           EXT.entries.push({ type: type, name: r.name, kind: r.kind, crit: r.crit });
         });
@@ -5635,6 +8396,99 @@ function extImport(evt) {
 // device. This is where that gets corrected - one override per device,
 // saved here, applied the next time the graph is built.
 const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
+// Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
+// published contract). A read-only iframe preview of Community Utilities'
+// releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
+// the map or the export. Created at most once per page view, on first open only - no repeated
+// background loading, no automatic retry within the same page session (spec 4.1/4.2).
+const RELEASE_ACTIVITY_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/embed/release-activity/';
+const RELEASE_ACTIVITY_TRACKER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/feature-tracker/?ref=automation-map-release-preview';
+const RELEASE_ACTIVITY_TIMEOUT_MS = 8000;
+const releaseActivityPanel = document.getElementById('releaseActivity');
+const releaseActivityBody = document.getElementById('releaseActivityBody');
+let releaseActivityLoaded = false;
+
+// Hubitat's own Release Notes category - the upstream authority this chart is
+// built from, not a third-party view of it. Confirmed from the generating
+// dataset itself, which declares source.authority "Hubitat Community Release
+// Notes" and harvests this exact category: every point on the chart traces
+// back to a post here. Offered alongside the Community Utilities tracker so
+// the panel closes the loop to the primary source rather than only to a
+// secondary presentation of it.
+const RELEASE_ACTIVITY_HUBITAT_URL = 'https://community.hubitat.com/c/news/release-notes/55';
+
+// Both destinations in one line, each labelled for what it actually is, so
+// neither reads as the other: one is Hubitat, one is a community project.
+function releaseActivityLinksHtml(trackerLabel) {
+  return '<p class="sub"><a href="' + RELEASE_ACTIVITY_TRACKER_URL + '" target="_blank" rel="noopener noreferrer">' + trackerLabel + '</a>' +
+    ' &middot; <a href="' + RELEASE_ACTIVITY_HUBITAT_URL + '" target="_blank" rel="noopener noreferrer">Hubitat release notes</a></p>';
+}
+
+// A postMessage readiness handshake, not the iframe's 'load' event: 'load'
+// fires even for a blocked or failed cross-origin response, so it cannot
+// prove the embed rendered. The embed posts
+// { type: 'automation-map-release-activity-ready', version: 1 } only after
+// its chart has rendered, and only that verified message clears the timer.
+function releaseActivityLoad() {
+  if (releaseActivityLoaded) return;
+  releaseActivityLoaded = true;
+  releaseActivityBody.innerHTML = '<p class="sub">Loading...</p>';
+  const iframe = document.createElement('iframe');
+  iframe.title = 'Hubitat releases over time';
+  iframe.loading = 'lazy';
+  iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
+  iframe.referrerPolicy = 'no-referrer';
+  let settled = false;
+
+  function fail() {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    window.removeEventListener('message', onMessage);
+    releaseActivityBody.innerHTML = '<p class="sub">The release preview could not be loaded.</p>' +
+      releaseActivityLinksHtml('Open the Community Utilities Update Tracker');
+  }
+
+  // The embed's own origin is fixed and known here (unlike the embed
+  // itself, which cannot know its private Hubitat parent's origin and so
+  // must post with a wildcard target) - every check below is required, not
+  // any one alone: origin proves who sent it, contentWindow proves it came
+  // from this iframe specifically and not some other frame on the page,
+  // and the type/version match proves it is this handshake and not an
+  // unrelated message this page happens to receive.
+  function onMessage(ev) {
+    if (settled) return;
+    // "null" is expected, not a fallback: sandboxed without allow-same-origin,
+    // the embed has an opaque origin and posts as "null". Provenance rests on
+    // the source check below - this page created the iframe and set its src to
+    // a fixed URL, and event.source cannot be forged. The host string is kept
+    // so this still works if the embed is ever framed unsandboxed.
+    if (ev.origin !== 'https://gordonthelander.github.io' && ev.origin !== 'null') return;
+    if (ev.source !== iframe.contentWindow) return;
+    const d = ev.data;
+    if (!d || d.type !== 'automation-map-release-activity-ready' || d.version !== 1) return;
+    settled = true;
+    clearTimeout(timer);
+    window.removeEventListener('message', onMessage);
+  }
+
+  const timer = setTimeout(fail, RELEASE_ACTIVITY_TIMEOUT_MS);
+  window.addEventListener('message', onMessage);
+  iframe.addEventListener('error', fail);
+  // src set after the listener is attached, so a synchronous/cached
+  // response cannot post its ready message before this code is listening.
+  iframe.src = RELEASE_ACTIVITY_URL;
+  releaseActivityBody.innerHTML = '';
+  releaseActivityBody.appendChild(iframe);
+  // Present alongside the embed regardless of its own load outcome (spec's
+  // suggested presentation shows this as a standing part of the panel, not
+  // only a failure fallback) - the failure branch above replaces this
+  // whole body anyway, so there is never a duplicate link on screen.
+  const cta = document.createElement('div');
+  cta.innerHTML = releaseActivityLinksHtml('Open the full Update Tracker');
+  releaseActivityBody.appendChild(cta);
+}
+
 const iconsPanel = document.getElementById('icons');
 const iconsBody = document.getElementById('iconsBody');
 let ICONS = null;
@@ -5907,35 +8761,48 @@ function buildExportPayload(ext, icons, failedFetches) {
   const iconById = {};
   (icons && icons.devices || []).forEach(function (d) { iconById['d' + d.id] = d; });
 
-  const missingIds = {};
-  ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
-  const referencesTo = {};
-  ALL_EDGES.forEach(function (e) {
-    if (!missingIds[e.to]) return;
-    if (!referencesTo[e.to]) referencesTo[e.to] = [];
-    if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
+  // Every finding below now comes from deriveInsightData(), the same call the
+  // Insights panel renders from. This block used to
+  // recompute all of it independently, and the two had already drifted - the
+  // export gained Hub Variable findings that the panel never got. The export
+  // schema and wording are unchanged by the switch; only the source of the
+  // numbers is now shared. Verified by capturing insights+summary before and
+  // after and diffing them byte for byte.
+  const INS = deriveInsightData();
+  const GUIDE = insightGuidance();
+  const missingIds = INS.missingIds;
+  const referencesTo = INS.referencesTo;
+
+  const commanders = INS.statefulCommanders;
+  const touched = INS.touched;
+  const contested = INS.contested.map(function (d) {
+    return { device: ref(d, nameOf), commandedBy: commanders[d].map(function (a) { return ref(a, nameOf); }) };
+  });
+  const unreferencedDevices = INS.untouched.map(function (id) { return ref(id, nameOf); });
+  const inertApps = INS.inertNodes
+    .map(function (n) { return { app: ref(n.id, nameOf), reason: n.reason || 'no reason recorded' }; });
+  const brokenRuleReferences = INS.brokenTargets.map(function (id) {
+    return { target: ref(id, nameOf), referencedBy: (referencesTo[id] || []).map(function (a) { return ref(a, nameOf); }) };
   });
 
-  const commanders = {};
-  const touched = {};
-  ALL_EDGES.forEach(function (e) {
-    touched[e.to] = true;
-    if (e.kind === 'action' && e.stateful) {
-      if (!commanders[e.to]) commanders[e.to] = [];
-      if (commanders[e.to].indexOf(e.from) < 0) commanders[e.to].push(e.from);
-    }
+  // Hub Variable findings (v2.0.14, schema 4 - parent spec 8.3/11.5). Reader/
+  // writer/multiple-writer findings are computed from the same GRAPH.edges
+  // data as every insight above. unresolvedReferences is the one exception:
+  // it describes names that never became nodes at all (parent spec 6.3), so
+  // it is sourced from Groovy's buildGraph() directly
+  // (GRAPH.hubVariableUnresolvedReferences) rather than derived from
+  // ALL_EDGES here. There is no unresolvedConnectors finding - every
+  // reported Connector deviceId is trusted unconditionally, so
+  // no case exists for this export to flag as unresolved.
+  const hubVarWriters = INS.hubVar.writers;
+  const noDecodedUsage = INS.hubVar.noDecodedUsage.map(function (id) { return ref(id, nameOf); });
+  const readersWithoutDecodedWriter = INS.hubVar.readersWithoutDecodedWriter.map(function (id) { return ref(id, nameOf); });
+  const writersWithoutDecodedReader = INS.hubVar.writersWithoutDecodedReader.map(function (id) { return ref(id, nameOf); });
+  const multipleHubVarWriters = INS.hubVar.multipleWriters.map(function (id) {
+    return { variable: ref(id, nameOf), writers: hubVarWriters[id].map(function (a) { return ref(a, nameOf); }) };
   });
-  const contested = Object.keys(commanders).filter(function (d) { return commanders[d].length > 1; })
-    .sort(function (a, b) { return commanders[b].length - commanders[a].length; })
-    .map(function (d) {
-      return { device: ref(d, nameOf), commandedBy: commanders[d].map(function (a) { return ref(a, nameOf); }) };
-    });
-  const unreferencedDevices = ALL_NODES.filter(function (n) { return n.group === 'device' && !touched[n.id]; })
-    .map(function (n) { return ref(n.id, nameOf); });
-  const inertApps = ALL_NODES.filter(function (n) { return n.inert; })
-    .map(function (n) { return { app: ref(n.id, nameOf), reason: n.reason || 'no reason recorded' }; });
-  const brokenRuleReferences = Object.keys(missingIds).map(function (id) {
-    return { target: ref(id, nameOf), referencedBy: (referencesTo[id] || []).map(function (a) { return ref(a, nameOf); }) };
+  const unresolvedHubVarReferences = INS.hubVar.unresolvedReferences.map(function (r) {
+    return { name: r.name, kind: r.kind, referencedBy: ref(r.appId, nameOf) };
   });
 
   const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; }).map(function (n) {
@@ -5960,8 +8827,20 @@ function buildExportPayload(ext, icons, failedFetches) {
   const externalSystems = ALL_NODES.filter(function (n) { return n.group === 'external'; }).map(function (n) {
     return { id: n.id, name: nameOf[n.id], kind: n.kindKey || null };
   });
+  // v2.0.14, schema 4 (parent spec 11.3): variableType/identitySource/
+  // connector come straight off the node - buildGraph() (Groovy) populates
+  // them from the authoritative getAllGlobalVars() inventory when available,
+  // or leaves them at their reference-derived defaults otherwise.
+  // currentValue stays null in every default export (parent spec 10) - no
+  // opt-in value export exists yet.
   const hubVariables = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) {
-    return { id: n.id, name: nameOf[n.id] };
+    return {
+      id: n.id, name: nameOf[n.id],
+      variableType: n.variableType || null,
+      identitySource: n.identitySource || 'reference-derived',
+      connector: n.connectorDeviceId ? { deviceId: n.connectorDeviceId, connectorType: n.connectorType || null } : null,
+      currentValue: null
+    };
   });
   const edges = ALL_EDGES.map(function (e) {
     return {
@@ -5972,7 +8851,16 @@ function buildExportPayload(ext, icons, failedFetches) {
       // a lasting state, versus a momentary command) - null rather than
       // false everywhere else, so it does not look like a real "no" for a
       // relationship kind the field was never about.
-      stateful: e.kind === 'action' ? !!e.stateful : null
+      stateful: e.kind === 'action' ? !!e.stateful : null,
+      // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated only for
+      // proven Hub Variable reads (Groovy currently always emits
+      // 'unknown-read' - role classification is not yet built, per parent
+      // spec 6.2's explicit preference for unknown-read over an invented
+      // role). writeSource is populated only when the write's source device
+      // ID resolved in the discovered device set -
+      // both null on every other relationship kind.
+      usageRole: e.usageRole || null,
+      writeSource: e.writeSource || null
     };
   });
   // Flow steps' own "devices" field is really a display list, not always
@@ -6043,6 +8931,8 @@ function buildExportPayload(ext, icons, failedFetches) {
     appCount: apps.length,
     externalSystemCount: externalSystems.length,
     hubVariableCount: hubVariables.length,
+    hubVariablesWithConnectorCount: hubVariables.filter(function (v) { return !!v.connector; }).length,
+    unresolvedHubVariableReferenceCount: unresolvedHubVarReferences.length,
     edgeCount: edges.length,
     decodedRuleFlowCount: ruleFlows.length,
     contestedDeviceCount: contested.length,
@@ -6057,7 +8947,14 @@ function buildExportPayload(ext, icons, failedFetches) {
   const limitations = [
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
-    'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.'
+    'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
+    // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
+    'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
+    'A Hub Variable with no decoded reader or writer (insights.hubVariables.noDecodedUsage) may still be used by an app or integration this export cannot decode - absence of a decoded edge is not proof the variable is unused.',
+    'Multiple writers on a Hub Variable (insights.hubVariables.multipleWriters) are not proof of a race condition - static configuration proves shared writers, not simultaneous execution.',
+    'A Hub Variable connector is a synchronized projection of the same shared state (relationship: synchronizedWith), not an independent value - do not treat the variable and its connector device as two different things to reconcile.',
+    'A Hub Variable write edge with a deviceAttribute writeSource means the rule copies or derives its write from that device attribute - it does not mean the device writes the Hub Variable directly.',
+    'A Connector deviceId Hubitat reports is trusted directly and always resolved into hubVariables[].connector - there is no check against a case where that Connector was later deleted or replaced outside the normal remove-connector flow. Such a stale or orphaned ID would still be reported here as a resolved connector; this export cannot distinguish that from a genuine one with the data it has.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -6086,7 +8983,7 @@ function buildExportPayload(ext, icons, failedFetches) {
     'Open a first response with a short plain-language summary of what was understood - counts plus two or three specific named apps or devices as evidence the file was actually read, not a templated response.',
     'State findings before recommendations, in visibly separate sections.',
     'Surface scan-quality caveats (scan.status, unresolved or ambiguous references) in that opening summary, not after conclusions have already been presented.',
-    'When more than one thing is worth pursuing, offer a short menu - two to five options, one line each on why it might matter - and ask which to explore, rather than silently picking one and going deep unprompted.',
+    'When more than one thing is worth pursuing, offer a short menu - two to five options, one line each on why it might matter - and ask which to explore, unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly rather than forcing an unnecessary choice.',
     'If the request itself is broad or vague, let that options menu be the first response, rather than guessing scope.',
     'Every option offered must read as investigate or explain, never as an action taken or promised - nothing in this export authorises any change to the hub.'
   ];
@@ -6102,24 +8999,40 @@ function buildExportPayload(ext, icons, failedFetches) {
       lastScanError: SCAN_META.scanError,
       status: scanStatus,
       appsUnreadable: SCAN_META.appsUnreadable || 0,
-      devicesUnreadable: SCAN_META.devicesUnreadable || 0
+      devicesUnreadable: SCAN_META.devicesUnreadable || 0,
+      // v2.0.14, schema 4 (parent spec 6.1/11.2): inventory completeness kept
+      // separate from relationship-decoder completeness - a consumer must not
+      // assume one implies the other.
+      hubVariableInventory: {
+        status: SCAN_META.hubVariableInventoryStatus || 'not-supported',
+        error: SCAN_META.hubVariableInventoryError || null,
+        count: SCAN_META.hubVariableInventoryCount || 0,
+        source: SCAN_META.hubVariableInventorySource || null
+      },
+      hubVariableRelationships: {
+        status: 'partial',
+        supportedEngines: ['Rule Machine 5.1'],
+        limitations: ['Other app engines may use Hub Variables without exposing a decoded edge.']
+      }
     },
     summary: summary,
     limitations: limitations,
     recommendedAiBehaviour: recommendedAiBehaviour,
+    insightGuidance: GUIDE,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
-      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export).',
+      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
       apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
-      hubVariables: 'Hub-wide variables one or more rules read or write.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply.',
+      hubVariables: 'Hub-wide shared state - schema 4 (v2.0.14): every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules read or write. A variable found only via a decoded reference, with no matching inventory entry (inventory was unavailable for this scan), has identitySource "reference-derived" instead - a weaker guarantee: it was found in a decoded rule configuration at scan time, not confirmed against the authoritative variable list the hub itself reports. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations).',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable (see usageRole/writeSource below). synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4) is populated only on proven Hub Variable read edges - "unknown-read" is the only value this app currently produces (a real read was proven, its narrower role - trigger/condition/action-input/text-substitution - was not); null on every other edge. writeSource (schema 4) is populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including when a source detail exists but could not be resolved to an ID.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous.',
-      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing.',
-      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected.',
-      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported; a variable in hubVariables[] with identitySource "reference-derived" instead of "hub-inventory" means this status was not "complete" when it was found. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
+      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
-      recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore rather than silently picking one - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.'
+      recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.',
+      insightGuidance: 'The same deterministic interpretation catalogue shown in the on-hub Insights panel. categories explains each group and its recommended priority; findings gives what the observation means, why it may be normal when applicable, and what to check next. It is guidance for investigation, never authority to change the hub.'
     },
     devices: devices,
     apps: apps,
@@ -6131,7 +9044,17 @@ function buildExportPayload(ext, icons, failedFetches) {
       contested: contested,
       unreferencedDevices: unreferencedDevices,
       inertApps: inertApps,
-      brokenRuleReferences: brokenRuleReferences
+      brokenRuleReferences: brokenRuleReferences,
+      // v2.0.14, schema 4 (parent spec 8.3/11.5). Neutral findings, not fault
+      // claims - see recommendedAiBehaviour and this section's own limitations
+      // note above.
+      hubVariables: {
+        noDecodedUsage: noDecodedUsage,
+        readersWithoutDecodedWriter: readersWithoutDecodedWriter,
+        writersWithoutDecodedReader: writersWithoutDecodedReader,
+        multipleWriters: multipleHubVarWriters,
+        unresolvedReferences: unresolvedHubVarReferences
+      }
     },
     externalSystemDeclarations: ext ? (ext.entries || []) : null,
     deviceIconOverrides: icons ? (icons.devices || [])
@@ -6159,6 +9082,17 @@ document.getElementById('iconsBtn').addEventListener('click', function () {
 document.getElementById('iconsClose').addEventListener('click', function () {
   iconsPanel.style.display = 'none';
   syncLegendVisibility();
+});
+document.getElementById('releaseActivityBtn').addEventListener('click', function () {
+  bringToFront(releaseActivityPanel);
+  releaseActivityLoad();
+});
+document.getElementById('releaseActivityClose').addEventListener('click', function () {
+  releaseActivityPanel.style.display = 'none';
+  syncLegendVisibility();
+  // Spec 4.1 - focus returns to the control that
+  // opened this panel, not left on the just-hidden close button.
+  document.getElementById('releaseActivityBtn').focus();
 });
 document.getElementById('exportBtn').addEventListener('click', exportJSON);
 document.getElementById('pivotBtn').addEventListener('click', function () {
@@ -6198,6 +9132,7 @@ document.getElementById('pivotClose').addEventListener('click', function () {
 
 const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
 const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
+const hubVarSelect = fillSelect('hubVarFilter', 'hubVarSearch', 'hubVariable', 'All hub variables');
 
 // Clicking a node is the first thing anyone tries, so it drills in: click an
 // app to see what it uses, click one of those devices to see everything else
@@ -6242,6 +9177,7 @@ function focusLabel(id) {
 function currentFocus() {
   if (appSelect.value !== '__all__') return appSelect.value;
   if (deviceSelect.value !== '__all__') return deviceSelect.value;
+  if (hubVarSelect.value !== '__all__') return hubVarSelect.value;
   return null;
 }
 
@@ -6254,7 +9190,9 @@ function currentFocus() {
 // Shared by the panel's Exit link and the top-right "Show all" button, which
 // did this exact reset already; Exit is the same action, reachable from where
 // the problem actually is instead of from a button that may be off screen.
-// External systems/Pivot tables/Device icons are unrelated to whatever was
+// External systems/Pivot tables/Device icons/Hubitat release activity - the
+// full secondaryPanels() list, which is the single source of truth rather
+// than a copy maintained here - are unrelated to whatever was
 // just chosen (Focus app/device dropdowns, a node click, browser Back/
 // Forward restoring one, a link-through from Pivot tables) and would
 // otherwise sit open over it. flowPanel is deliberately NOT touched here -
@@ -6269,7 +9207,7 @@ function currentFocus() {
 // on the toggle would overwrite the saved amLegendCollapsed preference,
 // found live to be the wrong behaviour there and equally wrong here).
 function closeSecondaryPanels() {
-  [extPanel, pivotPanel, iconsPanel].forEach(function (p) { if (p) p.style.display = 'none'; });
+  secondaryPanels().forEach(function (p) { if (p) p.style.display = 'none'; });
   const legendEl = document.getElementById('legend');
   if (legendEl && legendEl.classList.contains('collapsed')) {
     legendEl.classList.remove('collapsed');
@@ -6285,6 +9223,7 @@ function closeSecondaryPanels() {
 function exitToWholeMap() {
   appSelect.value = '__all__';
   deviceSelect.value = '__all__';
+  hubVarSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
   closeSecondaryPanels();
@@ -6323,6 +9262,7 @@ function renderBackLink() {
 function focusNode(id) {
   const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
   if (!node) return false;
+  focusGenerationSeq += 1;
   if (!poppingHistory) {
     const from = currentFocus();
     if (from !== id) {
@@ -6339,6 +9279,7 @@ function focusNode(id) {
   if (node.group === 'app') {
     forceSelect(appSelect, node.id, node.title);
     deviceSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
     // An inert app has no edges by definition, so filtering the graph down to
     // its neighbourhood - what applyFilters does for every other app - leaves
     // nothing to draw: the whole map collapses to that one square. Nothing is
@@ -6352,9 +9293,21 @@ function focusNode(id) {
     // for inert nodes.
     if (!node.inert && !node.unreadable) applyFilters();
     showFlow(node.id);
+  } else if (node.group === 'hubVariable') {
+    // Own branch, not the device else below - a Hub Variable used to fall
+    // into that branch by default (forceSelect(deviceSelect, ...)), which
+    // worked visually but mis-filed it as a device selection. Split out once
+    // this dropdown existed to give it somewhere correct to go.
+    forceSelect(hubVarSelect, node.id, node.title);
+    appSelect.value = '__all__';
+    deviceSelect.value = '__all__';
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
   } else {
     forceSelect(deviceSelect, node.id, node.title);
     appSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
@@ -6389,12 +9342,12 @@ window.addEventListener('popstate', function (ev) {
       // browser has already updated to this entry by the time popstate
       // fires - no extra bookkeeping needed here for the label to be right.
     } else {
-      appSelect.value = '__all__';
-      deviceSelect.value = '__all__';
-      flowPanel.style.display = 'none';
-      syncLegendVisibility();
-      applyFilters();
-      renderBackLink();
+      // Delegated rather than hand-rolled: a near-copy here drifted out of
+      // sync and stopped closing panels or resetting kindFilter.
+      // exitToWholeMap() guards its own pushState behind !poppingHistory,
+      // which is false for the duration of this handler, so no spurious
+      // history entry is added.
+      exitToWholeMap();
     }
   } finally {
     poppingHistory = false;
@@ -6414,6 +9367,7 @@ network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') {
     deviceSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
     closeSecondaryPanels();
   }
   applyFilters();
@@ -6427,6 +9381,17 @@ appSelect.addEventListener('change', function () {
 deviceSelect.addEventListener('change', function () {
   if (deviceSelect.value !== '__all__') {
     appSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
+    closeSecondaryPanels();
+  }
+  flowPanel.style.display = 'none';
+  syncLegendVisibility();
+  applyFilters();
+});
+hubVarSelect.addEventListener('change', function () {
+  if (hubVarSelect.value !== '__all__') {
+    appSelect.value = '__all__';
+    deviceSelect.value = '__all__';
     closeSecondaryPanels();
   }
   flowPanel.style.display = 'none';
@@ -6562,4 +9527,457 @@ document.getElementById('exitMapBtn').addEventListener('click', function () {
 </body>
 </html>
 """
+}
+
+String comparatorFrameHtml() {
+    // Hubitat inserts paragraph HTML after the host page has loaded. Browsers do
+    // not execute script elements added that way, so render the comparator as a
+    // standalone iframe document whose script is parsed and executed normally.
+    String document = """<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body>${comparatorHtml()}</body>
+</html>"""
+    String sourceDocument = document
+        .replace('&', '&amp;')
+        .replace('"', '&quot;')
+    return """<iframe title="Automation Map Export Comparator" srcdoc="${sourceDocument}"
+        style="display:block;width:100%;height:900px;border:0;background:#fff;"></iframe>"""
+}
+
+String comparatorHtml() {
+    return '''
+<style>
+  #amc-root { max-width: 1180px; color: #252525; font-family: Arial, sans-serif; }
+  #amc-root * { box-sizing: border-box; }
+  #amc-root .amc-note { margin: 0 0 16px; color: #555; line-height: 1.45; }
+  #amc-root .amc-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 14px; }
+  #amc-root .amc-card { border: 1px solid #d7dce2; border-radius: 7px; padding: 14px; background: #fff; }
+  #amc-root .amc-card h3 { margin: 0 0 9px; font-size: 16px; }
+  #amc-root .amc-file { width: 100%; padding: 8px; border: 1px solid #c8ced6; border-radius: 5px; background: #f8f9fa; }
+  #amc-root .amc-meta { margin-top: 8px; min-height: 38px; color: #58616b; font-size: 13px; line-height: 1.4; }
+  #amc-root .amc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0; }
+  #amc-root button { border: 0; border-radius: 5px; padding: 9px 14px; background: #1976d2; color: #fff; cursor: pointer; font-weight: 600; }
+  #amc-root button:disabled { opacity: .48; cursor: default; }
+  #amc-root button.amc-secondary { background: #58616b; }
+  #amc-root .amc-filter { display: inline-flex; align-items: center; gap: 5px; margin-left: 5px; font-size: 13px; }
+  #amc-root .amc-error { display: none; margin: 12px 0; padding: 10px 12px; border-left: 4px solid #c62828; background: #ffebee; color: #8e1717; white-space: pre-wrap; }
+  #amc-root .amc-summary { display: none; margin: 14px 0; }
+  #amc-root .amc-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 9px; }
+  #amc-root .amc-stat { padding: 11px; border-radius: 6px; background: #f1f4f7; }
+  #amc-root .amc-stat strong { display: block; font-size: 21px; margin-bottom: 3px; }
+  #amc-root .amc-stat span { color: #58616b; font-size: 12px; }
+  #amc-root .amc-scope { margin: 10px 0; color: #58616b; font-size: 13px; }
+  #amc-root .amc-table-wrap { display: none; overflow-x: auto; border: 1px solid #d7dce2; border-radius: 7px; }
+  #amc-root table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #amc-root th { position: sticky; top: 0; background: #eef2f6; text-align: left; padding: 9px; border-bottom: 1px solid #cdd3da; white-space: nowrap; }
+  #amc-root td { padding: 9px; border-bottom: 1px solid #e4e7eb; vertical-align: top; }
+  #amc-root tr:last-child td { border-bottom: 0; }
+  #amc-root .amc-added { color: #1b7f37; font-weight: 700; }
+  #amc-root .amc-removed { color: #b3261e; font-weight: 700; }
+  #amc-root .amc-changed { color: #9a6700; font-weight: 700; }
+  #amc-root .amc-unchanged { color: #66717d; }
+  #amc-root .amc-detail { min-width: 260px; line-height: 1.45; }
+  #amc-root .amc-empty { padding: 20px; color: #58616b; text-align: center; }
+  @media (max-width: 760px) {
+    #amc-root .amc-grid { grid-template-columns: 1fr; }
+    #amc-root .amc-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+
+<div id="amc-root">
+  <p class="amc-note">
+    Select two Automation Map AI-friendly JSON exports. Comparison happens entirely in this browser;
+    the files are not uploaded to the hub or sent anywhere else. Only discovered apps, devices,
+    Connectors, and Hub Variables are compared. A Hub Variable Connector is shown as its own
+    Connector category, separate from Devices, since it represents synchronized shared state and
+    not an independent physical device. Relationships, flows, insights, external systems and other
+    derived data are deliberately ignored. An export from before Hub Variables existed compares with
+    zero Connectors and Hub Variables rather than failing.
+  </p>
+
+  <div class="amc-grid">
+    <div class="amc-card">
+      <h3>Earlier or baseline export</h3>
+      <input id="amc-left-file" class="amc-file" type="file" accept="application/json,.json">
+      <div id="amc-left-meta" class="amc-meta">No file selected.</div>
+    </div>
+    <div class="amc-card">
+      <h3>Later or comparison export</h3>
+      <input id="amc-right-file" class="amc-file" type="file" accept="application/json,.json">
+      <div id="amc-right-meta" class="amc-meta">No file selected.</div>
+    </div>
+  </div>
+
+  <div class="amc-actions">
+    <button id="amc-compare" type="button" disabled>Compare discovered items</button>
+    <button id="amc-csv" class="amc-secondary" type="button" disabled>Export differences to CSV</button>
+    <label class="amc-filter"><input id="amc-show-apps" type="checkbox" checked> Apps</label>
+    <label class="amc-filter"><input id="amc-show-devices" type="checkbox" checked> Devices</label>
+    <label class="amc-filter"><input id="amc-show-connectors" type="checkbox" checked> Connectors</label>
+    <label class="amc-filter"><input id="amc-show-hubvariables" type="checkbox" checked> Hub Variables</label>
+    <label class="amc-filter"><input id="amc-show-unchanged" type="checkbox"> Include unchanged</label>
+  </div>
+
+  <div id="amc-error" class="amc-error"></div>
+
+  <div id="amc-summary" class="amc-summary">
+    <div class="amc-summary-grid">
+      <div class="amc-stat"><strong id="amc-added-count">0</strong><span>Added</span></div>
+      <div class="amc-stat"><strong id="amc-removed-count">0</strong><span>Removed</span></div>
+      <div class="amc-stat"><strong id="amc-changed-count">0</strong><span>Changed</span></div>
+      <div class="amc-stat"><strong id="amc-same-count">0</strong><span>Unchanged</span></div>
+    </div>
+    <div id="amc-scope" class="amc-scope"></div>
+  </div>
+
+  <div id="amc-table-wrap" class="amc-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Result</th>
+          <th>Stable ID</th>
+          <th>Baseline</th>
+          <th>Comparison</th>
+          <th>Direct field differences</th>
+        </tr>
+      </thead>
+      <tbody id="amc-rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script type="text/javascript">
+function amcInit() {
+  'use strict';
+
+  var left = null;
+  var right = null;
+  var results = [];
+
+  var TYPE_LABELS = { app: 'App', device: 'Device', connector: 'Connector', hubVariable: 'Hub Variable' };
+  var TYPE_FILTER_IDS = {
+    app: 'amc-show-apps', device: 'amc-show-devices',
+    connector: 'amc-show-connectors', hubVariable: 'amc-show-hubvariables'
+  };
+
+  var byId = function (id) { return document.getElementById(id); };
+  var compareButton = byId('amc-compare');
+  var csvButton = byId('amc-csv');
+  var errorBox = byId('amc-error');
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function readJsonFile(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        try { resolve(JSON.parse(reader.result)); }
+        catch (e) { reject(new Error('Invalid JSON: ' + e.message)); }
+      };
+      reader.onerror = function () { reject(new Error('The browser could not read this file.')); };
+      reader.readAsText(file);
+    });
+  }
+
+  function validateExport(data, filename) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error(filename + ' is not a JSON object.');
+    }
+    if (!Array.isArray(data.apps) || !Array.isArray(data.devices)) {
+      throw new Error(filename + ' is not an Automation Map export with apps[] and devices[].');
+    }
+    // A Connector device is real in devices[] (iconCategory "connector") but is
+    // split out here into its own bucket rather than left mixed into devices -
+    // it represents synchronized shared state, not an independent physical
+    // device. hubVariables[] does not exist on an export from before it shipped
+    // (schema 3 or earlier); treated as empty rather than a validation failure,
+    // so an old baseline still compares on apps/devices/connectors.
+    var realDevices = data.devices.filter(function (d) { return d.iconCategory !== 'connector'; });
+    var connectorDevices = data.devices.filter(function (d) { return d.iconCategory === 'connector'; });
+    return {
+      filename: filename,
+      generatedBy: String(data.generatedBy || 'Unknown Automation Map version'),
+      generatedAt: String(data.generatedAt || ''),
+      exportSchemaVersion: data.exportSchemaVersion,
+      apps: data.apps,
+      devices: realDevices,
+      connectors: connectorDevices,
+      hubVariables: Array.isArray(data.hubVariables) ? data.hubVariables : []
+    };
+  }
+
+  function metaText(x) {
+    var when = x.generatedAt ? ' | ' + x.generatedAt : '';
+    return x.generatedBy + when + '<br>' + x.apps.length + ' apps, ' + x.devices.length + ' devices, ' +
+      x.connectors.length + ' connectors, ' + x.hubVariables.length + ' hub variables';
+  }
+
+  function setError(message) {
+    errorBox.textContent = message || '';
+    errorBox.style.display = message ? 'block' : 'none';
+  }
+
+  function onFile(side, file, metaId) {
+    setError('');
+    if (!file) {
+      if (side === 'left') left = null; else right = null;
+      byId(metaId).textContent = 'No file selected.';
+      compareButton.disabled = !(left && right);
+      return;
+    }
+    readJsonFile(file).then(function (data) {
+      var parsed = validateExport(data, file.name);
+      if (side === 'left') left = parsed; else right = parsed;
+      byId(metaId).innerHTML = metaText(parsed);
+      compareButton.disabled = !(left && right);
+    }).catch(function (e) {
+      if (side === 'left') left = null; else right = null;
+      byId(metaId).textContent = 'Could not use this file.';
+      compareButton.disabled = true;
+      setError(e.message);
+    });
+  }
+
+  function scalar(value) {
+    return value == null ? '' : String(value).trim();
+  }
+
+  function sortedStrings(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map(function (x) { return String(x).trim(); }).sort();
+  }
+
+  function directFields(type, item) {
+    if (type === 'app') {
+      return {
+        name: scalar(item.name),
+        appType: scalar(item.appType),
+        status: scalar(item.status),
+        parentId: scalar(item.parentId)
+      };
+    }
+    if (type === 'hubVariable') {
+      return {
+        name: scalar(item.name),
+        variableType: scalar(item.variableType),
+        connectorDeviceId: scalar(item.connector ? item.connector.deviceId : null),
+        connectorType: scalar(item.connector ? item.connector.connectorType : null)
+      };
+    }
+    // device and connector share this shape - a Connector is a real entry in
+    // devices[] before validateExport() splits it into its own bucket above.
+    return {
+      name: scalar(item.name),
+      room: scalar(item.room),
+      capabilities: sortedStrings(item.capabilities)
+    };
+  }
+
+  function displayName(item) {
+    return item && item.name ? String(item.name) : '';
+  }
+
+  function indexItems(items, type, sourceName) {
+    var index = Object.create(null);
+    items.forEach(function (item, position) {
+      if (!item || item.id == null || String(item.id).trim() === '') {
+        throw new Error(sourceName + ' has a discovered ' + type + ' without an ID at position ' + position + '.');
+      }
+      var id = String(item.id);
+      if (index[id]) throw new Error(sourceName + ' contains duplicate ' + type + ' ID ' + id + '.');
+      index[id] = item;
+    });
+    return index;
+  }
+
+  function equalValue(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function valueForDisplay(value) {
+    if (Array.isArray(value)) return value.join(' | ');
+    return scalar(value);
+  }
+
+  function compareType(type, leftItems, rightItems) {
+    var a = indexItems(leftItems, type, left.filename);
+    var b = indexItems(rightItems, type, right.filename);
+    var ids = Object.keys(a).concat(Object.keys(b)).filter(function (id, i, all) {
+      return all.indexOf(id) === i;
+    }).sort(function (x, y) {
+      var xn = displayName(a[x] || b[x]).toLowerCase();
+      var yn = displayName(a[y] || b[y]).toLowerCase();
+      return xn.localeCompare(yn) || x.localeCompare(y);
+    });
+
+    return ids.map(function (id) {
+      var oldItem = a[id] || null;
+      var newItem = b[id] || null;
+      if (!oldItem) {
+        return { type: type, change: 'added', id: id, oldItem: null, newItem: newItem, differences: [] };
+      }
+      if (!newItem) {
+        return { type: type, change: 'removed', id: id, oldItem: oldItem, newItem: null, differences: [] };
+      }
+      var oldFields = directFields(type, oldItem);
+      var newFields = directFields(type, newItem);
+      var differences = Object.keys(oldFields).filter(function (field) {
+        return !equalValue(oldFields[field], newFields[field]);
+      }).map(function (field) {
+        return { field: field, oldValue: oldFields[field], newValue: newFields[field] };
+      });
+      return {
+        type: type,
+        change: differences.length ? 'changed' : 'unchanged',
+        id: id,
+        oldItem: oldItem,
+        newItem: newItem,
+        differences: differences
+      };
+    });
+  }
+
+  function render() {
+    var showByType = {};
+    Object.keys(TYPE_FILTER_IDS).forEach(function (type) {
+      showByType[type] = byId(TYPE_FILTER_IDS[type]).checked;
+    });
+    var showUnchanged = byId('amc-show-unchanged').checked;
+    var visible = results.filter(function (r) {
+      return showByType[r.type] && (showUnchanged || r.change !== 'unchanged');
+    });
+    var body = byId('amc-rows');
+    if (!visible.length) {
+      body.innerHTML = '<tr><td class="amc-empty" colspan="6">No items match the current filters.</td></tr>';
+    } else {
+      body.innerHTML = visible.map(function (r) {
+        var detail = '';
+        if (r.change === 'added') detail = 'Present only in the comparison export.';
+        else if (r.change === 'removed') detail = 'Present only in the baseline export.';
+        else if (r.change === 'unchanged') detail = 'Direct discovery fields match.';
+        else detail = r.differences.map(function (d) {
+          return '<b>' + escapeHtml(d.field) + '</b>: ' + escapeHtml(valueForDisplay(d.oldValue)) +
+                 ' &rarr; ' + escapeHtml(valueForDisplay(d.newValue));
+        }).join('<br>');
+        return '<tr>' +
+          '<td>' + TYPE_LABELS[r.type] + '</td>' +
+          '<td class="amc-' + r.change + '">' + r.change.charAt(0).toUpperCase() + r.change.slice(1) + '</td>' +
+          '<td>' + escapeHtml(r.id) + '</td>' +
+          '<td>' + escapeHtml(displayName(r.oldItem)) + '</td>' +
+          '<td>' + escapeHtml(displayName(r.newItem)) + '</td>' +
+          '<td class="amc-detail">' + detail + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+  }
+
+  function compare() {
+    setError('');
+    try {
+      results = compareType('app', left.apps, right.apps)
+        .concat(compareType('device', left.devices, right.devices))
+        .concat(compareType('connector', left.connectors, right.connectors))
+        .concat(compareType('hubVariable', left.hubVariables, right.hubVariables));
+      var counts = { added: 0, removed: 0, changed: 0, unchanged: 0 };
+      results.forEach(function (r) { counts[r.change] += 1; });
+      byId('amc-added-count').textContent = counts.added;
+      byId('amc-removed-count').textContent = counts.removed;
+      byId('amc-changed-count').textContent = counts.changed;
+      byId('amc-same-count').textContent = counts.unchanged;
+      byId('amc-scope').textContent = left.generatedBy + ' (' + left.apps.length + ' apps, ' + left.devices.length +
+        ' devices, ' + left.connectors.length + ' connectors, ' + left.hubVariables.length +
+        ' hub variables) compared with ' + right.generatedBy + ' (' + right.apps.length + ' apps, ' +
+        right.devices.length + ' devices, ' + right.connectors.length + ' connectors, ' +
+        right.hubVariables.length + ' hub variables). Stable IDs are used for matching.';
+      byId('amc-summary').style.display = 'block';
+      byId('amc-table-wrap').style.display = 'block';
+      csvButton.disabled = !results.some(function (r) { return r.change !== 'unchanged'; });
+      render();
+    } catch (e) {
+      results = [];
+      csvButton.disabled = true;
+      setError(e.message);
+    }
+  }
+
+  function csvCell(value) {
+    var s = scalar(value).replace(/\\r?\\n/g, ' ');
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+
+  function exportCsv() {
+    var rows = [[
+      'itemType', 'change', 'stableId', 'baselineVersion', 'comparisonVersion',
+      'baselineName', 'comparisonName', 'field', 'baselineValue', 'comparisonValue'
+    ]];
+    results.filter(function (r) { return r.change !== 'unchanged'; }).forEach(function (r) {
+      if (r.change === 'changed') {
+        r.differences.forEach(function (d) {
+          rows.push([
+            r.type, r.change, r.id, left.generatedBy, right.generatedBy,
+            displayName(r.oldItem), displayName(r.newItem), d.field,
+            valueForDisplay(d.oldValue), valueForDisplay(d.newValue)
+          ]);
+        });
+      } else {
+        rows.push([
+          r.type, r.change, r.id, left.generatedBy, right.generatedBy,
+          displayName(r.oldItem), displayName(r.newItem), 'presence',
+          r.oldItem ? 'present' : 'absent', r.newItem ? 'present' : 'absent'
+        ]);
+      }
+    });
+    var csv = '\\ufeff' + rows.map(function (row) { return row.map(csvCell).join(','); }).join('\\r\\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'automation-map-discovery-diff-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  byId('amc-left-file').addEventListener('change', function () {
+    onFile('left', this.files && this.files[0], 'amc-left-meta');
+  });
+  byId('amc-right-file').addEventListener('change', function () {
+    onFile('right', this.files && this.files[0], 'amc-right-meta');
+  });
+  compareButton.addEventListener('click', compare);
+  csvButton.addEventListener('click', exportCsv);
+  byId('amc-show-apps').addEventListener('change', render);
+  byId('amc-show-devices').addEventListener('change', render);
+  byId('amc-show-connectors').addEventListener('change', render);
+  byId('amc-show-hubvariables').addEventListener('change', render);
+  byId('amc-show-unchanged').addEventListener('change', render);
+}
+
+// Hubitat can evaluate a paragraph's inline script before it has inserted the
+// paragraph's HTML into the document. Initialising immediately then sees null
+// controls and attaches no file-change listeners. Wait briefly for the root,
+// whether this runs before DOMContentLoaded or during later DOM insertion.
+var amcBootAttempts = 0;
+function amcBoot() {
+  var root = document.getElementById('amc-root');
+  if (!root) {
+    amcBootAttempts += 1;
+    if (amcBootAttempts < 50) setTimeout(amcBoot, 50);
+    return;
+  }
+  if (root.getAttribute('data-amc-ready') === 'true') return;
+  root.setAttribute('data-amc-ready', 'true');
+  amcInit();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', amcBoot);
+setTimeout(amcBoot, 0);
+</script>
+'''
 }

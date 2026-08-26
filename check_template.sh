@@ -36,6 +36,8 @@
 #                         \s+ alone here would be Groovy's, not the browser's
 #   [^&\\s]*             JS-side token-redaction regex in the scan diagnostic,
 #                         same double-escape reasoning as the line above
+#   replace(/\\r?\\n/g   JS-side newline cleanup in the comparison CSV
+#   '\\ufeff' / '\\r\\n'  JS-side CSV BOM and row separators
 #   key: '\uXXXX'        ICON_GLYPHS entries (device icon font codepoints) -
 #                         Groovy consuming \uXXXX and emitting the raw glyph
 #                         character is the INTENDED behaviour here, not a bug:
@@ -46,6 +48,16 @@
 # Usage: ./check_template.sh apps/automation_map.groovy
 set -euo pipefail
 FILE="${1:-apps/automation_map.groovy}"
+
+if ! command -v grep >/dev/null 2>&1; then
+  echo "check_template.sh requires grep; validation did not run." >&2
+  exit 2
+fi
+
+if [ ! -f "$FILE" ]; then
+  echo "App source not found: $FILE" >&2
+  exit 2
+fi
 
 BAD=$(grep -n '\\' "$FILE" \
   | grep -v 'Pattern URL_PATTERN' \
@@ -61,6 +73,8 @@ BAD=$(grep -n '\\' "$FILE" \
   | grep -v 'access_token=\[^&\\\\s\]' \
   | grep -vE "[a-z]+: '.u[0-9a-f]{4}'" \
   | grep -v 'u003c' \
+  | grep -v 'replace(/\\\\r?\\\\n/g' \
+  | grep -v '\\\\ufeff' \
   || true)
 
 if [ -n "$BAD" ]; then

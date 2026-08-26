@@ -33,7 +33,7 @@ Pick **Rule to rule only** in the Show filter to see the automation chains on th
 
 A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped. If a rule still names another rule that has since been deleted, that is shown too - labelled `deleted`, so the action silently doing nothing is something you can actually see rather than only discover the hard way.
 
-**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them.
+**Hub Variables.** An authoritative inventory straight from the hub, not just what decoded rules happen to mention. Drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them, and linked to their Variable Connector device where one exists.
 
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
@@ -41,14 +41,17 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 
 **Device icons.** Every device is drawn with an icon representing what it actually is - a light looks like a light, a door like a door, a water sensor like a water sensor - guessed automatically from the device's own capabilities and, where that alone is not specific enough, its name. Wrong for a particular device? The Device icons panel lists every device with its guessed icon, lets you pick the right one by hand, and lets you leave yourself a short note on anything left unrecognised. Overrides and notes survive future rescans, and can be backed up to a file and restored later.
 
-**Insights.** Findings the hub cannot give you directly:
+**Insights.** Findings the hub cannot give you directly, presented as plain-language explanations rather than bare counts - what a finding means, when it is normal, and what to check next:
 
 - **Contested devices** - more than one app can leave the device in a lasting state, the usual cause of automations fighting each other. Notifications and chimes are excluded, since repeating those is not a conflict.
 - **Devices nothing references** - no app owns, watches or drives them.
 - **Apps with no device or rule relationship** - installed and readable, but touch nothing, grouped by why (holds other apps, runs on a schedule, references nothing at all).
 - **Broken rule references** - a rule still names another rule, action, pause target or Private Boolean that no longer exists.
+- **Hub Variable findings** - variables nothing decoded reads or writes, and reads or writes without a matching counterpart, shown as review prompts rather than automatic fault claims.
 
-**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Declare it yourself in the External systems panel and it is drawn as its own diamond-shaped node, dashed edge back to the app that depends on it - so you can see what breaks if that outside service goes down. A shared community registry pre-fills the common ones; your own declarations always win over it.
+The same guidance is included in the AI-friendly export, so an AI reading the file gets the same explanations you see on screen.
+
+**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Reviewed defaults pre-fill common integrations (Hue, LIFX, Sensibo, Tapo, Meross, Chromecast, Google Home and others), and a [shared community registry](https://github.com/GordonThelander/HPM_Manifest_Crawl/blob/main/AUTOMATION_MAP_CONTRACT.md) covers more; your own declarations in the External systems panel always win over both. Declared or matched dependencies are drawn as their own diamond-shaped node, dashed edge back to the app that depends on it, so you can see what breaks if that outside service goes down.
 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
@@ -71,7 +74,7 @@ Hubitat has no API for "list every app and what devices it uses, and how". Autom
 
 | Endpoint | Used for |
 | --- | --- |
-| `/device/fullJson/<id>` | discovering which apps exist, by asking each device which apps use it |
+| `/device/fullJson/<id>` | device metadata and relationship evidence |
 | `/hub2/appsList` | the complete installed-app tree in one call, so an app that touches no device at all - a Rule Function, a schedule-only app, a container - is not invisible |
 | `/installedapp/statusJson/<id>` | the relationship data per app: child devices, event subscriptions, and every setting that resolves to devices |
 
@@ -97,14 +100,14 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN, the device icon font loads from cdnjs, and the watermark and click sound effects load from GitHub. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
-- **Only actually tested on platform 2.5.1.152.** `minimumHEVersion` in the manifest stays at `2.3.0` regardless - the two platform-specific pieces this app uses (Visual Rule Builder 2.0 decoding, and the `/hub2/appsList` endpoint behind full app discovery) both degrade gracefully rather than fail outright if unavailable, and the app was already shipping and working at this floor before this note was written. If you hit something that only breaks on older firmware, that is worth a report.
+- **Tested only on platform 2.5.1.152.** `minimumHEVersion` in the manifest matches; HPM will not offer this app on an earlier build.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
-- **Every installed app is discovered, whether or not it touches a device.** Device-led discovery is unioned with the complete app list from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
+- **Every installed app is discovered, whether or not it touches a device.** The complete app list comes from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
 - **Hub Variable read/write edges are read from any Rule Machine engine, not only 5.1.** Rule-to-rule link detection runs against every app's settings regardless of engine, so it depends on Rule Machine's own settings shape being present rather than an explicit type check. Room Lighting, Basic Rules, Simple Automation and webCoRE do not store rules that way, so they show no links rather than showing that they have none.
 - **Device icons are a best guess, not a certainty.** Capability and name-based detection cover most devices well, but a handful of categories (appliances, robot vacuums, and a few others) have no reliable Hubitat signal to detect from at all - see the Device icons panel to correct any of these by hand.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
-- A scan of roughly 200 devices and 60 apps takes about two minutes.
+- A scan of roughly 200 devices and 100 apps typically completes in well under a minute. Hub load and app count affect this.
 
 ## Install
 
@@ -131,9 +134,9 @@ Then continue from step 3.
 
 The map link contains an access token unique to your installation. Open the map from the app rather than bookmarking the URL, since reinstalling the app issues a new token and the old link stops working.
 
-Every device on the hub is scanned. There is no device picker: apps are found by asking each device which apps use it, and the hub supplies the device list.
+Every device on the hub is scanned. There is no device picker: Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.
 
-A daily scan runs automatically by default (00:30, changeable in the app's own settings page, or turn it off entirely to only ever scan by hand).
+A daily scan runs automatically by default at 00:30, changeable in the app's own settings page, or turn it off entirely to only ever scan by hand.
 
 ## Re-scanning
 
@@ -156,13 +159,15 @@ The app exposes two endpoints, using the same access token as the map link, usef
 
 **Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
 
+**Hubitrep** - the bounded-async scan rewrite is built on the fix in their `HubDiagnostics` app (`github.com/hubitrep/hubitat`): concurrent `asynchttpGet` callbacks writing to `state` are subject to last-write-wins persistence, which can silently overwrite a correct result with a stale one. Their diagnosis and fix were the origin; this app extends it further since its scan results must survive a hub reboot, unlike theirs.
+
 **"Woman Excited Cheers And Phrases Says Yes 1" sound effect** by Floraphonic, via [Pixabay](https://pixabay.com/sound-effects/people-woman-excited-cheers-and-phrases-says-yes-1-186748/), used under the [Pixabay Content License](https://pixabay.com/service/license-summary/). Plays on the Community utilities button.
 
 ## Branches
 
 `main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.
 
-`dev` is a private test channel. It renames the app to **Automation Map (Dev)** with its own package id, so it installs alongside the release version on the same hub without touching it. Both builds exclude every variant of themselves from the map, so neither draws the other.
+`dev` is a development test channel. It renames the app to **Automation Map (Dev)** with its own package id, so it installs alongside the release version on the same hub without touching it. Both builds exclude every variant of themselves from the map, so neither draws the other.
 
 To use it, add this as a custom repository in your own HPM:
 
@@ -170,4 +175,4 @@ To use it, add this as a custom repository in your own HPM:
 https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/repository.json
 ```
 
-Changes are made and tested on `dev`, then merged to `main` for release. Only the app name, package id, the raw URLs, and each branch's own `repository.json` differ between the branches - check `repository.json` specifically after every merge, since it does not diff-merge cleanly and has previously ended up on `main` still pointing at the Dev package.
+Changes are made and tested on `dev`, then promoted to `main` for release. While development is in progress, `dev` also contains unreleased functionality and may differ substantially from `main`. During promotion, preserve Main's production app name, package ids and raw URLs, and check `repository.json` explicitly because it does not merge cleanly and has previously ended up on `main` still pointing at the Dev package.

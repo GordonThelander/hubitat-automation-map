@@ -8,3 +8,10 @@
 # history remains in git if ever needed.
 handoff.md
 amnesia.md
+
+# External review handoffs -
+# local working material, not project source, never pushed.
+Bucket/
+
+# Source snapshots created before direct deployment to the development hub.
+.hubitat-backups/
