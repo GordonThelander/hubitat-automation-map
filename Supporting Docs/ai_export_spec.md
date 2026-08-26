@@ -387,7 +387,9 @@ so a first reply reads as understood and actionable rather than a report dumped 
   before presenting anything built on top of it, not as a footnote after the fact.
 - **When more than one thing is worth pursuing, offer it as a short menu and stop** - 2 to 5
   options, one line each on why it might matter, then ask which to go into. Do not silently
-  pick one and go deep unprompted.
+  pick one and go deep unprompted - unless the user's request or the evidence itself makes the
+  next investigation unambiguous, in which case proceed with it directly rather than forcing an
+  unnecessary choice.
 - **When the user's own request is broad or vague** ("help me with my automations"), the first
   reply should itself be that options menu - what kind of help: audit for conflicts, find
   unused capability, explain a specific rule - rather than guessing scope.
