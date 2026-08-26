@@ -23,6 +23,7 @@ where the backlog referenced them and they would eventually have been lost.
 | `ai_assessment_export_extension.md` | AI assessment export feature contract (proposed, not implemented) - augments the AI-friendly export with evidence for automated review |
 | `ai_assessment_export_proposal.md` | Codex's original delivery of the AI assessment export proposal (2026-08-23), raw source behind `ai_assessment_export_extension.md` |
 | `ai_bad_rule_assessment_framework.md` | Detailed reasoning catalogue behind the AI assessment export feature contract (superseded as the design itself by `ai_assessment_export_extension.md`, retained as background) |
+| `hub_variable_v2014_implementation_spec.md` | Bounded v2.0.14 implementation plan for `hub_variable_first_class_spec.md` (draft, sent to Codex for review, not authorized for implementation) |
 
 ## rule_machine_5_1_storage_format.md
 
