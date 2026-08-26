@@ -5379,6 +5379,44 @@ String buildMapHtml() {
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #icons .msg { font-size:0.8em; margin-left:6px; }
   #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Insights. Rendered into #flowChart, so it inherits #flow typography and
+     only what is specific to the dashboard layout lives here. */
+  #insRoot .insCards { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:0 0 10px 0; }
+  #insRoot .insCard { background:#0d2630; border:1px solid #2a4a57; border-radius:5px; padding:8px 6px; cursor:pointer;
+                      color:#e8f2f6; font-family:inherit; text-align:center; display:flex; flex-direction:column; gap:2px; }
+  #insRoot .insCard:hover { border-color:#4a7a94; }
+  #insRoot .insCard b { font-size:1.5em; line-height:1.1; }
+  #insRoot .insCard span { font-size:0.72em; opacity:0.8; }
+  #insRoot .insCardZero b { opacity:0.35; }
+  #insRoot .insCardAlert { border-color:#a5563f; }
+  #insRoot .insCardAlert b { color:#e0a95f; }
+  #insRoot .insNote { font-size:0.72em; opacity:0.6; margin:0 0 12px 0; line-height:1.4; }
+  #insRoot .insSec { border-top:1px solid #16323c; }
+  #insRoot .insHead { width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; cursor:pointer;
+                      color:#cfe3ea; font-family:inherit; font-size:0.9em; font-weight:600; padding:9px 2px; text-align:left; }
+  #insRoot .insHead:hover { color:#fff; }
+  #insRoot .insTitle { flex:1; }
+  #insRoot .insChev { opacity:0.7; font-size:0.85em; }
+  #insRoot .insBadge { background:#1c3540; color:#9fb4bc; border-radius:9px; padding:1px 8px; font-size:0.8em; }
+  #insRoot .insBadgeZero { opacity:0.4; }
+  #insRoot .insBody { padding:0 0 10px 0; }
+  #insRoot .insOk { font-size:0.78em; opacity:0.65; margin:0 0 4px 2px; }
+  #insRoot .insLead { font-size:0.78em; opacity:0.8; margin:6px 0 6px 2px; line-height:1.45; }
+  #insRoot .insRow { display:flex; align-items:center; gap:8px; padding:4px 2px; border-bottom:1px solid #10262e; font-size:0.82em; }
+  #insRoot .insName { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #insRoot .insMeta { opacity:0.6; font-size:0.9em; white-space:nowrap; }
+  #insRoot .insBtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer;
+                     padding:1px 7px; font-size:0.9em; font-family:inherit; white-space:nowrap; }
+  #insRoot .insBtn:hover { border-color:#4a7a94; color:#cfe3ea; }
+  #insRoot .insChevPad { display:inline-block; width:22px; }
+  #insRoot .insDetail { padding:4px 2px 8px 10px; border-left:2px solid #1c3540; margin:0 0 6px 4px; }
+  #insRoot .insDetail p { margin:3px 0; font-size:0.78em; line-height:1.45; }
+  #insRoot .insShowAll { margin:8px 0 2px 2px; }
+  #insRoot .insPlain { margin:4px 0 4px 18px; padding:0; font-size:0.8em; }
+  #insRoot .insPlain li { margin:2px 0; }
+  #insRoot a { color:#7fb6d6; text-decoration:none; }
+  #insRoot a:hover { text-decoration:underline; }
+  @media (max-width: 1100px) { #insRoot .insCards { grid-template-columns:repeat(2, 1fr); } }
   /* Same "one panel's own CSS" convention as #ext/#pivot/#icons above, not a
      reused class - see those panels' own comments for why. */
   /* An explicit width, not just max-width like the other panels here - this
@@ -7146,42 +7184,44 @@ function fillSelect(selectId, searchId, group, allLabel) {
 // usual cause of automations fighting each other), and which devices nothing
 // commands at all.
 // ---------------------------------------------------------------------------
-function buildInsights() {
-  const nameOf = {};
-  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
-
-  // A node this hub cannot resolve at all - the id was named by a rule-to-rule
-  // link but the target no longer exists. Built from node.missing rather than
-  // string-matching a "- deleted" label, so it survives whatever the display
-  // label happens to say.
+${''}
+// Single derivation of every finding, as plain data with no rendering in it.
+// Codex review 133 point 3: the panel and the AI export used to derive the
+// same concepts independently and had already drifted - the export gained
+// Hub Variable findings in schema 4 and the panel never got them, so the two
+// disagreed about what the same scan meant. One derivation, two renderers,
+// so a finding added here appears in both by construction.
+//
+// Returns raw ids and maps rather than formatted output: the panel wants
+// display names and the export wants {id,name} refs, and baking either in
+// here would just move the duplication rather than remove it.
+function deriveInsightData() {
   const missingIds = {};
   ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
-  const referencesTo = {};   // deleted target -> apps that still reference it
+  const referencesTo = {};
   ALL_EDGES.forEach(function (e) {
     if (!missingIds[e.to]) return;
     if (!referencesTo[e.to]) referencesTo[e.to] = [];
     if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
   });
-  const brokenTargets = Object.keys(missingIds);
 
-  // Two separate commander maps, because one map cannot answer both questions
-  // and using it for both is what made "Read but never driven" wrong.
-  //
-  // statefulCommanders drives contention only: two apps notifying the same
-  // phone is normal, two apps driving the same light is the finding.
-  //
-  // anyCommanders is every action relationship regardless of statefulness, and
-  // is what "is this device ever driven at all" has to be answered from.
-  // Measured on Gordon's hub before this fix: 19 of the 140 devices listed as
-  // "Referenced only as triggers, constraints or monitored inputs" were in
-  // fact commanded - Mobile Proxy by 27 apps, the Security Speaker by 10 -
-  // because a notification or chime target has action edges but no stateful
-  // ones, so it fell through the stateful-only map into the read-only list.
+  // See the long note that used to sit here in buildInsights: statefulCommanders
+  // answers contention, anyCommanders answers "is this ever driven at all", and
+  // using one map for both is what made read-only wrong for 19 devices.
   const statefulCommanders = {};
   const anyCommanders = {};
-  const touched = {};      // device -> any relationship at all
+  const touched = {};
+  const hubVarReaders = {};
+  const hubVarWriters = {};
   ALL_EDGES.forEach(function (e) {
     touched[e.to] = true;
+    if (e.kind === 'read') {
+      if (!hubVarReaders[e.to]) hubVarReaders[e.to] = [];
+      if (hubVarReaders[e.to].indexOf(e.from) < 0) hubVarReaders[e.to].push(e.from);
+    } else if (e.kind === 'write') {
+      if (!hubVarWriters[e.to]) hubVarWriters[e.to] = [];
+      if (hubVarWriters[e.to].indexOf(e.from) < 0) hubVarWriters[e.to].push(e.from);
+    }
     if (e.kind !== 'action') return;
     if (!anyCommanders[e.to]) anyCommanders[e.to] = [];
     if (anyCommanders[e.to].indexOf(e.from) < 0) anyCommanders[e.to].push(e.from);
@@ -7190,126 +7230,294 @@ function buildInsights() {
     if (statefulCommanders[e.to].indexOf(e.from) < 0) statefulCommanders[e.to].push(e.from);
   });
 
-  const contested = Object.keys(statefulCommanders)
-    .filter(function (d) { return statefulCommanders[d].length > 1; })
-    .sort(function (a, b) { return statefulCommanders[b].length - statefulCommanders[a].length; });
+  const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; });
+  const hubVarIds = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) { return n.id; });
 
-  const untouched = ALL_NODES
-    .filter(function (n) { return n.group === 'device' && !touched[n.id]; })
-    .map(function (n) { return n.id; });
+  return {
+    missingIds: missingIds,
+    referencesTo: referencesTo,
+    statefulCommanders: statefulCommanders,
+    anyCommanders: anyCommanders,
+    touched: touched,
+    brokenTargets: Object.keys(missingIds),
+    contested: Object.keys(statefulCommanders)
+      .filter(function (d) { return statefulCommanders[d].length > 1; })
+      .sort(function (a, b) { return statefulCommanders[b].length - statefulCommanders[a].length; }),
+    untouched: devices.filter(function (n) { return !touched[n.id]; }).map(function (n) { return n.id; }),
+    readOnly: devices.filter(function (n) { return touched[n.id] && !anyCommanders[n.id]; }).map(function (n) { return n.id; }),
+    notifiedOnly: devices.filter(function (n) {
+      return touched[n.id] && anyCommanders[n.id] && !statefulCommanders[n.id];
+    }).map(function (n) { return n.id; }),
+    inertNodes: ALL_NODES.filter(function (n) { return n.inert; }),
+    unreadableNodes: ALL_NODES.filter(function (n) { return n.unreadable; }),
+    hubVar: {
+      readers: hubVarReaders,
+      writers: hubVarWriters,
+      noDecodedUsage: hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id]; }),
+      readersWithoutDecodedWriter: hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; }),
+      writersWithoutDecodedReader: hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; }),
+      multipleWriters: hubVarIds.filter(function (id) { return hubVarWriters[id] && hubVarWriters[id].length > 1; }),
+      unresolvedReferences: (GRAPH.hubVariableUnresolvedReferences || [])
+    },
+    scan: {
+      status: SCAN_META.scanError ? 'failed'
+        : ((SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0) ? 'complete-with-gaps' : 'complete'),
+      appsUnreadable: SCAN_META.appsUnreadable || 0,
+      devicesUnreadable: SCAN_META.devicesUnreadable || 0,
+      error: SCAN_META.scanError || null
+    }
+  };
+}
 
-  // Genuinely never driven: no action edge of any kind.
-  const readOnly = ALL_NODES.filter(function (n) {
-    if (n.group !== 'device' || !touched[n.id]) return false;
-    return !anyCommanders[n.id];
-  }).map(function (n) { return n.id; });
+function buildInsights() {
+  const nameOf = {};
+  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
+  const D = deriveInsightData();
 
-  // Driven, but only by commands that leave nothing behind - notifications,
-  // chimes, speech. Normal behaviour for a phone or speaker, so it is stated
-  // as a category of its own rather than left to look like either a conflict
-  // or a sensor.
-  const notifiedOnly = ALL_NODES.filter(function (n) {
-    if (n.group !== 'device' || !touched[n.id]) return false;
-    return anyCommanders[n.id] && !statefulCommanders[n.id];
-  }).map(function (n) { return n.id; });
+  // Progressive disclosure, not a report (Codex review 135, from Gordon's own
+  // verdict on the previous version: a checklist of waffle nobody would read).
+  // The whole result has to be legible in the first viewport, so the summary
+  // carries counts only - deliberately no device or app names up here - and
+  // every name lives behind a section the reader chose to open.
+  function row(id, metaText, detailHtml) {
+    let h = '<div class="insRow" data-row>';
+    h += '<span class="insName">' + extEsc(nameOf[id] || id) + '</span>';
+    h += '<span class="insMeta">' + extEsc(metaText) + '</span>';
+    h += '<button type="button" class="insBtn" data-focus="' + extEsc(id) + '">Show on map</button>';
+    h += detailHtml ? '<button type="button" class="insBtn insChev" data-toggle-row aria-expanded="false" title="More">&#9656;</button>' : '<span class="insChevPad"></span>';
+    h += '</div>';
+    if (detailHtml) h += '<div class="insDetail" hidden>' + detailHtml + '</div>';
+    return h;
+  }
 
-  let html = '<h3>Insights</h3>';
-  html += '<div class="sub">Derived from the current scan. Contested counts only apps that can leave a device in a lasting state - notifications, chimes and speech are counted separately below, because repeating those is not a conflict.</div>';
+  // Names of the apps behind a row, as focus links rather than dead text -
+  // reaching any detail in one click is the point of the redesign.
+  function appLinks(ids) {
+    return (ids || []).map(function (a) {
+      return '<a href="#" data-focus="' + extEsc(a) + '">' + extEsc(nameOf[a] || a) + '</a>';
+    }).join(' &middot; ');
+  }
 
-  html += '<h4>Contested devices (' + contested.length + ')</h4>';
-  if (!contested.length) {
-    html += '<p class="sub">No device is commanded by more than one app.</p>';
-  } else {
-    html += '<p class="sub">More than one app can leave these in a lasting state. Where two disagree, the last to run wins. Notifications and chimes are excluded - repeating those is not a conflict.</p><ul>';
-    contested.slice(0, 40).forEach(function (d) {
-      html += '<li><b>' + extEsc(nameOf[d]) + '</b> &mdash; ' + statefulCommanders[d].length + ' apps<br><span class="sub">' +
-        statefulCommanders[d].map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
+  const PAGE = 5;
+  function rows(ids, metaFor, detailFor) {
+    let h = '';
+    ids.slice(0, PAGE).forEach(function (id) { h += row(id, metaFor(id), detailFor ? detailFor(id) : ''); });
+    if (ids.length > PAGE) {
+      h += '<div class="insMore" hidden>';
+      ids.slice(PAGE).forEach(function (id) { h += row(id, metaFor(id), detailFor ? detailFor(id) : ''); });
+      h += '</div>';
+      h += '<button type="button" class="insBtn insShowAll" data-show-all>Show all ' + ids.length + '</button>';
+    }
+    return h;
+  }
+
+  function section(key, title, count, openByDefault, bodyHtml, healthyText) {
+    const open = openByDefault && count > 0;
+    let h = '<section class="insSec" data-sec="' + key + '">';
+    h += '<button type="button" class="insHead" data-toggle-sec aria-expanded="' + (open ? 'true' : 'false') + '">';
+    h += '<span class="insChev">' + (open ? '&#9662;' : '&#9656;') + '</span>';
+    h += '<span class="insTitle">' + extEsc(title) + '</span>';
+    h += '<span class="insBadge' + (count ? '' : ' insBadgeZero') + '">' + count + '</span>';
+    h += '</button>';
+    h += '<div class="insBody"' + (open ? '' : ' hidden') + '>';
+    h += count ? bodyHtml : '<p class="insOk">' + extEsc(healthyText) + '</p>';
+    h += '</div></section>';
+    return h;
+  }
+
+  // --- Needs attention: only things genuinely wrong -----------------------
+  const scanBad = D.scan.status !== 'complete';
+  const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0);
+  let attentionBody = '';
+  if (scanBad) {
+    const what = D.scan.status === 'failed'
+      ? 'The last scan did not finish, so everything below is incomplete.'
+      : 'The last scan finished but could not read ' + D.scan.appsUnreadable + ' app(s) and ' + D.scan.devicesUnreadable + ' device(s). Findings below may be missing those.';
+    attentionBody += '<p class="insLead">' + extEsc(what) + ' Run the scan again to retry.</p>';
+  }
+  if (D.brokenTargets.length) {
+    attentionBody += '<p class="insLead">' + D.brokenTargets.length + ' rule target(s) no longer exist. The referencing action still runs and silently does nothing.</p>';
+    attentionBody += rows(D.brokenTargets,
+      function (id) { return (D.referencesTo[id] || []).length + ' referencing'; },
+      function (id) { return '<p class="sub">Referenced by ' + appLinks(D.referencesTo[id]) + '</p>'; });
+  }
+
+  // --- Worth reviewing: shared control, not faults ------------------------
+  const hv = D.hubVar;
+  const hubVarWorth = hv.multipleWriters.length + hv.unresolvedReferences.length;
+  const reviewCount = D.contested.length + hubVarWorth;
+  let reviewBody = '<p class="insLead">' + D.contested.length + ' device(s) have shared control. This is often intentional.</p>';
+  reviewBody += rows(D.contested,
+    function (id) { return D.statefulCommanders[id].length + ' automations'; },
+    function (id) {
+      return '<p class="sub">More than one app can leave this device in a lasting state, so the last one to run decides the outcome. Notifications, chimes and speech are excluded - repeating those is not a conflict.</p>' +
+        '<p class="sub">' + appLinks(D.statefulCommanders[id]) + '</p>';
     });
-    html += '</ul>';
-    if (contested.length > 40) {
-      html += '<p class="sub">Showing the 40 most contested. ' + (contested.length - 40) + ' more not listed.</p>';
+  if (hv.multipleWriters.length) {
+    reviewBody += '<p class="insLead">' + hv.multipleWriters.length + ' hub variable(s) have more than one writer. Shared state, not automatically a race.</p>';
+    reviewBody += rows(hv.multipleWriters,
+      function (id) { return hv.writers[id].length + ' writers'; },
+      function (id) { return '<p class="sub">Written by ' + appLinks(hv.writers[id]) + '</p>'; });
+  }
+  if (hv.unresolvedReferences.length) {
+    reviewBody += '<p class="insLead">' + hv.unresolvedReferences.length + ' rule reference(s) name a hub variable that is not in the hub inventory. The variable may have been renamed or deleted.</p><ul class="insPlain">';
+    hv.unresolvedReferences.slice(0, 10).forEach(function (r) {
+      reviewBody += '<li>' + extEsc(r.name) + ' <span class="sub">' + extEsc(r.kind || '') + ' by ' + extEsc(nameOf[r.appId] || r.appId || 'an app') + '</span></li>';
+    });
+    reviewBody += '</ul>';
+    if (hv.unresolvedReferences.length > 10) {
+      reviewBody += '<p class="sub">Showing 10 of ' + hv.unresolvedReferences.length + '.</p>';
     }
   }
 
-  html += '<h4>Devices nothing references (' + untouched.length + ')</h4>';
-  if (!untouched.length) {
-    html += '<p class="sub">Every device in the map is referenced by at least one app.</p>';
-  } else {
-    html += '<p class="sub">No app owns, watches or drives these. Candidates for removal, or gaps in automation.</p><ul>';
-    untouched.slice(0, 60).forEach(function (d) { html += '<li>' + extEsc(nameOf[d]) + '</li>'; });
-    html += '</ul>';
-    if (untouched.length > 60) {
-      html += '<p class="sub">Showing 60. ' + (untouched.length - 60) + ' more not listed.</p>';
-    }
+  // --- Cleanup candidates -------------------------------------------------
+  const orphanApps = D.inertNodes.filter(function (n) { return !n.holds && !(n.kids && n.kids.length); });
+  const cleanupCount = D.untouched.length + orphanApps.length;
+  let cleanupBody = '';
+  if (D.untouched.length) {
+    cleanupBody += '<p class="insLead">' + D.untouched.length + ' device(s) are not referenced by any app. Candidates for removal, or gaps in automation.</p>';
+    cleanupBody += rows(D.untouched, function () { return 'no references'; }, '');
+  }
+  if (orphanApps.length) {
+    cleanupBody += '<p class="insLead">' + orphanApps.length + ' app(s) touch no device, link to no rule and hold nothing.</p>';
+    cleanupBody += rows(orphanApps.map(function (n) { return n.id; }),
+      function (id) {
+        const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
+        return (n && n.reason) ? n.reason : 'no reason recorded';
+      }, '');
   }
 
-  html += '<h4>Notified or signalled only (' + notifiedOnly.length + ')</h4>';
-  if (!notifiedOnly.length) {
-    html += '<p class="sub">No device is driven purely by notifications, chimes or speech.</p>';
-  } else {
-    html += '<p class="sub">Apps do command these, but only with commands that leave nothing behind - a notification, a chime, speech. Normal for phones, speakers and message brokers, and deliberately not counted as contention above.</p><ul>';
-    notifiedOnly.slice(0, 60).forEach(function (d) {
-      html += '<li>' + extEsc(nameOf[d]) + ' <span class="sub">&mdash; ' + anyCommanders[d].length + ' app' + (anyCommanders[d].length === 1 ? '' : 's') + '</span></li>';
-    });
-    html += '</ul>';
-    if (notifiedOnly.length > 60) {
-      html += '<p class="sub">Showing 60. ' + (notifiedOnly.length - 60) + ' more not listed.</p>';
-    }
+  // --- Normal patterns: explanations, not findings -------------------------
+  const containers = D.inertNodes.filter(function (n) { return n.holds || (n.kids && n.kids.length); });
+  const normalCount = D.readOnly.length + D.notifiedOnly.length + containers.length + hv.noDecodedUsage.length;
+  let normalBody = '';
+  if (D.notifiedOnly.length) {
+    normalBody += '<p class="insLead">' + D.notifiedOnly.length + ' device(s) are commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
+    normalBody += rows(D.notifiedOnly,
+      function (id) { return D.anyCommanders[id].length + ' automations'; },
+      function (id) { return '<p class="sub">' + appLinks(D.anyCommanders[id]) + '</p>'; });
+  }
+  if (D.readOnly.length) {
+    normalBody += '<p class="insLead">' + D.readOnly.length + ' device(s) are never commanded in any form - referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+    normalBody += rows(D.readOnly, function () { return 'monitored only'; }, '');
+  }
+  if (containers.length) {
+    normalBody += '<p class="insLead">' + containers.length + ' app(s) hold other apps rather than touching devices themselves. Expected.</p>';
+    normalBody += rows(containers.map(function (n) { return n.id; }),
+      function (id) {
+        const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
+        const held = n ? (n.holds || (n.kids || []).length) : 0;
+        return 'holds ' + held;
+      }, '');
+  }
+  if (hv.noDecodedUsage.length) {
+    normalBody += '<p class="insLead">' + hv.noDecodedUsage.length + ' hub variable(s) have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode.</p>';
+    normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, '');
   }
 
-  html += '<h4>Read but never driven (' + readOnly.length + ')</h4>';
-  html += '<p class="sub">No app commands these at all, in any form - they are referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+  // --- Assemble ------------------------------------------------------------
+  const cards = [
+    { key: 'attention', label: 'Needs attention', count: attentionCount },
+    { key: 'review', label: 'Worth reviewing', count: reviewCount },
+    { key: 'cleanup', label: 'Cleanup candidates', count: cleanupCount },
+    { key: 'normal', label: 'Normal patterns', count: normalCount }
+  ];
+  let html = '<div id="insRoot">';
+  html += '<div class="insCards">';
+  cards.forEach(function (c) {
+    html += '<button type="button" class="insCard' + (c.count ? '' : ' insCardZero') + (c.key === 'attention' && c.count ? ' insCardAlert' : '') +
+      '" data-jump="' + c.key + '"><b>' + c.count + '</b><span>' + extEsc(c.label) + '</span></button>';
+  });
+  html += '</div>';
+  html += '<p class="insNote">Counts are review prompts, not faults. A hub with many automations will normally show entries in every section except the first.</p>';
 
-  // Grouped by the reason rather than listed flat. Eleven containers and two
-  // genuine orphans in one alphabetical list reads as thirteen problems; split
-  // by reason it reads as one problem and twelve explanations.
-  const inertNodes = ALL_NODES.filter(function (n) { return n.inert; });
-  html += '<h4>Apps with no device or rule relationship (' + inertNodes.length + ')</h4>';
-  if (!inertNodes.length) {
-    html += '<p class="sub">Every app on the map references at least one device or rule.</p>';
-  } else {
-    html += '<p class="sub">These are installed and were read, but touch no device, link to no rule and publish no endpoint. Most are containers holding other apps, which is expected. The ones giving no reason at all are the ones worth a look.</p>';
-    const byReason = {};
-    inertNodes.forEach(function (n) {
-      const reason = n.reason || 'no reason recorded';
-      if (!byReason[reason]) byReason[reason] = [];
-      byReason[reason].push(n);
-    });
-    // "references nothing" last: it is the finding, and a finding reads better
-    // after the things that explain themselves.
-    const reasons = Object.keys(byReason).sort(function (a, b) {
-      if (a === 'references nothing') return 1;
-      if (b === 'references nothing') return -1;
-      return a.localeCompare(b);
-    });
-    html += '<ul>';
-    reasons.forEach(function (r) {
-      html += '<li><b>' + extEsc(r) + '</b><br><span class="sub">' +
-        byReason[r].map(function (n) { return extEsc(nameOf[n.id]); }).join(' &middot; ') + '</span></li>';
-    });
-    html += '</ul>';
-  }
-
-  html += '<h4>Broken rule references (' + brokenTargets.length + ')</h4>';
-  if (!brokenTargets.length) {
-    html += '<p class="sub">No rule references a target that no longer exists.</p>';
-  } else {
-    html += '<p class="sub">These rule/action/pause/private-boolean targets no longer resolve to anything. The referencing action still runs and silently does nothing.</p><ul>';
-    brokenTargets.forEach(function (id) {
-      html += '<li><b>' + extEsc(nameOf[id]) + '</b><br><span class="sub">Referenced by ' +
-        (referencesTo[id] || []).map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
-    });
-    html += '</ul>';
-  }
-
+  html += section('attention', 'Needs attention', attentionCount, true, attentionBody,
+    'Scan completed cleanly and every rule reference resolves.');
+  html += section('review', 'Worth reviewing', reviewCount, false, reviewBody,
+    'No shared lasting-state control and no hub variable worth a second look.');
+  html += section('cleanup', 'Cleanup candidates', cleanupCount, false, cleanupBody,
+    'Every device is referenced and every app does something.');
+  html += section('normal', 'Normal patterns', normalCount, false, normalBody,
+    'Nothing to explain here.');
+  html += '</div>';
   return html;
 }
 
 document.getElementById('insightsBtn').addEventListener('click', function () {
-  document.getElementById('flowTitle').textContent = '';
+  document.getElementById('flowTitle').textContent = 'Automation health';
   document.getElementById('flowSub').textContent = '';
   flowChart.innerHTML = buildInsights();
   bringToFront(flowPanel);
+});
+
+// One delegated listener on the panel rather than listeners bound per row.
+// The panel is rebuilt wholesale on every open and can hold several hundred
+// rows; binding individually would both leak across rebuilds and cost more
+// than the delegation lookup ever does.
+flowChart.addEventListener('click', function (ev) {
+  const root = ev.target.closest ? ev.target.closest('#insRoot') : null;
+  if (!root) return;
+
+  // Focus an entity on the map. Closing the panel is deliberate: the point of
+  // the control is to look at the thing, and leaving the panel covering the
+  // map would defeat it. focusNode() opens its own panel for an app anyway.
+  const focusEl = ev.target.closest('[data-focus]');
+  if (focusEl) {
+    ev.preventDefault();
+    const id = focusEl.getAttribute('data-focus');
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    focusNode(id);
+    return;
+  }
+
+  const secHead = ev.target.closest('[data-toggle-sec]');
+  if (secHead) {
+    const body = secHead.parentNode.querySelector('.insBody');
+    const open = secHead.getAttribute('aria-expanded') === 'true';
+    secHead.setAttribute('aria-expanded', open ? 'false' : 'true');
+    const chev = secHead.querySelector('.insChev');
+    if (chev) chev.innerHTML = open ? '&#9656;' : '&#9662;';
+    if (body) body.hidden = open;
+    return;
+  }
+
+  const rowChev = ev.target.closest('[data-toggle-row]');
+  if (rowChev) {
+    const detail = rowChev.parentNode.nextElementSibling;
+    if (detail && detail.classList.contains('insDetail')) {
+      const open = rowChev.getAttribute('aria-expanded') === 'true';
+      rowChev.setAttribute('aria-expanded', open ? 'false' : 'true');
+      rowChev.innerHTML = open ? '&#9656;' : '&#9662;';
+      detail.hidden = open;
+    }
+    return;
+  }
+
+  const showAll = ev.target.closest('[data-show-all]');
+  if (showAll) {
+    const more = showAll.parentNode.querySelector('.insMore');
+    if (more) { more.hidden = false; showAll.remove(); }
+    return;
+  }
+
+  // A summary card opens its section and scrolls to it, so the cards are a
+  // route into the detail rather than decoration.
+  const jump = ev.target.closest('[data-jump]');
+  if (jump) {
+    const key = jump.getAttribute('data-jump');
+    const sec = root.querySelector('[data-sec="' + key + '"]');
+    if (!sec) return;
+    const head = sec.querySelector('[data-toggle-sec]');
+    const body = sec.querySelector('.insBody');
+    if (head && head.getAttribute('aria-expanded') !== 'true') {
+      head.setAttribute('aria-expanded', 'true');
+      const chev = head.querySelector('.insChev');
+      if (chev) chev.innerHTML = '&#9662;';
+      if (body) body.hidden = false;
+    }
+    sec.scrollIntoView({ block: 'start' });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -8082,34 +8290,26 @@ function buildExportPayload(ext, icons, failedFetches) {
   const iconById = {};
   (icons && icons.devices || []).forEach(function (d) { iconById['d' + d.id] = d; });
 
-  const missingIds = {};
-  ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
-  const referencesTo = {};
-  ALL_EDGES.forEach(function (e) {
-    if (!missingIds[e.to]) return;
-    if (!referencesTo[e.to]) referencesTo[e.to] = [];
-    if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
-  });
+  // Every finding below now comes from deriveInsightData(), the same call the
+  // Insights panel renders from (Codex review 133 point 3). This block used to
+  // recompute all of it independently, and the two had already drifted - the
+  // export gained Hub Variable findings that the panel never got. The export
+  // schema and wording are unchanged by the switch; only the source of the
+  // numbers is now shared. Verified by capturing insights+summary before and
+  // after and diffing them byte for byte.
+  const INS = deriveInsightData();
+  const missingIds = INS.missingIds;
+  const referencesTo = INS.referencesTo;
 
-  const commanders = {};
-  const touched = {};
-  ALL_EDGES.forEach(function (e) {
-    touched[e.to] = true;
-    if (e.kind === 'action' && e.stateful) {
-      if (!commanders[e.to]) commanders[e.to] = [];
-      if (commanders[e.to].indexOf(e.from) < 0) commanders[e.to].push(e.from);
-    }
+  const commanders = INS.statefulCommanders;
+  const touched = INS.touched;
+  const contested = INS.contested.map(function (d) {
+    return { device: ref(d, nameOf), commandedBy: commanders[d].map(function (a) { return ref(a, nameOf); }) };
   });
-  const contested = Object.keys(commanders).filter(function (d) { return commanders[d].length > 1; })
-    .sort(function (a, b) { return commanders[b].length - commanders[a].length; })
-    .map(function (d) {
-      return { device: ref(d, nameOf), commandedBy: commanders[d].map(function (a) { return ref(a, nameOf); }) };
-    });
-  const unreferencedDevices = ALL_NODES.filter(function (n) { return n.group === 'device' && !touched[n.id]; })
-    .map(function (n) { return ref(n.id, nameOf); });
-  const inertApps = ALL_NODES.filter(function (n) { return n.inert; })
+  const unreferencedDevices = INS.untouched.map(function (id) { return ref(id, nameOf); });
+  const inertApps = INS.inertNodes
     .map(function (n) { return { app: ref(n.id, nameOf), reason: n.reason || 'no reason recorded' }; });
-  const brokenRuleReferences = Object.keys(missingIds).map(function (id) {
+  const brokenRuleReferences = INS.brokenTargets.map(function (id) {
     return { target: ref(id, nameOf), referencedBy: (referencesTo[id] || []).map(function (a) { return ref(a, nameOf); }) };
   });
 
@@ -8122,29 +8322,14 @@ function buildExportPayload(ext, icons, failedFetches) {
   // ALL_EDGES here. There is no unresolvedConnectors finding (Codex review
   // 103) - every reported Connector deviceId is trusted unconditionally, so
   // no case exists for this export to flag as unresolved.
-  const hubVarReaders = {};
-  const hubVarWriters = {};
-  ALL_EDGES.forEach(function (e) {
-    if (e.kind === 'read') {
-      if (!hubVarReaders[e.to]) hubVarReaders[e.to] = [];
-      if (hubVarReaders[e.to].indexOf(e.from) < 0) hubVarReaders[e.to].push(e.from);
-    } else if (e.kind === 'write') {
-      if (!hubVarWriters[e.to]) hubVarWriters[e.to] = [];
-      if (hubVarWriters[e.to].indexOf(e.from) < 0) hubVarWriters[e.to].push(e.from);
-    }
+  const hubVarWriters = INS.hubVar.writers;
+  const noDecodedUsage = INS.hubVar.noDecodedUsage.map(function (id) { return ref(id, nameOf); });
+  const readersWithoutDecodedWriter = INS.hubVar.readersWithoutDecodedWriter.map(function (id) { return ref(id, nameOf); });
+  const writersWithoutDecodedReader = INS.hubVar.writersWithoutDecodedReader.map(function (id) { return ref(id, nameOf); });
+  const multipleHubVarWriters = INS.hubVar.multipleWriters.map(function (id) {
+    return { variable: ref(id, nameOf), writers: hubVarWriters[id].map(function (a) { return ref(a, nameOf); }) };
   });
-  const hubVarIds = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) { return n.id; });
-  const noDecodedUsage = hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id]; })
-    .map(function (id) { return ref(id, nameOf); });
-  const readersWithoutDecodedWriter = hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; })
-    .map(function (id) { return ref(id, nameOf); });
-  const writersWithoutDecodedReader = hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; })
-    .map(function (id) { return ref(id, nameOf); });
-  const multipleHubVarWriters = hubVarIds.filter(function (id) { return hubVarWriters[id] && hubVarWriters[id].length > 1; })
-    .map(function (id) {
-      return { variable: ref(id, nameOf), writers: hubVarWriters[id].map(function (a) { return ref(a, nameOf); }) };
-    });
-  const unresolvedHubVarReferences = (GRAPH.hubVariableUnresolvedReferences || []).map(function (r) {
+  const unresolvedHubVarReferences = INS.hubVar.unresolvedReferences.map(function (r) {
     return { name: r.name, kind: r.kind, referencedBy: ref(r.appId, nameOf) };
   });
 
