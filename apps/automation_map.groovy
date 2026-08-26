@@ -4526,6 +4526,32 @@ void rebuildStoredGraph() {
 // be able to say "nothing needed" separately from "nobody has said".
 @Field static final String EXTERNAL_NONE = '__none__'
 
+// First-party assessments for Hubitat's own automation apps, as a distinct
+// provenance tier from the community-reviewed registry (Codex review 136
+// ladder step 4). Every entry is hub-local rule or grouping logic with no
+// external system involved - verifiable from what the app does, not inferred
+// from missing evidence, which is the line that matters: this asserts an
+// Automation Map assessment under its own label, it does not dress an absence
+// up as a community review.
+//
+// Deliberately an explicit allow-list of named apps, NOT a rule about the
+// hubitat namespace: Google Home, Chromecast, Hub Mesh and Maker API are all
+// built-ins with real external relationships, and a namespace-wide rule would
+// wrongly mark every one of them internal. Anything not named here stays
+// unassessed rather than being assumed.
+//
+// A user declaration always overrides this, same as it overrides the registry.
+@Field static final Map BUILTIN_INTERNAL_ONLY = [
+    'Rule Machine'             : 'Hub-local rule engine.',
+    'Basic Rules'              : 'Hub-local rule engine.',
+    'Visual Rules Builder'     : 'Hub-local rule engine.',
+    'Button Controllers'       : 'Hub-local button handling.',
+    'Basic Button Controllers' : 'Hub-local button handling.',
+    'Groups and Scenes'        : 'Hub-local device grouping.',
+    'Notifications'            : 'Sends to notification devices on this hub.',
+    'Export/Import/Clone'      : 'Hub-local app management.',
+]
+
 // ===================================================================================================================
 // Shared registry
 //
@@ -4908,6 +4934,7 @@ String externalsJson() {
         // it: user declarations are keyed by type string and must keep
         // working unchanged (Codex review 134 point 5).
         appTypeInfo: appTypeIdentities(),
+        builtinInternal: BUILTIN_INTERNAL_ONLY,
         // Unclassified means nobody has said, by user OR registry. An app type
         // the registry covers is not a gap the user needs to fill.
         unclassified: types.findAll { !classified.contains(it) && !regTypes.contains(it) },
@@ -5394,6 +5421,8 @@ String buildMapHtml() {
   #ext th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #ext td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   #ext tr.unclassified td { background:rgba(217,83,79,0.09); }
+  #ext tr.grouphdr td { background:#0a2029; border-top:1px solid #2a4a57; padding-top:9px; padding-bottom:7px; }
+  #ext tr.grouphdr .sub { opacity:0.65; font-weight:400; }
   #ext .tag { display:inline-block; padding:1px 6px; border-radius:3px; font-size:0.88em; }
   #ext .tag-none { background:#2c3e44; color:#9fb4bc; }
   #ext .tag-unset { background:#5a2b29; color:#f0b8b5; }
@@ -7767,6 +7796,7 @@ function extClassify(type) {
   if ((EXT.entries || []).some(function (e) { return e.type === type; })) return { group: 'declared', info: info };
   if (info.isRoot === false) return { group: 'inherited', info: info };
   if ((EXT.registry || []).some(function (e) { return e.type === type; })) return { group: 'registry', info: info };
+  if ((EXT.builtinInternal || {})[type]) return { group: 'internal', info: info };
   return { group: 'unknown', info: info };
 }
 
@@ -7820,29 +7850,78 @@ function extRender(message) {
   // Classify every discovered type once, then render three groups instead of
   // one flat list where 57 inherited rule instances drown the handful of real
   // integrations (Codex review 136).
-  const groups = { declared: [], registry: [], unknown: [], inherited: [] };
+  const groups = { declared: [], registry: [], unknown: [], inherited: [], internal: [] };
   (EXT.appTypes || []).forEach(function (t) { groups[extClassify(t).group].push(t); });
+  // Suggestions are split out of unknown so the two are visibly different
+  // tasks: one has evidence to weigh, the other has nothing yet.
+  const suggested = groups.unknown.filter(function (t) { return !!extEvidenceBadge(t); });
+  const bare = groups.unknown.filter(function (t) { return !extEvidenceBadge(t); });
 
   let h = '<h3>External systems</h3>';
   h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
        'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
 
+  // Everything already answered, collapsed to a count rather than listed:
+  // these are not tasks, and listing them is what buried the ones that are.
+  const autoParts = [];
+  if (groups.internal.length) {
+    autoParts.push(groups.internal.length + ' Hubitat built-in(s) assessed as needing nothing outside the hub');
+  }
   if (groups.inherited.length) {
     const instances = groups.inherited.reduce(function (n, t) {
       return n + (((EXT.appTypeInfo || {})[t] || {}).count || 0);
     }, 0);
-    h += '<p class="sub"><b>' + groups.inherited.length + ' app type(s)</b> covering ' + instances +
-         ' installed app(s) are children of another app and inherit its assessment, so they are not listed separately: ' +
-         extEsc(groups.inherited.slice(0, 6).map(function (t) {
-           const i = (EXT.appTypeInfo || {})[t] || {};
-           return t + ' (under ' + (i.rootType || 'a parent') + ')';
-         }).join(', ')) + (groups.inherited.length > 6 ? ', and others.' : '.') + '</p>';
+    autoParts.push(groups.inherited.length + ' child type(s) covering ' + instances +
+      ' installed app(s) inheriting a parent assessment');
+  }
+  if (autoParts.length) {
+    h += '<p class="sub"><b>Classified automatically:</b> ' + extEsc(autoParts.join('; ')) + '. ' +
+         '<button class="rowbtn" id="extShowAuto" type="button">Show these</button></p>';
+    if (groups.inherited.length) {
+      h += '<div id="extAutoList" style="display:none"><p class="sub">Inheriting a parent: ' +
+           extEsc(groups.inherited.map(function (t) {
+             const i = (EXT.appTypeInfo || {})[t] || {};
+             return t + ' (under ' + (i.rootType || 'a parent') + ')';
+           }).join(', ')) + '. Classify the parent to change these.</p></div>';
+    }
   }
 
   h += '<table><thead><tr><th>App type</th><th>Needs</th><th>Kind</th><th>Needed for</th><th></th></tr></thead><tbody>';
 
-  const ordered = groups.declared.concat(groups.registry).concat(groups.unknown);
-  ordered.forEach(function (type) {
+  // Three groups, as headed sections rather than an ordered flat list - the
+  // previous pass ordered these correctly but rendered them as one
+  // undifferentiated table, which did not deliver the grouping at all.
+  const sections = [
+    { label: 'Confirmed external relationships', types: groups.declared.concat(groups.registry),
+      note: 'Declared by you, or matched in the reviewed registry.' },
+    { label: 'Suggestions to review', types: suggested,
+      note: 'Community Utilities reports network activity. It does not name a dependency - confirm before declaring one.' },
+    { label: 'Not assessed', types: bare,
+      note: 'Nobody has reviewed these yet.' },
+    // Hidden until "Show these", but rendered as real rows rather than a text
+    // list, so an Automation Map assessment stays overridable exactly like a
+    // registry match. User declarations must always be able to win.
+    { label: 'Assessed as internal only', types: groups.internal, auto: true,
+      note: 'Hubitat built-ins that run entirely on the hub. Override any of these if your setup differs.' }
+  ];
+
+  sections.forEach(function (sec) {
+    const hide = sec.auto ? ' class="autorow" style="display:none"' : '';
+    h += (sec.auto ? '<tr class="autorow grouphdr" style="display:none">' : '<tr class="grouphdr">') +
+      '<td colspan="5"><b>' + extEsc(sec.label) + ' (' + sec.types.length + ')</b>' +
+      (sec.note ? ' <span class="sub">' + extEsc(sec.note) + '</span>' : '') + '</td></tr>';
+    if (!sec.types.length) {
+      h += '<tr' + hide + '><td colspan="5"><span class="sub">None.</span></td></tr>';
+      return;
+    }
+    sec.types.forEach(function (type) {
+      if (sec.auto) {
+        const why = (EXT.builtinInternal || {})[type] || '';
+        h += '<tr class="autorow" style="display:none"><td>' + extEsc(type) + '</td>' +
+             '<td colspan="3"><span class="tag tag-none">nothing external needed</span> <span class="sub">' + extEsc(why) + '</span></td>' +
+             '<td><button class="rowbtn" data-add="' + extEsc(type) + '">override</button></td></tr>';
+        return;
+      }
     const rows = extRowsFor(type);
     if (!rows.length) {
       const fromRegistry = extRegistryFor(type);
@@ -7895,6 +7974,7 @@ function extRender(message) {
       }
       h += '</td></tr>';
     });
+    });
   });
   h += '</tbody></table>';
 
@@ -7928,6 +8008,17 @@ function extRender(message) {
 }
 
 function extWire() {
+  const showAuto = document.getElementById('extShowAuto');
+  if (showAuto) {
+    showAuto.addEventListener('click', function () {
+      const list = document.getElementById('extAutoList');
+      const rows = extBody.querySelectorAll('.autorow');
+      const hidden = rows.length ? rows[0].style.display === 'none' : (list && list.style.display === 'none');
+      rows.forEach(function (r) { r.style.display = hidden ? '' : 'none'; });
+      if (list) list.style.display = hidden ? '' : 'none';
+      showAuto.textContent = hidden ? 'Hide these' : 'Show these';
+    });
+  }
   extBody.querySelectorAll('input[data-f], select[data-f]').forEach(function (el) {
     el.addEventListener('change', function () {
       const rows = extRowsFor(el.getAttribute('data-t'));
