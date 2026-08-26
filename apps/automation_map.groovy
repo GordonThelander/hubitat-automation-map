@@ -5294,8 +5294,24 @@ String buildMapHtml() {
   #flow ul { margin:4px 0 10px 0; padding-left:18px; }
   #flow li { margin:2px 0; font-size:0.85em; }
   #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Below whatever showFlow()/showInertPanel() put in #flowChart, not inside
+     it - #flowChart gets fully overwritten on every re-render (a fresh
+     mermaid SVG, or a fresh inert-app summary), which would wipe this out if
+     it shared that container. Most of its typography rides #flow's own
+     h4/p/.sub/a rules above; only what is specific to this card is added
+     here. */
+  #communityCard { margin-top:14px; padding-top:12px; border-top:1px solid #1c3540; }
+  #communityCard .ccBadge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:0.75em; margin:0 6px 6px 0; background:#1c3540; color:#9fb4bc; }
+  #communityCard .ccCaution { color:#e0a95f; }
+  #communityCard .ccLinks a { margin-right:12px; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
-     through as ghost text across the middle of the table. */
+     through as ghost text across the middle of the table. Marker just above:
+     the whole <style> block is one unbroken GString literal (no interpolation
+     anywhere in it) - the JVM caps a single compiled string constant at 65535
+     UTF-8 code units, and this block is close enough to that ceiling that
+     adding this card's CSS crossed it. This empty interpolation splits the
+     constant in two without changing anything rendered; needed again if this
+     block grows much further. */
   #ext { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
          max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
@@ -5450,7 +5466,7 @@ String buildMapHtml() {
   <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div></div>
+<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="communityCard"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
@@ -6535,19 +6551,27 @@ function showInertPanel(node) {
       focusNode(a.getAttribute('data-node'));
     });
   });
+  renderCommunityCard(node);
   bringToFront(flowPanel);
 }
 
 function showFlow(appId) {
-  const target = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
-  if (target && (target.inert || target.unreadable)) { showInertPanel(target); return; }
+  const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
+  if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
   const steps = FLOWS[appId];
   if (!steps || !steps.length || !window.mermaid) {
-    flowPanel.style.display = 'none';
-    syncLegendVisibility();
+    // No decoded flow to draw is not the same as nothing to say - the
+    // Community Context Card below still applies to every app, decoded flow
+    // or not (this used to just hide the panel and show nothing at all,
+    // which is exactly what selecting an app like LIFX Light Manager did
+    // before the card existed).
+    document.getElementById('flowTitle').textContent = node ? node.title : 'App details';
+    document.getElementById('flowSub').textContent = 'This app has no decoded rule flow to show.';
+    flowChart.innerHTML = '';
+    renderCommunityCard(node);
+    bringToFront(flowPanel);
     return;
   }
-  const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
   // backslash-escaped quote is consumed by Groovy and ends the JS string early -
@@ -6557,9 +6581,11 @@ function showFlow(appId) {
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
     flowChart.innerHTML = res.svg;
+    renderCommunityCard(node);
     bringToFront(flowPanel);
   }).catch(function (err) {
     flowChart.textContent = 'Could not render this rule: ' + err.message;
+    renderCommunityCard(node);
     bringToFront(flowPanel);
   });
 }
@@ -6569,6 +6595,235 @@ if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () {
     flowPanel.style.display = 'none';
     syncLegendVisibility();
+  });
+}
+
+// Community Context Card (Supporting Docs/community_context_card_spec.md,
+// contract locked in Bucket/Queue 112/113). A read-only, browser-only lookup
+// against a public HPM_Manifest_Crawl projection - never told which app is
+// selected, never affects scanning, the map or the export. Lazy-loaded once
+// per page view (spec 3.2) and cached in memory only; a failed or invalid
+// response degrades this one card to "unavailable", nothing else.
+const COMMUNITY_CONTEXT_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/integrations/automation-map/community_context_index.json';
+// Generation targets 750 KiB (spec 5.4); this is a client-side ceiling on
+// what a response is even allowed to be before it is parsed, not the
+// generator's own budget - deliberately looser so a modest catalogue growth
+// between Automation Map releases does not start failing this check.
+const COMMUNITY_CONTEXT_MAX_BYTES = 1536 * 1024;
+const COMMUNITY_CONTEXT_TIMEOUT_MS = 8000;
+const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
+  HUBITAT_BUILT_IN: 'Hubitat built-in',
+  HPM_PACKAGE: 'HPM package',
+  REVIEWED_MANUAL_PROJECT: 'Reviewed manual project',
+  COMMUNITY_CATALOGUE_LISTING: 'Community catalogue listing'
+};
+const COMMUNITY_CONTEXT_LINK_LABELS = { record: 'Full record', documentation: 'Documentation', community: 'Community support', source: 'Source' };
+let communityContextPromise = null;
+let communityCardRequestSeq = 0;
+
+// One request for the whole page view, whichever app is selected first -
+// later selections reuse this same promise (spec 3.2 steps 2-4).
+function loadCommunityContext() {
+  if (communityContextPromise) return communityContextPromise;
+  communityContextPromise = new Promise(function (resolve, reject) {
+    const controller = ('AbortController' in window) ? new AbortController() : null;
+    const timer = controller ? setTimeout(function () { controller.abort(); }, COMMUNITY_CONTEXT_TIMEOUT_MS) : null;
+    fetch(COMMUNITY_CONTEXT_URL, { credentials: 'omit', signal: controller ? controller.signal : undefined })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function (text) {
+        // Bytes, not JS string length - text.length undercounts a multi-byte
+        // UTF-8 response, the exact case a size gate exists to catch.
+        if (new Blob([text]).size > COMMUNITY_CONTEXT_MAX_BYTES) throw new Error('response exceeds the size gate');
+        const data = JSON.parse(text);
+        if (!data || typeof data !== 'object') throw new Error('not a JSON object');
+        if (data.schemaVersion !== '1.0') throw new Error('unsupported schemaVersion ' + data.schemaVersion);
+        if (data.dataset !== 'automation-map-community-context') throw new Error('unexpected dataset ' + data.dataset);
+        if (!Array.isArray(data.records)) throw new Error('missing records[]');
+        if (typeof data.recordCount === 'number' && data.records.length !== data.recordCount) {
+          throw new Error('recordCount ' + data.recordCount + ' does not match records.length ' + data.records.length);
+        }
+        resolve(data);
+      })
+      .catch(reject)
+      .finally(function () { if (timer) clearTimeout(timer); });
+  });
+  // A rejected promise must not poison every later app selection for the
+  // rest of this page view - one bad response could otherwise mean nothing
+  // ever loads again until a reload. Each caller gets a fresh attempt.
+  communityContextPromise.catch(function () { communityContextPromise = null; });
+  return communityContextPromise;
+}
+
+// Definition identity only (spec section 4), never the user-editable
+// instance label - node.appType/node.namespace come from
+// processAppRelationships()'s installedApp.name/namespace-via-appTypeId
+// join, not node.title (which is the label the user sees and can rename).
+function matchCommunityContext(data, node) {
+  const name = String(node.appType || '').trim().toLowerCase();
+  if (!name) return { state: 'none' };
+  const namespace = node.namespace ? String(node.namespace).trim().toLowerCase() : null;
+  const records = data.records;
+
+  function identitiesMatchingName(r) {
+    return (r.definitionIdentities || []).filter(function (di) {
+      return String(di.name || '').trim().toLowerCase() === name;
+    });
+  }
+  function confirmed(record) {
+    const mismatch = (record.qualityFlags || []).indexOf('IDENTITY_MISMATCH') >= 0;
+    return { state: 'confirmed', record: record, identityMismatch: mismatch };
+  }
+
+  // Tier 1 (spec 6.1): built-in, exact name only - a built-in has no
+  // namespace to match against.
+  const builtIns = records.filter(function (r) {
+    return r.authority === 'HUBITAT_BUILT_IN' && identitiesMatchingName(r).length > 0;
+  });
+  if (builtIns.length === 1) return confirmed(builtIns[0]);
+  if (builtIns.length > 1) return { state: 'ambiguous', records: builtIns };
+
+  const nameMatches = records.filter(function (r) { return identitiesMatchingName(r).length > 0; });
+
+  if (namespace) {
+    // Tier 2 (spec 6.2): exact name and exact namespace.
+    const nsMatches = nameMatches.filter(function (r) {
+      return identitiesMatchingName(r).some(function (di) {
+        return di.namespace && String(di.namespace).trim().toLowerCase() === namespace;
+      });
+    });
+    if (nsMatches.length === 1) return confirmed(nsMatches[0]);
+    if (nsMatches.length > 1) return { state: 'ambiguous', records: nsMatches };
+    // Tier 3 (spec 6.3) explicitly requires namespace to be absent - it does
+    // not apply here. A same-named app under a different namespace is not
+    // evidence of the same identity, so this does not fall back to bare-name
+    // uniqueness; that would risk a false confident match.
+    return { state: 'none' };
+  }
+
+  // Tier 3: namespace absent on our side - bare name uniqueness is the last
+  // confirming tier. Tier 4 (ambiguous) otherwise.
+  if (nameMatches.length === 1) return confirmed(nameMatches[0]);
+  if (nameMatches.length > 1) return { state: 'ambiguous', records: nameMatches };
+  return { state: 'none' };
+}
+${''}
+// Empty interpolation above: this entire embedded <script> is one unbroken
+// GString literal from const SCAN_META down to the next real interpolation,
+// well over a thousand lines with no split point anywhere in it - close
+// enough to the JVM's 65535-UTF-8-code-unit single-constant ceiling already
+// that this feature's own JS pushed the whole style block over it (see the
+// matching marker in <style> above). Splitting here defensively rather than
+// waiting for a second failed deploy to prove it was needed.
+function ccHumanizeCheckKey(k) {
+  // A replacer function, not a numbered-backreference replacement string -
+  // this whole block is a Groovy GString, so a literal backreference marker
+  // in JS source is consumed as an attempted Groovy interpolation and fails
+  // to compile. Same hazard class as this file's known apostrophe trap.
+  return String(k).replace(/([a-z0-9])([A-Z])/g, function (m, a, b) { return a + ' ' + b; })
+    .replace(/^./, function (c) { return c.toUpperCase(); });
+}
+
+// https-only (spec section 7) checked again here regardless of what the
+// projection already filtered server-side - defense in depth, not the sole
+// enforcement point. Iterates the object's own keys rather than a fixed
+// four, since the schema leaves links open-ended (additionalProperties).
+function ccSafeLinks(links) {
+  const out = [];
+  Object.keys(links || {}).forEach(function (key) {
+    const value = links[key];
+    try {
+      if (value && new URL(value).protocol === 'https:') {
+        out.push({ label: COMMUNITY_CONTEXT_LINK_LABELS[key] || key, url: value });
+      }
+    } catch (e) { /* not a valid absolute URL - silently skipped, not shown broken */ }
+  });
+  return out;
+}
+
+function ccIsStale(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return false;
+  return (Date.now() - t) > (7 * 24 * 60 * 60 * 1000);
+}
+
+function ccFormatDate(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? String(iso) : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function ccRecordHtml(record, identityMismatch) {
+  let html = '<span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[record.authority] || record.authority) + '</span>';
+  if (identityMismatch) {
+    html += '<p class="sub ccCaution">Community Utilities flagged this package - its declared identity did not match its own source code at last check. Treat this match with extra care.</p>';
+  }
+  html += '<p><b>' + extEsc(record.displayName || record.packageName || 'Unnamed') + '</b>' +
+    (record.author ? ' &middot; ' + extEsc(record.author) : '') + '</p>';
+  if (record.summary) html += '<p class="sub">' + extEsc(record.summary) + '</p>';
+  if (record.evidenceChecks) {
+    const checks = Object.keys(record.evidenceChecks).map(function (k) {
+      return extEsc(ccHumanizeCheckKey(k)) + ': ' + extEsc(record.evidenceChecks[k]);
+    });
+    if (checks.length) html += '<p class="sub">Evidence checks - ' + checks.join(', ') + '</p>';
+  }
+  if (record.networkEvidence) {
+    html += '<p class="sub">Network evidence: ' + extEsc(record.networkEvidence.classification) +
+      (record.networkEvidence.reviewed ? ' (reviewed)' : ' (not yet reviewed)') + '</p>';
+  }
+  const links = ccSafeLinks(record.links);
+  if (links.length) {
+    html += '<p class="ccLinks">' + links.map(function (l) {
+      return '<a href="' + extEsc(l.url) + '" target="_blank" rel="noopener noreferrer">' + extEsc(l.label) + '</a>';
+    }).join('') + '</p>';
+  }
+  return html;
+}
+
+function ccCardHtml(result, snapshotGenerated) {
+  let html = '<h4>Community information</h4>';
+  if (result.state === 'confirmed') {
+    html += ccRecordHtml(result.record, result.identityMismatch);
+  } else if (result.state === 'ambiguous') {
+    html += '<p class="sub">More than one Community Utilities record matches this app by name. None is shown as confirmed - use the links below to investigate.</p><ul>';
+    result.records.slice(0, 5).forEach(function (r) {
+      html += '<li>' + extEsc(r.displayName || r.packageName || 'Unnamed') +
+        (r.author ? ' &middot; ' + extEsc(r.author) : '') +
+        ' <span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[r.authority] || r.authority) + '</span></li>';
+    });
+    html += '</ul>';
+  } else {
+    html += '<p class="sub">No community information found for this app.</p>';
+  }
+  if (snapshotGenerated) {
+    html += '<p class="sub ccSnapshot">Catalogue snapshot: ' + extEsc(ccFormatDate(snapshotGenerated)) +
+      (ccIsStale(snapshotGenerated) ? ' - may be out of date' : '') + '</p>';
+  }
+  html += '<p class="sub">External community evidence - not read from your hub, and never affects the map above.</p>';
+  return html;
+}
+
+// Called for every app selection (spec 3.1: "below Automation Map's own
+// discovered facts", for every app, not only ones with a decoded flow or an
+// inert reason). communityCardRequestSeq makes a late response from a
+// PREVIOUS selection a no-op once a newer one has started (spec section 7's
+// race-safety requirement) without needing a second AbortController per
+// card - loadCommunityContext()'s single in-flight fetch is shared, only
+// which selection gets to use its result changes.
+function renderCommunityCard(node) {
+  const box = document.getElementById('communityCard');
+  if (!box) return;
+  const seq = ++communityCardRequestSeq;
+  if (!node || node.group !== 'app') { box.innerHTML = ''; return; }
+  box.innerHTML = '<h4>Community information</h4><p class="sub">Checking Community Utilities...</p>';
+  loadCommunityContext().then(function (data) {
+    if (seq !== communityCardRequestSeq) return;
+    box.innerHTML = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated);
+  }).catch(function (e) {
+    if (seq !== communityCardRequestSeq) return;
+    console.warn('Community information unavailable: ' + e.message);
+    box.innerHTML = '<h4>Community information</h4><p class="sub">Community information is temporarily unavailable.</p>';
   });
 }
 
