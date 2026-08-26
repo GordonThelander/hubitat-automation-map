@@ -865,6 +865,17 @@ String compatibilitySummary() {
         s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
     }
 
+    // v2.0.14: only shown when the authoritative inventory itself succeeded
+    // (complete or complete-with-gaps) - a failed/not-supported inventory has
+    // no real count to report, and showing 0 would misrepresent "could not
+    // ask the hub" as "the hub has none".
+    Map hubVarInv = (state.hubVariableInventory ?: [:]) as Map
+    String hubVarInvStatus = "${hubVarInv.status}"
+    if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
+        int hubVarCount = (hubVarInv.count ?: 0) as Integer
+        s << " Found ${hubVarCount} Hub Variable(s)."
+    }
+
     int skipped = (state.rulesSkipped ?: 0) as Integer
     if (skipped > 0) {
         List engines = (state.otherEngines ?: []) as List
