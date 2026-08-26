@@ -8321,6 +8321,9 @@ document.getElementById('releaseActivityBtn').addEventListener('click', function
 document.getElementById('releaseActivityClose').addEventListener('click', function () {
   releaseActivityPanel.style.display = 'none';
   syncLegendVisibility();
+  // Spec 4.1 / Codex review 124 point 2 - focus returns to the control that
+  // opened this panel, not left on the just-hidden close button.
+  document.getElementById('releaseActivityBtn').focus();
 });
 document.getElementById('exportBtn').addEventListener('click', exportJSON);
 document.getElementById('pivotBtn').addEventListener('click', function () {
