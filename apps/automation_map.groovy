@@ -5300,10 +5300,22 @@ String buildMapHtml() {
      it shared that container. Most of its typography rides #flow's own
      h4/p/.sub/a rules above; only what is specific to this card is added
      here. */
-  #communityCard { margin-top:14px; padding-top:12px; border-top:1px solid #1c3540; }
-  #communityCard .ccBadge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:0.75em; margin:0 6px 6px 0; background:#1c3540; color:#9fb4bc; }
-  #communityCard .ccCaution { color:#e0a95f; }
-  #communityCard .ccLinks a { margin-right:12px; }${''}
+  /* Deliberately lighter than the surrounding #flow panel's near-black, not
+     just a lighter accent within it - visually this is public, external
+     evidence about the package, not something the hub itself reported (spec
+     3.1's "cannot be mistaken for data read from the hub"), and the contrast
+     against #flow's own dark theme is the clearest way to say so at a glance.
+     Overrides every #flow-inherited color (h4/.sub/a) that would otherwise
+     stay light-on-light here. */
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; }
+  #communityCard h4 { color:#1a2733; margin-top:0; }
+  #communityCard .sub { color:#4a5a63; }
+  #communityCard a { color:#1565c0; }
+  #communityCard .ccBadge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:0.75em; margin:0 6px 6px 0; background:#d7e6ea; color:#2c4a55; }
+  #communityCard .ccCaution { color:#a05a1f; }
+  #communityCard .ccLinks a { margin-right:12px; }
+  #communityCard.ccClickable { cursor:pointer; }
+  #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
      through as ghost text across the middle of the table. Marker just above:
      the whole <style> block is one unbroken GString literal (no interpolation
@@ -6781,18 +6793,35 @@ function ccRecordHtml(record, identityMismatch) {
   return html;
 }
 
+// Package Explorer supports a plain ?query= filter (verified against its own
+// app.js: matches() requires every query token present in the record's
+// searchable text, score() gives an exact name match top relevance) - safer
+// than deep-linking by record id, since this projection's ids
+// ("hpm:...", "manifest:...") are not the same id space Package Explorer's
+// own dataset uses, confirmed by comparing both directly rather than assumed.
+const COMMUNITY_EXPLORER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/package-explorer/';
+function ccExplorerUrl(name) {
+  return COMMUNITY_EXPLORER_URL + '?query=' + encodeURIComponent(name);
+}
+
 function ccCardHtml(result, snapshotGenerated) {
   let html = '<h4>Community information</h4>';
+  let clickUrl = null;
   if (result.state === 'confirmed') {
     html += ccRecordHtml(result.record, result.identityMismatch);
+    const name = result.record.displayName || result.record.packageName;
+    if (name) clickUrl = ccExplorerUrl(name);
   } else if (result.state === 'ambiguous') {
-    html += '<p class="sub">More than one Community Utilities record matches this app by name. None is shown as confirmed - use the links below to investigate.</p><ul>';
+    html += '<p class="sub">More than one Community Utilities record matches this app by name. None is shown as confirmed - click through to investigate.</p><ul>';
     result.records.slice(0, 5).forEach(function (r) {
       html += '<li>' + extEsc(r.displayName || r.packageName || 'Unnamed') +
         (r.author ? ' &middot; ' + extEsc(r.author) : '') +
         ' <span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[r.authority] || r.authority) + '</span></li>';
     });
     html += '</ul>';
+    const first = result.records[0];
+    const name = first && (first.displayName || first.packageName);
+    if (name) clickUrl = ccExplorerUrl(name);
   } else {
     html += '<p class="sub">No community information found for this app.</p>';
   }
@@ -6801,7 +6830,8 @@ function ccCardHtml(result, snapshotGenerated) {
       (ccIsStale(snapshotGenerated) ? ' - may be out of date' : '') + '</p>';
   }
   html += '<p class="sub">External community evidence - not read from your hub, and never affects the map above.</p>';
-  return html;
+  if (clickUrl) html += '<p class="sub">Click this card to open it on the Community Utilities site.</p>';
+  return { html: html, clickUrl: clickUrl };
 }
 
 // Called for every app selection (spec 3.1: "below Automation Map's own
@@ -6811,19 +6841,38 @@ function ccCardHtml(result, snapshotGenerated) {
 // race-safety requirement) without needing a second AbortController per
 // card - loadCommunityContext()'s single in-flight fetch is shared, only
 // which selection gets to use its result changes.
+function ccApplyClickable(box, url) {
+  // Direct property assignment, not addEventListener - this box is reused
+  // across every selection, and a plain assignment always replaces whatever
+  // handler (or none) the previous render left behind, with nothing to leak
+  // or double-fire the way accumulating listeners would.
+  box.classList.toggle('ccClickable', !!url);
+  box.onclick = url ? function (ev) {
+    // A click landing on one of this card's own links (Source, etc.) must
+    // still just follow that link - only a click on the card background
+    // itself opens the explorer.
+    if (ev.target.closest('a')) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  } : null;
+}
+
 function renderCommunityCard(node) {
   const box = document.getElementById('communityCard');
   if (!box) return;
   const seq = ++communityCardRequestSeq;
-  if (!node || node.group !== 'app') { box.innerHTML = ''; return; }
+  if (!node || node.group !== 'app') { box.innerHTML = ''; ccApplyClickable(box, null); return; }
   box.innerHTML = '<h4>Community information</h4><p class="sub">Checking Community Utilities...</p>';
+  ccApplyClickable(box, null);
   loadCommunityContext().then(function (data) {
     if (seq !== communityCardRequestSeq) return;
-    box.innerHTML = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated);
+    const rendered = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated);
+    box.innerHTML = rendered.html;
+    ccApplyClickable(box, rendered.clickUrl);
   }).catch(function (e) {
     if (seq !== communityCardRequestSeq) return;
     console.warn('Community information unavailable: ' + e.message);
     box.innerHTML = '<h4>Community information</h4><p class="sub">Community information is temporarily unavailable.</p>';
+    ccApplyClickable(box, null);
   });
 }
 
