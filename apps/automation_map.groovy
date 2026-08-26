@@ -87,7 +87,12 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise render with edge kinds that no longer match any colour/dash
 // lookup, degrading silently to the '#999' fallback instead of forcing the
 // rescan that already exists for exactly this situation.
-@Field static final String GRAPH_SCHEMA = '5'
+// Bumped 5->6 for public release: schema 5 predates Hub Variable nodes,
+// Connector edges, structured writeSource and current External Systems
+// identity data, none of which existed when a production v2.0.4 instance's
+// graph was last built. Forces graphIsStale() to catch that upgrade instead
+// of silently exposing an old-shaped graph to new rendering code.
+@Field static final String GRAPH_SCHEMA = '6'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
