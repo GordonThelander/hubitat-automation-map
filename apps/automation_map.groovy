@@ -3889,15 +3889,21 @@ Map fetchHubVariableInventory() {
 }
 
 // Map a platform Hub Variable type spelling to the canonical schema-4 value,
-// case-insensitively. Only "string" has been observed live (Bucket/Queue/094);
-// the other four are mapped on the platform's documented type names, not yet
-// individually confirmed. Unrecognized input returns null rather than
-// guessing (Codex review 097 point 6) so an unmapped spelling is visibly
-// absent instead of silently wrong.
+// case-insensitively. Confirmed live 2026-08-26 against real test variables of
+// all five types (Bucket/Queue/094 for "string"; a v2.0.14 export of TestNumber/
+// TestDecimal/TestBoolean/TestDateTime for the rest): getAllGlobalVars()
+// returns Groovy runtime type names, not the UI's declared-type labels -
+// "integer" for Number, "bigdecimal" for Decimal, "boolean" and "datetime"
+// matching directly. The first live export (schema 4) showed variableType:
+// null for TestNumber/TestDecimal because this mapping only recognized
+// "number"/"decimal" at the time - the safe fallback worked exactly as
+// designed (no crash, no wrong guess - Codex review 097 point 6), and this is
+// the confirmed correction, not a guess. Unrecognized input still returns
+// null.
 String normalizeHubVariableType(String rawType) {
     switch ("${rawType}".toLowerCase()) {
-        case 'number': return 'Number'
-        case 'decimal': return 'Decimal'
+        case 'integer': return 'Number'
+        case 'bigdecimal': return 'Decimal'
         case 'string': return 'String'
         case 'boolean': return 'Boolean'
         case 'datetime': return 'DateTime'
