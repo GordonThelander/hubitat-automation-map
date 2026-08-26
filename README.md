@@ -73,7 +73,7 @@ Hubitat has no API for "list every app and what devices it uses, and how". Autom
 
 | Endpoint | Used for |
 | --- | --- |
-| `/device/fullJson/<id>` | discovering which apps exist, by asking each device which apps use it |
+| `/device/fullJson/<id>` | device metadata and relationship evidence |
 | `/hub2/appsList` | the complete installed-app tree in one call, so an app that touches no device at all - a Rule Function, a schedule-only app, a container - is not invisible |
 | `/installedapp/statusJson/<id>` | the relationship data per app: child devices, event subscriptions, and every setting that resolves to devices |
 
@@ -143,7 +143,7 @@ The Dev package installs alongside production and keeps its own settings, scan d
 
 The map link contains an access token unique to your installation. Open the map from the app rather than bookmarking the URL, since reinstalling the app issues a new token and the old link stops working.
 
-Every device on the hub is scanned. There is no device picker: apps are found by asking each device which apps use it, and the hub supplies the device list.
+Every device on the hub is scanned. There is no device picker: Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.
 
 A daily scan runs automatically by default. Production uses 00:30 and Dev uses 01:00 so parallel installations do not scan at the same moment. The time is changeable in the app's settings page, and automatic scanning can be disabled entirely.
 
