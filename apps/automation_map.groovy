@@ -6673,12 +6673,44 @@ function loadCommunityContext() {
 // instance label - node.appType/node.namespace come from
 // processAppRelationships()'s installedApp.name/namespace-via-appTypeId
 // join, not node.title (which is the label the user sees and can rename).
-function matchCommunityContext(data, node) {
-  const name = String(node.appType || '').trim().toLowerCase();
-  if (!name) return { state: 'none' };
-  const namespace = node.namespace ? String(node.namespace).trim().toLowerCase() : null;
-  const records = data.records;
+// A trailing whitespace-separated version number, optionally "v"-prefixed -
+// "Zigbee Map 3.0.4" -> "Zigbee Map", but "Rule Machine Manager" (no
+// trailing digits) is untouched. Confirmed live and necessary: this
+// installed app's own definitionName IS "Zigbee Map 3.0.4" (the author bakes
+// the version into the app's own declared name), while the catalogue's
+// manifestIdentity for the same real package - correct namespace and all -
+// is plain "Zigbee Map". Deliberately narrow (a numeric-version pattern, not
+// word-similarity) so it does not relax spec section 6's "do not infer
+// identity from a similar-looking label" rule for anything else.
+function ccStripVersionSuffix(name) {
+  // No regex literal here at all, on purpose - this whole block is a Groovy
+  // GString, and a JS-side regex needs backslash escapes doubled or Groovy's
+  // own escape processing consumes the single backslash before the browser
+  // ever sees it (check_template.sh's whitelist documents this same doubling
+  // for the file's other JS-side regexes, one entry per pattern). Plain
+  // character checks sidestep the whole class of hazard rather than adding
+  // one more pattern to keep track of.
+  function isAllDigits(s) {
+    if (!s.length) return false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charAt(i);
+      if (c < '0' || c > '9') return false;
+    }
+    return true;
+  }
+  const idx = name.lastIndexOf(' ');
+  if (idx < 0) return name;
+  const tail = name.slice(idx + 1);
+  const parts = tail.split('.');
+  if (!parts.length || parts.length > 4) return name;
+  const versionLike = parts.every(function (p, i) {
+    const body = (i === 0 && (p.charAt(0) === 'v' || p.charAt(0) === 'V')) ? p.slice(1) : p;
+    return isAllDigits(body);
+  });
+  return versionLike ? name.slice(0, idx) : name;
+}
 
+function ccRunMatchLadder(name, namespace, records) {
   function identitiesMatchingName(r) {
     return (r.definitionIdentities || []).filter(function (di) {
       return String(di.name || '').trim().toLowerCase() === name;
@@ -6720,6 +6752,19 @@ function matchCommunityContext(data, node) {
   if (nameMatches.length === 1) return confirmed(nameMatches[0]);
   if (nameMatches.length > 1) return { state: 'ambiguous', records: nameMatches };
   return { state: 'none' };
+}
+
+function matchCommunityContext(data, node) {
+  const name = String(node.appType || '').trim().toLowerCase();
+  if (!name) return { state: 'none' };
+  const namespace = node.namespace ? String(node.namespace).trim().toLowerCase() : null;
+
+  const result = ccRunMatchLadder(name, namespace, data.records);
+  if (result.state !== 'none') return result;
+
+  const strippedName = ccStripVersionSuffix(name);
+  if (strippedName === name) return result;
+  return ccRunMatchLadder(strippedName, namespace, data.records);
 }
 ${''}
 // Empty interpolation above: this entire embedded <script> is one unbroken
