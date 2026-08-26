@@ -82,7 +82,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.0.13'
+@Field static final String APP_VERSION = '2.0.14'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -2212,6 +2212,15 @@ void finishScan(data = null) {
     // all for a given generation; every other concurrent caller's claim
     // fails immediately and does no work.
     boolean finished = finishGeneration(lockToken, null) {
+        // v2.0.14: authoritative Hub Variable inventory. A synchronous,
+        // in-process call (getAllGlobalVars() - Bucket/Queue/091-098) with no
+        // async round trip of its own, so it is called and published here,
+        // inside the same protected closure as buildGraph()/state.graph below
+        // - never outside it (Codex review 097 point 7). A failed inventory
+        // still publishes (status: 'failed'), so buildGraph() always has a
+        // definite, current-generation answer to read rather than stale state
+        // from a previous scan.
+        state.hubVariableInventory = fetchHubVariableInventory()
         Map graph = buildGraph()
         state.scanHeartbeat = now()
         if (registryStalled) {
@@ -2690,11 +2699,21 @@ List extractHubVariableWrites(Map data) {
 
     Map settingValues = [:]
     Map settingDevices = [:]
+    // Device-list KEYS (Hubitat device IDs), parallel to settingDevices'
+    // stripped-label values, same iteration order (LinkedHashMap). Added for
+    // v2.0.14's writeSource (Codex review 097 point 1, confirmed against this
+    // exact code 2026-08-26): settingDevices alone only ever held the display
+    // label, so write.sourceDevice could never be joined authoritatively to
+    // devices[] - schema 4 forbids joining writeSource by display name.
+    Map settingDeviceIds = [:]
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
         String n = "${s.name}"
         Map dl = s.deviceList as Map
-        if (dl) settingDevices[n] = dl.values().collect { stripTags("${it}") }
+        if (dl) {
+            settingDevices[n] = dl.values().collect { stripTags("${it}") }
+            settingDeviceIds[n] = dl.keySet().collect { "${it}" }
+        }
         if (s.value != null && "${s.value}") settingValues[n] = "${s.value}"
     }
 
@@ -2716,9 +2735,15 @@ List extractHubVariableWrites(Map data) {
         if (settingValues["valStringOp.${num}"] == 'Device attribute') {
             String attr = settingValues["tCustomAttr.${num}"]
             List srcDevices = settingDevices["customDev.${num}"] ?: []
+            List srcDeviceIds = settingDeviceIds["customDev.${num}"] ?: []
             if (attr && srcDevices) {
                 write.sourceDevice = srcDevices[0]
                 write.sourceAttr = attr
+                // ID-based, for the structured writeSource edge field. May be
+                // absent even when sourceDevice/sourceAttr are present (an
+                // older cached scan, or a shape this has not seen) - the
+                // structured field is only ever emitted when this resolves.
+                if (srcDeviceIds) write.sourceDeviceId = srcDeviceIds[0]
             }
         }
         out << write
@@ -3840,6 +3865,46 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     return 'references nothing'
 }
 
+// Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API,
+// NOT an HTTP endpoint - confirmed live 2026-08-26 after a dedicated search for
+// a loopback endpoint came back seven 404s (Bucket/Queue/091-095). Called only
+// from finishScan()'s finishGeneration() closure, synchronously, so a failed or
+// stale inventory is published or discarded atomically with the rest of that
+// scan generation - never mixed into a different generation's graph (Codex
+// review 097 point 7).
+Map fetchHubVariableInventory() {
+    try {
+        Map allVars = getAllGlobalVars()
+        if (allVars == null) {
+            return [status: 'failed', error: 'getAllGlobalVars() returned null', count: 0,
+                    source: 'authoritative-hub-inventory', variables: [:]]
+        }
+        return [status: 'complete', error: null, count: allVars.size(),
+                source: 'authoritative-hub-inventory', variables: allVars]
+    } catch (Exception e) {
+        log.warn "${app.label}: getAllGlobalVars() failed - ${e.message}"
+        return [status: 'failed', error: "${e.message}", count: 0,
+                source: 'authoritative-hub-inventory', variables: [:]]
+    }
+}
+
+// Map a platform Hub Variable type spelling to the canonical schema-4 value,
+// case-insensitively. Only "string" has been observed live (Bucket/Queue/094);
+// the other four are mapped on the platform's documented type names, not yet
+// individually confirmed. Unrecognized input returns null rather than
+// guessing (Codex review 097 point 6) so an unmapped spelling is visibly
+// absent instead of silently wrong.
+String normalizeHubVariableType(String rawType) {
+    switch ("${rawType}".toLowerCase()) {
+        case 'number': return 'Number'
+        case 'decimal': return 'Decimal'
+        case 'string': return 'String'
+        case 'boolean': return 'Boolean'
+        case 'datetime': return 'DateTime'
+        default: return null
+    }
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -3872,6 +3937,45 @@ Map buildGraph() {
         Map appMap = info as Map
         (appMap.hubVarWrites ?: []).each { Map w -> if (w.variable) confirmedVarNames << "${w.variable}" }
         (appMap.hubVarReads ?: []).each { Map r -> if (r.variable && r.confirmed) confirmedVarNames << "${r.variable}" }
+    }
+
+    // Authoritative Hub Variable inventory (v2.0.14), published by finishScan()
+    // into state.hubVariableInventory inside its finishGeneration() closure -
+    // read here as already-durable, generation-consistent state, the same way
+    // appInfo/deviceLabels above are. Seeded into `nodes` BEFORE the per-app
+    // write/read loop below, so that loop's existing `if (!nodes[varNodeId])`
+    // guards naturally treat an inventory-sourced node as already present
+    // (parent spec 6.3 reconciliation) instead of overwriting it.
+    Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
+    boolean hubVarInventoryComplete = "${hubVarInventory.status}" == 'complete'
+    Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
+    // Findings: a proven structured reference to a name absent from a COMPLETE
+    // inventory (not promoted to a node - parent spec 6.3, Codex review 097
+    // point 5), and an inventory Connector deviceId that does not resolve to a
+    // discovered device (parent spec 8.3 "Connector missing").
+    List unresolvedHubVarReferences = []
+    List unresolvedHubVarConnectors = []
+    hubVarInventoryVars.each { String varName, meta ->
+        if (!varName) return
+        String varNodeId = "v${varName}"
+        Map m = (meta instanceof Map) ? (meta as Map) : [:]
+        nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+        nodes[varNodeId].variableType = normalizeHubVariableType(m.type as String)
+        nodes[varNodeId].identitySource = 'hub-inventory'
+        String connDevId = m.deviceId ? "${m.deviceId}" : null
+        if (connDevId) {
+            if (labels.containsKey(connDevId)) {
+                nodes[varNodeId].connectorDeviceId = connDevId
+                nodes[varNodeId].connectorType = (deviceTypes[connDevId] as String) ?: null
+                String connEdgeKey = "${varNodeId}|d${connDevId}|synchronizedWith"
+                if (!seen.contains(connEdgeKey)) {
+                    seen << connEdgeKey
+                    edges << [from: varNodeId, to: "d${connDevId}", kind: 'synchronizedWith']
+                }
+            } else {
+                unresolvedHubVarConnectors << [name: varName, connectorDeviceId: connDevId]
+            }
+        }
     }
 
     appInfo.each { String appId, info ->
@@ -4029,12 +4133,30 @@ Map buildGraph() {
             String varName = "${w.variable}"
             if (!varName) return
             String varNodeId = "v${varName}"
-            if (!nodes[varNodeId]) nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+            // A proven structured write naming a variable absent from a
+            // COMPLETE authoritative inventory is an unresolved reference, not
+            // a node - it is not promoted (parent spec 6.3, Codex review 097
+            // point 5). When inventory failed/is absent, behaviour below is
+            // unchanged from before v2.0.14 (reference-derived fallback).
+            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
+                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'write']
+                return
+            }
+            if (!nodes[varNodeId]) {
+                nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+                nodes[varNodeId].identitySource = 'reference-derived'
+            }
             String key = "${appNodeId}|${varNodeId}|write"
             if (seen.contains(key)) return
             seen << key
             Map edge = [from: appNodeId, to: varNodeId, kind: 'write']
             if (w.sourceDevice && w.sourceAttr) edge.detail = "from ${w.sourceDevice}.${w.sourceAttr}"
+            // Structured, ID-based writeSource - only emitted when the source
+            // device ID resolves in the discovered device set, never joined by
+            // display label alone (parent spec 7.2, Codex review 097 point 1).
+            if (w.sourceDeviceId && w.sourceAttr && labels.containsKey("${w.sourceDeviceId}")) {
+                edge.writeSource = [kind: 'deviceAttribute', deviceId: "${w.sourceDeviceId}", attribute: "${w.sourceAttr}"]
+            }
             edges << edge
         }
         // Stored from-app-to-variable the same as a write, NOT reversed, even
@@ -4055,11 +4177,24 @@ Map buildGraph() {
             // silently rather than drawn as a guess.
             if (r.confirmed != true && !confirmedVarNames.contains(varName)) return
             String varNodeId = "v${varName}"
-            if (!nodes[varNodeId]) nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+            // Same unresolved-reference reconciliation as writes above.
+            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
+                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'read']
+                return
+            }
+            if (!nodes[varNodeId]) {
+                nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
+                nodes[varNodeId].identitySource = 'reference-derived'
+            }
             String key = "${appNodeId}|${varNodeId}|read"
             if (seen.contains(key)) return
             seen << key
-            edges << [from: appNodeId, to: varNodeId, kind: 'read']
+            // usageRole: 'unknown-read' for every currently-decoded read; this
+            // app does not yet classify trigger/condition/action-input/
+            // text-substitution roles. Parent spec 6.2 explicitly prefers
+            // unknown-read over an invented role - first-class inventory is
+            // not delayed on complete role classification.
+            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']
         }
     }
 
@@ -4232,7 +4367,9 @@ Map buildGraph() {
         }
     }
 
-    return [nodes: nodes.values().toList(), edges: edges, flows: flows]
+    return [nodes: nodes.values().toList(), edges: edges, flows: flows,
+            hubVariableUnresolvedReferences: unresolvedHubVarReferences,
+            hubVariableUnresolvedConnectors: unresolvedHubVarConnectors]
 }
 
 // Scheduled rather than called inline from a save handler so the web request
@@ -4887,13 +5024,27 @@ String buildMapHtml() {
     // blob above does not carry on its own. Built the same safe way GRAPH
     // is (JsonOutput, not manual string splicing) so an exception message
     // in scanError can never break out of the embedding script tag.
+    // v2.0.14: schema 4 - hubVariables changes meaning from an inferred
+    // referenced subset to an authoritative inventory when available, plus
+    // Connector topology and completeness metadata (parent spec 11.1). Not a
+    // dual-export mode - schema 3 files remain readable by their own
+    // consumers, but this app now generates schema 4 only (Codex review 097
+    // point 4).
+    Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 3,
+        exportSchemaVersion: 4,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
         appsUnreadable: state.appsUnreadable ?: 0,
         devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
+        // Inventory completeness kept separate from relationship-decoder
+        // completeness (parent spec 6.1) - a consumer must not assume one
+        // implies the other.
+        hubVariableInventoryStatus: hubVarInventoryMeta.status ?: 'not-supported',
+        hubVariableInventoryError: hubVarInventoryMeta.error,
+        hubVariableInventoryCount: hubVarInventoryMeta.count ?: 0,
+        hubVariableInventorySource: hubVarInventoryMeta.source,
     ]
     String scanMetaJsonStr = jsonForScriptEmbed(scanMeta)
     return """\
@@ -5479,6 +5630,13 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   const edge = {
     id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
     crit: e.crit || null,
+    // v2.0.14, schema 4: carried through explicitly, same as every other
+    // field here - this object is a fresh rendering-specific literal, not a
+    // spread of `e`, so a field not listed here is silently dropped
+    // (buildExportPayload's edges mapping reads these off ALL_EDGES, not
+    // GRAPH.edges directly).
+    usageRole: e.usageRole || null,
+    writeSource: e.writeSource || null,
     arrows: inbound ? 'from' : 'to',
     dashes: dashes,
     color: roleColors[e.kind] || '#999',
@@ -7240,6 +7398,42 @@ function buildExportPayload(ext, icons, failedFetches) {
     return { target: ref(id, nameOf), referencedBy: (referencesTo[id] || []).map(function (a) { return ref(a, nameOf); }) };
   });
 
+  // Hub Variable findings (v2.0.14, schema 4 - parent spec 8.3/11.5). Reader/
+  // writer/multiple-writer findings are computed from the same GRAPH.edges
+  // data as every insight above. unresolvedReferences/unresolvedConnectors
+  // are the one exception: they describe names that never became nodes at
+  // all (parent spec 6.3), so they are sourced from Groovy's buildGraph()
+  // directly (GRAPH.hubVariableUnresolvedReferences/
+  // hubVariableUnresolvedConnectors) rather than derived from ALL_EDGES here.
+  const hubVarReaders = {};
+  const hubVarWriters = {};
+  ALL_EDGES.forEach(function (e) {
+    if (e.kind === 'read') {
+      if (!hubVarReaders[e.to]) hubVarReaders[e.to] = [];
+      if (hubVarReaders[e.to].indexOf(e.from) < 0) hubVarReaders[e.to].push(e.from);
+    } else if (e.kind === 'write') {
+      if (!hubVarWriters[e.to]) hubVarWriters[e.to] = [];
+      if (hubVarWriters[e.to].indexOf(e.from) < 0) hubVarWriters[e.to].push(e.from);
+    }
+  });
+  const hubVarIds = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) { return n.id; });
+  const noDecodedUsage = hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id]; })
+    .map(function (id) { return ref(id, nameOf); });
+  const readersWithoutDecodedWriter = hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; })
+    .map(function (id) { return ref(id, nameOf); });
+  const writersWithoutDecodedReader = hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; })
+    .map(function (id) { return ref(id, nameOf); });
+  const multipleHubVarWriters = hubVarIds.filter(function (id) { return hubVarWriters[id] && hubVarWriters[id].length > 1; })
+    .map(function (id) {
+      return { variable: ref(id, nameOf), writers: hubVarWriters[id].map(function (a) { return ref(a, nameOf); }) };
+    });
+  const unresolvedHubVarReferences = (GRAPH.hubVariableUnresolvedReferences || []).map(function (r) {
+    return { name: r.name, kind: r.kind, referencedBy: ref(r.appId, nameOf) };
+  });
+  const unresolvedHubVarConnectors = (GRAPH.hubVariableUnresolvedConnectors || []).map(function (r) {
+    return { name: r.name, connectorDeviceId: r.connectorDeviceId };
+  });
+
   const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; }).map(function (n) {
     const ic = iconById[n.id];
     return {
@@ -7262,8 +7456,20 @@ function buildExportPayload(ext, icons, failedFetches) {
   const externalSystems = ALL_NODES.filter(function (n) { return n.group === 'external'; }).map(function (n) {
     return { id: n.id, name: nameOf[n.id], kind: n.kindKey || null };
   });
+  // v2.0.14, schema 4 (parent spec 11.3): variableType/identitySource/
+  // connector come straight off the node - buildGraph() (Groovy) populates
+  // them from the authoritative getAllGlobalVars() inventory when available,
+  // or leaves them at their reference-derived defaults otherwise.
+  // currentValue stays null in every default export (parent spec 10) - no
+  // opt-in value export exists yet.
   const hubVariables = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) {
-    return { id: n.id, name: nameOf[n.id] };
+    return {
+      id: n.id, name: nameOf[n.id],
+      variableType: n.variableType || null,
+      identitySource: n.identitySource || 'reference-derived',
+      connector: n.connectorDeviceId ? { deviceId: n.connectorDeviceId, connectorType: n.connectorType || null } : null,
+      currentValue: null
+    };
   });
   const edges = ALL_EDGES.map(function (e) {
     return {
@@ -7274,7 +7480,16 @@ function buildExportPayload(ext, icons, failedFetches) {
       // a lasting state, versus a momentary command) - null rather than
       // false everywhere else, so it does not look like a real "no" for a
       // relationship kind the field was never about.
-      stateful: e.kind === 'action' ? !!e.stateful : null
+      stateful: e.kind === 'action' ? !!e.stateful : null,
+      // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated only for
+      // proven Hub Variable reads (Groovy currently always emits
+      // 'unknown-read' - role classification is not yet built, per parent
+      // spec 6.2's explicit preference for unknown-read over an invented
+      // role). writeSource is populated only when the write's source device
+      // ID resolved in the discovered device set (Codex review 097 point 1) -
+      // both null on every other relationship kind.
+      usageRole: e.usageRole || null,
+      writeSource: e.writeSource || null
     };
   });
   // Flow steps' own "devices" field is really a display list, not always
@@ -7345,6 +7560,8 @@ function buildExportPayload(ext, icons, failedFetches) {
     appCount: apps.length,
     externalSystemCount: externalSystems.length,
     hubVariableCount: hubVariables.length,
+    hubVariablesWithConnectorCount: hubVariables.filter(function (v) { return !!v.connector; }).length,
+    unresolvedHubVariableReferenceCount: unresolvedHubVarReferences.length,
     edgeCount: edges.length,
     decodedRuleFlowCount: ruleFlows.length,
     contestedDeviceCount: contested.length,
@@ -7359,7 +7576,13 @@ function buildExportPayload(ext, icons, failedFetches) {
   const limitations = [
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
-    'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.'
+    'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
+    // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
+    'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
+    'A Hub Variable with no decoded reader or writer (insights.hubVariables.noDecodedUsage) may still be used by an app or integration this export cannot decode - absence of a decoded edge is not proof the variable is unused.',
+    'Multiple writers on a Hub Variable (insights.hubVariables.multipleWriters) are not proof of a race condition - static configuration proves shared writers, not simultaneous execution.',
+    'A Hub Variable connector is a synchronized projection of the same shared state (relationship: synchronizedWith), not an independent value - do not treat the variable and its connector device as two different things to reconcile.',
+    'A Hub Variable write edge with a deviceAttribute writeSource means the rule copies or derives its write from that device attribute - it does not mean the device writes the Hub Variable directly.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -7404,7 +7627,21 @@ function buildExportPayload(ext, icons, failedFetches) {
       lastScanError: SCAN_META.scanError,
       status: scanStatus,
       appsUnreadable: SCAN_META.appsUnreadable || 0,
-      devicesUnreadable: SCAN_META.devicesUnreadable || 0
+      devicesUnreadable: SCAN_META.devicesUnreadable || 0,
+      // v2.0.14, schema 4 (parent spec 6.1/11.2): inventory completeness kept
+      // separate from relationship-decoder completeness - a consumer must not
+      // assume one implies the other.
+      hubVariableInventory: {
+        status: SCAN_META.hubVariableInventoryStatus || 'not-supported',
+        error: SCAN_META.hubVariableInventoryError || null,
+        count: SCAN_META.hubVariableInventoryCount || 0,
+        source: SCAN_META.hubVariableInventorySource || null
+      },
+      hubVariableRelationships: {
+        status: 'partial',
+        supportedEngines: ['Rule Machine 5.1'],
+        limitations: ['Other app engines may use Hub Variables without exposing a decoded edge.']
+      }
     },
     summary: summary,
     limitations: limitations,
@@ -7414,12 +7651,12 @@ function buildExportPayload(ext, icons, failedFetches) {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export).',
       apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
-      hubVariables: 'Hub-wide variables one or more rules read or write.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply.',
+      hubVariables: 'Hub-wide shared state - schema 4 (v2.0.14): every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules read or write. A variable found only via a decoded reference, with no matching inventory entry (inventory was unavailable for this scan), has identitySource "reference-derived" instead - a weaker guarantee: it was found in a decoded rule configuration at scan time, not confirmed against the authoritative variable list the hub itself reports. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. currentValue is always null in this export (see limitations).',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable (see usageRole/writeSource below). synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4) is populated only on proven Hub Variable read edges - "unknown-read" is the only value this app currently produces (a real read was proven, its narrower role - trigger/condition/action-input/text-substitution - was not); null on every other edge. writeSource (schema 4) is populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including when a source detail exists but could not be resolved to an ID.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous.',
-      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing.',
-      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected.',
-      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan), unresolvedConnectors ({name, connectorDeviceId} - the inventory named a Connector device this scan could not resolve).',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported; a variable in hubVariables[] with identitySource "reference-derived" instead of "hub-inventory" means this status was not "complete" when it was found. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
+      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
       recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore rather than silently picking one - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.'
     },
@@ -7433,7 +7670,18 @@ function buildExportPayload(ext, icons, failedFetches) {
       contested: contested,
       unreferencedDevices: unreferencedDevices,
       inertApps: inertApps,
-      brokenRuleReferences: brokenRuleReferences
+      brokenRuleReferences: brokenRuleReferences,
+      // v2.0.14, schema 4 (parent spec 8.3/11.5). Neutral findings, not fault
+      // claims - see recommendedAiBehaviour and this section's own limitations
+      // note above.
+      hubVariables: {
+        noDecodedUsage: noDecodedUsage,
+        readersWithoutDecodedWriter: readersWithoutDecodedWriter,
+        writersWithoutDecodedReader: writersWithoutDecodedReader,
+        multipleWriters: multipleHubVarWriters,
+        unresolvedReferences: unresolvedHubVarReferences,
+        unresolvedConnectors: unresolvedHubVarConnectors
+      }
     },
     externalSystemDeclarations: ext ? (ext.entries || []) : null,
     deviceIconOverrides: icons ? (icons.devices || [])

@@ -73,7 +73,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `3` here. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `4` as of v2.0.14 (see section 18). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
@@ -84,7 +84,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `devices` | object[] | yes | Known device nodes. |
 | `apps` | object[] | yes | Known app/rule nodes. |
 | `externalSystems` | object[] | yes | External dependency nodes drawn on the map. |
-| `hubVariables` | object[] | yes | Hub Variable nodes used by decoded rules. |
+| `hubVariables` | object[] | yes | As of schema 4 (v2.0.14): the hub's own authoritative Hub Variable inventory, reconciled with decoded rule references. Under schema 3 this held only variables found via decoded rule references (see section 18). |
 | `edges` | object[] | yes | Relationships between nodes. |
 | `ruleFlows` | object[] | yes | Decoded rule logic where supported. |
 | `insights` | object | yes | Precomputed findings. |
@@ -202,8 +202,13 @@ or user declarations. They are not the same collection as `externalSystemDeclara
 { "id": "v...", "name": "Overloadcount" }
 ```
 
-Only variables discovered through supported Rule Machine decoding are represented. Absence
-does not prove that no rule engine uses the variable.
+Schema-3 shape, shown for reference against existing schema-3 files. As of schema 4 (v2.0.14,
+this app's current output) the record carries several more fields and the array's meaning changes
+from "referenced by a decoded rule" to "the hub's own authoritative inventory, reconciled with
+decoded references" - see section 18.1 for the current shape and section 7/18.2 for how to read
+completeness. The schema-3 caveat below still describes what schema-3 files (not this app's
+current output) guarantee: only variables discovered through supported Rule Machine decoding are
+represented; absence does not prove that no rule engine uses the variable.
 
 ## 9. Edges
 
@@ -423,3 +428,120 @@ The schema-3 export generated on 2026-08-17 from Automation Map 1.9.6 was valida
 
 This evidence validates that sample and the implemented contract; it is not a substitute for
 running the minimum consumer validation on every future export.
+
+## 18. Schema 4 (v2.0.14) delta
+
+Everything in sections 1-17 above describes schema 3 except where a section explicitly points
+here. This section is the complete, precise delta - implemented in v2.0.14, reviewed by Codex in
+`Bucket/Queue/097`, deployed to the dev hub 2026-08-26. Full design rationale is in
+`Supporting Docs/hub_variable_first_class_spec.md` (the parent design) and
+`Supporting Docs/hub_variable_v2014_implementation_spec.md` (this release's scope).
+
+Not a dual-export mode: this app generates schema 4 only. Schema-3 files already on disk remain
+valid and interpretable under section 4's compatibility rule - a consumer must not assume a
+schema-3 `hubVariables` array is a complete inventory, since schema 3 never claimed to be one.
+
+### 18.1 `hubVariables[]` - authoritative inventory, not just referenced variables
+
+```json
+{
+  "id": "v...",
+  "name": "Overloadcount",
+  "variableType": "Number",
+  "identitySource": "hub-inventory",
+  "connector": { "deviceId": "d...", "connectorType": "Switch" },
+  "currentValue": null
+}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `variableType` | string or null | `Number`, `Decimal`, `String`, `Boolean`, `DateTime`, or `null` if the platform's reported type spelling was not recognized. |
+| `identitySource` | enum | `hub-inventory` (confirmed against the hub's own authoritative Hub Variable list this scan) or `reference-derived` (found only via a decoded rule reference; a weaker guarantee - see section 7 for how to read `scan.hubVariableInventory.status`). |
+| `connector` | object or null | `{deviceId, connectorType}` when Hubitat reports a linked Connector device that resolved to a known device on this hub; `null` otherwise, including when the hub names a Connector this scan could not resolve (see `insights.hubVariables.unresolvedConnectors`, 18.4). `connector.deviceId` resolves in `devices[].id`. |
+| `currentValue` | JSON scalar or null | Always `null` in this release. No opt-in value export exists yet. |
+
+`identitySource: "hub-inventory"` means every variable the hub itself reports appears here, even
+one no decoded rule references at all (see `insights.hubVariables.noDecodedUsage`, 18.4) - the
+inverse of schema 3, where absence from any decoded reference meant absence from this array
+entirely.
+
+### 18.2 `scan` additions - inventory completeness, kept separate from relationship completeness
+
+```json
+{
+  "hubVariableInventory": { "status": "complete", "error": null, "count": 3, "source": "authoritative-hub-inventory" },
+  "hubVariableRelationships": { "status": "partial", "supportedEngines": ["Rule Machine 5.1"], "limitations": [ "..." ] }
+}
+```
+
+`hubVariableInventory.status` is `complete`, `complete-with-gaps`, `failed`, or `not-supported` -
+independent of the top-level `scan.status` above, which describes app/device scanning only. A
+consumer must not assume one implies the other. When `hubVariableInventory.status` is not
+`complete`, expect `identitySource: "reference-derived"` entries in `hubVariables[]` instead of
+`"hub-inventory"` ones (section 18.1) - the fallback described in section 12 of the parent spec:
+existing reference-derived nodes still appear, but completeness is not claimed.
+
+`hubVariableRelationships` is unchanged in shape from what section 7's schema-3 provenance
+already implied informally; it is now explicit and versioned.
+
+### 18.3 `edges[]` additions
+
+```json
+{ "usageRole": "unknown-read", "writeSource": { "kind": "deviceAttribute", "deviceId": "d...", "attribute": "temperature" } }
+```
+
+Both fields are present (nullable) on every edge, added alongside the existing fields from
+section 9.
+
+- `usageRole` - populated only on a proven Hub Variable `read` edge. This release always emits
+  `"unknown-read"`: a read was proven, but this app does not yet classify the narrower
+  trigger/condition/action-input/text-substitution role. Prefer `unknown-read` over guessing - do
+  not treat its presence as meaning "this edge's role is unknown/broken"; it means exactly what it
+  says, a proven read whose sub-classification is not yet built.
+- `writeSource` - populated only on a Hub Variable `write` edge whose source device attribute
+  resolved to a real, authoritative device ID (never joined by display label - see section 6). A
+  write edge with no `writeSource` may still have a device-attribute source that simply could not
+  be resolved to an ID; absence is not proof the write has no such source.
+- `synchronizedWith` - a new `relationship` value (joins the enum in section 9): a Hub Variable
+  node to its Connector device node, structural and bidirectional in meaning. It is not a
+  read/write/trigger/action and must not be counted as device control or fed into any
+  action-based/contested-device calculation.
+
+### 18.4 `insights.hubVariables` - new findings object
+
+```json
+{
+  "noDecodedUsage": [ { "id": "v...", "name": "..." } ],
+  "readersWithoutDecodedWriter": [ { "id": "v...", "name": "..." } ],
+  "writersWithoutDecodedReader": [ { "id": "v...", "name": "..." } ],
+  "multipleWriters": [ { "variable": { "id": "v...", "name": "..." }, "writers": [ { "id": "a...", "name": "..." } ] } ],
+  "unresolvedReferences": [ { "name": "...", "kind": "write", "referencedBy": { "id": "a...", "name": "..." } } ],
+  "unresolvedConnectors": [ { "name": "...", "connectorDeviceId": "..." } ]
+}
+```
+
+Every finding is a neutral observation, not a fault claim (see sections 15-16's tone guidance,
+which applies identically here):
+
+- `noDecodedUsage` - no decoded reader or writer at all. May simply be unused, or used by an app
+  engine this export cannot decode (section 18.2's `hubVariableRelationships.limitations`).
+- `readersWithoutDecodedWriter` / `writersWithoutDecodedReader` - may be set manually, externally,
+  or by an undecoded app; or no longer needed. Not evidence of misconfiguration by itself.
+- `multipleWriters` - shared state with more than one writer. Static configuration proves shared
+  writers, not simultaneous execution - never call this a race condition.
+- `unresolvedReferences` - a proven structured reference (never an unconfirmed free-text
+  candidate) to a name absent from a `complete` authoritative inventory. The rule may reference a
+  renamed or deleted variable, or inventory may have been incomplete for this scan
+  (`scan.hubVariableInventory.status`) - check that before concluding the reference is stale.
+- `unresolvedConnectors` - the inventory named a Connector device ID this scan could not resolve
+  to a known device. `connectorDeviceId` here is a raw ID, not a resolvable node reference (it did
+  not resolve, by definition).
+
+### 18.5 What did not change
+
+No baseline-comparator behaviour changed in this release. No current-value export exists.
+`about`, `privacyNote`, and the rest of the root object are unchanged from section 5 except where
+noted above. Section 15's recommended-AI-behaviour guidance applies to Hub Variable findings with
+no modification - the Hub-Variable-specific tone notes in section 18.4 above are elaborations of
+that same guidance, not exceptions to it.
