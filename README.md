@@ -4,6 +4,8 @@ Draws every installed app and device on your hub as an interactive graph, colour
 
 It answers questions the hub itself makes tedious: what does this rule really touch, which app keeps turning that light on, and what is this device even used for.
 
+> **Development channel:** This `dev` branch documents the current parallel test build. It installs as **Automation Map (Dev)** with separate settings and scan data. The production release remains on `main`. See the [changelog](CHANGELOG.md) for the complete development history.
+
 **Read-only where it matters.** It never commands a device or changes another app. The only things you can edit are its own notes about your setup - device icon corrections and external system declarations - never anything on the hub itself.
 
 ## What you get
@@ -104,13 +106,13 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Device icons are a best guess, not a certainty.** Capability and name-based detection cover most devices well, but a handful of categories (appliances, robot vacuums, and a few others) have no reliable Hubitat signal to detect from at all - see the Device icons panel to correct any of these by hand.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
-- A scan of roughly 200 devices and 60 apps takes about two minutes.
+- On the current Dev build, a scan of roughly 200 devices normally completes well under a minute. The production v2.0.4 serial scanner can take about two minutes on a similarly sized hub. Hub load and app count still affect both figures.
 
 ## Install
 
 **OAuth must be enabled.** The map is a web page the app serves from your hub, which needs an OAuth access token. Without it there is no map link. Installing through Hubitat Package Manager enables OAuth for you; installing by hand does not, so step 2 below is not optional.
 
-### Via Hubitat Package Manager
+### Production release via Hubitat Package Manager
 
 **Install** -> **From a URL**, then:
 
@@ -120,11 +122,21 @@ https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/pa
 
 Then continue from step 3.
 
+### Development channel via Hubitat Package Manager
+
+Add the following URL as a custom repository in HPM, then install **Automation Map (Dev)**:
+
+```
+https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/repository.json
+```
+
+The Dev package installs alongside production and keeps its own settings, scan data and schedule.
+
 ### By hand
 
 1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> **Save**.
 2. Still in Apps Code, click **OAuth** -> **Enable OAuth in App** -> **Update**.
-3. **Apps** -> **Add User App** -> **Automation Map**.
+3. **Apps** -> **Add User App** -> **Automation Map**, or **Automation Map (Dev)** when using the Dev source.
 4. Press **Done**. The first scan starts by itself; there is nothing to configure.
 5. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
 6. **View Automation Map**.
@@ -133,7 +145,7 @@ The map link contains an access token unique to your installation. Open the map 
 
 Every device on the hub is scanned. There is no device picker: apps are found by asking each device which apps use it, and the hub supplies the device list.
 
-A daily scan runs automatically by default (00:30, changeable in the app's own settings page, or turn it off entirely to only ever scan by hand).
+A daily scan runs automatically by default. Production uses 00:30 and Dev uses 01:00 so parallel installations do not scan at the same moment. The time is changeable in the app's settings page, and automatic scanning can be disabled entirely.
 
 ## Re-scanning
 
@@ -148,7 +160,7 @@ The app exposes two endpoints, using the same access token as the map link, usef
 - `.../scan-status` - progress, counts, and any recorded error
 - `.../scan` - starts a scan without opening the app
 
-`check_template.sh` is a maintainer tool. The map page is built inside a Groovy string, so a stray backslash is consumed before the browser sees it and silently breaks the page script. Run it before committing changes to the page.
+The map page is built inside a Groovy string, so a stray backslash can be consumed before the browser sees it and silently break the page script. Maintainers should run `powershell -File validate.ps1` before committing. The validator checks manifest and source version alignment, branch-specific URLs, JSON validity, tracked compiler artefacts and the embedded-template backslash guard. `check_template.sh` remains available on systems with Bash and `grep`, and now fails clearly if that dependency is unavailable.
 
 ## Credits
 
@@ -163,7 +175,7 @@ The app exposes two endpoints, using the same access token as the map link, usef
 
 `main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.
 
-`dev` is a private test channel. It renames the app to **Automation Map (Dev)** with its own package id, so it installs alongside the release version on the same hub without touching it. Both builds exclude every variant of themselves from the map, so neither draws the other.
+`dev` is a development test channel. It renames the app to **Automation Map (Dev)** with its own package id, so it installs alongside the release version on the same hub without touching it. Both builds exclude every variant of themselves from the map, so neither draws the other.
 
 To use it, add this as a custom repository in your own HPM:
 
@@ -171,4 +183,4 @@ To use it, add this as a custom repository in your own HPM:
 https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/repository.json
 ```
 
-Changes are made and tested on `dev`, then merged to `main` for release. Only the app name, package id, the raw URLs, and each branch's own `repository.json` differ between the branches - check `repository.json` specifically after every merge, since it does not diff-merge cleanly and has previously ended up on `main` still pointing at the Dev package.
+Changes are made and tested on `dev`, then promoted to `main` for release. While development is in progress, `dev` also contains unreleased functionality and may differ substantially from `main`. During promotion, preserve Main's production app name, package ids and raw URLs, and check `repository.json` explicitly because it does not merge cleanly and has previously ended up on `main` still pointing at the Dev package.
