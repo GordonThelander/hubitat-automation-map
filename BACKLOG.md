@@ -1107,8 +1107,7 @@ HubDiagnostics needed to go since this app's results must survive a reboot and t
 per-item claims with attempt tokens, atomic conditional-ownership retirement
 (`claims.remove(id, exactClaim)`), a missing-callback reaper, exact completion invariants
 (`==`, not `>=`), and durable publication only from a separately scheduled execution, never
-inline inside a callback. Reviewed and hardened through several rounds with Codex (see
-`Bucket/Queue/`, gitignored) before any live test - two more real bugs found and fixed purely
+inline inside a callback. Reviewed and hardened through several rounds before any live test - two more real bugs found and fixed purely
 through that review, before ever touching a hub: callbacks were still writing progress fields to
 `state` (recreating the exact race this exists to prevent), and the watchdog's failure path
 could race a legitimate finalize and overwrite a successful publication with a false failure.
@@ -1130,7 +1129,7 @@ final` cannot reference another's value even in correct declaration order. Full 
 at `github.com/GordonThelander/hubitat_dev_utililities` ("Transactional Bounded-Async
 Discovery"), credited to hubitrep's `HubDiagnostics` as the origin.
 
-Currently on `dev` only, live on the Dev hub instance for a bounded soak (Codex's
+Currently on `dev` only, live on the Dev hub instance for a bounded soak (the
 recommendation: 24h+, several more scans, checked each time against the same acceptance
 criteria as the four controlled runs) before production promotion is considered. Not yet
 measured: hub CPU/memory pressure during a scan, and live exercise of the recovery paths

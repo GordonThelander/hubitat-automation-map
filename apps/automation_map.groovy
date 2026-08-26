@@ -338,20 +338,20 @@ Map main() {
                             description: 'Open the relationship graph',
                             url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                             style: 'embedded', state: 'complete', required: false,
-                        )
+                       )
                     }
                 }
                 href(
                     name: 'baselineComparisonLink', title: "<span style='color:#1976d2'>Baseline Comparison</span>",
                     description: 'Compare discovered apps and devices between two Automation Map exports',
                     page: 'baselineComparisonPage', style: 'embedded', required: false,
-                )
+               )
                 href(
                     name: 'communityUtilitiesLink', title: "<span style='color:#1976d2'>Community Utilities</span>",
                     description: 'Open the Hubitat Community Utilities site',
                     url: 'https://gordonthelander.github.io/HPM_Manifest_Crawl/',
                     style: 'embedded', required: false,
-                )
+               )
                 // Hubitat's external href style calls openWindow(), which
                 // creates a sized popup rather than the full browser tab the
                 // user requested. Keep the normal full-width href row, then
@@ -397,7 +397,7 @@ Map baselineComparisonPage() {
                 name: 'baselineComparisonBack', title: 'Back to Automation Map',
                 description: 'Return to the Automation Map main page',
                 page: 'main', style: 'button', required: false,
-            )
+           )
             // A Hubitat dynamic subpage adds its own bottom-right Done/Cancel
             // action even though this page has nothing to save. On the tall
             // comparator page that control is both misleading and far away
@@ -567,8 +567,8 @@ function amStartScan() {
 // path. Every reload re-renders the page while scanRunning is still true,
 // which re-enters this same function on load and reschedules another
 // reload - an unbounded four-second reload chain for the whole scan, not
-// the single fallback the old comment claimed. Caught in the Bucket/Queue
-// remote-access review (2026-08-23) before this shipped past dev.
+// the single fallback the old comment claimed. Caught in review before this
+// shipped past dev.
 var amPolling = false;
 var amSawRunning = false;
 function amProgressPoll() {
@@ -2233,10 +2233,10 @@ void finishScan(data = null) {
     // fails immediately and does no work.
     boolean finished = finishGeneration(lockToken, null) {
         // v2.0.14: authoritative Hub Variable inventory. A synchronous,
-        // in-process call (getAllGlobalVars() - Bucket/Queue/091-098) with no
+        // in-process call (getAllGlobalVars()) with no
         // async round trip of its own, so it is called and published here,
         // inside the same protected closure as buildGraph()/state.graph below
-        // - never outside it (Codex review 097 point 7). A failed inventory
+        // - never outside it. A failed inventory
         // still publishes (status: 'failed'), so buildGraph() always has a
         // definite, current-generation answer to read rather than stale state
         // from a previous scan.
@@ -2433,7 +2433,7 @@ void collectAppIds(def nodes, List ids) {
 }
 
 // installedApp itself carries no namespace (confirmed live 2026-08-26 against
-// this hub's /installedapp/statusJson/{id} - Bucket/Queue/107). It does carry
+// this hub's /installedapp/statusJson/{id}). It does carry
 // appTypeId, which /hub2/userAppTypes - a separate, definition-level bulk
 // endpoint, one call regardless of app count - maps to the real namespace.
 // Failure here degrades to every app having a null namespace rather than
@@ -2762,7 +2762,7 @@ List extractHubVariableWrites(Map data) {
     Map settingDevices = [:]
     // Device-list KEYS (Hubitat device IDs), parallel to settingDevices'
     // stripped-label values, same iteration order (LinkedHashMap). Added for
-    // v2.0.14's writeSource (Codex review 097 point 1, confirmed against this
+    // v2.0.14's writeSource (confirmed against this
     // exact code 2026-08-26): settingDevices alone only ever held the display
     // label, so write.sourceDevice could never be joined authoritatively to
     // devices[] - schema 4 forbids joining writeSource by display name.
@@ -3938,11 +3938,10 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
 
 // Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API,
 // NOT an HTTP endpoint - confirmed live 2026-08-26 after a dedicated search for
-// a loopback endpoint came back seven 404s (Bucket/Queue/091-095). Called only
+// a loopback endpoint came back seven 404s. Called only
 // from finishScan()'s finishGeneration() closure, synchronously, so a failed or
 // stale inventory is published or discarded atomically with the rest of that
-// scan generation - never mixed into a different generation's graph (Codex
-// review 097 point 7).
+// scan generation - never mixed into a different generation's graph.
 Map fetchHubVariableInventory() {
     try {
         Map allVars = getAllGlobalVars()
@@ -3961,14 +3960,14 @@ Map fetchHubVariableInventory() {
 
 // Map a platform Hub Variable type spelling to the canonical schema-4 value,
 // case-insensitively. Confirmed live 2026-08-26 against real test variables of
-// all five types (Bucket/Queue/094 for "string"; a v2.0.14 export of TestNumber/
+// all five types (a v2.0.14 export of TestNumber/
 // TestDecimal/TestBoolean/TestDateTime for the rest): getAllGlobalVars()
 // returns Groovy runtime type names, not the UI's declared-type labels -
 // "integer" for Number, "bigdecimal" for Decimal, "boolean" and "datetime"
 // matching directly. The first live export (schema 4) showed variableType:
 // null for TestNumber/TestDecimal because this mapping only recognized
 // "number"/"decimal" at the time - the safe fallback worked exactly as
-// designed (no crash, no wrong guess - Codex review 097 point 6), and this is
+// designed (no crash, no wrong guess), and this is
 // the confirmed correction, not a guess. Unrecognized input still returns
 // null.
 String normalizeHubVariableType(String rawType) {
@@ -4027,10 +4026,10 @@ Map buildGraph() {
     boolean hubVarInventoryComplete = "${hubVarInventory.status}" == 'complete'
     Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
     // Findings: a proven structured reference to a name absent from a COMPLETE
-    // inventory (not promoted to a node - parent spec 6.3, Codex review 097
+    // inventory (not promoted to a node - parent spec 6.3, a design review
     // point 5). There is no equivalent "Connector missing" finding: a
-    // reported Connector deviceId is trusted unconditionally below (Codex
-    // review 103 confirmed this against live hub data), so no code path can
+    // reported Connector deviceId is trusted unconditionally below (confirmed
+    // against live hub data), so no code path can
     // ever fail to resolve one - see the synthesized-node comment just below
     // for why, and the orphan/stale-ID limitation this trade-off leaves.
     List unresolvedHubVarReferences = []
@@ -4044,23 +4043,12 @@ Map buildGraph() {
         nodes[varNodeId].identitySource = 'hub-inventory'
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
-            // Diagnosed live 2026-08-26 against three real connectors: Hub
-            // Variable Connector devices do not appear in /hub2/devicesList,
-            // the bulk endpoint this app's own device discovery uses -
-            // `labels` stayed at its pre-connector size across three
-            // consecutive scans while getGlobalVar() correctly reported all
-            // three deviceIds throughout. getGlobalVar()'s deviceId is still
-            // Hubitat's own authoritative confirmation that this Connector
-            // exists - an ID-based reference, not the display-name join
-            // parent spec 7.2 actually warns against - so it is trusted
-            // directly. When independent discovery DID find the device
-            // (labels.containsKey), its real label/type is used; otherwise a
-            // minimal device node is synthesized here rather than silently
-            // dropping the relationship. `labels` itself is never written -
-            // it may share state.deviceLabels' backing object (the
-            // mutate-a-state-held-collection hazard this file treats as a
-            // confirmed bug class elsewhere), so the synthesized node goes
-            // straight into `nodes`, which buildGraph() already owns.
+            // Connector devices do not appear in /hub2/devicesList, so
+            // getGlobalVar()'s deviceId is trusted directly - an ID-based
+            // reference, not the display-name join spec 7.2 warns against.
+            // When bulk discovery does find the device its real label is
+            // used; otherwise a minimal node is synthesized. Never write to
+            // `labels`: it may share state.deviceLabels' backing object.
             String devNodeId = "d${connDevId}"
             boolean discovered = labels.containsKey(connDevId)
             if (!discovered && !nodes[devNodeId]) {
@@ -4242,7 +4230,7 @@ Map buildGraph() {
             String varNodeId = "v${varName}"
             // A proven structured write naming a variable absent from a
             // COMPLETE authoritative inventory is an unresolved reference, not
-            // a node - it is not promoted (parent spec 6.3, Codex review 097
+            // a node - it is not promoted (parent spec 6.3, a design review
             // point 5). When inventory failed/is absent, behaviour below is
             // unchanged from before v2.0.14 (reference-derived fallback).
             if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
@@ -4260,7 +4248,7 @@ Map buildGraph() {
             if (w.sourceDevice && w.sourceAttr) edge.detail = "from ${w.sourceDevice}.${w.sourceAttr}"
             // Structured, ID-based writeSource - only emitted when the source
             // device ID resolves in the discovered device set, never joined by
-            // display label alone (parent spec 7.2, Codex review 097 point 1).
+            // display label alone (parent spec 7.2).
             if (w.sourceDeviceId && w.sourceAttr && labels.containsKey("${w.sourceDeviceId}")) {
                 edge.writeSource = [kind: 'deviceAttribute', deviceId: "${w.sourceDeviceId}", attribute: "${w.sourceAttr}"]
             }
@@ -4526,21 +4514,12 @@ void rebuildStoredGraph() {
 // be able to say "nothing needed" separately from "nobody has said".
 @Field static final String EXTERNAL_NONE = '__none__'
 
-// First-party assessments for Hubitat's own automation apps, as a distinct
-// provenance tier from the community-reviewed registry (Codex review 136
-// ladder step 4). Every entry is hub-local rule or grouping logic with no
-// external system involved - verifiable from what the app does, not inferred
-// from missing evidence, which is the line that matters: this asserts an
-// Automation Map assessment under its own label, it does not dress an absence
-// up as a community review.
+// First-party assessments for Hubitat's own automation apps, kept as their
+// own provenance tier rather than presented as reviewed community evidence.
 //
-// Deliberately an explicit allow-list of named apps, NOT a rule about the
-// hubitat namespace: Google Home, Chromecast, Hub Mesh and Maker API are all
-// built-ins with real external relationships, and a namespace-wide rule would
-// wrongly mark every one of them internal. Anything not named here stays
-// unassessed rather than being assumed.
-//
-// A user declaration always overrides this, same as it overrides the registry.
+// An explicit allow-list, NOT a namespace rule: Google Home, Chromecast, Hub
+// Mesh and Maker API are built-ins with real external relationships. Anything
+// not named here stays unassessed. A user declaration always wins.
 @Field static final Map BUILTIN_INTERNAL_ONLY = [
     'Rule Machine'             : 'Hub-local rule engine.',
     'Basic Rules'              : 'Hub-local rule engine.',
@@ -4752,17 +4731,12 @@ List discoveredAppTypes() {
     return types.sort()
 }
 
-// Identity and hierarchy per app type, for classifying the ROOT integration
-// relationship rather than asking the user to classify every definition
-// independently (Codex review 136). discoveredAppTypes() above reduces
-// everything to a type-name string and therefore throws away exactly the two
-// pieces of evidence needed to avoid noise: which namespace a definition
-// belongs to, and whether it is a child of something already classified.
+// Identity and hierarchy per app type, so External Systems classifies the
+// ROOT integration rather than every definition independently.
+// discoveredAppTypes() reduces everything to a type name and discards both
+// namespace and parent, which is what fills the panel with child rule types.
 //
-// On this hub that distinction collapses 57 Rule-5.1 rows into one Rule
-// Machine root, which is the bulk of what makes the panel look unresolved.
-//
-// Returns type -> [type, namespace, count, rootType, isRoot].
+// Returns type -> [type, namespace, count, rootType, isRoot, identities].
 Map appTypeIdentities() {
     Map info = (state.appInfo ?: [:]) as Map
     Map byIdentity = [:]
@@ -4793,7 +4767,7 @@ Map appTypeIdentities() {
         String rootType = "${cur?.type}"
         if (!rootType || rootType == 'null') rootType = t
 
-        // Accumulate per {type, namespace}, NOT per type (Codex review 139
+        // Accumulate per {type, namespace}, NOT per type (a design review
         // point 1). Two definitions sharing a type name across namespaces are
         // different things: merging them pools their counts and lets one
         // namespace's child status erase another namespace's root.
@@ -4812,7 +4786,7 @@ Map appTypeIdentities() {
     }
 
     // Collapsed to type keys for the panel, because user declarations are
-    // type-keyed and must keep working (Codex review 134 point 5) - but the
+    // type-keyed and must keep working - but the
     // per-identity records travel with it so nothing is lost, and an old
     // type-only declaration is understood to apply to every identity sharing
     // that name.
@@ -4962,7 +4936,7 @@ String externalsJson() {
         appTypes: types,
         // Identity and hierarchy alongside the flat type list, not instead of
         // it: user declarations are keyed by type string and must keep
-        // working unchanged (Codex review 134 point 5).
+        // working unchanged.
         appTypeInfo: appTypeIdentities(),
         builtinInternal: BUILTIN_INTERNAL_ONLY,
         // Unclassified means nobody has said, by user OR registry. An app type
@@ -5209,7 +5183,7 @@ Map renderMapMapping() {
 <p>Return to the Automation Map app when the scan has completed, then open the map again.</p>
 <button type="button" onclick="history.back()" style="padding:0.65em 1em; cursor:pointer">Back</button>
 </body></html>"""
-        )
+       )
     }
     if (graphIsStale()) {
         return render(
@@ -5222,7 +5196,7 @@ Map renderMapMapping() {
 Relationship types have changed since then, so the graph would render without role colours.</p>
 <p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
 </body></html>"""
-        )
+       )
     }
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
@@ -5254,7 +5228,7 @@ String buildMapHtml() {
     // referenced subset to an authoritative inventory when available, plus
     // Connector topology and completeness metadata (parent spec 11.1). Not a
     // dual-export mode - schema 3 files remain readable by their own
-    // consumers, but this app now generates schema 4 only (Codex review 097
+    // consumers, but this app now generates schema 4 only (a design review
     // point 4).
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
@@ -6664,18 +6638,13 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // across the table" problem this hiding was built for). Hint has no
 // collapsed form, so it keeps hiding for any open panel same as before.
 ${''}
-// Single source of truth for panel coordination. Three separate hardcoded
-// copies of this list used to exist - bringToFront, syncLegendVisibility and
-// closeSecondaryPanels - and adding the release-activity panel to only two of
-// them shipped a real bug Gordon hit immediately: "Show all" and browser Back
-// both left that panel sitting open over the map. Functions rather than a
-// const array purely so declaration order does not matter: several of these
-// panel consts are declared much further down the file than the coordination
-// functions that use them.
+// Single source of truth for panel coordination - bringToFront,
+// syncLegendVisibility and closeSecondaryPanels all read it, so a new panel is
+// coordinated everywhere at once. Functions rather than a const array so
+// declaration order does not matter.
 //
-// secondaryPanels() is everything closeSecondaryPanels() may close on its own.
-// flowPanel is deliberately NOT in it - its callers hide it themselves,
-// because several of them re-open it a moment later with new content.
+// flowPanel is deliberately outside secondaryPanels(): its callers hide it
+// themselves, since several re-open it a moment later with new content.
 function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
@@ -6842,7 +6811,7 @@ if (flowCloseBtn) {
 }
 
 // Community Context Card (Supporting Docs/community_context_card_spec.md,
-// contract locked in Bucket/Queue 112/113). A read-only, browser-only lookup
+// published contract). A read-only, browser-only lookup
 // against a public HPM_Manifest_Crawl projection - never told which app is
 // selected, never affects scanning, the map or the export. Lazy-loaded once
 // per page view (spec 3.2) and cached in memory only; a failed or invalid
@@ -6854,7 +6823,7 @@ const COMMUNITY_CONTEXT_URL = 'https://gordonthelander.github.io/HPM_Manifest_Cr
 // between Automation Map releases does not start failing this check.
 const COMMUNITY_CONTEXT_MAX_BYTES = 1536 * 1024;
 // Well above today's 476 records - a bound against a compact response
-// carrying an unreasonable number of tiny records (Codex review 115 point
+// carrying an unreasonable number of tiny records (a design review point
 // 1), not a forecast of real catalogue growth.
 const COMMUNITY_CONTEXT_MAX_RECORDS = 5000;
 const COMMUNITY_CONTEXT_TIMEOUT_MS = 8000;
@@ -6867,17 +6836,10 @@ const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
 const COMMUNITY_CONTEXT_LINK_LABELS = { record: 'Full record', documentation: 'Documentation', community: 'Community support', source: 'Source' };
 let communityContextPromise = null;
 let communityCardRequestSeq = 0;
-// Bumped once per focusNode() call, any selection type - separate from
-// communityCardRequestSeq above, which only guards the community-context
-// fetch itself. This guards showFlow()'s asynchronous Mermaid render: that
-// promise can still be pending when a LATER, different selection (another
-// app, or a device/hub variable) has already changed what is on screen: if
-// the earlier render is allowed to write flowChart / re-open the panel /
-// re-render the community card once it finally settles, it silently
-// restores a stale selection over the current one (Codex review 115 point
-// 3, reproduced by inspection - the community card's own sequence number
-// cannot help here, since renderCommunityCard() for a decoded flow is not
-// even called until AFTER the stale Mermaid promise resolves).
+// Bumped once per focusNode() call, any selection type. Guards showFlow()'s
+// async Mermaid render: that promise can still be pending when a later
+// selection has changed the screen, and letting it write flowChart or reopen
+// the panel would silently restore a stale selection.
 let focusGenerationSeq = 0;
 
 // One request for the whole page view, whichever app is selected first -
@@ -6903,7 +6865,7 @@ function loadCommunityContext() {
         if (!Array.isArray(data.records)) throw new Error('missing records[]');
         // recordCount must itself be a genuine non-negative integer, not
         // merely "a number" - NaN, Infinity and a negative value all pass a
-        // bare typeof check (Codex review 115 point 1).
+        // bare typeof check.
         if (typeof data.recordCount !== 'number' || !isFinite(data.recordCount) ||
             data.recordCount < 0 || Math.floor(data.recordCount) !== data.recordCount) {
           throw new Error('recordCount is not a non-negative integer');
@@ -6919,14 +6881,9 @@ function loadCommunityContext() {
       .catch(reject)
       .finally(function () { if (timer) clearTimeout(timer); });
   });
-  // Deliberately NOT reset on rejection - a page reload is the retry
-  // boundary for v1 (Codex review 115 point 2). The first prior version of
-  // this comment argued the opposite (a bad response should not poison
-  // every later selection), but that meant every app selection after one
-  // failure re-fetched and re-waited through the full timeout, which is
-  // worse: it contradicts the "downloads the index at most once" gate. A
-  // cached rejection still resolves instantly for every later caller -
-  // Promise.catch() on an already-settled promise does not re-run anything.
+  // Deliberately NOT reset on rejection: a page reload is the retry boundary.
+  // Resetting meant every selection after a failure re-fetched and waited out
+  // the full timeout again. A cached rejection resolves instantly.
   return communityContextPromise;
 }
 
@@ -7111,7 +7068,7 @@ function ccExplorerUrl(name) {
 }
 
 // Constant, never carrying app or hub identity in its query string (spec
-// 3.3's No match row, Codex review 115 point 4) - a plain link to the
+// 3.3's No match row) - a plain link to the
 // general tool, for the reader to search by hand, not a deep link.
 const COMMUNITY_IDENTITY_RESOLVER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/identity-resolver/';
 function ccIdentityResolverLinkHtml() {
@@ -7125,7 +7082,7 @@ function ccCardHtml(result, snapshotGenerated) {
     html += ccRecordHtml(result.record, result.identityMismatch);
     const name = result.record.displayName || result.record.packageName;
     if (name) clickUrl = ccExplorerUrl(name);
-    // Spec 3.3/Codex review 115 point 4: a flagged identity should not read
+    // Spec 3.3: a flagged identity should not read
     // as a plain clean match with nowhere else to check it - the reader can
     // go verify it themselves, not just take this card's word for it.
     if (result.identityMismatch) html += ccIdentityResolverLinkHtml();
@@ -7320,16 +7277,10 @@ function fillSelect(selectId, searchId, group, allLabel) {
 // commands at all.
 // ---------------------------------------------------------------------------
 ${''}
-// Single derivation of every finding, as plain data with no rendering in it.
-// Codex review 133 point 3: the panel and the AI export used to derive the
-// same concepts independently and had already drifted - the export gained
-// Hub Variable findings in schema 4 and the panel never got them, so the two
-// disagreed about what the same scan meant. One derivation, two renderers,
-// so a finding added here appears in both by construction.
-//
-// Returns raw ids and maps rather than formatted output: the panel wants
-// display names and the export wants {id,name} refs, and baking either in
-// here would just move the duplication rather than remove it.
+// Single derivation of every finding, as plain data with no rendering in it,
+// feeding both the Insights panel and the AI export so the two cannot drift.
+// Returns raw ids and maps: the panel wants display names and the export
+// wants {id,name} refs, so formatting stays with each renderer.
 function deriveInsightData() {
   const missingIds = {};
   ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
@@ -7340,9 +7291,8 @@ function deriveInsightData() {
     if (referencesTo[e.to].indexOf(e.from) < 0) referencesTo[e.to].push(e.from);
   });
 
-  // See the long note that used to sit here in buildInsights: statefulCommanders
-  // answers contention, anyCommanders answers "is this ever driven at all", and
-  // using one map for both is what made read-only wrong for 19 devices.
+  // statefulCommanders answers contention; anyCommanders answers "is this ever
+  // driven at all". Using one map for both is what made read-only wrong.
   const statefulCommanders = {};
   const anyCommanders = {};
   const touched = {};
@@ -7409,7 +7359,7 @@ function buildInsights() {
   ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
   const D = deriveInsightData();
 
-  // Progressive disclosure, not a report (Codex review 135, from Gordon's own
+  // Progressive disclosure, not a report (from Gordon's own
   // verdict on the previous version: a checklist of waffle nobody would read).
   // The whole result has to be legible in the first viewport, so the summary
   // carries counts only - deliberately no device or app names up here - and
@@ -7827,18 +7777,12 @@ function extRegistryFor(type) {
   return (EXT.registry || []).filter(function (e) { return e.type === type; });
 }
 
-// Which of the three groups an app type belongs in, following the ladder in
-// Codex review 136. Order matters: the first source that answers wins.
-//
-// Deliberately absent is a curated built-in table of my own. Inventing
-// classifications for Hubitat built-ins here would assert reviewed evidence
-// that does not exist - the same thing we declined to do for evidenceHealth
-// and NONE_EXPECTED. The reviewed registry is the curated source, and
-// extending its coverage is website-side work.
+// Which group an app type belongs in. Order matters: the first source that
+// answers wins, and a user declaration always outranks the rest.
 function extClassify(type) {
   const info = (EXT.appTypeInfo || {})[type] || {};
   if ((EXT.entries || []).some(function (e) { return e.type === type; })) return { group: 'declared', info: info };
-  // Registry is checked BEFORE inheritance (Codex review 139 point 2). With
+  // Registry is checked BEFORE inheritance. With
   // the order reversed, a child type carrying its own reviewed dependency was
   // filed as inherited and dropped from the confirmed table - while the graph
   // still drew that dependency, because registryMatches() attaches it by
@@ -7852,7 +7796,7 @@ function extClassify(type) {
 }
 
 // Network evidence for an unknown root, from the projection the Context Card
-// already downloads once per page view - no second fetch (Codex review 134
+// already downloads once per page view - no second fetch (a design review
 // point 3). Strictly a review aid: LAN/CLOUD/BOTH names no dependency and
 // must never create a graph node on its own, so it is shown as a badge and
 // nothing here offers to accept it.
@@ -7860,7 +7804,7 @@ let EXT_EVIDENCE = null;
 function extLoadEvidence() {
   if (EXT_EVIDENCE) return Promise.resolve(EXT_EVIDENCE);
   return loadCommunityContext().then(function (data) {
-    // Every candidate per name, not just the first (Codex review 139 point 3).
+    // Every candidate per name, not just the first.
     // Keeping only the first meant that if it carried the wrong namespace and
     // a later record was the exact match, the valid evidence was thrown away
     // before anything could compare namespaces.
@@ -7885,7 +7829,7 @@ function extEvidenceBadge(type) {
   if (!cands || !cands.length) return '';
 
   // Namespace strengthens a match but its absence never proves anything
-  // (Codex review 134 point 5) - it can equally mean the join produced
+  // - it can equally mean the join produced
   // nothing. Where both sides declare one, require an exact match; anything
   // still ambiguous after that shows no badge rather than picking a winner.
   let pool = cands;
@@ -7917,7 +7861,7 @@ function extRender(message) {
 
   // Classify every discovered type once, then render three groups instead of
   // one flat list where 57 inherited rule instances drown the handful of real
-  // integrations (Codex review 136).
+  // integrations.
   const groups = { declared: [], registry: [], unknown: [], inherited: [], internal: [] };
   (EXT.appTypes || []).forEach(function (t) { groups[extClassify(t).group].push(t); });
   // Suggestions are split out of unknown so the two are visibly different
@@ -8007,7 +7951,7 @@ function extRender(message) {
       }
       // "Not assessed" rather than "not classified": nobody has reviewed this
       // identity, which is a different and more honest statement than the app
-      // being unclassifiable (Codex review 134 point 2). Any network evidence
+      // being unclassifiable. Any network evidence
       // is shown beside it as a review aid, never as an answer.
       const nsInfo = (EXT.appTypeInfo || {})[type] || {};
       const badge = extEvidenceBadge(type);
@@ -8227,7 +8171,7 @@ function extImport(evt) {
 // saved here, applied the next time the graph is built.
 const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
 // Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
-// live contract from Bucket/Queue 122). A read-only iframe preview of Community Utilities'
+// published contract). A read-only iframe preview of Community Utilities'
 // releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
 // the map or the export. Created at most once per page view, on first open only - no repeated
 // background loading, no automatic retry within the same page session (spec 4.1/4.2).
@@ -8254,16 +8198,11 @@ function releaseActivityLinksHtml(trackerLabel) {
     ' &middot; <a href="' + RELEASE_ACTIVITY_HUBITAT_URL + '" target="_blank" rel="noopener noreferrer">Hubitat release notes</a></p>';
 }
 
-// A postMessage readiness handshake, not the iframe's own 'load' event -
-// 'load' fires even for a blocked or failed cross-origin response (a 404,
-// a future framing refusal), which would otherwise be treated as a
-// successful preview forever (Codex review 124 point 1). The published
-// embed (HPM_Manifest_Crawl commit 2690d3b, contract in Bucket/Queue 126)
-// sends { type: 'automation-map-release-activity-ready', version: 1 } via
-// window.parent.postMessage only after its own chart/range/freshness text
-// has actually rendered - only that verified message may clear the timer.
-// 'load' is not observed at all here; it proves nothing this handshake
-// does not already prove better.
+// A postMessage readiness handshake, not the iframe's 'load' event: 'load'
+// fires even for a blocked or failed cross-origin response, so it cannot
+// prove the embed rendered. The embed posts
+// { type: 'automation-map-release-activity-ready', version: 1 } only after
+// its chart has rendered, and only that verified message clears the timer.
 function releaseActivityLoad() {
   if (releaseActivityLoaded) return;
   releaseActivityLoaded = true;
@@ -8293,19 +8232,11 @@ function releaseActivityLoad() {
   // unrelated message this page happens to receive.
   function onMessage(ev) {
     if (settled) return;
-    // "null" is the expected origin here, not a fallback: this iframe is
-    // sandboxed WITHOUT allow-same-origin, so its document has an opaque
-    // origin and everything it posts arrives as origin "null". Requiring the
-    // literal host (as the original contract did) could therefore never
-    // match - measured live against the real embed - so the handshake never
-    // completed, the timer always fired, and a chart that had rendered
-    // perfectly was torn down and replaced by the unavailable message every
-    // single time. The real proof of provenance is the source check below:
-    // this page created that iframe and set its src to a fixed,
-    // source-controlled HTTPS URL, and only that document can be its
-    // contentWindow - event.source cannot be forged by another frame. The
-    // host string is still accepted so this keeps working unchanged if the
-    // embed is ever framed without the sandbox.
+    // "null" is expected, not a fallback: sandboxed without allow-same-origin,
+    // the embed has an opaque origin and posts as "null". Provenance rests on
+    // the source check below - this page created the iframe and set its src to
+    // a fixed URL, and event.source cannot be forged. The host string is kept
+    // so this still works if the embed is ever framed unsandboxed.
     if (ev.origin !== 'https://gordonthelander.github.io' && ev.origin !== 'null') return;
     if (ev.source !== iframe.contentWindow) return;
     const d = ev.data;
@@ -8605,7 +8536,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   (icons && icons.devices || []).forEach(function (d) { iconById['d' + d.id] = d; });
 
   // Every finding below now comes from deriveInsightData(), the same call the
-  // Insights panel renders from (Codex review 133 point 3). This block used to
+  // Insights panel renders from. This block used to
   // recompute all of it independently, and the two had already drifted - the
   // export gained Hub Variable findings that the panel never got. The export
   // schema and wording are unchanged by the switch; only the source of the
@@ -8633,8 +8564,8 @@ function buildExportPayload(ext, icons, failedFetches) {
   // it describes names that never became nodes at all (parent spec 6.3), so
   // it is sourced from Groovy's buildGraph() directly
   // (GRAPH.hubVariableUnresolvedReferences) rather than derived from
-  // ALL_EDGES here. There is no unresolvedConnectors finding (Codex review
-  // 103) - every reported Connector deviceId is trusted unconditionally, so
+  // ALL_EDGES here. There is no unresolvedConnectors finding - every
+  // reported Connector deviceId is trusted unconditionally, so
   // no case exists for this export to flag as unresolved.
   const hubVarWriters = INS.hubVar.writers;
   const noDecodedUsage = INS.hubVar.noDecodedUsage.map(function (id) { return ref(id, nameOf); });
@@ -8699,7 +8630,7 @@ function buildExportPayload(ext, icons, failedFetches) {
       // 'unknown-read' - role classification is not yet built, per parent
       // spec 6.2's explicit preference for unknown-read over an invented
       // role). writeSource is populated only when the write's source device
-      // ID resolved in the discovered device set (Codex review 097 point 1) -
+      // ID resolved in the discovered device set -
       // both null on every other relationship kind.
       usageRole: e.usageRole || null,
       writeSource: e.writeSource || null
@@ -8930,7 +8861,7 @@ document.getElementById('releaseActivityBtn').addEventListener('click', function
 document.getElementById('releaseActivityClose').addEventListener('click', function () {
   releaseActivityPanel.style.display = 'none';
   syncLegendVisibility();
-  // Spec 4.1 / Codex review 124 point 2 - focus returns to the control that
+  // Spec 4.1 - focus returns to the control that
   // opened this panel, not left on the just-hidden close button.
   document.getElementById('releaseActivityBtn').focus();
 });
@@ -9182,17 +9113,11 @@ window.addEventListener('popstate', function (ev) {
       // browser has already updated to this entry by the time popstate
       // fires - no extra bookkeeping needed here for the label to be right.
     } else {
-      // Delegated to exitToWholeMap() rather than repeating its steps here.
-      // This branch used to hand-roll its own reset and had silently drifted
-      // out of sync with it: it never called closeSecondaryPanels(), so Back
-      // to the whole map left External systems / Pivot / Device icons /
-      // release activity open on top of it, and it never reset kindFilter, so
-      // the "Show" dropdown kept a filter the restored view was not actually
-      // showing. Both are exactly the "navigation gets confused going in and
-      // out" Gordon reported. exitToWholeMap() already guards its own
-      // history.pushState behind !poppingHistory. poppingHistory is true for
-      // the duration of this handler, so that guard is false and delegating
-      // adds no spurious history entry.
+      // Delegated rather than hand-rolled: a near-copy here drifted out of
+      // sync and stopped closing panels or resetting kindFilter.
+      // exitToWholeMap() guards its own pushState behind !poppingHistory,
+      // which is false for the duration of this handler, so no spurious
+      // history entry is added.
       exitToWholeMap();
     }
   } finally {

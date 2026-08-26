@@ -1,8 +1,8 @@
 param(
     [string]$AppFile = 'apps/automation_map.groovy',
     # Exercises each gate below against a known-bad fixture and against the
-    # real source, then exits. Required by Bucket/Queue 130: a gate nobody has
-    # seen fail is not evidence of anything.
+    # real source, then exits. A gate nobody has seen fail is not evidence of
+    # anything.
     [switch]$SelfTest
 )
 

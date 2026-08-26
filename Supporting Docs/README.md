@@ -18,11 +18,12 @@ where the backlog referenced them and they would eventually have been lost.
 | `hpm_scrape_spec.md` | Origin task spec for the package identity index now built and maintained in `GordonThelander/HPM_Manifest_Crawl` |
 | `async_scan_v205_technical_report.md` | v2.0.5 bounded-async scan architecture, failure model, harness evidence, dev-hub validation, and remaining release gates |
 | `hubitat_local_mcp_data_access_assessment.md` | Assessment of reusable Hubitat data-access methods evidenced by the Community Hubitat Local MCP server |
-| `hub_variable_first_class_spec.md` | First-class Hub Variable entity and export specification (draft, Codex/Claude consensus reached, implementation not yet authorized) |
+| `hub_variable_first_class_spec.md` | First-class Hub Variable entity and export specification (draft, consensus reached, implementation not yet authorized) |
 | `hubitat_driver_programmatic_access.md` | Architecture for programmatic access to Hubitat devices and drivers (inventory, source, capabilities, commands, attributes, events, state) |
-| `ai_assessment_export_extension.md` | AI assessment export feature contract (proposed, not implemented) - augments the AI-friendly export with evidence for automated review. Delivered by Codex 2026-08-23 (see its own Source line) |
+| `ai_assessment_export_extension.md` | AI assessment export feature contract (proposed, not implemented) - augments the AI-friendly export with evidence for automated review. Delivered 2026-08-23 (see its own Source line) |
 | `ai_bad_rule_assessment_framework.md` | Detailed reasoning catalogue behind the AI assessment export feature contract (superseded as the design itself by `ai_assessment_export_extension.md`, retained as background) |
-| `hub_variable_v2014_implementation_spec.md` | Bounded v2.0.14 implementation plan for `hub_variable_first_class_spec.md` (draft, sent to Codex for review, not authorized for implementation) |
+| `hub_variable_v2014_implementation_spec.md` | Bounded v2.0.14 implementation plan for `hub_variable_first_class_spec.md` (draft, sent for review, not authorized for implementation) |
+| `community_context_card_spec.md` | Proposed contextual Community Utilities information card for selected Automation Map apps, including the slim online data contract, local matching, privacy boundary and release gates |
 
 ## rule_machine_5_1_storage_format.md
 

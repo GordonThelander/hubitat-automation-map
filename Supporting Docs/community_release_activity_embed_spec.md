@@ -143,7 +143,7 @@ embed document an *opaque* origin; everything it posts therefore arrives as orig
 the Pages host. An earlier revision of this contract required the literal host, which could never
 match - the handshake never completed, the timeout always fired, and a correctly rendered chart was
 torn down and replaced by the 4.2 failure state on every open. Measured live and corrected
-(Bucket/Queue 128-130).
+(design review).
 
 Provenance rests on `event.source`, not on the origin string: this page creates the iframe and sets
 its `src` to the single fixed, source-controlled URL from 4.3, and no other frame can forge
@@ -231,11 +231,11 @@ https://gordonthelander.github.io/HPM_Manifest_Crawl/update-tracker/?ref=automat
 
 ## 8. Ownership and sequence
 
-1. **Codex, Community Utilities:** implement and publish the dedicated embed route, tests and live
+1. **Community Utilities site:** implement and publish the dedicated embed route, tests and live
    framing verification.
-2. **Claude, Automation Map:** implement the launcher, panel, lazy iframe and failure treatment only
+2. **Automation Map app:** implement the launcher, panel, lazy iframe and failure treatment only
    after the live embed contract is available.
-3. **Codex:** review the combined source and live behavior.
+3. **Review:** the combined source and live behavior.
 4. **Gordon:** approve Dev hub testing and the eventual release.
 
 The Community Context Card iteration should be completed and accepted before this feature begins,
