@@ -7716,8 +7716,20 @@ const releaseActivityPanel = document.getElementById('releaseActivity');
 const releaseActivityBody = document.getElementById('releaseActivityBody');
 let releaseActivityLoaded = false;
 
-function releaseActivityTrackerLinkHtml(label) {
-  return '<p class="sub"><a href="' + RELEASE_ACTIVITY_TRACKER_URL + '" target="_blank" rel="noopener noreferrer">' + label + '</a></p>';
+// Hubitat's own Release Notes category - the upstream authority this chart is
+// built from, not a third-party view of it. Confirmed from the generating
+// dataset itself, which declares source.authority "Hubitat Community Release
+// Notes" and harvests this exact category: every point on the chart traces
+// back to a post here. Offered alongside the Community Utilities tracker so
+// the panel closes the loop to the primary source rather than only to a
+// secondary presentation of it.
+const RELEASE_ACTIVITY_HUBITAT_URL = 'https://community.hubitat.com/c/news/release-notes/55';
+
+// Both destinations in one line, each labelled for what it actually is, so
+// neither reads as the other: one is Hubitat, one is a community project.
+function releaseActivityLinksHtml(trackerLabel) {
+  return '<p class="sub"><a href="' + RELEASE_ACTIVITY_TRACKER_URL + '" target="_blank" rel="noopener noreferrer">' + trackerLabel + '</a>' +
+    ' &middot; <a href="' + RELEASE_ACTIVITY_HUBITAT_URL + '" target="_blank" rel="noopener noreferrer">Hubitat release notes</a></p>';
 }
 
 // A postMessage readiness handshake, not the iframe's own 'load' event -
@@ -7747,7 +7759,7 @@ function releaseActivityLoad() {
     clearTimeout(timer);
     window.removeEventListener('message', onMessage);
     releaseActivityBody.innerHTML = '<p class="sub">The release preview could not be loaded.</p>' +
-      releaseActivityTrackerLinkHtml('Open the Community Utilities Update Tracker');
+      releaseActivityLinksHtml('Open the Community Utilities Update Tracker');
   }
 
   // The embed's own origin is fixed and known here (unlike the embed
@@ -7794,7 +7806,7 @@ function releaseActivityLoad() {
   // only a failure fallback) - the failure branch above replaces this
   // whole body anyway, so there is never a duplicate link on screen.
   const cta = document.createElement('div');
-  cta.innerHTML = releaseActivityTrackerLinkHtml('Open the full Update Tracker');
+  cta.innerHTML = releaseActivityLinksHtml('Open the full Update Tracker');
   releaseActivityBody.appendChild(cta);
 }
 
