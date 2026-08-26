@@ -4765,7 +4765,7 @@ List discoveredAppTypes() {
 // Returns type -> [type, namespace, count, rootType, isRoot].
 Map appTypeIdentities() {
     Map info = (state.appInfo ?: [:]) as Map
-    Map out = [:]
+    Map byIdentity = [:]
     info.each { String appId, v ->
         if (!(v instanceof Map)) return
         Map m = v as Map
@@ -4793,18 +4793,48 @@ Map appTypeIdentities() {
         String rootType = "${cur?.type}"
         if (!rootType || rootType == 'null') rootType = t
 
-        Map e = out[t] as Map
+        // Accumulate per {type, namespace}, NOT per type (Codex review 139
+        // point 1). Two definitions sharing a type name across namespaces are
+        // different things: merging them pools their counts and lets one
+        // namespace's child status erase another namespace's root.
+        String ns = m.namespace ? "${m.namespace}" : ''
+        String key = "${t}||${ns}"
+        Map e = byIdentity[key] as Map
         if (e == null) {
-            e = [type: t, namespace: null, count: 0, rootType: t, isRoot: true]
-            out[t] = e
+            e = [type: t, namespace: (ns ?: null), count: 0, rootType: t, isRoot: true]
+            byIdentity[key] = e
         }
         e.count = ((e.count ?: 0) as Integer) + 1
-        if (m.namespace && !e.namespace) e.namespace = "${m.namespace}"
-        // Any instance rooted elsewhere makes the whole type a child: a type
-        // that is sometimes a child is not a root integration to classify.
         if (rootType != t) {
             e.isRoot = false
             e.rootType = rootType
+        }
+    }
+
+    // Collapsed to type keys for the panel, because user declarations are
+    // type-keyed and must keep working (Codex review 134 point 5) - but the
+    // per-identity records travel with it so nothing is lost, and an old
+    // type-only declaration is understood to apply to every identity sharing
+    // that name.
+    Map out = [:]
+    byIdentity.each { String key, Object v ->
+        Map e = v as Map
+        Map agg = out[e.type] as Map
+        if (agg == null) {
+            agg = [type: e.type, namespace: null, count: 0, rootType: e.rootType, isRoot: false, identities: []]
+            out[e.type] = agg
+        }
+        agg.count = ((agg.count ?: 0) as Integer) + ((e.count ?: 0) as Integer)
+        (agg.identities as List) << e
+        if (!agg.namespace && e.namespace) agg.namespace = e.namespace
+        // A root under ANY namespace makes the type a root. The previous rule
+        // was the inverse - one child instance demoted the whole type - which
+        // is what could hide a genuine root definition.
+        if (e.isRoot) {
+            agg.isRoot = true
+            agg.rootType = e.type
+        } else if (!agg.isRoot) {
+            agg.rootType = e.rootType
         }
     }
     return out
@@ -7808,8 +7838,15 @@ function extRegistryFor(type) {
 function extClassify(type) {
   const info = (EXT.appTypeInfo || {})[type] || {};
   if ((EXT.entries || []).some(function (e) { return e.type === type; })) return { group: 'declared', info: info };
-  if (info.isRoot === false) return { group: 'inherited', info: info };
+  // Registry is checked BEFORE inheritance (Codex review 139 point 2). With
+  // the order reversed, a child type carrying its own reviewed dependency was
+  // filed as inherited and dropped from the confirmed table - while the graph
+  // still drew that dependency, because registryMatches() attaches it by
+  // type. The panel would have said "inherits its parent assessment" about a
+  // relationship visible on the map beside it. Only a child with neither a
+  // declaration nor its own reviewed dependency should inherit.
   if ((EXT.registry || []).some(function (e) { return e.type === type; })) return { group: 'registry', info: info };
+  if (info.isRoot === false) return { group: 'inherited', info: info };
   if ((EXT.builtinInternal || {})[type]) return { group: 'internal', info: info };
   return { group: 'unknown', info: info };
 }
@@ -7823,11 +7860,17 @@ let EXT_EVIDENCE = null;
 function extLoadEvidence() {
   if (EXT_EVIDENCE) return Promise.resolve(EXT_EVIDENCE);
   return loadCommunityContext().then(function (data) {
+    // Every candidate per name, not just the first (Codex review 139 point 3).
+    // Keeping only the first meant that if it carried the wrong namespace and
+    // a later record was the exact match, the valid evidence was thrown away
+    // before anything could compare namespaces.
     const byName = {};
     (data.records || []).forEach(function (r) {
       (r.definitionIdentities || []).forEach(function (di) {
         const k = String(di.name || '').trim().toLowerCase();
-        if (k && !byName[k]) byName[k] = r;
+        if (!k) return;
+        if (!byName[k]) byName[k] = [];
+        byName[k].push({ record: r, namespace: di.namespace || null });
       });
     });
     EXT_EVIDENCE = byName;
@@ -7838,18 +7881,29 @@ function extLoadEvidence() {
 function extEvidenceBadge(type) {
   if (!EXT_EVIDENCE) return '';
   const info = (EXT.appTypeInfo || {})[type] || {};
-  const rec = EXT_EVIDENCE[String(type).trim().toLowerCase()];
-  if (!rec) return '';
-  // Namespace strengthens a match but its absence never proves a built-in
+  const cands = EXT_EVIDENCE[String(type).trim().toLowerCase()];
+  if (!cands || !cands.length) return '';
+
+  // Namespace strengthens a match but its absence never proves anything
   // (Codex review 134 point 5) - it can equally mean the join produced
-  // nothing. When both sides declare one and they disagree, do not claim a
-  // match at all.
-  if (info.namespace && rec.definitionIdentities) {
-    const nsMatch = rec.definitionIdentities.some(function (di) {
-      return !di.namespace || String(di.namespace).trim().toLowerCase() === String(info.namespace).trim().toLowerCase();
+  // nothing. Where both sides declare one, require an exact match; anything
+  // still ambiguous after that shows no badge rather than picking a winner.
+  let pool = cands;
+  const ourNs = info.namespace ? String(info.namespace).trim().toLowerCase() : null;
+  if (ourNs) {
+    const exact = cands.filter(function (c) {
+      return c.namespace && String(c.namespace).trim().toLowerCase() === ourNs;
     });
-    if (!nsMatch) return '';
+    if (!exact.length) return '';
+    pool = exact;
   }
+  // Distinct records only: one record can supply several identities with the
+  // same name, and that is not ambiguity.
+  const distinct = [];
+  pool.forEach(function (c) { if (distinct.indexOf(c.record) < 0) distinct.push(c.record); });
+  if (distinct.length !== 1) return '';
+  const rec = distinct[0];
+
   const ne = rec.networkEvidence;
   if (!ne || !ne.classification) return '';
   return '<span class="tag tag-reg" title="Community Utilities network evidence. Names no dependency - review before declaring one.">' +
