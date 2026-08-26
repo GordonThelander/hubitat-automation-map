@@ -161,8 +161,6 @@ The app exposes two endpoints, using the same access token as the map link, usef
 
 **Hubitrep** - the bounded-async scan rewrite is built on the fix in their `HubDiagnostics` app (`github.com/hubitrep/hubitat`): concurrent `asynchttpGet` callbacks writing to `state` are subject to last-write-wins persistence, which can silently overwrite a correct result with a stale one. Their diagnosis and fix were the origin; this app extends it further since its scan results must survive a hub reboot, unlike theirs.
 
-**"Woman Excited Cheers And Phrases Says Yes 1" sound effect** by Floraphonic, via [Pixabay](https://pixabay.com/sound-effects/people-woman-excited-cheers-and-phrases-says-yes-1-186748/), used under the [Pixabay Content License](https://pixabay.com/service/license-summary/). Plays on the Community utilities button.
-
 ## Branches
 
 `main` is the released version. It is what Hubitat Package Manager installs, so anything pushed there is public immediately.
