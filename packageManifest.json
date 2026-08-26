@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map",
   "author": "Gordon Thelander",
-  "version": "2.0.15",
+  "version": "2.1.0",
   "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-08-27",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Automation Map 2.0.15 - upgrading from 2.0.4. Scanning is far faster (roughly 124s down to 17-19s on a 194-device/103-app hub) through bulk device listing, per-driver capability batching and concurrent discovery, with stronger protection against publishing an incomplete or corrupted scan. Hub Variables are now a first-class part of the map: an authoritative inventory straight from the hub, Connector device reconciliation, and read/write relationships that correctly handle a trailing period in the variable's own name. External Systems now ships reviewed defaults for common integrations (Hue, LIFX, Sensibo, Tapo, Meross, Chromecast, Google Home, HPM's own GitHub dependency and more) instead of leaving them all unclassified. Insights is redesigned around plain-language findings - what something means, when it's normal, and what to check next - with the same guidance available in the AI-friendly export. Every hub-discovered device now appears in the graph and export even when nothing references it. Minimum platform raised to 2.5.1, the version this release was tested against. Full history: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
+  "releaseNotes": "Automation Map 2.1.0 - upgrading from 2.0.4. Scanning is far faster (roughly 124s down to 17-19s on a 194-device/103-app hub) through bulk device listing, per-driver capability batching and concurrent discovery, with stronger protection against publishing an incomplete or corrupted scan. Hub Variables are now a first-class part of the map: an authoritative inventory straight from the hub, Connector device reconciliation, and read/write relationships that correctly handle a trailing period in the variable's own name. External Systems now ships reviewed defaults for common integrations (Hue, LIFX, Sensibo, Tapo, Meross, Chromecast, Google Home, HPM's own GitHub dependency and more) instead of leaving them all unclassified. Insights is redesigned around plain-language findings - what something means, when it's normal, and what to check next - with the same guidance available in the AI-friendly export. Every hub-discovered device now appears in the graph and export even when nothing references it. Minimum platform raised to 2.5.1, the version this release was tested against. Full history: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "apps": [
     {
       "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "2.0.15"
+      "version": "2.1.0"
     }
   ],
   "drivers": []
