@@ -157,6 +157,13 @@ An AI should state the scan status before making claims about completeness. It m
 - `iconCategory` is a best guess and may be `unknown`.
 - `capabilities` is the raw capability-name list used for classification; it may be `null` if
   the auxiliary device metadata was unavailable or raced a rescan.
+- `iconCategory: "connector"` (schema 4, v2.0.14) usually means a Hub Variable Connector device -
+  see section 18.1's `connector` field for how to find the variable it belongs to. **One confirmed
+  exception:** Hubitat also creates its own single parent device, typically named "Variable
+  Connectors," that manages every per-variable Connector on the hub. The same detection rule
+  classifies it `"connector"` too, but no `hubVariables[]` entry links to it and no
+  `synchronizedWith` edge names it - it is not synchronized with one specific variable. Do not
+  assume every `"connector"` device resolves to exactly one `hubVariables[]` entry.
 
 ### 8.2 Apps
 
