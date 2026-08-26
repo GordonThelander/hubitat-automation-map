@@ -3531,6 +3531,15 @@ String prettyMethod(String method) {
     // resolves it to 'buttons', and its own name ("Dining - Relax") carries
     // no hint either.
     [key: 'scene',     label: 'Scene',                caps: []],
+    // Empty caps, detected off deviceType like 'scene' above - v2.0.14's
+    // synthesized Connector device nodes (buildGraph(), for a Hub Variable
+    // Connector Hubitat's own /hub2/devicesList does not list - see
+    // Supporting Docs/hub_variable_v2014_implementation_spec.md) hardcode this
+    // key directly, since the caller already knows it is a connector. A real,
+    // independently-discovered Connector device would also match here via its
+    // driver name containing "Connector" (Hubitat's own Variable Connector
+    // driver family), the same deviceType-substring pattern 'scene' uses.
+    [key: 'connector', label: 'Hub Variable connector', caps: []],
 ]
 
 // Name-based hints, checked BEFORE capability - added at Gordon's explicit
@@ -3583,6 +3592,7 @@ List nameWords(String name) {
 // being a scene at all, so neither of the other two signals can find them.
 String autoDetectIconKeyForDevice(String name, List capabilities, String deviceType = null) {
     if (deviceType && deviceType.toLowerCase().contains('scene')) return 'scene'
+    if (deviceType && deviceType.toLowerCase().contains('connector')) return 'connector'
     List words = nameWords(name)
     for (hint in ICON_NAME_HINTS) {
         Map h = hint as Map
@@ -3642,7 +3652,7 @@ String autoDetectIconKeyForDevice(String name, List capabilities, String deviceT
     'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
     'cameras', 'shades', 'broker', 'climate', 'lighting', 'security', 'media',
     'switches', 'energy', 'environmental', 'sensor', 'hub', 'ai', 'appliance',
-    'network', 'display', 'scene', 'unknown',
+    'network', 'display', 'scene', 'connector', 'unknown',
 ]
 
 // Nothing in ICON_RULES matched - not a guess, an honest "this app does not
@@ -4010,6 +4020,10 @@ Map buildGraph() {
             boolean discovered = labels.containsKey(connDevId)
             if (!discovered && !nodes[devNodeId]) {
                 nodes[devNodeId] = nodeEntry(devNodeId, "${varName} Connector" as String, 'device')
+                // Hardcoded, not autoDetectIconKeyForDevice() - this call site
+                // already knows it is a connector (that is why the node was
+                // synthesized at all), so there is nothing to detect.
+                nodes[devNodeId].icon = 'connector'
             }
             nodes[varNodeId].connectorDeviceId = connDevId
             nodes[varNodeId].connectorType = (deviceTypes[connDevId] as String) ?: (m.attribute as String) ?: null
@@ -5442,6 +5456,10 @@ const ICON_GLYPHS = {
   // rendered page - if this shows as a blank box instead of a glyph, the
   // codepoint is wrong and needs picking again from the actual font file.
   scene: '\uf1de',
+  // fa-link (stable FA4-6 codepoint) - chosen for the same reason ICON_RULES'
+  // 'connector' entry exists: a Hub Variable Connector device, distinct from
+  // an ordinary physical/integration device.
+  connector: '\uf0c1',
   unknown: '\uf059',
 };
 
@@ -6568,7 +6586,8 @@ const DEVICE_ICON_TAGS = {
   broker: 'BRK',
   hub: 'HUB',
   network: 'NET',
-  scene: 'SCN'
+  scene: 'SCN',
+  connector: 'CON'
 };
 function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
