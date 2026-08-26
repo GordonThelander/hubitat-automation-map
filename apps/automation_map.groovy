@@ -8475,7 +8475,9 @@ function currentFocus() {
 // Shared by the panel's Exit link and the top-right "Show all" button, which
 // did this exact reset already; Exit is the same action, reachable from where
 // the problem actually is instead of from a button that may be off screen.
-// External systems/Pivot tables/Device icons are unrelated to whatever was
+// External systems/Pivot tables/Device icons/Hubitat release activity - the
+// full secondaryPanels() list, which is the single source of truth rather
+// than a copy maintained here - are unrelated to whatever was
 // just chosen (Focus app/device dropdowns, a node click, browser Back/
 // Forward restoring one, a link-through from Pivot tables) and would
 // otherwise sit open over it. flowPanel is deliberately NOT touched here -
@@ -8633,8 +8635,9 @@ window.addEventListener('popstate', function (ev) {
       // the "Show" dropdown kept a filter the restored view was not actually
       // showing. Both are exactly the "navigation gets confused going in and
       // out" Gordon reported. exitToWholeMap() already guards its own
-      // history.pushState with !poppingHistory, which is true here, so
-      // delegating adds no spurious history entry.
+      // history.pushState behind !poppingHistory. poppingHistory is true for
+      // the duration of this handler, so that guard is false and delegating
+      // adds no spurious history entry.
       exitToWholeMap();
     }
   } finally {
