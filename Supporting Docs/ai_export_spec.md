@@ -460,7 +460,7 @@ schema-3 `hubVariables` array is a complete inventory, since schema 3 never clai
 | --- | --- | --- |
 | `variableType` | string or null | `Number`, `Decimal`, `String`, `Boolean`, `DateTime`, or `null` if the platform's reported type spelling was not recognized. |
 | `identitySource` | enum | `hub-inventory` (confirmed against the hub's own authoritative Hub Variable list this scan) or `reference-derived` (found only via a decoded rule reference; a weaker guarantee - see section 7 for how to read `scan.hubVariableInventory.status`). |
-| `connector` | object or null | `{deviceId, connectorType}` whenever the hub itself reports a linked Connector device for this variable; `null` when it reports none. **Revised from the original design:** Connector devices do not appear in the same bulk device-enumeration the rest of `devices[]` is built from (a live platform finding, not a design choice - see `Supporting Docs/hub_variable_v2014_implementation_spec.md`), so a resolvable `deviceId` is trusted directly from the hub rather than requiring independent confirmation. `connector.deviceId` always resolves in `devices[].id`; that device entry has `iconCategory: "connector"` and, when independent discovery genuinely did not find it, `room`/`capabilities` are both `null` (same null semantics as any other device missing from that fetch - section 8.1). `insights.hubVariables.unresolvedConnectors` (18.4) is consequently unreachable in the current implementation - kept in the schema for a hub state this has not yet been observed to produce, not actively populated. |
+| `connector` | object or null | `{deviceId, connectorType}` whenever the hub itself reports a linked Connector device for this variable; `null` when it reports none. **Revised from the original design:** Connector devices do not appear in the same bulk device-enumeration the rest of `devices[]` is built from (a live platform finding, not a design choice - see `Supporting Docs/hub_variable_v2014_implementation_spec.md`), so a resolvable `deviceId` is trusted directly from the hub rather than requiring independent confirmation (confirmed acceptable against live hub data - Codex review 103). `connector.deviceId` always resolves in `devices[].id`; that device entry has `iconCategory: "connector"` and, when independent discovery genuinely did not find it, `room`/`capabilities` are both `null` (same null semantics as any other device missing from that fetch - section 8.1) - otherwise its real reported data is used. `connectorType` is the device's own reported type when independent discovery did find it, otherwise the projected Connector attribute label Hubitat itself reports (observed live: `"Variable"`, `"Humidity"`) - not necessarily the underlying driver's name. There is no `unresolvedConnectors` finding (see 18.4): trusting the reported `deviceId` unconditionally means no code path can fail to resolve one. The one gap this leaves - a Connector manually deleted out from under its variable, bypassing the normal remove-connector flow - is documented as export prose in `limitations`, not as a structured field, since no code path can currently populate one. |
 | `currentValue` | JSON scalar or null | Always `null` in this release. No opt-in value export exists yet. |
 
 `identitySource: "hub-inventory"` means every variable the hub itself reports appears here, even
@@ -518,8 +518,7 @@ section 9.
   "readersWithoutDecodedWriter": [ { "id": "v...", "name": "..." } ],
   "writersWithoutDecodedReader": [ { "id": "v...", "name": "..." } ],
   "multipleWriters": [ { "variable": { "id": "v...", "name": "..." }, "writers": [ { "id": "a...", "name": "..." } ] } ],
-  "unresolvedReferences": [ { "name": "...", "kind": "write", "referencedBy": { "id": "a...", "name": "..." } } ],
-  "unresolvedConnectors": [ { "name": "...", "connectorDeviceId": "..." } ]
+  "unresolvedReferences": [ { "name": "...", "kind": "write", "referencedBy": { "id": "a...", "name": "..." } } ]
 }
 ```
 
@@ -536,11 +535,14 @@ which applies identically here):
   candidate) to a name absent from a `complete` authoritative inventory. The rule may reference a
   renamed or deleted variable, or inventory may have been incomplete for this scan
   (`scan.hubVariableInventory.status`) - check that before concluding the reference is stale.
-- `unresolvedConnectors` - the inventory named a Connector device ID this scan could not resolve
-  to a known device. `connectorDeviceId` here is a raw ID, not a resolvable node reference (it did
-  not resolve, by definition). See the `connector` field note in 18.1: this finding is currently
-  unreachable in practice, since a reported deviceId is now trusted directly rather than requiring
-  independent confirmation.
+
+There is no `unresolvedConnectors` finding here, unlike the original design this schema shipped
+against. **Removed after Codex review 103:** trusting a reported Connector `deviceId`
+unconditionally (see the `connector` field note in 18.1) means no code path can ever fail to
+resolve one, so a permanently-unreachable field was removed from the schema rather than shipped.
+The one gap this trust decision leaves - a Connector deleted out from under its variable, bypassing
+the normal remove-connector flow, rendering indistinguishably from a real one - is documented only
+as export prose (`limitations`), not as a structured field a consumer could rely on to detect it.
 
 ### 18.5 What did not change
 
