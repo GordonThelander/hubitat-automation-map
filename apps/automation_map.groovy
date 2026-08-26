@@ -873,7 +873,9 @@ String compatibilitySummary() {
     String hubVarInvStatus = "${hubVarInv.status}"
     if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
         int hubVarCount = (hubVarInv.count ?: 0) as Integer
-        s << " Found ${hubVarCount} Hub Variable(s)."
+        int hubVarConnCount = (state.hubVariableConnectorCount ?: 0) as Integer
+        s << " Found ${hubVarCount} Hub Variable(s)"
+        s << (hubVarConnCount > 0 ? ", ${hubVarConnCount} with a Connector." : ".")
     }
 
     int skipped = (state.rulesSkipped ?: 0) as Integer
@@ -2270,6 +2272,11 @@ void finishScan(data = null) {
             if ((n as Map).inert == true) inertCount++
         }
         state.appsInert = inertCount
+
+        // v2.0.14: read by compatibilitySummary() for the "N with a Connector"
+        // count. Captured from the built graph the same way ruleLinks/appsInert
+        // above are, rather than recomputed at page-render time.
+        state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
         log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
     }
@@ -3972,6 +3979,7 @@ Map buildGraph() {
     // discovered device (parent spec 8.3 "Connector missing").
     List unresolvedHubVarReferences = []
     List unresolvedHubVarConnectors = []
+    int hubVarConnectorCount = 0
     hubVarInventoryVars.each { String varName, meta ->
         if (!varName) return
         String varNodeId = "v${varName}"
@@ -3981,16 +3989,35 @@ Map buildGraph() {
         nodes[varNodeId].identitySource = 'hub-inventory'
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
-            if (labels.containsKey(connDevId)) {
-                nodes[varNodeId].connectorDeviceId = connDevId
-                nodes[varNodeId].connectorType = (deviceTypes[connDevId] as String) ?: null
-                String connEdgeKey = "${varNodeId}|d${connDevId}|synchronizedWith"
-                if (!seen.contains(connEdgeKey)) {
-                    seen << connEdgeKey
-                    edges << [from: varNodeId, to: "d${connDevId}", kind: 'synchronizedWith']
-                }
-            } else {
-                unresolvedHubVarConnectors << [name: varName, connectorDeviceId: connDevId]
+            // Diagnosed live 2026-08-26 against three real connectors: Hub
+            // Variable Connector devices do not appear in /hub2/devicesList,
+            // the bulk endpoint this app's own device discovery uses -
+            // `labels` stayed at its pre-connector size across three
+            // consecutive scans while getGlobalVar() correctly reported all
+            // three deviceIds throughout. getGlobalVar()'s deviceId is still
+            // Hubitat's own authoritative confirmation that this Connector
+            // exists - an ID-based reference, not the display-name join
+            // parent spec 7.2 actually warns against - so it is trusted
+            // directly. When independent discovery DID find the device
+            // (labels.containsKey), its real label/type is used; otherwise a
+            // minimal device node is synthesized here rather than silently
+            // dropping the relationship. `labels` itself is never written -
+            // it may share state.deviceLabels' backing object (the
+            // mutate-a-state-held-collection hazard this file treats as a
+            // confirmed bug class elsewhere), so the synthesized node goes
+            // straight into `nodes`, which buildGraph() already owns.
+            String devNodeId = "d${connDevId}"
+            boolean discovered = labels.containsKey(connDevId)
+            if (!discovered && !nodes[devNodeId]) {
+                nodes[devNodeId] = nodeEntry(devNodeId, "${varName} Connector" as String, 'device')
+            }
+            nodes[varNodeId].connectorDeviceId = connDevId
+            nodes[varNodeId].connectorType = (deviceTypes[connDevId] as String) ?: (m.attribute as String) ?: null
+            hubVarConnectorCount++
+            String connEdgeKey = "${varNodeId}|${devNodeId}|synchronizedWith"
+            if (!seen.contains(connEdgeKey)) {
+                seen << connEdgeKey
+                edges << [from: varNodeId, to: devNodeId, kind: 'synchronizedWith']
             }
         }
     }
@@ -4386,7 +4413,8 @@ Map buildGraph() {
 
     return [nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
-            hubVariableUnresolvedConnectors: unresolvedHubVarConnectors]
+            hubVariableUnresolvedConnectors: unresolvedHubVarConnectors,
+            hubVariableConnectorCount: hubVarConnectorCount]
 }
 
 // Scheduled rather than called inline from a save handler so the web request
