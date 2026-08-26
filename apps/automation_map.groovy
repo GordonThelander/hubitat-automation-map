@@ -5379,6 +5379,16 @@ String buildMapHtml() {
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #icons .msg { font-size:0.8em; margin-left:6px; }
   #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  /* Same "one panel's own CSS" convention as #ext/#pivot/#icons above, not a
+     reused class - see those panels' own comments for why. */
+  #releaseActivity { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+           max-width:min(74vw, 700px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
+  #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
+  #releaseActivity a { color:#7fb6d6; text-decoration:none; }
+  #releaseActivity a:hover { text-decoration:underline; }
+  #releaseActivityClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }${''}
 </style>
 </head>
 <body>
@@ -5475,6 +5485,7 @@ String buildMapHtml() {
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
   <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+  <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
   <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
@@ -5482,6 +5493,7 @@ String buildMapHtml() {
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
+<div id="releaseActivity"><button id="releaseActivityClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -6460,7 +6472,7 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 function syncLegendVisibility() {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
-  const panelOpen = [flowPanel, extPanel, pivotPanel, iconsPanel].some(function (p) {
+  const panelOpen = [flowPanel, extPanel, pivotPanel, iconsPanel, releaseActivityPanel].some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
   if (lg) lg.style.visibility = (panelOpen && !lg.classList.contains('collapsed')) ? 'hidden' : '';
@@ -6474,7 +6486,7 @@ function syncLegendVisibility() {
 // way, and only in one place.
 let panelTopZ = 30;
 function bringToFront(panel) {
-  [flowPanel, extPanel, pivotPanel, iconsPanel].forEach(function (p) {
+  [flowPanel, extPanel, pivotPanel, iconsPanel, releaseActivityPanel].forEach(function (p) {
     if (p && p !== panel) p.style.display = 'none';
   });
   panelTopZ += 1;
@@ -7611,6 +7623,71 @@ function extImport(evt) {
 // device. This is where that gets corrected - one override per device,
 // saved here, applied the next time the graph is built.
 const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
+// Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
+// live contract from Bucket/Queue 122). A read-only iframe preview of Community Utilities'
+// releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
+// the map or the export. Created at most once per page view, on first open only - no repeated
+// background loading, no automatic retry within the same page session (spec 4.1/4.2).
+const RELEASE_ACTIVITY_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/embed/release-activity/';
+const RELEASE_ACTIVITY_TRACKER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/feature-tracker/?ref=automation-map-release-preview';
+const RELEASE_ACTIVITY_TIMEOUT_MS = 8000;
+const releaseActivityPanel = document.getElementById('releaseActivity');
+const releaseActivityBody = document.getElementById('releaseActivityBody');
+let releaseActivityLoaded = false;
+
+function releaseActivityTrackerLinkHtml(label) {
+  return '<p class="sub"><a href="' + RELEASE_ACTIVITY_TRACKER_URL + '" target="_blank" rel="noopener noreferrer">' + label + '</a></p>';
+}
+
+// Fires on both a genuine load and a same-origin-policy-visible error (a
+// blocked cross-origin response still fires 'load' in most browsers, not
+// 'error' - the load event alone cannot prove the embed rendered
+// successfully). The timeout below is what actually catches a hang or a
+// response that never arrives; 'load' here mainly cancels that timeout
+// promptly on the common, successful case rather than waiting out the
+// full 8 seconds every time.
+function releaseActivityLoad() {
+  if (releaseActivityLoaded) return;
+  releaseActivityLoaded = true;
+  releaseActivityBody.innerHTML = '<p class="sub">Loading...</p>';
+  const iframe = document.createElement('iframe');
+  iframe.title = 'Hubitat releases over time';
+  iframe.loading = 'lazy';
+  iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
+  iframe.referrerPolicy = 'no-referrer';
+  let settled = false;
+  const timer = setTimeout(function () {
+    if (settled) return;
+    settled = true;
+    releaseActivityBody.innerHTML = '<p class="sub">The release preview could not be loaded.</p>' +
+      releaseActivityTrackerLinkHtml('Open the Community Utilities Update Tracker');
+  }, RELEASE_ACTIVITY_TIMEOUT_MS);
+  iframe.addEventListener('load', function () {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+  });
+  iframe.addEventListener('error', function () {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    releaseActivityBody.innerHTML = '<p class="sub">The release preview could not be loaded.</p>' +
+      releaseActivityTrackerLinkHtml('Open the Community Utilities Update Tracker');
+  });
+  // src set after both listeners are attached, so a synchronous/cached
+  // load cannot fire before this code is ready to observe it.
+  iframe.src = RELEASE_ACTIVITY_URL;
+  releaseActivityBody.innerHTML = '';
+  releaseActivityBody.appendChild(iframe);
+  // Present alongside the embed regardless of its own load outcome (spec's
+  // suggested presentation shows this as a standing part of the panel, not
+  // only a failure fallback) - the failure branch above replaces this
+  // whole body anyway, so there is never a duplicate link on screen.
+  const cta = document.createElement('div');
+  cta.innerHTML = releaseActivityTrackerLinkHtml('Open the full Update Tracker');
+  releaseActivityBody.appendChild(cta);
+}
+
 const iconsPanel = document.getElementById('icons');
 const iconsBody = document.getElementById('iconsBody');
 let ICONS = null;
@@ -8223,6 +8300,14 @@ document.getElementById('iconsBtn').addEventListener('click', function () {
 });
 document.getElementById('iconsClose').addEventListener('click', function () {
   iconsPanel.style.display = 'none';
+  syncLegendVisibility();
+});
+document.getElementById('releaseActivityBtn').addEventListener('click', function () {
+  bringToFront(releaseActivityPanel);
+  releaseActivityLoad();
+});
+document.getElementById('releaseActivityClose').addEventListener('click', function () {
+  releaseActivityPanel.style.display = 'none';
   syncLegendVisibility();
 });
 document.getElementById('exportBtn').addEventListener('click', exportJSON);
