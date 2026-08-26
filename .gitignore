@@ -9,6 +9,9 @@
 handoff.md
 amnesia.md
 
-# Cross-AI review handoffs (e.g. Codex feedback on a specific investigation) -
+# External review handoffs -
 # local working material, not project source, never pushed.
 Bucket/
+
+# Source snapshots created before direct deployment to the development hub.
+.hubitat-backups/

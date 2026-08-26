@@ -3,7 +3,7 @@
 **Status:** proposed feature contract  
 **Purpose:** augment the AI-friendly export with evidence an AI can assess directly  
 **Boundary:** read-only analysis only, no device or app control  
-**Source:** Codex, delivered via `Bucket/Queue/Automation Map AI assessment exte.txt` on
+**Source:** delivered on
 2026-08-23, saved here since `Bucket/` is gitignored and this is meant to persist. Filed as a
 backlog item only - not reasoned through or scoped for implementation yet.
 
