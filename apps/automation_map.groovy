@@ -6568,6 +6568,9 @@ function showInertPanel(node) {
 }
 
 function showFlow(appId) {
+  // Captured after focusNode() has already bumped it for the selection that
+  // led here - see focusGenerationSeq's own comment for why this exists.
+  const mySelectionSeq = focusGenerationSeq;
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
   const steps = FLOWS[appId];
@@ -6592,10 +6595,16 @@ function showFlow(appId) {
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
+    // A newer selection (any type - another app, a device, a hub variable)
+    // has already started since this render began. Writing flowChart or
+    // re-opening the panel now would silently restore this stale selection
+    // over whatever the user has actually picked since.
+    if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
     renderCommunityCard(node);
     bringToFront(flowPanel);
   }).catch(function (err) {
+    if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
     renderCommunityCard(node);
     bringToFront(flowPanel);
@@ -6622,6 +6631,10 @@ const COMMUNITY_CONTEXT_URL = 'https://gordonthelander.github.io/HPM_Manifest_Cr
 // generator's own budget - deliberately looser so a modest catalogue growth
 // between Automation Map releases does not start failing this check.
 const COMMUNITY_CONTEXT_MAX_BYTES = 1536 * 1024;
+// Well above today's 476 records - a bound against a compact response
+// carrying an unreasonable number of tiny records (Codex review 115 point
+// 1), not a forecast of real catalogue growth.
+const COMMUNITY_CONTEXT_MAX_RECORDS = 5000;
 const COMMUNITY_CONTEXT_TIMEOUT_MS = 8000;
 const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
   HUBITAT_BUILT_IN: 'Hubitat built-in',
@@ -6632,6 +6645,18 @@ const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
 const COMMUNITY_CONTEXT_LINK_LABELS = { record: 'Full record', documentation: 'Documentation', community: 'Community support', source: 'Source' };
 let communityContextPromise = null;
 let communityCardRequestSeq = 0;
+// Bumped once per focusNode() call, any selection type - separate from
+// communityCardRequestSeq above, which only guards the community-context
+// fetch itself. This guards showFlow()'s asynchronous Mermaid render: that
+// promise can still be pending when a LATER, different selection (another
+// app, or a device/hub variable) has already changed what is on screen: if
+// the earlier render is allowed to write flowChart / re-open the panel /
+// re-render the community card once it finally settles, it silently
+// restores a stale selection over the current one (Codex review 115 point
+// 3, reproduced by inspection - the community card's own sequence number
+// cannot help here, since renderCommunityCard() for a decoded flow is not
+// even called until AFTER the stale Mermaid promise resolves).
+let focusGenerationSeq = 0;
 
 // One request for the whole page view, whichever app is selected first -
 // later selections reuse this same promise (spec 3.2 steps 2-4).
@@ -6654,18 +6679,32 @@ function loadCommunityContext() {
         if (data.schemaVersion !== '1.0') throw new Error('unsupported schemaVersion ' + data.schemaVersion);
         if (data.dataset !== 'automation-map-community-context') throw new Error('unexpected dataset ' + data.dataset);
         if (!Array.isArray(data.records)) throw new Error('missing records[]');
-        if (typeof data.recordCount === 'number' && data.records.length !== data.recordCount) {
+        // recordCount must itself be a genuine non-negative integer, not
+        // merely "a number" - NaN, Infinity and a negative value all pass a
+        // bare typeof check (Codex review 115 point 1).
+        if (typeof data.recordCount !== 'number' || !isFinite(data.recordCount) ||
+            data.recordCount < 0 || Math.floor(data.recordCount) !== data.recordCount) {
+          throw new Error('recordCount is not a non-negative integer');
+        }
+        if (data.records.length !== data.recordCount) {
           throw new Error('recordCount ' + data.recordCount + ' does not match records.length ' + data.records.length);
+        }
+        if (data.recordCount > COMMUNITY_CONTEXT_MAX_RECORDS) {
+          throw new Error('recordCount ' + data.recordCount + ' exceeds the maximum allowed');
         }
         resolve(data);
       })
       .catch(reject)
       .finally(function () { if (timer) clearTimeout(timer); });
   });
-  // A rejected promise must not poison every later app selection for the
-  // rest of this page view - one bad response could otherwise mean nothing
-  // ever loads again until a reload. Each caller gets a fresh attempt.
-  communityContextPromise.catch(function () { communityContextPromise = null; });
+  // Deliberately NOT reset on rejection - a page reload is the retry
+  // boundary for v1 (Codex review 115 point 2). The first prior version of
+  // this comment argued the opposite (a bad response should not poison
+  // every later selection), but that meant every app selection after one
+  // failure re-fetched and re-waited through the full timeout, which is
+  // worse: it contradicts the "downloads the index at most once" gate. A
+  // cached rejection still resolves instantly for every later caller -
+  // Promise.catch() on an already-settled promise does not re-run anything.
   return communityContextPromise;
 }
 
@@ -6849,6 +6888,14 @@ function ccExplorerUrl(name) {
   return COMMUNITY_EXPLORER_URL + '?query=' + encodeURIComponent(name);
 }
 
+// Constant, never carrying app or hub identity in its query string (spec
+// 3.3's No match row, Codex review 115 point 4) - a plain link to the
+// general tool, for the reader to search by hand, not a deep link.
+const COMMUNITY_IDENTITY_RESOLVER_URL = 'https://gordonthelander.github.io/HPM_Manifest_Crawl/identity-resolver/';
+function ccIdentityResolverLinkHtml() {
+  return '<p class="ccLinks"><a href="' + COMMUNITY_IDENTITY_RESOLVER_URL + '" target="_blank" rel="noopener noreferrer">Search the Identity Resolver</a></p>';
+}
+
 function ccCardHtml(result, snapshotGenerated) {
   let html = '<h4>Community information</h4>';
   let clickUrl = null;
@@ -6856,6 +6903,10 @@ function ccCardHtml(result, snapshotGenerated) {
     html += ccRecordHtml(result.record, result.identityMismatch);
     const name = result.record.displayName || result.record.packageName;
     if (name) clickUrl = ccExplorerUrl(name);
+    // Spec 3.3/Codex review 115 point 4: a flagged identity should not read
+    // as a plain clean match with nowhere else to check it - the reader can
+    // go verify it themselves, not just take this card's word for it.
+    if (result.identityMismatch) html += ccIdentityResolverLinkHtml();
   } else if (result.state === 'ambiguous') {
     html += '<p class="sub">More than one Community Utilities record matches this app by name. None is shown as confirmed - click through to investigate.</p><ul>';
     result.records.slice(0, 5).forEach(function (r) {
@@ -6864,11 +6915,13 @@ function ccCardHtml(result, snapshotGenerated) {
         ' <span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[r.authority] || r.authority) + '</span></li>';
     });
     html += '</ul>';
+    html += ccIdentityResolverLinkHtml();
     const first = result.records[0];
     const name = first && (first.displayName || first.packageName);
     if (name) clickUrl = ccExplorerUrl(name);
   } else {
     html += '<p class="sub">No community information found for this app.</p>';
+    html += ccIdentityResolverLinkHtml();
   }
   if (snapshotGenerated) {
     html += '<p class="sub ccSnapshot">Catalogue snapshot: ' + extEsc(ccFormatDate(snapshotGenerated)) +
@@ -8338,6 +8391,7 @@ function renderBackLink() {
 function focusNode(id) {
   const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
   if (!node) return false;
+  focusGenerationSeq += 1;
   if (!poppingHistory) {
     const from = currentFocus();
     if (from !== id) {
