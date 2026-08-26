@@ -15,57 +15,7 @@ history, not in this delivery list.
 
 ## Now
 
-### 1. Verify and fix Hub Variable pivot accuracy
-
-**Why now:** incorrect relationship counts or directions make the pivot misleading and undermine
-trust in the new first-class Hub Variable support.
-
-**Next action:**
-
-1. Reproduce the reported mismatch on the current Dev build with a fresh scan.
-2. Count Hub Variable read and write edges independently.
-3. Compare both Hub Variable pivot presets against the graph and AI-friendly export.
-4. Determine whether the mismatch comes from filtering, edge direction, duplicate identity or
-   stale scan data.
-5. Fix the cause and verify the on-screen table and CSV export against the same fixture.
-
-**Done when:** both presets show the expected variables, apps and directions, and the exported
-rows agree with the visible table.
-
-### 2. Reconcile and apply External Systems seed assessments
-
-**Why now:** the panel structure is substantially better, but too many obvious dependencies remain
-unclassified. That makes a core feature look unfinished.
-
-The latest user-supplied seed matrix is the working ground truth. It includes explicit assessments
-for AI Connector, Bureau of Meteorology, Chromecast, CoCoHue, Google Home, Kasa, LIFX, Maker API,
-Meross, Sensibo, Tapo and mDNS, plus local-only classifications for built-in and community apps.
-Some entries conflict with older backlog material and must be reconciled rather than silently
-combined.
-
-**Next action:**
-
-1. Convert the latest seed matrix into canonical records keyed by app type and namespace.
-2. Record relationship, external system, system kind, criticality and provenance separately.
-3. Resolve conflicts with older registry and override records in favour of verified current data.
-4. Merge seeds with `state.userRegistry` without replacing user overrides.
-5. Ensure the panel, graph and AI-friendly export report the same classification.
-6. Add regression fixtures for the named integrations and for a genuinely unknown app.
-
-**Done when:** known seeded integrations are classified consistently, local-only apps are not
-presented as unexplained external dependencies, and unknown remains a meaningful exception.
-
-### 3. Correct stale discovery wording
-
-**Why now:** the install page and README still describe device-led app discovery, while the app now
-enumerates apps directly and then discovers relationships. The wording understates coverage.
-
-**Next action:** update the install page, README and any matching help text to describe direct app
-enumeration, unreadable-item gaps and relationship discovery accurately.
-
-**Done when:** public documentation matches the current scan implementation and status model.
-
-### 4. Desktop UI review and map workspace modernisation
+### 1. Desktop UI review and map workspace modernisation
 
 **Why now:** the desktop map is powerful but visually dense. Important actions compete with raw
 data, panels use space inconsistently, and several views are difficult to scan. This is a product
@@ -105,17 +55,34 @@ usability issue, not cosmetic polish.
 and Export; only one primary panel is open at a time; ordinary text is comfortably readable; and
 the graph remains useful while tools are opened and closed.
 
+### 2. Open Automation Map in a normal browser tab
+
+**Why now:** Hubitat's generated link opens a fixed-width popup that is cramped for the graph and
+can be blocked by browsers. This is a contained usability fix that supports the wider desktop UI
+work without depending on its redesign.
+
+**Next action:** replace the framework popup link with a safe plain link that opens the map in a
+normal new tab, then verify local, Remote Admin and cloud access paths.
+
+**Done when:** the map reliably opens in a normal tab at the available browser size without
+regressing authenticated local or remote access.
+
+### 3. Revalidate Local Variable handling
+
+**Why now:** first-class Hub Variable support is now live, but older evidence suggested that an
+identically named Rule Machine Local Variable could be conflated with a Hub Variable. This is the
+remaining variable-model correctness question.
+
+**Next action:** capture a fresh fixture containing identically named Local and Hub Variables,
+verify identity and edge separation in the graph, pivots and AI-friendly export, then fix only if
+the current build still conflates them.
+
+**Done when:** the fixture proves that Local and Hub Variable identities and relationships remain
+separate across every output, or a verified fix makes them separate.
+
 ## Next
 
-### 5. Revalidate Local Variable handling
-
-Earlier evidence suggested some Rule Machine Local Variables could be conflated with Hub Variables.
-That finding predates the authoritative Hub Variable inventory and first-class variable model.
-
-**Next action:** capture a fresh fixture containing identically named local and Hub Variables,
-verify identity and edge separation, then fix only if the current build still conflates them.
-
-### 6. Include Dashboard usage in cleanup findings
+### 4. Include Dashboard usage in cleanup findings
 
 Device cleanup advice should account for devices referenced by Hubitat Dashboard, not only rules and
 apps already represented by the map.
@@ -123,7 +90,7 @@ apps already represented by the map.
 **Next action:** confirm a reliable read-only source for dashboard device references, model the
 relationship, then suppress false unused-device findings.
 
-### 7. Add runtime activity and performance context
+### 5. Add runtime activity and performance context
 
 Users want help finding automations that may contribute to hub load, but configuration structure is
 not execution evidence.
@@ -131,14 +98,14 @@ not execution evidence.
 **Next action:** define a conservative metric model using available app statistics and timestamps,
 label observations as evidence rather than conclusions, and prototype a ranked diagnostic view.
 
-### 8. Expand a focused map one hop at a time
+### 6. Expand a focused map one hop at a time
 
 Allow users to reveal immediate neighbours without returning to the full graph.
 
 **Next action:** specify one-hop expansion, duplicate suppression, reset behaviour and visible
 provenance. This replaces the overlapping multi-select and extend-map backlog requests.
 
-### 9. Export and import configured app data for migration
+### 7. Export and import configured app data for migration
 
 Provide a safe, portable representation of user-maintained settings such as external-system
 overrides and icon choices.
@@ -146,37 +113,29 @@ overrides and icon choices.
 **Next action:** define a versioned schema, conflict rules, preview step and validation behaviour.
 Never import scan results or secrets as configuration.
 
-### 10. Open Automation Map in a normal browser tab
-
-Hubitat's generated link opens a fixed-width popup, which is cramped for the graph and can be
-blocked by browsers.
-
-**Next action:** replace the framework popup link with a safe plain link that opens the map in a
-normal new tab, then verify local and remote access paths.
-
 ## Later / v3
 
-### 11. Move graph derivation into the browser
+### 8. Move graph derivation into the browser
 
 Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
 deriving view-specific graph structures client-side.
 
-### 12. Move remaining display shaping into the browser
+### 9. Move remaining display shaping into the browser
 
 After graph derivation is stable, migrate filtering, grouping, styling and panel preparation while
 keeping scan collection and authoritative normalization on the hub.
 
-### 13. Separate the frontend from the Groovy GString
+### 10. Separate the frontend from the Groovy GString
 
 Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
 breaking single-app Hubitat distribution.
 
-### 14. Delta scanning
+### 11. Delta scanning
 
 Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
 but incomplete map is not acceptable.
 
-### 15. Same-hub warm-start cache
+### 12. Same-hub warm-start cache
 
 Investigate a bounded cache that can restore a recent map quickly while clearly showing its age and
 never presenting stale data as a completed current scan.
@@ -186,14 +145,20 @@ never presenting stale data as a completed current scan.
 - **Hub Variable search:** shipped.
 - **Variable Connector association:** shipped.
 - **First-class Hub Variable identity, focus and export:** shipped.
+- **Hub Variable pivot reconciliation:** fixed and independently verified on the Dev hub in
+  v2.0.15, including a trailing-period variable with six read/write relationships.
 - **Insights summary and readability redesign:** shipped; further work belongs to the desktop UI
   review above.
-- **External Systems hierarchy and identity handling:** shipped; classification coverage remains
-  active in item 2.
+- **Actionable Insights guidance and AI-export alignment:** shipped and independently verified on
+  the Dev hub in v2.0.15.
+- **External Systems hierarchy, identity and reviewed seed classifications:** shipped and
+  independently verified in v2.0.15. The only unassessed apps in the verification scan were two
+  intentionally unknown scratch/test apps.
+- **Current discovery wording:** corrected on the install page and in the README in v2.0.15.
 - **Persistent manual node layout:** rejected because it conflicts with changing graph membership
   and creates fragile state.
 - **Tablet-only legend redesign:** rejected as a separate item; desktop readability and responsive
-  behaviour are covered by item 4.
+  behaviour are covered by item 1.
 - **Arbitrary node exclusion:** rejected because it can hide evidence and make the map misleading.
 - **Single Hub Variable icon:** delivered in substance through first-class variable styling.
 
