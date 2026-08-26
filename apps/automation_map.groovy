@@ -5524,16 +5524,16 @@ String buildMapHtml() {
      throughout is one panel's CSS per panel rather than a shared class. */
   #pivot { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
            max-width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #pivot h3 { margin:0 0 4px 0; font-size:0.95em; }
-  #pivot .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
+  #pivot h3 { margin:0 0 4px 0; font-size:16px; }
+  #pivot .sub { opacity:0.72; font-size:14px; margin:0 0 12px 0; line-height:1.4; }
   #pivot a { color:#7fb6d6; text-decoration:none; }
   #pivot a:hover { text-decoration:underline; }
-  #pivot table { border-collapse:collapse; width:100%; font-size:0.8em; }
+  #pivot table { border-collapse:collapse; width:100%; font-size:14px; }
   #pivot th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #pivot td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
-  #pivot select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:0.85em; font-family:inherit; }
-  #pivot label { font-size:0.8em; display:flex; align-items:center; gap:4px; }
-  #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:0.85em; margin:0 4px 4px 0; }
+  #pivot select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:14px; font-family:inherit; }
+  #pivot label { font-size:14px; display:flex; align-items:center; gap:4px; }
+  #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:14px; margin:0 4px 4px 0; }
   #pivot .rowbtn:hover { border-color:#4a7a94; color:#cfe3ea; }
   #pivotClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Its own panel rather than reusing #ext's markup, same "one panel's CSS
@@ -5560,52 +5560,52 @@ String buildMapHtml() {
      and Gordon could not read it. Anchoring here stops the compounding, and
      the .sub rule below neutralises #flow's own 0.78em so a nested caption
      cannot shrink twice. */
-  #insRoot { font-size:14px; line-height:1.5; }
+  #insRoot { font-size:15px; line-height:1.5; }
   /* Explicit px, not em. An em here still compounds against whatever the
      ancestor resolved to - a .sub inside .insPlain measured 10.7px even after
      the base was set, because #flow's own .sub rule was applying to it first.
      13px is the floor for everything secondary in this panel. */
-  #insRoot .sub, #insRoot .insPlain .sub, #insRoot .insDetail .sub { font-size:13px; }
+  #insRoot .sub, #insRoot .insPlain .sub, #insRoot .insDetail .sub { font-size:14px; }
   #insRoot .insCards { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:0 0 10px 0; }
   #insRoot .insCard { background:#0d2630; border:1px solid #2a4a57; border-radius:5px; padding:10px 6px; cursor:pointer;
                       color:#e8f2f6; font-family:inherit; text-align:center; display:flex; flex-direction:column; gap:3px; }
   #insRoot .insCard:hover { border-color:#4a7a94; }
   #insRoot .insCard b { font-size:1.75em; line-height:1.1; }
-  #insRoot .insCard span { font-size:13px; opacity:0.85; line-height:1.25; }
+  #insRoot .insCard span { font-size:14px; opacity:0.85; line-height:1.25; }
   #insRoot .insCardZero b { opacity:0.35; }
   #insRoot .insCardAlert { border-color:#a5563f; }
   #insRoot .insCardAlert b { color:#e0a95f; }
-  #insRoot .insNote { font-size:13px; opacity:0.65; margin:0 0 12px 0; line-height:1.45; }
+  #insRoot .insNote { font-size:14px; opacity:0.65; margin:0 0 12px 0; line-height:1.45; }
   #insRoot .insStart { background:#0d2630; border:1px solid #2a4a57; border-left:3px solid #4a7a94; border-radius:4px;
-                       padding:8px 10px; margin:0 0 12px 0; font-size:13.5px; line-height:1.45; }
+                       padding:8px 10px; margin:0 0 12px 0; font-size:14px; line-height:1.45; }
   #insRoot .insSec { border-top:1px solid #16323c; }
   #insRoot .insHead { width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; cursor:pointer;
                       color:#cfe3ea; font-family:inherit; font-size:1.08em; font-weight:600; padding:10px 2px; text-align:left; }
   #insRoot .insHead:hover { color:#fff; }
   #insRoot .insHeading { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
   #insRoot .insTitle { display:block; }
-  #insRoot .insSummary { display:block; color:#9fb4bc; font-size:13px; font-weight:400; line-height:1.35; }
+  #insRoot .insSummary { display:block; color:#9fb4bc; font-size:14px; font-weight:400; line-height:1.35; }
   #insRoot .insChev { opacity:0.7; font-size:0.9em; }
   #insRoot .insBadge { background:#1c3540; color:#9fb4bc; border-radius:9px; padding:1px 9px; font-size:0.9em; }
   #insRoot .insBadgeZero { opacity:0.4; }
   #insRoot .insBody { padding:0 0 10px 0; }
-  #insRoot .insOk { font-size:13.5px; opacity:0.7; margin:0 0 6px 2px; }
-  #insRoot .insLead { font-size:13.5px; opacity:0.85; margin:8px 0 6px 2px; line-height:1.5; }
+  #insRoot .insOk { font-size:14px; opacity:0.7; margin:0 0 6px 2px; }
+  #insRoot .insLead { font-size:14px; opacity:0.85; margin:8px 0 6px 2px; line-height:1.5; }
   #insRoot .insRow { display:flex; align-items:center; gap:9px; padding:6px 2px; border-bottom:1px solid #10262e; font-size:1em; }
   #insRoot .insName { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #insRoot .insMeta { opacity:0.65; font-size:13px; white-space:nowrap; }
+  #insRoot .insMeta { opacity:0.65; font-size:14px; white-space:nowrap; }
   #insRoot .insBtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer;
-                     padding:3px 9px; font-size:13px; font-family:inherit; white-space:nowrap; }
+                     padding:3px 9px; font-size:14px; font-family:inherit; white-space:nowrap; }
   #insRoot .insBtn:hover { border-color:#4a7a94; color:#cfe3ea; }
   #insRoot .insChevPad { display:inline-block; width:26px; }
   #insRoot .insDetail { padding:6px 2px 9px 12px; border-left:2px solid #1c3540; margin:0 0 6px 4px; }
-  #insRoot .insDetail p { margin:4px 0; font-size:13.5px; line-height:1.5; }
+  #insRoot .insDetail p { margin:4px 0; font-size:14px; line-height:1.5; }
   #insRoot .insDetail b { color:#cfe3ea; }
   #insRoot .insShowAll { margin:9px 0 2px 2px; }
-  #insRoot .insPlain { margin:5px 0 5px 18px; padding:0; font-size:13.5px; }
+  #insRoot .insPlain { margin:5px 0 5px 18px; padding:0; font-size:14px; }
   /* #flow li sets 0.85em and overrides inheritance from the ul, which pulled
      these list items back down to 11.5px on their own. */
-  #insRoot .insPlain li { margin:3px 0; font-size:13.5px; }
+  #insRoot .insPlain li { margin:3px 0; font-size:14px; }
   #insRoot a { color:#7fb6d6; text-decoration:none; }
   #insRoot a:hover { text-decoration:underline; }
   @media (max-width: 1100px) { #insRoot .insCards { grid-template-columns:repeat(2, 1fr); } }
