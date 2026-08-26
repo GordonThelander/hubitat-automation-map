@@ -4726,6 +4726,64 @@ List discoveredAppTypes() {
     return types.sort()
 }
 
+// Identity and hierarchy per app type, for classifying the ROOT integration
+// relationship rather than asking the user to classify every definition
+// independently (Codex review 136). discoveredAppTypes() above reduces
+// everything to a type-name string and therefore throws away exactly the two
+// pieces of evidence needed to avoid noise: which namespace a definition
+// belongs to, and whether it is a child of something already classified.
+//
+// On this hub that distinction collapses 57 Rule-5.1 rows into one Rule
+// Machine root, which is the bulk of what makes the panel look unresolved.
+//
+// Returns type -> [type, namespace, count, rootType, isRoot].
+Map appTypeIdentities() {
+    Map info = (state.appInfo ?: [:]) as Map
+    Map out = [:]
+    info.each { String appId, v ->
+        if (!(v instanceof Map)) return
+        Map m = v as Map
+        String t = "${m.type}"
+        if (!t || t == 'null') return
+        if (t.startsWith(APP_FAMILY)) return
+
+        // Walk to the root. Bounded and cycle-guarded on purpose: this is
+        // persisted state that outlives the apps it points at, so a stale
+        // parentAppId referring to a deleted app is possible even though none
+        // exists on this hub today. Either way the walk stops and the app is
+        // treated as its own root rather than looping.
+        Map cur = m
+        Set seen = ["${appId}" as String]
+        int hops = 0
+        while (cur?.parent && hops < 12) {
+            String pid = "${cur.parent}"
+            if (seen.contains(pid)) break
+            seen << pid
+            Object p = info[pid]
+            if (!(p instanceof Map)) break
+            cur = p as Map
+            hops++
+        }
+        String rootType = "${cur?.type}"
+        if (!rootType || rootType == 'null') rootType = t
+
+        Map e = out[t] as Map
+        if (e == null) {
+            e = [type: t, namespace: null, count: 0, rootType: t, isRoot: true]
+            out[t] = e
+        }
+        e.count = ((e.count ?: 0) as Integer) + 1
+        if (m.namespace && !e.namespace) e.namespace = "${m.namespace}"
+        // Any instance rooted elsewhere makes the whole type a child: a type
+        // that is sometimes a child is not a root integration to classify.
+        if (rootType != t) {
+            e.isRoot = false
+            e.rootType = rootType
+        }
+    }
+    return out
+}
+
 // The declarations for one app type. Returns [] for an unclassified type and
 // for one explicitly marked as needing nothing, which the caller separates by
 // asking classifiedTypes().
@@ -4846,6 +4904,10 @@ String externalsJson() {
         criticality: EXTERNAL_CRITICALITY,
         noneMarker: EXTERNAL_NONE,
         appTypes: types,
+        // Identity and hierarchy alongside the flat type list, not instead of
+        // it: user declarations are keyed by type string and must keep
+        // working unchanged (Codex review 134 point 5).
+        appTypeInfo: appTypeIdentities(),
         // Unclassified means nobody has said, by user OR registry. An app type
         // the registry covers is not a gap the user needs to fill.
         unclassified: types.findAll { !classified.contains(it) && !regTypes.contains(it) },
@@ -7665,7 +7727,16 @@ function extLoad() {
   extBody.innerHTML = '<h3>External systems</h3><p class="sub">Loading...</p>';
   fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
-    .then(function (d) { EXT = d; extRender(''); })
+    .then(function (d) {
+      EXT = d;
+      extRender('');
+      // Evidence is an enhancement, so the table is rendered first and
+      // re-rendered only if the lookup succeeds. A slow or failed Community
+      // Utilities fetch must never delay or break the panel.
+      extLoadEvidence().then(function (m) {
+        if (m && Object.keys(m).length && extPanel.style.display !== 'none') extRender('');
+      });
+    })
     .catch(function (e) {
       extBody.innerHTML = '<h3>External systems</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
     });
@@ -7683,18 +7754,95 @@ function extRegistryFor(type) {
   return (EXT.registry || []).filter(function (e) { return e.type === type; });
 }
 
+// Which of the three groups an app type belongs in, following the ladder in
+// Codex review 136. Order matters: the first source that answers wins.
+//
+// Deliberately absent is a curated built-in table of my own. Inventing
+// classifications for Hubitat built-ins here would assert reviewed evidence
+// that does not exist - the same thing we declined to do for evidenceHealth
+// and NONE_EXPECTED. The reviewed registry is the curated source, and
+// extending its coverage is website-side work.
+function extClassify(type) {
+  const info = (EXT.appTypeInfo || {})[type] || {};
+  if ((EXT.entries || []).some(function (e) { return e.type === type; })) return { group: 'declared', info: info };
+  if (info.isRoot === false) return { group: 'inherited', info: info };
+  if ((EXT.registry || []).some(function (e) { return e.type === type; })) return { group: 'registry', info: info };
+  return { group: 'unknown', info: info };
+}
+
+// Network evidence for an unknown root, from the projection the Context Card
+// already downloads once per page view - no second fetch (Codex review 134
+// point 3). Strictly a review aid: LAN/CLOUD/BOTH names no dependency and
+// must never create a graph node on its own, so it is shown as a badge and
+// nothing here offers to accept it.
+let EXT_EVIDENCE = null;
+function extLoadEvidence() {
+  if (EXT_EVIDENCE) return Promise.resolve(EXT_EVIDENCE);
+  return loadCommunityContext().then(function (data) {
+    const byName = {};
+    (data.records || []).forEach(function (r) {
+      (r.definitionIdentities || []).forEach(function (di) {
+        const k = String(di.name || '').trim().toLowerCase();
+        if (k && !byName[k]) byName[k] = r;
+      });
+    });
+    EXT_EVIDENCE = byName;
+    return byName;
+  }).catch(function () { EXT_EVIDENCE = {}; return EXT_EVIDENCE; });
+}
+
+function extEvidenceBadge(type) {
+  if (!EXT_EVIDENCE) return '';
+  const info = (EXT.appTypeInfo || {})[type] || {};
+  const rec = EXT_EVIDENCE[String(type).trim().toLowerCase()];
+  if (!rec) return '';
+  // Namespace strengthens a match but its absence never proves a built-in
+  // (Codex review 134 point 5) - it can equally mean the join produced
+  // nothing. When both sides declare one and they disagree, do not claim a
+  // match at all.
+  if (info.namespace && rec.definitionIdentities) {
+    const nsMatch = rec.definitionIdentities.some(function (di) {
+      return !di.namespace || String(di.namespace).trim().toLowerCase() === String(info.namespace).trim().toLowerCase();
+    });
+    if (!nsMatch) return '';
+  }
+  const ne = rec.networkEvidence;
+  if (!ne || !ne.classification) return '';
+  return '<span class="tag tag-reg" title="Community Utilities network evidence. Names no dependency - review before declaring one.">' +
+    extEsc(ne.classification) + (ne.reviewed ? ', reviewed' : ', not reviewed') + '</span>';
+}
+
 function extRender(message) {
   const kinds = EXT.kinds || {};
   const crits = EXT.criticality || {};
   const none = EXT.noneMarker;
 
+  // Classify every discovered type once, then render three groups instead of
+  // one flat list where 57 inherited rule instances drown the handful of real
+  // integrations (Codex review 136).
+  const groups = { declared: [], registry: [], unknown: [], inherited: [] };
+  (EXT.appTypes || []).forEach(function (t) { groups[extClassify(t).group].push(t); });
+
   let h = '<h3>External systems</h3>';
   h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
        'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
 
+  if (groups.inherited.length) {
+    const instances = groups.inherited.reduce(function (n, t) {
+      return n + (((EXT.appTypeInfo || {})[t] || {}).count || 0);
+    }, 0);
+    h += '<p class="sub"><b>' + groups.inherited.length + ' app type(s)</b> covering ' + instances +
+         ' installed app(s) are children of another app and inherit its assessment, so they are not listed separately: ' +
+         extEsc(groups.inherited.slice(0, 6).map(function (t) {
+           const i = (EXT.appTypeInfo || {})[t] || {};
+           return t + ' (under ' + (i.rootType || 'a parent') + ')';
+         }).join(', ')) + (groups.inherited.length > 6 ? ', and others.' : '.') + '</p>';
+  }
+
   h += '<table><thead><tr><th>App type</th><th>Needs</th><th>Kind</th><th>Needed for</th><th></th></tr></thead><tbody>';
 
-  (EXT.appTypes || []).forEach(function (type) {
+  const ordered = groups.declared.concat(groups.registry).concat(groups.unknown);
+  ordered.forEach(function (type) {
     const rows = extRowsFor(type);
     if (!rows.length) {
       const fromRegistry = extRegistryFor(type);
@@ -7710,8 +7858,15 @@ function extRender(message) {
         });
         return;
       }
-      h += '<tr class="unclassified"><td>' + extEsc(type) + '</td>' +
-           '<td colspan="3"><span class="tag tag-unset">not classified</span></td>' +
+      // "Not assessed" rather than "not classified": nobody has reviewed this
+      // identity, which is a different and more honest statement than the app
+      // being unclassifiable (Codex review 134 point 2). Any network evidence
+      // is shown beside it as a review aid, never as an answer.
+      const nsInfo = (EXT.appTypeInfo || {})[type] || {};
+      const badge = extEvidenceBadge(type);
+      h += '<tr class="unclassified"><td>' + extEsc(type) +
+           (nsInfo.namespace ? '<br><span class="sub">' + extEsc(nsInfo.namespace) + '</span>' : '') + '</td>' +
+           '<td colspan="3"><span class="tag tag-unset">not assessed</span> ' + badge + '</td>' +
            '<td><button class="rowbtn" data-add="' + extEsc(type) + '">add</button>' +
            '<button class="rowbtn" data-none="' + extEsc(type) + '">needs nothing</button></td></tr>';
       return;
