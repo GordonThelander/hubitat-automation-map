@@ -5393,8 +5393,17 @@ String buildMapHtml() {
      figure - the widest existing panel - which also happens to match the
      spec's own stated upper design bound of 1100 CSS pixels
      (community_release_activity_embed_spec.md section 3.3). */
-  #releaseActivity { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  /* Centered, unlike #flow/#ext/#pivot/#icons' shared top:100px/left:10px
+     corner placement - a deliberate departure for this one panel, not an
+     oversight of the convention. A rule flowchart or a data table reads
+     fine pinned to a corner; a wide chart the user is meant to actually
+     look at does not. 92vw (up from 80vw) reaches the 1100px cap on more
+     realistic window widths - the cap itself stays at 1100px, the embed's
+     own stated design bound (section 3.3), since widening the panel past
+     what the chart itself was built and tested for would add empty space
+     around it, not a bigger chart. */
+  #releaseActivity { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+           width:min(92vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
   #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
@@ -7651,13 +7660,16 @@ function releaseActivityTrackerLinkHtml(label) {
   return '<p class="sub"><a href="' + RELEASE_ACTIVITY_TRACKER_URL + '" target="_blank" rel="noopener noreferrer">' + label + '</a></p>';
 }
 
-// Fires on both a genuine load and a same-origin-policy-visible error (a
-// blocked cross-origin response still fires 'load' in most browsers, not
-// 'error' - the load event alone cannot prove the embed rendered
-// successfully). The timeout below is what actually catches a hang or a
-// response that never arrives; 'load' here mainly cancels that timeout
-// promptly on the common, successful case rather than waiting out the
-// full 8 seconds every time.
+// A postMessage readiness handshake, not the iframe's own 'load' event -
+// 'load' fires even for a blocked or failed cross-origin response (a 404,
+// a future framing refusal), which would otherwise be treated as a
+// successful preview forever (Codex review 124 point 1). The published
+// embed (HPM_Manifest_Crawl commit 2690d3b, contract in Bucket/Queue 126)
+// sends { type: 'automation-map-release-activity-ready', version: 1 } via
+// window.parent.postMessage only after its own chart/range/freshness text
+// has actually rendered - only that verified message may clear the timer.
+// 'load' is not observed at all here; it proves nothing this handshake
+// does not already prove better.
 function releaseActivityLoad() {
   if (releaseActivityLoaded) return;
   releaseActivityLoaded = true;
@@ -7668,26 +7680,39 @@ function releaseActivityLoad() {
   iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
   iframe.referrerPolicy = 'no-referrer';
   let settled = false;
-  const timer = setTimeout(function () {
-    if (settled) return;
-    settled = true;
-    releaseActivityBody.innerHTML = '<p class="sub">The release preview could not be loaded.</p>' +
-      releaseActivityTrackerLinkHtml('Open the Community Utilities Update Tracker');
-  }, RELEASE_ACTIVITY_TIMEOUT_MS);
-  iframe.addEventListener('load', function () {
+
+  function fail() {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-  });
-  iframe.addEventListener('error', function () {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
+    window.removeEventListener('message', onMessage);
     releaseActivityBody.innerHTML = '<p class="sub">The release preview could not be loaded.</p>' +
       releaseActivityTrackerLinkHtml('Open the Community Utilities Update Tracker');
-  });
-  // src set after both listeners are attached, so a synchronous/cached
-  // load cannot fire before this code is ready to observe it.
+  }
+
+  // The embed's own origin is fixed and known here (unlike the embed
+  // itself, which cannot know its private Hubitat parent's origin and so
+  // must post with a wildcard target) - every check below is required, not
+  // any one alone: origin proves who sent it, contentWindow proves it came
+  // from this iframe specifically and not some other frame on the page,
+  // and the type/version match proves it is this handshake and not an
+  // unrelated message this page happens to receive.
+  function onMessage(ev) {
+    if (settled) return;
+    if (ev.origin !== 'https://gordonthelander.github.io') return;
+    if (ev.source !== iframe.contentWindow) return;
+    const d = ev.data;
+    if (!d || d.type !== 'automation-map-release-activity-ready' || d.version !== 1) return;
+    settled = true;
+    clearTimeout(timer);
+    window.removeEventListener('message', onMessage);
+  }
+
+  const timer = setTimeout(fail, RELEASE_ACTIVITY_TIMEOUT_MS);
+  window.addEventListener('message', onMessage);
+  iframe.addEventListener('error', fail);
+  // src set after the listener is attached, so a synchronous/cached
+  // response cannot post its ready message before this code is listening.
   iframe.src = RELEASE_ACTIVITY_URL;
   releaseActivityBody.innerHTML = '';
   releaseActivityBody.appendChild(iframe);
