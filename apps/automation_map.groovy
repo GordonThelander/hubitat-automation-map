@@ -1678,7 +1678,6 @@ void finalizeDevicePhase(String scanId) {
 // Carrying the caller's own remembered token instead closes that.
 void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
-    String selfId = "${app.id}"
     // Best-effort, not fatal - see fetchAppTypeNamespaces()'s own comment.
     // Fetched once here rather than per-app, same reasoning as appsList.
     Map appTypeNamespaceResult = fetchAppTypeNamespaces()
@@ -1691,9 +1690,10 @@ void startAppPhase(String lockToken) {
         markScanFinished(lockToken, "Could not list installed apps: ${appListing.error}")
         return
     }
-    (appListing.ids as List).each { String appId ->
-        if (appId != selfId) appIds << appId
-    }
+    // Own app.id included, not skipped: it fetches and processes through the
+    // same pipeline as any other app, and the out.type check below is what
+    // suppresses its relationship data.
+    appIds.addAll(appListing.ids as List)
     // Re-checked here, not only trusted from the caller's own earlier check -
     // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
     // fresh acquisition can interleave during it exactly as easily as around
@@ -4100,12 +4100,6 @@ Map buildGraph() {
         boolean hasVarRelationship = (appMap.hubVarWrites ?: []) ||
             (appMap.hubVarReads ?: []).any { Map r -> r.confirmed == true || confirmedVarNames.contains("${r.variable}") }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
-        // This app's own instances are the one exception, and stay hidden. They
-        // are excluded from the graph deliberately, so drawing them as apps that
-        // reference nothing would be actively misleading: they reference the
-        // whole hub.
-        if (inert && "${appMap.type}".startsWith(APP_FAMILY)) return
-
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
         // [paused] is this app's own annotation, not the hub's, so it belongs on
@@ -4116,8 +4110,12 @@ Map buildGraph() {
         // An inert app's subtitle carries why it is empty instead of its engine.
         // The engine is the less useful of the two here: "Rule Machine" on a
         // square with no edges raises the question, "holds 46 apps" answers it.
+        // This app's own instances are a fixed exception: they read the whole
+        // hub rather than driving anything, which is a fact about what they
+        // are, not an absence to explain the way an empty container is.
+        boolean isSelfFamily = "${appMap.type}".startsWith(APP_FAMILY)
         String subtitle = unreadable ? 'could not be read' :
-            (inert ? inertReason(appMap.inert as Map, appInfo, appMap.parent as String) : (appMap.type as String))
+            (inert ? (isSelfFamily ? 'reads the whole hub, drives nothing' : inertReason(appMap.inert as Map, appInfo, appMap.parent as String)) : (appMap.type as String))
         nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
         // The raw underlying type, unconditionally - subtitle above is
         // overwritten with the inert/unreadable reason for those nodes, so it
@@ -4722,9 +4720,9 @@ List discoveredAppTypes() {
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
         if (!t || t == 'null') return
-        // This app and its dev twin are already excluded from the graph.
-        // Offering them for classification asks the user to declare what
-        // Automation Map depends on, which is nothing and not their problem.
+        // This app and its dev twin have no external dependency to declare -
+        // offering them here would ask the user to classify what Automation
+        // Map depends on, which is nothing.
         if (t.startsWith(APP_FAMILY)) return
         if (!types.contains(t)) types << t
     }
