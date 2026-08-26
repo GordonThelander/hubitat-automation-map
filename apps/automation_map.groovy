@@ -25,13 +25,9 @@
  * via a self-request to 127.0.0.1 - an established community technique, not a
  * public API:
  *
- *   /device/fullJson/<id>         parentApp + appsUsing (NOT appsUsingForDialog,
- *                                 which the hub caps at five entries per device
- *                                 with only a count of the remainder), used to
- *                                 DISCOVER which app ids exist
+ *   /device/fullJson/<id>         device metadata and relationship evidence
  *   /hub2/appsList                the complete installed-app tree in one call,
- *                                 unioned with device-led discovery so an app
- *                                 that touches no device is not invisible
+ *                                 including apps that touch no device
  *   /installedapp/statusJson/<id> the real relationship data per app:
  *                                 childDevices, eventSubscriptions, and every
  *                                 setting that resolves to devices
@@ -383,7 +379,7 @@ Map main() {
         if (!ready) {
             section {
                 paragraph '<b>Press <i>Done</i> to install Automation Map.</b> <span style="color:#c0392b"><b>Your first scan then starts by itself and takes well under a minute, even on a large hub. Open the app again to watch it and to view the map.</b></span>'
-                paragraph '<span style="opacity:0.75">There is nothing to configure. Every device on the hub is scanned, and the apps are found by asking each device which apps use it.</span>'
+                paragraph '''<span style="opacity:0.75">There is nothing to configure. Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.</span>'''
             }
         }
     }
@@ -2783,10 +2779,10 @@ List extractHubVariableWrites(Map data) {
         Map act = (actVal instanceof Map) ? (actVal as Map) : [:]
         String method = (act.method ?: settingValues["actSubType.${num}"] ?: '') as String
         if (method != 'getSetVariable') return
-        // Trailing period observed on the one fixture verified so far (rule
-        // 2981, "TestHubUptime.") - not yet confirmed as universal, so strip
-        // rather than assume it is always present. See handoff.md Section 22.
-        String varName = ("${settingValues["xVarV.${num}"] ?: ''}").replaceAll(/\.$/, '')
+        // Preserve the name exactly. A trailing period can be part of the
+        // actual Hub Variable name, as confirmed by the authoritative hub
+        // inventory, so stripping it disconnects valid reads and writes.
+        String varName = "${settingValues["xVarV.${num}"] ?: ''}"
         if (!varName) return
         Map write = [variable: varName]
         // Only the device-attribute source has been observed. A fixed value or
@@ -2861,7 +2857,7 @@ List extractHubVariableReads(Map data) {
         (expr instanceof List ? expr as List : []).each { item ->
             String s = "${item}"
             if (settingValues["rCapab_${s}"] != 'Variable') return
-            String varName = ("${settingValues["xVar_${s}"] ?: ''}").replaceAll(/\.$/, '')
+            String varName = "${settingValues["xVar_${s}"] ?: ''}"
             if (varName) found[varName] = true
         }
     }
@@ -2876,7 +2872,7 @@ List extractHubVariableReads(Map data) {
     settingValues.keySet().findAll { it ==~ /^tCapab\d+$/ }.each { String capabKey ->
         if (settingValues[capabKey] != 'Variable') return
         String num = capabKey.replaceAll('^tCapab', '')
-        String varName = ("${settingValues["xVar${num}"] ?: ''}").replaceAll(/\.$/, '')
+        String varName = "${settingValues["xVar${num}"] ?: ''}"
         if (varName) found[varName] = true
     }
 
@@ -3981,6 +3977,22 @@ String normalizeHubVariableType(String rawType) {
     }
 }
 
+// Resolve stored references against the authoritative inventory. Exact identity
+// wins; the trailing-period fallback applies only to one unambiguous match.
+String canonicalHubVariableName(String rawName, Map inventoryVars) {
+    String raw = rawName ?: ''
+    if (!raw || !inventoryVars) return raw
+    if (inventoryVars.containsKey(raw)) return raw
+
+    String comparable = raw.endsWith('.') ? raw.substring(0, raw.length() - 1) : raw
+    List matches = inventoryVars.keySet().findAll { Object key ->
+        String candidate = "${key}"
+        String candidateComparable = candidate.endsWith('.') ? candidate.substring(0, candidate.length() - 1) : candidate
+        candidateComparable == comparable
+    } as List
+    return matches.size() == 1 ? "${matches[0]}" : raw
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -4007,12 +4019,18 @@ Map buildGraph() {
     // cannot be trusted alone - Rule Machine's own %device%/%time%/%date%
     // notification tokens match the same pattern as a real Hub Variable
     // reference and are not one.
+    Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
+    Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
     Set confirmedVarNames = []
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        (appMap.hubVarWrites ?: []).each { Map w -> if (w.variable) confirmedVarNames << "${w.variable}" }
-        (appMap.hubVarReads ?: []).each { Map r -> if (r.variable && r.confirmed) confirmedVarNames << "${r.variable}" }
+        (appMap.hubVarWrites ?: []).each { Map w ->
+            if (w.variable) confirmedVarNames << canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
+        }
+        (appMap.hubVarReads ?: []).each { Map r ->
+            if (r.variable && r.confirmed) confirmedVarNames << canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
+        }
     }
 
     // Authoritative Hub Variable inventory (v2.0.14), published by finishScan()
@@ -4022,9 +4040,7 @@ Map buildGraph() {
     // write/read loop below, so that loop's existing `if (!nodes[varNodeId])`
     // guards naturally treat an inventory-sourced node as already present
     // (parent spec 6.3 reconciliation) instead of overwriting it.
-    Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
     boolean hubVarInventoryComplete = "${hubVarInventory.status}" == 'complete'
-    Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
     // Findings: a proven structured reference to a name absent from a COMPLETE
     // inventory (not promoted to a node - parent spec 6.3, a design review
     // point 5). There is no equivalent "Connector missing" finding: a
@@ -4098,7 +4114,10 @@ Map buildGraph() {
         // must not itself count as a relationship, or an app with only a
         // false-positive candidate would be wrongly called non-inert too.
         boolean hasVarRelationship = (appMap.hubVarWrites ?: []) ||
-            (appMap.hubVarReads ?: []).any { Map r -> r.confirmed == true || confirmedVarNames.contains("${r.variable}") }
+            (appMap.hubVarReads ?: []).any { Map r ->
+                String canonical = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
+                r.confirmed == true || confirmedVarNames.contains(canonical)
+            }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
@@ -4223,7 +4242,7 @@ Map buildGraph() {
         // so unlike a device the node is identified by name, not by an id the
         // scan discovered it under.
         (appMap.hubVarWrites ?: []).each { Map w ->
-            String varName = "${w.variable}"
+            String varName = canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
             if (!varName) return
             String varNodeId = "v${varName}"
             // A proven structured write naming a variable absent from a
@@ -4261,7 +4280,7 @@ Map buildGraph() {
         // 'trigger'/'constraint'/'monitor' in the JS inbound list so the
         // arrowhead still points at the app despite `from` being the app.
         (appMap.hubVarReads ?: []).each { Map r ->
-            String varName = "${r.variable}"
+            String varName = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
             if (!varName) return
             // An unconfirmed (free-text-only) candidate is only drawn if
             // some app, anywhere on the hub, confirms the same name via a
@@ -4372,8 +4391,14 @@ Map buildGraph() {
     List externals = []
     List userRows = userRegistry()
     List userTypes = classifiedTypes()
+    List reviewedRows = reviewedExternalDefaults()
+    List reviewedTypes = reviewedRows.collect { Object row -> "${(row as Map).type}" }.unique()
     registryMatches().each { row ->
         if (!(row instanceof Map)) return
+        String t = "${(row as Map).type}"
+        if (!userTypes.contains(t) && !reviewedTypes.contains(t)) externals << row
+    }
+    reviewedRows.each { row ->
         String t = "${(row as Map).type}"
         if (!userTypes.contains(t)) externals << row
     }
@@ -4529,6 +4554,39 @@ void rebuildStoredGraph() {
     'Export/Import/Clone'      : 'Hub-local app management.',
 ]
 
+// Reviewed community and deployment-specific hub-only assessments. Explicit
+// user declarations remain higher priority than these defaults.
+@Field static final Map REVIEWED_INTERNAL_ONLY = [
+    'MCP Rule Server'                    : 'Runs on this hub.',
+    'Presence Manager'                   : 'Uses participating devices already represented on this hub.',
+    'Rebooter'                           : 'Runs on this hub.',
+    'Rule References Rule Table'         : 'Runs on this hub.',
+    'AI (MCP) Connector Integration'     : 'Runs on this hub.',
+    'Averaging Master'                   : 'Uses participating devices already represented on this hub.',
+    'Critical Device Monitor'            : 'Uses participating devices already represented on this hub.',
+    'Hub Diagnostics'                    : 'Runs on this hub.',
+    'Hubitat® Dashboard'                 : 'Runs on this hub.',
+    'Kasa Integration'                   : 'Assessed for this deployment as hub-only.',
+    'Maker API'                          : 'Assessed for this deployment as hub-only.',
+    'Notification Proxy'                 : 'Runs on this hub.',
+    'Zigbee Map 3.0.4'                   : 'Runs on this hub.',
+    'mDNS Device Discovery'              : 'Runs on this hub.',
+]
+
+// Reviewed dependency defaults remain separate from saved user declarations,
+// which stay portable and higher priority.
+@Field static final List REVIEWED_EXTERNAL_DEFAULTS = [
+    [type: 'CoCoHue - Hue Bridge Integration', name: 'Hue Bridge',        kind: 'local_bridge', crit: 'RUNTIME'],
+    [type: 'LIFX Light Manager',               name: 'LIFX Cloud',        kind: 'internet',     crit: 'MANAGEMENT'],
+    [type: 'Sensibo Integration',              name: 'Sensibo Cloud',     kind: 'internet',     crit: 'RUNTIME'],
+    [type: 'Tapo Integration',                 name: 'Tapo Cloud',        kind: 'internet',     crit: 'RUNTIME'],
+    [type: 'BOM Weather Alerts',               name: 'Weather Services',  kind: 'internet',     crit: 'RUNTIME'],
+    [type: 'Chromecast Integration',           name: 'Google Chromecast', kind: 'local_device', crit: 'RUNTIME'],
+    [type: 'Google Home',                      name: 'Google Home',       kind: 'platform',     crit: 'RUNTIME'],
+    [type: 'Hubitat Package Manager',          name: 'GitHub',            kind: 'internet',     crit: 'MANAGEMENT'],
+    [type: 'Meross MSG100 Garage Door Setup',  name: 'Meross Cloud',      kind: 'internet',     crit: 'SETUP_ONLY'],
+]
+
 // ===================================================================================================================
 // Shared registry
 //
@@ -4660,6 +4718,16 @@ List extractRuleEndpoints(Map data) {
 
 List userRegistry() {
     return (state.userRegistry ?: []) as List
+}
+
+List reviewedExternalDefaults() {
+    return REVIEWED_EXTERNAL_DEFAULTS.collect { Object row -> new LinkedHashMap(row as Map) }
+}
+
+Map reviewedInternalOnly() {
+    Map out = new LinkedHashMap(BUILTIN_INTERNAL_ONLY)
+    out.putAll(REVIEWED_INTERNAL_ONLY)
+    return out
 }
 
 List registryMatches() {
@@ -4922,6 +4990,9 @@ Map externalsSaveMapping() {
 String externalsJson() {
     List types = discoveredAppTypes()
     List classified = classifiedTypes()
+    List reviewed = reviewedExternalDefaults()
+    List reviewedTypes = reviewed.collect { Object row -> "${(row as Map).type}" }.unique()
+    Map internalOnly = reviewedInternalOnly()
     List reg = registryMatches()
     List regTypes = []
     reg.each { r -> String t = "${(r as Map).type}"; if (t && !regTypes.contains(t)) regTypes << t }
@@ -4936,10 +5007,14 @@ String externalsJson() {
         // it: user declarations are keyed by type string and must keep
         // working unchanged.
         appTypeInfo: appTypeIdentities(),
-        builtinInternal: BUILTIN_INTERNAL_ONLY,
+        builtinInternal: internalOnly,
+        reviewed: reviewed,
         // Unclassified means nobody has said, by user OR registry. An app type
         // the registry covers is not a gap the user needs to fill.
-        unclassified: types.findAll { !classified.contains(it) && !regTypes.contains(it) },
+        unclassified: types.findAll {
+            !classified.contains(it) && !reviewedTypes.contains(it) &&
+                !regTypes.contains(it) && !internalOnly.containsKey(it)
+        },
         entries: userRegistry(),
         registry: reg,
         registryMeta: (state.registryMeta ?: [:]),
@@ -5496,11 +5571,15 @@ String buildMapHtml() {
   #insRoot .insCardAlert { border-color:#a5563f; }
   #insRoot .insCardAlert b { color:#e0a95f; }
   #insRoot .insNote { font-size:13px; opacity:0.65; margin:0 0 12px 0; line-height:1.45; }
+  #insRoot .insStart { background:#0d2630; border:1px solid #2a4a57; border-left:3px solid #4a7a94; border-radius:4px;
+                       padding:8px 10px; margin:0 0 12px 0; font-size:13.5px; line-height:1.45; }
   #insRoot .insSec { border-top:1px solid #16323c; }
   #insRoot .insHead { width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; cursor:pointer;
                       color:#cfe3ea; font-family:inherit; font-size:1.08em; font-weight:600; padding:10px 2px; text-align:left; }
   #insRoot .insHead:hover { color:#fff; }
-  #insRoot .insTitle { flex:1; }
+  #insRoot .insHeading { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+  #insRoot .insTitle { display:block; }
+  #insRoot .insSummary { display:block; color:#9fb4bc; font-size:13px; font-weight:400; line-height:1.35; }
   #insRoot .insChev { opacity:0.7; font-size:0.9em; }
   #insRoot .insBadge { background:#1c3540; color:#9fb4bc; border-radius:9px; padding:1px 9px; font-size:0.9em; }
   #insRoot .insBadgeZero { opacity:0.4; }
@@ -5516,6 +5595,7 @@ String buildMapHtml() {
   #insRoot .insChevPad { display:inline-block; width:26px; }
   #insRoot .insDetail { padding:6px 2px 9px 12px; border-left:2px solid #1c3540; margin:0 0 6px 4px; }
   #insRoot .insDetail p { margin:4px 0; font-size:13.5px; line-height:1.5; }
+  #insRoot .insDetail b { color:#cfe3ea; }
   #insRoot .insShowAll { margin:9px 0 2px 2px; }
   #insRoot .insPlain { margin:5px 0 5px 18px; padding:0; font-size:13.5px; }
   /* #flow li sets 0.85em and overrides inheritance from the ul, which pulled
@@ -7355,10 +7435,104 @@ function deriveInsightData() {
   };
 }
 
+// Shared panel/export interpretation of the facts derived above. Guidance does
+// not alter classification and never authorises a hub change.
+function insightGuidance() {
+  return {
+    categories: {
+      attention: {
+        label: 'Needs attention',
+        summary: 'Incomplete scans or references to targets that no longer exist.',
+        next: 'Resolve these first because they can hide data or leave an automation action doing nothing.'
+      },
+      review: {
+        label: 'Shared control to confirm',
+        summary: 'Shared device control and Hub Variable use that may be entirely intentional.',
+        next: 'Confirm that the participants, timing and intended winner are what you expect.'
+      },
+      cleanup: {
+        label: 'Possibly unused',
+        summary: 'Devices or apps with no relationship the scan could prove.',
+        next: 'Check external integrations, dashboards and schedules before removing anything.'
+      },
+      normal: {
+        label: 'Expected patterns',
+        summary: 'Common structures that usually need no action.',
+        next: 'Use these explanations to understand the map, not as a cleanup list.'
+      }
+    },
+    findings: {
+      scanIncomplete: {
+        meaning: 'The last scan did not produce a complete snapshot, so other findings may be missing items.',
+        next: 'Run the scan again. If the same gap remains, check the Hubitat logs for the named unreadable app or device.'
+      },
+      brokenRuleReference: {
+        meaning: 'A rule still names an app or rule target that is no longer installed. That action runs but cannot do anything.',
+        next: 'Open each referencing rule and either select the intended replacement or remove the obsolete action.'
+      },
+      contestedDevice: {
+        meaning: 'Several automations can leave this device in a lasting state, so the last one to run decides the result.',
+        normal: 'Motion, schedules, scenes and manual overrides often share the same light or switch deliberately.',
+        next: 'Check whether their triggers can overlap and which automation should win when they do.'
+      },
+      multipleVariableWriters: {
+        meaning: 'More than one decoded rule writes this Hub Variable.',
+        normal: 'Shared state can legitimately be updated from several places. This alone does not prove a race condition.',
+        next: 'Check whether the writers can run close together and whether the final value depends on their order.'
+      },
+      variableReadersWithoutWriter: {
+        meaning: 'Decoded rules read this Hub Variable, but no decoded rule writes it.',
+        normal: 'It may be set manually, through a Connector, by an external integration or by an app engine this scan cannot decode.',
+        next: 'Confirm where its value is expected to come from before treating the missing writer as a gap.'
+      },
+      variableWritersWithoutReader: {
+        meaning: 'Decoded rules write this Hub Variable, but no decoded rule reads it.',
+        normal: 'A dashboard, Connector or external integration may consume it without producing a decoded read edge.',
+        next: 'Confirm whether anything outside the decoded rules still uses the value before removing the writer or variable.'
+      },
+      unresolvedVariableReference: {
+        meaning: 'A decoded rule names a Hub Variable that is absent from the hub inventory.',
+        next: 'Open the referencing rule and check whether the variable was renamed or deleted. Re-scan first if the inventory was incomplete.'
+      },
+      unreferencedDevice: {
+        meaning: 'No scanned app owns, watches or drives this device.',
+        normal: 'Dashboards, voice assistants, Maker API, external automations and disabled or unsupported apps may still use it.',
+        next: 'Check those external uses and the physical device before deciding it is safe to remove.'
+      },
+      inertApp: {
+        meaning: 'The scan found no device relationship, rule link or child app held by this app.',
+        normal: 'Schedule-only apps, API integrations and unsupported automation engines can look inactive to this scan.',
+        next: 'Open the app and check its status, schedules and external purpose before deciding it is unused.'
+      },
+      notificationOnly: {
+        meaning: 'These devices receive only momentary notifications, chimes or speech commands.',
+        normal: 'This is expected for phones, speakers and notification brokers.',
+        next: 'No action is normally required unless a lasting-state command was expected.'
+      },
+      monitoredOnly: {
+        meaning: 'These devices are read as triggers, conditions or monitored inputs but are never commanded.',
+        normal: 'This is expected for sensors and other input-only devices.',
+        next: 'No action is normally required unless an automation was meant to control the device.'
+      },
+      containerApp: {
+        meaning: 'This app organises or owns child apps rather than touching devices directly.',
+        normal: 'That is the expected structure for parent apps such as rule containers.',
+        next: 'Review its child apps if you need detail. The parent itself is not a cleanup candidate.'
+      },
+      variableWithoutDecodedUsage: {
+        meaning: 'No decoded rule reads or writes this Hub Variable.',
+        normal: 'It may be unused, manually maintained, externally consumed or used by an app engine this scan cannot decode.',
+        next: 'Check Connectors, dashboards and external integrations before deciding it is obsolete.'
+      }
+    }
+  };
+}
+
 function buildInsights() {
   const nameOf = {};
   ALL_NODES.forEach(function (n) { nameOf[n.id] = n.title; });
   const D = deriveInsightData();
+  const GUIDE = insightGuidance();
 
   // Progressive disclosure, not a report (from Gordon's own
   // verdict on the previous version: a checklist of waffle nobody would read).
@@ -7384,6 +7558,15 @@ function buildInsights() {
     }).join(' &middot; ');
   }
 
+  function advice(key) {
+    const g = GUIDE.findings[key];
+    if (!g) return '';
+    let h = '<p><b>What this means:</b> ' + extEsc(g.meaning) + '</p>';
+    if (g.normal) h += '<p><b>Why it may be normal:</b> ' + extEsc(g.normal) + '</p>';
+    h += '<p><b>Check next:</b> ' + extEsc(g.next) + '</p>';
+    return h;
+  }
+
   const PAGE = 5;
   function rows(ids, metaFor, detailFor) {
     let h = '';
@@ -7397,12 +7580,13 @@ function buildInsights() {
     return h;
   }
 
-  function section(key, title, count, openByDefault, bodyHtml, healthyText) {
+  function section(key, title, count, summary, openByDefault, bodyHtml, healthyText) {
     const open = openByDefault && count > 0;
     let h = '<section class="insSec" data-sec="' + key + '">';
     h += '<button type="button" class="insHead" data-toggle-sec aria-expanded="' + (open ? 'true' : 'false') + '">';
     h += '<span class="insChev">' + (open ? '&#9662;' : '&#9656;') + '</span>';
-    h += '<span class="insTitle">' + extEsc(title) + '</span>';
+    h += '<span class="insHeading"><span class="insTitle">' + extEsc(title) + '</span>';
+    h += '<span class="insSummary">' + extEsc(summary) + '</span></span>';
     h += '<span class="insBadge' + (count ? '' : ' insBadgeZero') + '">' + count + '</span>';
     h += '</button>';
     h += '<div class="insBody"' + (open ? '' : ' hidden') + '>';
@@ -7419,34 +7603,46 @@ function buildInsights() {
     const what = D.scan.status === 'failed'
       ? 'The last scan did not finish, so everything below is incomplete.'
       : 'The last scan finished but could not read ' + D.scan.appsUnreadable + ' app(s) and ' + D.scan.devicesUnreadable + ' device(s). Findings below may be missing those.';
-    attentionBody += '<p class="insLead">' + extEsc(what) + ' Run the scan again to retry.</p>';
+    attentionBody += '<p class="insLead">' + extEsc(what) + '</p>' + advice('scanIncomplete');
   }
   if (D.brokenTargets.length) {
     attentionBody += '<p class="insLead">' + D.brokenTargets.length + ' rule target(s) no longer exist. The referencing action still runs and silently does nothing.</p>';
     attentionBody += rows(D.brokenTargets,
       function (id) { return (D.referencesTo[id] || []).length + ' referencing'; },
-      function (id) { return '<p class="sub">Referenced by ' + appLinks(D.referencesTo[id]) + '</p>'; });
+      function (id) { return advice('brokenRuleReference') + '<p class="sub"><b>Referenced by:</b> ' + appLinks(D.referencesTo[id]) + '</p>'; });
   }
 
-  // --- Worth reviewing: shared control, not faults ------------------------
+  // --- Shared control to confirm: review prompts, not faults ---------------
   const hv = D.hubVar;
-  const hubVarWorth = hv.multipleWriters.length + hv.unresolvedReferences.length;
+  const hubVarWorth = hv.multipleWriters.length + hv.readersWithoutDecodedWriter.length +
+    hv.writersWithoutDecodedReader.length + hv.unresolvedReferences.length;
   const reviewCount = D.contested.length + hubVarWorth;
   let reviewBody = '<p class="insLead">' + D.contested.length + ' device(s) have shared control. This is often intentional.</p>';
   reviewBody += rows(D.contested,
     function (id) { return D.statefulCommanders[id].length + ' automations'; },
     function (id) {
-      return '<p class="sub">More than one app can leave this device in a lasting state, so the last one to run decides the outcome. Notifications, chimes and speech are excluded - repeating those is not a conflict.</p>' +
-        '<p class="sub">' + appLinks(D.statefulCommanders[id]) + '</p>';
+      return advice('contestedDevice') + '<p class="sub"><b>Controlling apps:</b> ' + appLinks(D.statefulCommanders[id]) + '</p>';
     });
   if (hv.multipleWriters.length) {
     reviewBody += '<p class="insLead">' + hv.multipleWriters.length + ' hub variable(s) have more than one writer. Shared state, not automatically a race.</p>';
     reviewBody += rows(hv.multipleWriters,
       function (id) { return hv.writers[id].length + ' writers'; },
-      function (id) { return '<p class="sub">Written by ' + appLinks(hv.writers[id]) + '</p>'; });
+      function (id) { return advice('multipleVariableWriters') + '<p class="sub"><b>Written by:</b> ' + appLinks(hv.writers[id]) + '</p>'; });
+  }
+  if (hv.readersWithoutDecodedWriter.length) {
+    reviewBody += '<p class="insLead">' + hv.readersWithoutDecodedWriter.length + ' hub variable(s) are read but have no decoded rule writer.</p>';
+    reviewBody += rows(hv.readersWithoutDecodedWriter,
+      function (id) { return hv.readers[id].length + ' readers'; },
+      function (id) { return advice('variableReadersWithoutWriter') + '<p class="sub"><b>Read by:</b> ' + appLinks(hv.readers[id]) + '</p>'; });
+  }
+  if (hv.writersWithoutDecodedReader.length) {
+    reviewBody += '<p class="insLead">' + hv.writersWithoutDecodedReader.length + ' hub variable(s) are written but have no decoded rule reader.</p>';
+    reviewBody += rows(hv.writersWithoutDecodedReader,
+      function (id) { return hv.writers[id].length + ' writers'; },
+      function (id) { return advice('variableWritersWithoutReader') + '<p class="sub"><b>Written by:</b> ' + appLinks(hv.writers[id]) + '</p>'; });
   }
   if (hv.unresolvedReferences.length) {
-    reviewBody += '<p class="insLead">' + hv.unresolvedReferences.length + ' rule reference(s) name a hub variable that is not in the hub inventory. The variable may have been renamed or deleted.</p><ul class="insPlain">';
+    reviewBody += '<p class="insLead">' + hv.unresolvedReferences.length + ' rule reference(s) name a hub variable that is not in the hub inventory.</p>' + advice('unresolvedVariableReference') + '<ul class="insPlain">';
     hv.unresolvedReferences.slice(0, 10).forEach(function (r) {
       reviewBody += '<li>' + extEsc(r.name) + ' <span class="sub">' + extEsc(r.kind || '') + ' by ' + extEsc(nameOf[r.appId] || r.appId || 'an app') + '</span></li>';
     });
@@ -7456,13 +7652,13 @@ function buildInsights() {
     }
   }
 
-  // --- Cleanup candidates -------------------------------------------------
+  // --- Possibly unused ----------------------------------------------------
   const orphanApps = D.inertNodes.filter(function (n) { return !n.holds && !(n.kids && n.kids.length); });
   const cleanupCount = D.untouched.length + orphanApps.length;
   let cleanupBody = '';
   if (D.untouched.length) {
-    cleanupBody += '<p class="insLead">' + D.untouched.length + ' device(s) are not referenced by any app. Candidates for removal, or gaps in automation.</p>';
-    cleanupBody += rows(D.untouched, function () { return 'no references'; }, '');
+    cleanupBody += '<p class="insLead">' + D.untouched.length + ' device(s) are not referenced by any scanned app.</p>';
+    cleanupBody += rows(D.untouched, function () { return 'no mapped references'; }, function () { return advice('unreferencedDevice'); });
   }
   if (orphanApps.length) {
     cleanupBody += '<p class="insLead">' + orphanApps.length + ' app(s) touch no device, link to no rule and hold nothing.</p>';
@@ -7470,7 +7666,7 @@ function buildInsights() {
       function (id) {
         const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
         return (n && n.reason) ? n.reason : 'no reason recorded';
-      }, '');
+      }, function () { return advice('inertApp'); });
   }
 
   // --- Normal patterns: explanations, not findings -------------------------
@@ -7481,11 +7677,11 @@ function buildInsights() {
     normalBody += '<p class="insLead">' + D.notifiedOnly.length + ' device(s) are commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
     normalBody += rows(D.notifiedOnly,
       function (id) { return D.anyCommanders[id].length + ' automations'; },
-      function (id) { return '<p class="sub">' + appLinks(D.anyCommanders[id]) + '</p>'; });
+      function (id) { return advice('notificationOnly') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.anyCommanders[id]) + '</p>'; });
   }
   if (D.readOnly.length) {
     normalBody += '<p class="insLead">' + D.readOnly.length + ' device(s) are never commanded in any form - referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
-    normalBody += rows(D.readOnly, function () { return 'monitored only'; }, '');
+    normalBody += rows(D.readOnly, function () { return 'monitored only'; }, function () { return advice('monitoredOnly'); });
   }
   if (containers.length) {
     normalBody += '<p class="insLead">' + containers.length + ' app(s) hold other apps rather than touching devices themselves. Expected.</p>';
@@ -7494,19 +7690,19 @@ function buildInsights() {
         const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
         const held = n ? (n.holds || (n.kids || []).length) : 0;
         return 'holds ' + held;
-      }, '');
+      }, function () { return advice('containerApp'); });
   }
   if (hv.noDecodedUsage.length) {
     normalBody += '<p class="insLead">' + hv.noDecodedUsage.length + ' hub variable(s) have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode.</p>';
-    normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, '');
+    normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, function () { return advice('variableWithoutDecodedUsage'); });
   }
 
   // --- Assemble ------------------------------------------------------------
   const cards = [
-    { key: 'attention', label: 'Needs attention', count: attentionCount },
-    { key: 'review', label: 'Worth reviewing', count: reviewCount },
-    { key: 'cleanup', label: 'Cleanup candidates', count: cleanupCount },
-    { key: 'normal', label: 'Normal patterns', count: normalCount }
+    { key: 'attention', label: GUIDE.categories.attention.label, count: attentionCount },
+    { key: 'review', label: 'Shared control', count: reviewCount },
+    { key: 'cleanup', label: GUIDE.categories.cleanup.label, count: cleanupCount },
+    { key: 'normal', label: GUIDE.categories.normal.label, count: normalCount }
   ];
   let html = '<div id="insRoot">';
   html += '<div class="insCards">';
@@ -7515,15 +7711,18 @@ function buildInsights() {
       '" data-jump="' + c.key + '"><b>' + c.count + '</b><span>' + extEsc(c.label) + '</span></button>';
   });
   html += '</div>';
-  html += '<p class="insNote">Counts are review prompts, not faults. A hub with many automations will normally show entries in every section except the first.</p>';
+  const firstCategory = attentionCount ? GUIDE.categories.attention
+    : (reviewCount ? GUIDE.categories.review : (cleanupCount ? GUIDE.categories.cleanup : GUIDE.categories.normal));
+  html += '<div class="insStart"><b>Start here:</b> ' + extEsc(firstCategory.next) + '</div>';
+  html += '<p class="insNote">Counts are review prompts, not faults, and can include more than one finding for the same item. Open a row for what it means and what to check next.</p>';
 
-  html += section('attention', 'Needs attention', attentionCount, true, attentionBody,
+  html += section('attention', GUIDE.categories.attention.label, attentionCount, GUIDE.categories.attention.summary, true, attentionBody,
     'Scan completed cleanly and every rule reference resolves.');
-  html += section('review', 'Worth reviewing', reviewCount, false, reviewBody,
+  html += section('review', GUIDE.categories.review.label, reviewCount, GUIDE.categories.review.summary, !attentionCount, reviewBody,
     'No shared lasting-state control and no hub variable worth a second look.');
-  html += section('cleanup', 'Cleanup candidates', cleanupCount, false, cleanupBody,
+  html += section('cleanup', GUIDE.categories.cleanup.label, cleanupCount, GUIDE.categories.cleanup.summary, !attentionCount && !reviewCount, cleanupBody,
     'Every device is referenced and every app does something.');
-  html += section('normal', 'Normal patterns', normalCount, false, normalBody,
+  html += section('normal', GUIDE.categories.normal.label, normalCount, GUIDE.categories.normal.summary, !attentionCount && !reviewCount && !cleanupCount, normalBody,
     'Nothing to explain here.');
   html += '</div>';
   return html;
@@ -7770,12 +7969,24 @@ function extRowsFor(type) {
   return (EXT.entries || []).filter(function (e) { return e.type === type; });
 }
 
-// Rows the shared registry supplied, shown only where the user has said
-// nothing about that app type. The moment they do, theirs replaces these.
-function extRegistryFor(type) {
+function extReviewedFor(type) {
   const claimed = (EXT.entries || []).some(function (e) { return e.type === type; });
   if (claimed) return [];
+  return (EXT.reviewed || []).filter(function (e) { return e.type === type; });
+}
+
+// Rows the shared registry supplied, shown only where the user has said
+// nothing and no reviewed local default exists for that app type.
+function extRegistryFor(type) {
+  const claimed = (EXT.entries || []).some(function (e) { return e.type === type; });
+  const reviewed = (EXT.reviewed || []).some(function (e) { return e.type === type; });
+  if (claimed || reviewed) return [];
   return (EXT.registry || []).filter(function (e) { return e.type === type; });
+}
+
+function extDefaultsFor(type) {
+  const reviewed = extReviewedFor(type);
+  return reviewed.length ? reviewed : extRegistryFor(type);
 }
 
 // Which group an app type belongs in. Order matters: the first source that
@@ -7783,6 +7994,7 @@ function extRegistryFor(type) {
 function extClassify(type) {
   const info = (EXT.appTypeInfo || {})[type] || {};
   if ((EXT.entries || []).some(function (e) { return e.type === type; })) return { group: 'declared', info: info };
+  if ((EXT.reviewed || []).some(function (e) { return e.type === type; })) return { group: 'reviewed', info: info };
   // Registry is checked BEFORE inheritance. With
   // the order reversed, a child type carrying its own reviewed dependency was
   // filed as inherited and dropped from the confirmed table - while the graph
@@ -7863,7 +8075,7 @@ function extRender(message) {
   // Classify every discovered type once, then render three groups instead of
   // one flat list where 57 inherited rule instances drown the handful of real
   // integrations.
-  const groups = { declared: [], registry: [], unknown: [], inherited: [], internal: [] };
+  const groups = { declared: [], reviewed: [], registry: [], unknown: [], inherited: [], internal: [] };
   (EXT.appTypes || []).forEach(function (t) { groups[extClassify(t).group].push(t); });
   // Suggestions are split out of unknown so the two are visibly different
   // tasks: one has evidence to weigh, the other has nothing yet.
@@ -7878,7 +8090,7 @@ function extRender(message) {
   // these are not tasks, and listing them is what buried the ones that are.
   const autoParts = [];
   if (groups.internal.length) {
-    autoParts.push(groups.internal.length + ' Hubitat built-in(s) assessed as needing nothing outside the hub');
+    autoParts.push(groups.internal.length + ' app type(s) assessed as needing nothing outside the hub');
   }
   if (groups.inherited.length) {
     const instances = groups.inherited.reduce(function (n, t) {
@@ -7905,8 +8117,8 @@ function extRender(message) {
   // previous pass ordered these correctly but rendered them as one
   // undifferentiated table, which did not deliver the grouping at all.
   const sections = [
-    { label: 'Confirmed external relationships', types: groups.declared.concat(groups.registry),
-      note: 'Declared by you, or matched in the reviewed registry.' },
+    { label: 'Confirmed external relationships', types: groups.declared.concat(groups.reviewed, groups.registry),
+      note: 'Declared by you, supplied by a reviewed default, or matched in the reviewed registry.' },
     { label: 'Suggestions to review', types: suggested,
       note: 'Community Utilities reports network activity. It does not name a dependency - confirm before declaring one.' },
     { label: 'Not assessed', types: bare,
@@ -7915,7 +8127,7 @@ function extRender(message) {
     // list, so an Automation Map assessment stays overridable exactly like a
     // registry match. User declarations must always be able to win.
     { label: 'Assessed as internal only', types: groups.internal, auto: true,
-      note: 'Hubitat built-ins that run entirely on the hub. Override any of these if your setup differs.' }
+      note: 'Reviewed app types that run entirely on the hub. Override any of these if your setup differs.' }
   ];
 
   sections.forEach(function (sec) {
@@ -7937,6 +8149,19 @@ function extRender(message) {
       }
     const rows = extRowsFor(type);
     if (!rows.length) {
+      const fromReviewed = extReviewedFor(type);
+      if (fromReviewed.length) {
+        fromReviewed.forEach(function (r, i) {
+          h += '<tr class="fromreg"><td>' + (i === 0 ? extEsc(type) : '') + '</td>' +
+               '<td>' + extEsc(r.name) + '</td>' +
+               '<td>' + extEsc(kinds[r.kind] || r.kind) + '</td>' +
+               '<td>' + extEsc(crits[r.crit] || r.crit) + '</td>' +
+               '<td>' + (i === 0 ? '<span class="tag tag-reg">reviewed default</span>' +
+                                   '<button class="rowbtn" data-over="' + extEsc(type) + '">override</button>' : '') +
+               '</td></tr>';
+        });
+        return;
+      }
       const fromRegistry = extRegistryFor(type);
       if (fromRegistry.length) {
         fromRegistry.forEach(function (r, i) {
@@ -8058,12 +8283,12 @@ function extWire() {
     });
   });
 
-  // Overriding seeds the user's rows from the registry's, so correcting one
-  // value does not mean retyping the rest.
+  // Overriding seeds the user's rows from the reviewed default or registry, so
+  // correcting one value does not mean retyping the rest.
   extBody.querySelectorAll('[data-over]').forEach(function (b) {
     b.addEventListener('click', function () {
       const type = b.getAttribute('data-over');
-      (EXT.registry || []).filter(function (e) { return e.type === type; })
+      extDefaultsFor(type)
         .forEach(function (r) {
           EXT.entries.push({ type: type, name: r.name, kind: r.kind, crit: r.crit });
         });
@@ -8544,6 +8769,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // numbers is now shared. Verified by capturing insights+summary before and
   // after and diffing them byte for byte.
   const INS = deriveInsightData();
+  const GUIDE = insightGuidance();
   const missingIds = INS.missingIds;
   const referencesTo = INS.referencesTo;
 
@@ -8792,6 +9018,7 @@ function buildExportPayload(ext, icons, failedFetches) {
     summary: summary,
     limitations: limitations,
     recommendedAiBehaviour: recommendedAiBehaviour,
+    insightGuidance: GUIDE,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
@@ -8804,7 +9031,8 @@ function buildExportPayload(ext, icons, failedFetches) {
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported; a variable in hubVariables[] with identitySource "reference-derived" instead of "hub-inventory" means this status was not "complete" when it was found. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
-      recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.'
+      recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.',
+      insightGuidance: 'The same deterministic interpretation catalogue shown in the on-hub Insights panel. categories explains each group and its recommended priority; findings gives what the observation means, why it may be normal when applicable, and what to check next. It is guidance for investigation, never authority to change the hub.'
     },
     devices: devices,
     apps: apps,

@@ -79,6 +79,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
 | `limitations` | string[] | yes | Known structural or generation-time gaps. |
 | `recommendedAiBehaviour` | string[] | yes | How an AI reading this file should behave - both what it may claim (section 15) and how a response should be structured (section 15, "Response shape"). |
+| `insightGuidance` | object | yes | Deterministic plain-language interpretation shared with the on-hub Insights panel: category purpose and priority plus meaning, normal-case caveats and next checks for each finding type. |
 | `privacyNote` | string | yes | Reminder that the file contains household data. |
 | `schema` | object | yes | Self-contained field explanations for an AI. |
 | `devices` | object[] | yes | Known device nodes. |
@@ -304,6 +305,12 @@ Rule Machine's stored target IDs.
 
 These are precomputed conveniences, not additional source facts. A conforming consumer may
 recalculate them from nodes and edges and should report a mismatch as a validation warning.
+
+`insightGuidance` is the interpretation catalogue for those facts. `categories` provides a label,
+summary and recommended next step for each presentation group. `findings` provides `meaning`, an
+optional `normal` caveat and `next` investigation guidance for each supported finding type. It is
+advisory and does not authorise a consumer to change the hub. The Automation Map UI and export use
+the same catalogue so their explanations cannot drift independently.
 
 ## 12. Summary invariants
 
