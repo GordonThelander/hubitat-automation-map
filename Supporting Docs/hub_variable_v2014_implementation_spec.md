@@ -170,11 +170,15 @@ a development hub under separate authorization"):
   reference, not the display-name join parent spec 7.2 warns against) and synthesizing a minimal
   device node when independent discovery did not find it, rather than requiring both sources to
   agree. Confirmed live: node/edge counts and the connector count in the main-page summary moved
-  exactly as expected once deployed. Known, accepted trade-off: a Connector device manually deleted
-  out from under its variable (bypassing the proper remove-connector flow) would now render as a
-  synthesized node instead of surfacing in `unresolvedConnectors` - no live evidence this happens,
-  and re-verifying per-device before trusting the platform's own reported ID was judged not worth
-  the extra per-device call this scan's architecture is built to avoid.
+  exactly as expected once deployed. Known, accepted trade-off, confirmed with Codex review 103: a
+  Connector device manually deleted out from under its variable (bypassing the proper
+  remove-connector flow) renders as a resolved connector indistinguishable from a real one - no
+  structured finding surfaces it, and re-verifying per-device before trusting the platform's own
+  reported ID was judged not worth the extra per-device call this scan's architecture is built to
+  avoid. `unresolvedHubVarConnectors`/`insights.hubVariables.unresolvedConnectors` were removed
+  entirely from the implementation and schema 4 rather than shipped as a permanently-unreachable
+  field (Codex review 103 required cleanup item 1) - the orphan/stale-ID gap is now documented only
+  as export prose (`limitations`), not as a structured field a consumer could mistakenly rely on.
 - Never log or export a variable's `value` outside the explicit-opt-in path that doesn't exist yet
   - same discipline as every test this effort has run so far.
 
