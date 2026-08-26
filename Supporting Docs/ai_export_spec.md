@@ -460,7 +460,7 @@ schema-3 `hubVariables` array is a complete inventory, since schema 3 never clai
 | --- | --- | --- |
 | `variableType` | string or null | `Number`, `Decimal`, `String`, `Boolean`, `DateTime`, or `null` if the platform's reported type spelling was not recognized. |
 | `identitySource` | enum | `hub-inventory` (confirmed against the hub's own authoritative Hub Variable list this scan) or `reference-derived` (found only via a decoded rule reference; a weaker guarantee - see section 7 for how to read `scan.hubVariableInventory.status`). |
-| `connector` | object or null | `{deviceId, connectorType}` when Hubitat reports a linked Connector device that resolved to a known device on this hub; `null` otherwise, including when the hub names a Connector this scan could not resolve (see `insights.hubVariables.unresolvedConnectors`, 18.4). `connector.deviceId` resolves in `devices[].id`. |
+| `connector` | object or null | `{deviceId, connectorType}` whenever the hub itself reports a linked Connector device for this variable; `null` when it reports none. **Revised from the original design:** Connector devices do not appear in the same bulk device-enumeration the rest of `devices[]` is built from (a live platform finding, not a design choice - see `Supporting Docs/hub_variable_v2014_implementation_spec.md`), so a resolvable `deviceId` is trusted directly from the hub rather than requiring independent confirmation. `connector.deviceId` always resolves in `devices[].id`; that device entry has `iconCategory: "connector"` and, when independent discovery genuinely did not find it, `room`/`capabilities` are both `null` (same null semantics as any other device missing from that fetch - section 8.1). `insights.hubVariables.unresolvedConnectors` (18.4) is consequently unreachable in the current implementation - kept in the schema for a hub state this has not yet been observed to produce, not actively populated. |
 | `currentValue` | JSON scalar or null | Always `null` in this release. No opt-in value export exists yet. |
 
 `identitySource: "hub-inventory"` means every variable the hub itself reports appears here, even
@@ -538,7 +538,9 @@ which applies identically here):
   (`scan.hubVariableInventory.status`) - check that before concluding the reference is stale.
 - `unresolvedConnectors` - the inventory named a Connector device ID this scan could not resolve
   to a known device. `connectorDeviceId` here is a raw ID, not a resolvable node reference (it did
-  not resolve, by definition).
+  not resolve, by definition). See the `connector` field note in 18.1: this finding is currently
+  unreachable in practice, since a reported deviceId is now trusted directly rather than requiring
+  independent confirmation.
 
 ### 18.5 What did not change
 
