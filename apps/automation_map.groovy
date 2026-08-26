@@ -7164,33 +7164,57 @@ function buildInsights() {
   });
   const brokenTargets = Object.keys(missingIds);
 
-  const commanders = {};   // device -> apps that can leave it in a lasting state
+  // Two separate commander maps, because one map cannot answer both questions
+  // and using it for both is what made "Read but never driven" wrong.
+  //
+  // statefulCommanders drives contention only: two apps notifying the same
+  // phone is normal, two apps driving the same light is the finding.
+  //
+  // anyCommanders is every action relationship regardless of statefulness, and
+  // is what "is this device ever driven at all" has to be answered from.
+  // Measured on Gordon's hub before this fix: 19 of the 140 devices listed as
+  // "Referenced only as triggers, constraints or monitored inputs" were in
+  // fact commanded - Mobile Proxy by 27 apps, the Security Speaker by 10 -
+  // because a notification or chime target has action edges but no stateful
+  // ones, so it fell through the stateful-only map into the read-only list.
+  const statefulCommanders = {};
+  const anyCommanders = {};
   const touched = {};      // device -> any relationship at all
   ALL_EDGES.forEach(function (e) {
     touched[e.to] = true;
-    // Only stateful commands can conflict. Two apps notifying the same phone
-    // is normal; two apps driving the same light is what you want to find.
-    if (e.kind === 'action' && e.stateful) {
-      if (!commanders[e.to]) commanders[e.to] = [];
-      if (commanders[e.to].indexOf(e.from) < 0) commanders[e.to].push(e.from);
-    }
+    if (e.kind !== 'action') return;
+    if (!anyCommanders[e.to]) anyCommanders[e.to] = [];
+    if (anyCommanders[e.to].indexOf(e.from) < 0) anyCommanders[e.to].push(e.from);
+    if (!e.stateful) return;
+    if (!statefulCommanders[e.to]) statefulCommanders[e.to] = [];
+    if (statefulCommanders[e.to].indexOf(e.from) < 0) statefulCommanders[e.to].push(e.from);
   });
 
-  const contested = Object.keys(commanders)
-    .filter(function (d) { return commanders[d].length > 1; })
-    .sort(function (a, b) { return commanders[b].length - commanders[a].length; });
+  const contested = Object.keys(statefulCommanders)
+    .filter(function (d) { return statefulCommanders[d].length > 1; })
+    .sort(function (a, b) { return statefulCommanders[b].length - statefulCommanders[a].length; });
 
   const untouched = ALL_NODES
     .filter(function (n) { return n.group === 'device' && !touched[n.id]; })
     .map(function (n) { return n.id; });
 
+  // Genuinely never driven: no action edge of any kind.
   const readOnly = ALL_NODES.filter(function (n) {
     if (n.group !== 'device' || !touched[n.id]) return false;
-    return !commanders[n.id];
+    return !anyCommanders[n.id];
+  }).map(function (n) { return n.id; });
+
+  // Driven, but only by commands that leave nothing behind - notifications,
+  // chimes, speech. Normal behaviour for a phone or speaker, so it is stated
+  // as a category of its own rather than left to look like either a conflict
+  // or a sensor.
+  const notifiedOnly = ALL_NODES.filter(function (n) {
+    if (n.group !== 'device' || !touched[n.id]) return false;
+    return anyCommanders[n.id] && !statefulCommanders[n.id];
   }).map(function (n) { return n.id; });
 
   let html = '<h3>Insights</h3>';
-  html += '<div class="sub">Derived from the current scan. "Commanded by" counts apps with an action relationship.</div>';
+  html += '<div class="sub">Derived from the current scan. Contested counts only apps that can leave a device in a lasting state - notifications, chimes and speech are counted separately below, because repeating those is not a conflict.</div>';
 
   html += '<h4>Contested devices (' + contested.length + ')</h4>';
   if (!contested.length) {
@@ -7198,10 +7222,13 @@ function buildInsights() {
   } else {
     html += '<p class="sub">More than one app can leave these in a lasting state. Where two disagree, the last to run wins. Notifications and chimes are excluded - repeating those is not a conflict.</p><ul>';
     contested.slice(0, 40).forEach(function (d) {
-      html += '<li><b>' + extEsc(nameOf[d]) + '</b> &mdash; ' + commanders[d].length + ' apps<br><span class="sub">' +
-        commanders[d].map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
+      html += '<li><b>' + extEsc(nameOf[d]) + '</b> &mdash; ' + statefulCommanders[d].length + ' apps<br><span class="sub">' +
+        statefulCommanders[d].map(function (a) { return extEsc(nameOf[a]); }).join(' &middot; ') + '</span></li>';
     });
     html += '</ul>';
+    if (contested.length > 40) {
+      html += '<p class="sub">Showing the 40 most contested. ' + (contested.length - 40) + ' more not listed.</p>';
+    }
   }
 
   html += '<h4>Devices nothing references (' + untouched.length + ')</h4>';
@@ -7211,10 +7238,27 @@ function buildInsights() {
     html += '<p class="sub">No app owns, watches or drives these. Candidates for removal, or gaps in automation.</p><ul>';
     untouched.slice(0, 60).forEach(function (d) { html += '<li>' + extEsc(nameOf[d]) + '</li>'; });
     html += '</ul>';
+    if (untouched.length > 60) {
+      html += '<p class="sub">Showing 60. ' + (untouched.length - 60) + ' more not listed.</p>';
+    }
+  }
+
+  html += '<h4>Notified or signalled only (' + notifiedOnly.length + ')</h4>';
+  if (!notifiedOnly.length) {
+    html += '<p class="sub">No device is driven purely by notifications, chimes or speech.</p>';
+  } else {
+    html += '<p class="sub">Apps do command these, but only with commands that leave nothing behind - a notification, a chime, speech. Normal for phones, speakers and message brokers, and deliberately not counted as contention above.</p><ul>';
+    notifiedOnly.slice(0, 60).forEach(function (d) {
+      html += '<li>' + extEsc(nameOf[d]) + ' <span class="sub">&mdash; ' + anyCommanders[d].length + ' app' + (anyCommanders[d].length === 1 ? '' : 's') + '</span></li>';
+    });
+    html += '</ul>';
+    if (notifiedOnly.length > 60) {
+      html += '<p class="sub">Showing 60. ' + (notifiedOnly.length - 60) + ' more not listed.</p>';
+    }
   }
 
   html += '<h4>Read but never driven (' + readOnly.length + ')</h4>';
-  html += '<p class="sub">Referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+  html += '<p class="sub">No app commands these at all, in any form - they are referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
 
   // Grouped by the reason rather than listed flat. Eleven containers and two
   // genuine orphans in one alphabetical list reads as thirteen problems; split
