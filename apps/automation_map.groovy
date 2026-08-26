@@ -6490,10 +6490,26 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // still tall enough to run behind panel content (the original "ghost text
 // across the table" problem this hiding was built for). Hint has no
 // collapsed form, so it keeps hiding for any open panel same as before.
+${''}
+// Single source of truth for panel coordination. Three separate hardcoded
+// copies of this list used to exist - bringToFront, syncLegendVisibility and
+// closeSecondaryPanels - and adding the release-activity panel to only two of
+// them shipped a real bug Gordon hit immediately: "Show all" and browser Back
+// both left that panel sitting open over the map. Functions rather than a
+// const array purely so declaration order does not matter: several of these
+// panel consts are declared much further down the file than the coordination
+// functions that use them.
+//
+// secondaryPanels() is everything closeSecondaryPanels() may close on its own.
+// flowPanel is deliberately NOT in it - its callers hide it themselves,
+// because several of them re-open it a moment later with new content.
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel]; }
+function allPanels() { return [flowPanel].concat(secondaryPanels()); }
+
 function syncLegendVisibility() {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
-  const panelOpen = [flowPanel, extPanel, pivotPanel, iconsPanel, releaseActivityPanel].some(function (p) {
+  const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
   if (lg) lg.style.visibility = (panelOpen && !lg.classList.contains('collapsed')) ? 'hidden' : '';
@@ -6507,7 +6523,7 @@ function syncLegendVisibility() {
 // way, and only in one place.
 let panelTopZ = 30;
 function bringToFront(panel) {
-  [flowPanel, extPanel, pivotPanel, iconsPanel, releaseActivityPanel].forEach(function (p) {
+  allPanels().forEach(function (p) {
     if (p && p !== panel) p.style.display = 'none';
   });
   panelTopZ += 1;
@@ -7699,7 +7715,20 @@ function releaseActivityLoad() {
   // unrelated message this page happens to receive.
   function onMessage(ev) {
     if (settled) return;
-    if (ev.origin !== 'https://gordonthelander.github.io') return;
+    // "null" is the expected origin here, not a fallback: this iframe is
+    // sandboxed WITHOUT allow-same-origin, so its document has an opaque
+    // origin and everything it posts arrives as origin "null". Requiring the
+    // literal host (as the original contract did) could therefore never
+    // match - measured live against the real embed - so the handshake never
+    // completed, the timer always fired, and a chart that had rendered
+    // perfectly was torn down and replaced by the unavailable message every
+    // single time. The real proof of provenance is the source check below:
+    // this page created that iframe and set its src to a fixed,
+    // source-controlled HTTPS URL, and only that document can be its
+    // contentWindow - event.source cannot be forged by another frame. The
+    // host string is still accepted so this keeps working unchanged if the
+    // embed is ever framed without the sandbox.
+    if (ev.origin !== 'https://gordonthelander.github.io' && ev.origin !== 'null') return;
     if (ev.source !== iframe.contentWindow) return;
     const d = ev.data;
     if (!d || d.type !== 'automation-map-release-activity-ready' || d.version !== 1) return;
@@ -8461,7 +8490,7 @@ function currentFocus() {
 // on the toggle would overwrite the saved amLegendCollapsed preference,
 // found live to be the wrong behaviour there and equally wrong here).
 function closeSecondaryPanels() {
-  [extPanel, pivotPanel, iconsPanel].forEach(function (p) { if (p) p.style.display = 'none'; });
+  secondaryPanels().forEach(function (p) { if (p) p.style.display = 'none'; });
   const legendEl = document.getElementById('legend');
   if (legendEl && legendEl.classList.contains('collapsed')) {
     legendEl.classList.remove('collapsed');
@@ -8596,13 +8625,17 @@ window.addEventListener('popstate', function (ev) {
       // browser has already updated to this entry by the time popstate
       // fires - no extra bookkeeping needed here for the label to be right.
     } else {
-      appSelect.value = '__all__';
-      deviceSelect.value = '__all__';
-      hubVarSelect.value = '__all__';
-      flowPanel.style.display = 'none';
-      syncLegendVisibility();
-      applyFilters();
-      renderBackLink();
+      // Delegated to exitToWholeMap() rather than repeating its steps here.
+      // This branch used to hand-roll its own reset and had silently drifted
+      // out of sync with it: it never called closeSecondaryPanels(), so Back
+      // to the whole map left External systems / Pivot / Device icons /
+      // release activity open on top of it, and it never reset kindFilter, so
+      // the "Show" dropdown kept a filter the restored view was not actually
+      // showing. Both are exactly the "navigation gets confused going in and
+      // out" Gordon reported. exitToWholeMap() already guards its own
+      // history.pushState with !poppingHistory, which is true here, so
+      // delegating adds no spurious history entry.
+      exitToWholeMap();
     }
   } finally {
     poppingHistory = false;
