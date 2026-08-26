@@ -1679,6 +1679,12 @@ void finalizeDevicePhase(String scanId) {
 void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
     String selfId = "${app.id}"
+    // Best-effort, not fatal - see fetchAppTypeNamespaces()'s own comment.
+    // Fetched once here rather than per-app, same reasoning as appsList.
+    Map appTypeNamespaceResult = fetchAppTypeNamespaces()
+    if (appTypeNamespaceResult.error) {
+        log.info "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
+    }
     Map appListing = fetchInstalledAppIds()
     if (appListing.error) {
         log.warn "${app.label}: app phase could not start: ${appListing.error}"
@@ -1738,6 +1744,7 @@ void startAppPhase(String lockToken) {
     // from data this exact scan generation just finished publishing, not
     // from whatever an unrelated earlier scan left behind.
     scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
+    scan.appTypeNamespaces = new ConcurrentHashMap<String, String>((appTypeNamespaceResult.namespaces ?: [:]) as Map)
     scan.decoded = new AtomicInteger(0)
     scan.unreadable = new AtomicInteger(0)
     scan.rulesDecoded = new AtomicInteger(0)
@@ -1800,7 +1807,7 @@ boolean dispatchAppOne(String scanId) {
             if (attemptCount < ATTEMPT_CAP) {
                 (scan.pending as ConcurrentLinkedQueue) << [id: appId, attemptCount: attemptCount]
             } else {
-                Map info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+                Map info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
                             ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
                             error: "dispatch threw ${attemptCount}x: ${ex.message}"]
                 (scan.appInfo as ConcurrentHashMap)[appId] = info
@@ -1834,14 +1841,14 @@ void appFetchCb(resp, data) {
     try {
         if (resp?.status == 200) {
             Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
-            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap)
+            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap, scan.appTypeNamespaces as Map)
         } else {
-            info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+            info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
                     ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
                     error: "HTTP ${resp?.status ?: 'n/a'}"]
         }
     } catch (Exception ex) {
-        info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+        info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
                 ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: "${ex.message}"]
     }
     (scan.appInfo as ConcurrentHashMap)[appId] = info
@@ -1914,7 +1921,7 @@ void reapAppClaim(String scanId, String appId, Map candidateClaim) {
     if (attemptCount < ATTEMPT_CAP) {
         (scan.pending as ConcurrentLinkedQueue) << [id: appId, attemptCount: attemptCount]
     } else {
-        Map info = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [],
+        Map info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
                     ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
                     error: "no callback within ${CLAIM_REAP_DEADLINE_MS}ms (attempt ${attemptCount})"]
         (scan.appInfo as ConcurrentHashMap)[appId] = info
@@ -2425,6 +2432,37 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
+// installedApp itself carries no namespace (confirmed live 2026-08-26 against
+// this hub's /installedapp/statusJson/{id} - Bucket/Queue/107). It does carry
+// appTypeId, which /hub2/userAppTypes - a separate, definition-level bulk
+// endpoint, one call regardless of app count - maps to the real namespace.
+// Failure here degrades to every app having a null namespace rather than
+// failing the scan; namespace is an enhancement for the Community Context
+// Card match, not something core scanning depends on.
+Map fetchAppTypeNamespaces() {
+    Map out = [status: 'ok', error: null, namespaces: [:]]
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/userAppTypes", 30)
+    if (!result.ok) {
+        out.status = 'failed'
+        out.error = result.error ?: 'the hub returned no error detail'
+        return out
+    }
+    if (!(result.data instanceof List)) {
+        out.status = 'failed'
+        out.error = 'the hub returned an unexpected userAppTypes response'
+        return out
+    }
+    Map namespaces = [:]
+    (result.data as List).each { entry ->
+        if (!(entry instanceof Map)) return
+        Map e = entry as Map
+        if (e.id == null || !e.namespace) return
+        namespaces["${e.id}"] = "${e.namespace}"
+    }
+    out.namespaces = namespaces
+    return out
+}
+
 // Pure processing, split out of fetchAppRelationships so the async scan
 // pipeline's callback can run it directly on data it already has, with no
 // second fetch. Mutates labels in place, same as before the split - the
@@ -2432,8 +2470,8 @@ void collectAppIds(def nodes, List ids) {
 // to mutate safely, merged into state.deviceLabels only at finalization, not
 // state.deviceLabels itself (concurrent callbacks racing on state directly
 // is exactly the failure mode this whole rewrite exists to avoid).
-Map processAppRelationships(String appId, Map data, Map labels) {
-    Map out = [id: appId, label: "App ${appId}", type: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
+Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
+    Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
@@ -2443,6 +2481,11 @@ Map processAppRelationships(String appId, Map data, Map labels) {
             // across the canvas. See nodeEntry for which form goes where.
             out.drawLabel = stripStatusMarkup(rawLabel)
             out.type = stripReplacementChar(installedApp?.name as String)
+            // definitionName's namespace, for the Community Context Card match
+            // only (spec section 4.1) - never added to the AI-friendly export.
+            if (installedApp?.appTypeId != null) {
+                out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
+            }
             // Stored for EVERY app, not only the empty ones, because it is read
             // in the opposite direction from the one it is written in. A
             // container needs the names of its children, and a child is the only
@@ -4096,6 +4139,10 @@ Map buildGraph() {
         // rule reached only as another rule's target counted the same as
         // LIFX Light Manager.
         nodes[appNodeId].appType = "${appMap.type}"
+        // Browser-local Community Context Card matching only (spec section
+        // 4.1) - deliberately absent from buildExportPayload()'s apps[]
+        // mapping, so it never reaches the AI-friendly export.
+        if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (unreadable) {
             nodes[appNodeId].unreadable = true
