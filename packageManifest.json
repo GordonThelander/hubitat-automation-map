@@ -6,7 +6,7 @@
   "dateReleased": "2026-08-27",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Automation Map 2.1.1 - version-tracking sync bump only, no functional change from 2.1.0. If you were already on 2.1.0, this update just realigns Package Manager. Refer here for more information: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
+  "releaseNotes": "Automation Map 2.1.1 - maintenance update, no functional changes since 2.1.0. Refer here for more information: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "apps": [
     {
       "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
