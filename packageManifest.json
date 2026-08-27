@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map",
   "author": "Gordon Thelander",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-08-27",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Automation Map 2.1.0 - upgrading from 2.0.4. Scans complete much faster, Hub Variables are now read directly from the hub instead of only from decoded rules, Insights explains what each finding means and what to check next, and common external integrations are classified automatically. Minimum platform is now 2.5.1. Refer here for more information: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
+  "releaseNotes": "Automation Map 2.1.1 - version-tracking sync bump only, no functional change from 2.1.0. If you were already on 2.1.0, this update just realigns Package Manager. Refer here for more information: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
   "apps": [
     {
       "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "2.1.0"
+      "version": "2.1.1"
     }
   ],
   "drivers": []
