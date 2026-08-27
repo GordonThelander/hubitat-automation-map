@@ -142,21 +142,29 @@ existing structural findings.
 
 The existing "Hubitat release activity" panel only shows historical Community Utilities/Hubitat
 release data; it never tells the user whether their own hub currently has an update available.
-Confirmed via a separate MCP tool that a status check is possible in principle (`platformUpdate:
-{available, currentVersion}` from a hub-admin read), but that path is not available to a sandboxed
-Hubitat app.
 
-Verified live on Gordon's hub on 2026-08-27: the underlying mechanism is real, not theoretical. A
-status read reported `UPDATE_AVAILABLE` (2.5.1.172 -> 2.5.1.174) with version, release-notes URL and
-beta flag, and a second call actually triggered the install (download, apply, reboot). Both calls
-went through the hub-rules MCP server, i.e. from outside the app sandbox - this confirms the data
-exists and what shape it takes, not that a sandboxed app can reach it.
+Investigated two approaches on 2026-08-27. Hubitat's own live update-check
+(`/hub/cloud/checkForUpdate`) is real and confirmed working - a status read via the hub-rules MCP
+server reported `UPDATE_AVAILABLE` (2.5.1.172 -> 2.5.1.174) with version, release-notes URL and beta
+flag, and a second call actually triggered the install (download, apply, reboot). But that path is
+only reachable from outside the app sandbox (via the MCP server's admin access), not from a Hubitat
+app's own code, and it bundles the check together with the install - there is no way to ask "is one
+available" without also committing to install if the answer is yes.
 
-**Next action:** confirm whether a stable, read-only way to check platform-update availability
-exists from inside a sandboxed app (likely an undocumented internal endpoint, per the read-only
-internal API harness in `hubitat_dev_utililities`), assess reliability across platform versions,
-then surface it as a plain "update available: yes/no, current vX, latest vY" fact - report only,
-never trigger an install from within Automation Map itself.
+Better direction found the same day: `HPM_Manifest_Crawl`'s own feature-tracker dataset
+(`site/feature-tracker/data/hubitat_release_features.json`, publicly fetchable, confirmed live)
+already tracks every Hubitat release with a `version` and `releasedAt`. A sandboxed app can safely
+read `location.hub.firmwareVersionString` (standard, documented) and compare it against that
+dataset's latest entry - no undocumented endpoint, no admin access, no risk. The limit: this is a
+scheduled crawl of the community forum, not a live Hubitat query, so it lags real releases by up to
+one crawl cycle - confirmed directly, since at the moment 2.5.1.174 was installing on Gordon's hub,
+the dataset's last harvest (2026-08-26) still only knew about 2.5.1.172.
+
+**Next action:** publish a small derived `latest.json` (`{version, releasedAt}`) from the
+`HPM_Manifest_Crawl` pipeline instead of shipping the full ~4 MB dataset to a Hubitat app, fetch it
+from Automation Map, compare against `location.hub.firmwareVersionString`, and label the result
+honestly as "latest known as of `releasedAt`" rather than "latest available" so the crawl lag stays
+visible. Report only - never trigger an install from within Automation Map itself.
 
 ## Later / v3
 
