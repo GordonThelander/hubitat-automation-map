@@ -146,6 +146,12 @@ Confirmed via a separate MCP tool that a status check is possible in principle (
 {available, currentVersion}` from a hub-admin read), but that path is not available to a sandboxed
 Hubitat app.
 
+Verified live on Gordon's hub on 2026-08-27: the underlying mechanism is real, not theoretical. A
+status read reported `UPDATE_AVAILABLE` (2.5.1.172 -> 2.5.1.174) with version, release-notes URL and
+beta flag, and a second call actually triggered the install (download, apply, reboot). Both calls
+went through the hub-rules MCP server, i.e. from outside the app sandbox - this confirms the data
+exists and what shape it takes, not that a sandboxed app can reach it.
+
 **Next action:** confirm whether a stable, read-only way to check platform-update availability
 exists from inside a sandboxed app (likely an undocumented internal endpoint, per the read-only
 internal API harness in `hubitat_dev_utililities`), assess reliability across platform versions,
