@@ -128,29 +128,39 @@ default only applies internally at scheduling time, never as a pre-filled value.
 **Next action:** replace the two `description:` attributes with a `paragraph` element instead,
 since plain paragraphs render reliably everywhere else in this app.
 
+### 9. Surface broken or disabled rules in Insights
+
+Rule Machine rules that are paused, disabled, or already reporting an execution error are invisible
+in the current map and Insights output; a user has to already know something is wrong and go check
+Rule Machine directly.
+
+**Next action:** confirm what rule health signals are reliably readable (paused/disabled state via
+RMUtils, recent error status), then add a ranked Insights finding surfacing them, distinct from the
+existing structural findings.
+
 ## Later / v3
 
-### 9. Move graph derivation into the browser
+### 10. Move graph derivation into the browser
 
 Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
 deriving view-specific graph structures client-side.
 
-### 10. Move remaining display shaping into the browser
+### 11. Move remaining display shaping into the browser
 
 After graph derivation is stable, migrate filtering, grouping, styling and panel preparation while
 keeping scan collection and authoritative normalization on the hub.
 
-### 11. Separate the frontend from the Groovy GString
+### 12. Separate the frontend from the Groovy GString
 
 Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
 breaking single-app Hubitat distribution.
 
-### 12. Delta scanning
+### 13. Delta scanning
 
 Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
 but incomplete map is not acceptable.
 
-### 13. Same-hub warm-start cache
+### 14. Same-hub warm-start cache
 
 Investigate a bounded cache that can restore a recent map quickly while clearly showing its age and
 never presenting stale data as a completed current scan.
