@@ -53,7 +53,13 @@ The same guidance is included in the AI-friendly export, so an AI reading the fi
 
 **External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Reviewed defaults pre-fill common integrations (Hue, LIFX, Sensibo, Tapo, Meross, Chromecast, Google Home and others), and a [shared community registry](https://github.com/GordonThelander/HPM_Manifest_Crawl/blob/main/AUTOMATION_MAP_CONTRACT.md) covers more; your own declarations in the External systems panel always win over both. Declared or matched dependencies are drawn as their own diamond-shaped node, dashed edge back to the app that depends on it, so you can see what breaks if that outside service goes down.
 
+**Community information.** Focus an app and, where the Community Utilities registry has a matching package, a card shows its name, author, review status and links to its documentation, source and support thread - a quick way to check whether an integration is a known, reviewed package before trusting it. Click through for the full detail in the Package Explorer.
+
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
+
+**Baseline Comparison.** Compare two of your own AI-friendly exports side by side to see exactly which apps and devices were added, removed or changed between them.
+
+**Hubitat release activity.** A compact preview of Hubitat's own release history, pulled from the Community Utilities Update Tracker, with a link through to the full tracker.
 
 **AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
 
@@ -100,7 +106,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
 - **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN, the device icon font loads from cdnjs, and the watermark and click sound effects load from GitHub. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
-- **Tested only on platform 2.5.1.152.** `minimumHEVersion` in the manifest matches; HPM will not offer this app on an earlier build.
+- **Tested on Hubitat platform 2.5.1**, including builds 2.5.1.152 and 2.5.1.172. `minimumHEVersion` in the manifest matches 2.5.1; HPM will not offer this app on an earlier build.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
 - **Every installed app is discovered, whether or not it touches a device.** The complete app list comes from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
 - **Hub Variable read/write edges are read from any Rule Machine engine, not only 5.1.** Rule-to-rule link detection runs against every app's settings regardless of engine, so it depends on Rule Machine's own settings shape being present rather than an explicit type check. Room Lighting, Basic Rules, Simple Automation and webCoRE do not store rules that way, so they show no links rather than showing that they have none.
