@@ -19,5 +19,14 @@
       "version": "2.1.1"
     }
   ],
-  "drivers": []
+  "drivers": [
+    {
+      "id": "7f3a8471-a8c4-4421-aa82-cd2f3ed0a169",
+      "name": "Automation Map Telemetry Driver",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/drivers/automation_map_telemetry_driver.groovy",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ]
 }
