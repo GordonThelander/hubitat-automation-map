@@ -138,29 +138,43 @@ Rule Machine directly.
 RMUtils, recent error status), then add a ranked Insights finding surfacing them, distinct from the
 existing structural findings.
 
+### 10. Live Hubitat platform update check
+
+The existing "Hubitat release activity" panel only shows historical Community Utilities/Hubitat
+release data; it never tells the user whether their own hub currently has an update available.
+Confirmed via a separate MCP tool that a status check is possible in principle (`platformUpdate:
+{available, currentVersion}` from a hub-admin read), but that path is not available to a sandboxed
+Hubitat app.
+
+**Next action:** confirm whether a stable, read-only way to check platform-update availability
+exists from inside a sandboxed app (likely an undocumented internal endpoint, per the read-only
+internal API harness in `hubitat_dev_utililities`), assess reliability across platform versions,
+then surface it as a plain "update available: yes/no, current vX, latest vY" fact - report only,
+never trigger an install from within Automation Map itself.
+
 ## Later / v3
 
-### 10. Move graph derivation into the browser
+### 11. Move graph derivation into the browser
 
 Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
 deriving view-specific graph structures client-side.
 
-### 11. Move remaining display shaping into the browser
+### 12. Move remaining display shaping into the browser
 
 After graph derivation is stable, migrate filtering, grouping, styling and panel preparation while
 keeping scan collection and authoritative normalization on the hub.
 
-### 12. Separate the frontend from the Groovy GString
+### 13. Separate the frontend from the Groovy GString
 
 Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
 breaking single-app Hubitat distribution.
 
-### 13. Delta scanning
+### 14. Delta scanning
 
 Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
 but incomplete map is not acceptable.
 
-### 14. Same-hub warm-start cache
+### 15. Same-hub warm-start cache
 
 Investigate a bounded cache that can restore a recent map quickly while clearly showing its age and
 never presenting stale data as a completed current scan.
