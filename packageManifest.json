@@ -1,7 +1,7 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "minimumHEVersion": "2.5.1",
   "dateReleased": "2026-08-27",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/dev/README.md",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "2.1.0"
+      "version": "2.1.1"
     }
   ],
   "drivers": []
