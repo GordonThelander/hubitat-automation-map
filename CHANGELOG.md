@@ -4,7 +4,7 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
-## 2.0.15
+## 2.1.0
 
 Makes Insights concise and actionable with plain-language explanations, reasons a pattern may be normal, and practical next checks. The same guidance is included in the AI-friendly export. Adds reviewed defaults for common external systems, reconciles Hub Variable identities that include a trailing period, and corrects the installation-page description of how apps are discovered. Released to the Dev channel for hub testing.
 
