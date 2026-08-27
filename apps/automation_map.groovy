@@ -272,8 +272,8 @@ Map main() {
                     // without reading the live scan accumulator instead. Same
                     // fix as scanStatusJson().
                     ConcurrentHashMap liveScan = null
-                    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
-                    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+                    if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
+                    else if (state.scanPhase == 'apps') liveScan = liveAppScan()
                     Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: 0) as Integer
                     Integer total = (state.scanTotal ?: 1) as Integer
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
@@ -720,8 +720,8 @@ void clearAbandonedScan() {
     // watchdog/reaper is live is therefore not a belt-and-suspenders
     // addition any more, it is the only thing standing between a perfectly
     // healthy in-progress scan and this function marking it abandoned.
-    boolean asyncDeviceScanActive = state.scanPhase == 'devices' && DEVICE_SCANS.containsKey(state.deviceScanId as String)
-    boolean asyncAppScanActive = state.scanPhase == 'apps' && APP_SCANS.containsKey(state.appScanId as String)
+    boolean asyncDeviceScanActive = state.scanPhase == 'devices' && liveDeviceScan() != null
+    boolean asyncAppScanActive = state.scanPhase == 'apps' && liveAppScan() != null
     if (asyncDeviceScanActive || asyncAppScanActive) return
 
     // A "finishing:<token>:<since>" value means finishGeneration() is
@@ -987,6 +987,20 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
 // state directly could silently drop whichever wrote last.
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
+
+// A null id (state predating these fields, or a stale reference to a
+// since-cleared generation) must never reach a ConcurrentHashMap lookup -
+// get()/containsKey(null) throw outright, unlike a plain HashMap's null-key
+// tolerance. Every read of the live accumulators goes through here instead
+// of repeating the guard at each call site.
+ConcurrentHashMap liveDeviceScan() {
+    String id = state.deviceScanId as String
+    return id ? DEVICE_SCANS[id] : null
+}
+ConcurrentHashMap liveAppScan() {
+    String id = state.appScanId as String
+    return id ? APP_SCANS[id] : null
+}
 // Single-flight lock keyed by app instance id. state.scanRunning alone cannot
 // serve this role: two scanMapping()/scheduledScanHandler() executions can
 // each read it before either one's own state commit lands (state only
@@ -5214,8 +5228,8 @@ String scanStatusJson(boolean forceRunning = false) {
     // read directly from there rather than report a frozen, misleadingly-
     // early snapshot for the whole phase.
     ConcurrentHashMap liveScan = null
-    if (state.scanPhase == 'devices') liveScan = DEVICE_SCANS[state.deviceScanId as String]
-    else if (state.scanPhase == 'apps') liveScan = APP_SCANS[state.appScanId as String]
+    if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
+    else if (state.scanPhase == 'apps') liveScan = liveAppScan()
     int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
     def done = liveScan ? (liveScan.processed as AtomicInteger).get() : state.scanDone
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
