@@ -200,6 +200,20 @@ try {
         }
     }
 
+    $telemetryScriptPath = 'Supporting Docs/automation_map_telemetry_apps_script.gs'
+    if (@($manifest.drivers).Count -gt 0) {
+        if (-not (Test-Path -LiteralPath $telemetryScriptPath)) {
+            Add-ValidationError "Telemetry Apps Script not found: $telemetryScriptPath"
+        } else {
+            $telemetryScript = Get-Content -LiteralPath $telemetryScriptPath -Raw
+            foreach ($requiredFunction in @('doGet', 'doPost', 'setupTelemetrySheet')) {
+                if ($telemetryScript -notmatch "(?m)^function\s+$requiredFunction\s*\(") {
+                    Add-ValidationError "Telemetry Apps Script is missing top-level function $requiredFunction."
+                }
+            }
+        }
+    }
+
     # Hubitat currently documents these as required fields with empty values.
     # Validate their presence, not whether they point to an image.
     if ($appText -notmatch "(?m)^\s*iconUrl:\s*(['""]).*?\1,?\s*$") {
@@ -220,6 +234,28 @@ try {
                 }
                 if ($manifest.documentationLink -notlike "*$expectedSegment*") {
                     Add-ValidationError "Manifest documentation link does not point to the $branch branch."
+                }
+                foreach ($manifestDriver in @($manifest.drivers)) {
+                    if ($manifestDriver.location -notlike "*$expectedSegment*") {
+                        Add-ValidationError "Manifest driver '$($manifestDriver.name)' location does not point to the $branch branch."
+                    }
+                    $driverFileName = Split-Path -Leaf ([uri]$manifestDriver.location).AbsolutePath
+                    $driverPath = Join-Path 'drivers' $driverFileName
+                    if (-not (Test-Path -LiteralPath $driverPath)) {
+                        Add-ValidationError "Manifest driver source not found locally: $driverPath"
+                        continue
+                    }
+                    $driverText = Get-Content -LiteralPath $driverPath -Raw
+                    $driverVersionMatch = [regex]::Match($driverText, "@Field\s+static\s+final\s+String\s+DRIVER_VERSION\s*=\s*'([^']+)'")
+                    if (-not $driverVersionMatch.Success) {
+                        Add-ValidationError "Could not read DRIVER_VERSION from $driverPath."
+                    } elseif ($manifestDriver.version -ne $driverVersionMatch.Groups[1].Value) {
+                        Add-ValidationError "Manifest driver version '$($manifestDriver.version)' does not match DRIVER_VERSION '$($driverVersionMatch.Groups[1].Value)'."
+                    }
+                    $driverImportMatch = [regex]::Match($driverText, 'importUrl:\s*"([^"]+)"')
+                    if (-not $driverImportMatch.Success -or $driverImportMatch.Groups[1].Value -notlike "*$expectedSegment*") {
+                        Add-ValidationError "Driver '$($manifestDriver.name)' importUrl does not point to the $branch branch."
+                    }
                 }
             }
             if ($null -ne $repository -and @($repository.packages)[0].location -notlike "*$expectedSegment*") {

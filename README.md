@@ -108,6 +108,10 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
 - On the current Dev build, a scan of roughly 200 devices normally completes well under a minute. The production v2.0.4 serial scanner can take about two minutes on a similarly sized hub. Hub load and app count still affect both figures.
 
+## Telemetry
+
+After every successful scan, Automation Map reports anonymous compatibility and scale data to the developer: your hub's firmware version, the installed Automation Map version, the time of the scan, and its app/device/node/edge counts. Nothing else - no device or app names, hub identity, IP address or location. This has no toggle; it is part of how the app works. It exists to show which versions and platform builds are actually in use and to prioritise compatibility work. Delivery happens after the map is published, so a telemetry failure cannot fail the scan.
+
 ## Install
 
 **OAuth must be enabled.** The map is a web page the app serves from your hub, which needs an OAuth access token. Without it there is no map link. Installing through Hubitat Package Manager enables OAuth for you; installing by hand does not, so step 2 below is not optional.

@@ -139,6 +139,7 @@ preferences {
 
 void installed() {
     log.info "${app.label} installed"
+    ensureTelemetryDevice()
     // Pressing Done is the first moment the instance exists and work can be
     // scheduled for it, so the first scan starts here rather than asking the
     // user to press Done and then come back in to start one - which reads as
@@ -150,6 +151,10 @@ void installed() {
 
 void updated() {
     log.info "${app.label} updated"
+    // Also called here, not only from installed() - an instance upgraded from
+    // a version that predates telemetry has no child device yet, and updated()
+    // is what actually runs on that upgrade.
+    ensureTelemetryDevice()
     // Rescheduled on every updated(), which is also how this survives a hub
     // reboot - Hubitat re-runs updated() for every installed app on boot, so
     // the schedule() call here re-establishes the cron rather than relying
@@ -157,6 +162,35 @@ void updated() {
     // this hub; standard platform behaviour, worth a real reboot test if
     // this schedule is ever reported as silently not firing.
     scheduleAutoScan()
+}
+
+// One child device per instance, created once and reused - the report() call
+// after every scan just fetches it by DNI rather than re-deriving anything.
+// Failure here (e.g. the driver isn't installed for some reason) is logged
+// and swallowed, never thrown - telemetry must never be able to block a
+// scan-triggering install/update.
+void ensureTelemetryDevice() {
+    String dni = "${app.id}-telemetry"
+    if (getChildDevice(dni)) return
+    try {
+        addChildDevice('Hubitat Integrations', 'Automation Map Telemetry Driver', dni,
+            [name: 'Automation Map Telemetry Driver', label: 'Automation Map Telemetry', isComponent: true])
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not create telemetry device: ${ex.message}"
+    }
+}
+
+// runIn handler - see the finishScan() call site for what data is sent and why
+// it is deferred. Missing device or a failed report is logged and swallowed;
+// a scan that already published successfully must never be affected by this.
+void reportTelemetry(Map data) {
+    def telemetryDevice = getChildDevice("${app.id}-telemetry")
+    if (!telemetryDevice) return
+    try {
+        telemetryDevice.report(data)
+    } catch (Exception ex) {
+        log.warn "${app.label}: telemetry report failed: ${ex.message}"
+    }
 }
 
 // On by default (00:30 production, 01:00 Dev when the time is left blank) -
@@ -2301,6 +2335,19 @@ void finishScan(data = null) {
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
         log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+
+        // Deferred, not called inline - a telemetry endpoint hiccup must never
+        // delay or risk this closure's own state.graph publish. See README for
+        // exactly what this sends (four fields, nothing identifying) and why.
+        runIn(1, 'reportTelemetry', [data: [
+            firmwareVersion: (location?.hub?.firmwareVersionString ?: 'unknown') as String,
+            appVersion     : APP_VERSION,
+            apps           : (state.appInfo as Map).size(),
+            devices        : (state.deviceLabels as Map).size(),
+            nodes          : (graph.nodes ?: []).size(),
+            edges          : (graph.edges ?: []).size(),
+            timestamp      : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
+        ]])
     }
     if (!finished) {
         // The claim is now checked before buildGraph() runs, so a
