@@ -113,29 +113,44 @@ overrides and icon choices.
 **Next action:** define a versioned schema, conflict rules, preview step and validation behaviour.
 Never import scan results or secrets as configuration.
 
+### 8. Scan-schedule setting descriptions never render
+
+Not urgent - cosmetic, and has been present in production (confirmed on the live v2.0.4 instance,
+unrelated to any recent work) without being noticed until now.
+
+The `autoScanEnabled` and `autoScanTime` inputs both set a `description:` ("On by default at
+00:30/01:00...", "Leave blank for 00:30/01:00.") that never appears in Hubitat's rendered settings
+page - confirmed on both the Dev and production instances, same gap on both, so this is a platform
+rendering limitation for `bool`/`time` input descriptions, not something broken in this app's code.
+The Hours/Minutes fields showing empty is correct - no time has ever been explicitly set, and the
+default only applies internally at scheduling time, never as a pre-filled value.
+
+**Next action:** replace the two `description:` attributes with a `paragraph` element instead,
+since plain paragraphs render reliably everywhere else in this app.
+
 ## Later / v3
 
-### 8. Move graph derivation into the browser
+### 9. Move graph derivation into the browser
 
 Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
 deriving view-specific graph structures client-side.
 
-### 9. Move remaining display shaping into the browser
+### 10. Move remaining display shaping into the browser
 
 After graph derivation is stable, migrate filtering, grouping, styling and panel preparation while
 keeping scan collection and authoritative normalization on the hub.
 
-### 10. Separate the frontend from the Groovy GString
+### 11. Separate the frontend from the Groovy GString
 
 Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
 breaking single-app Hubitat distribution.
 
-### 11. Delta scanning
+### 12. Delta scanning
 
 Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
 but incomplete map is not acceptable.
 
-### 12. Same-hub warm-start cache
+### 13. Same-hub warm-start cache
 
 Investigate a bounded cache that can restore a recent map quickly while clearly showing its age and
 never presenting stale data as a completed current scan.
