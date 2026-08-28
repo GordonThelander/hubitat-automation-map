@@ -358,7 +358,12 @@ Map main() {
                         // splitting apps in here and nodes/edges down there.
                         String when = state.scanHeartbeat ?
                             new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : 'unknown'
-                        progress = "Last scan : <span style='color:#2e7d32'>${when}</span>"
+                        // Absent on a scan completed before this field existed, or one that
+                        // ended through a failure path that never reaches finishScan's closure -
+                        // omitted rather than shown as "(null s)".
+                        String durationSuffix = state.lastScanDurationSeconds != null ?
+                            " (${state.lastScanDurationSeconds}s)" : ''
+                        progress = "Last scan : <span style='color:#2e7d32'>${when}</span>${durationSuffix}"
                     }
                     // Wrapped in an id'd span, not a bare paragraph - amProgressPoll()
                     // below replaces this element's text in place once JS takes over,
@@ -2575,6 +2580,13 @@ void finishScan(data = null) {
         // rather than adding a new state field for it - the token already IS
         // the scan's start timestamp, just formatted for lock identity.
         Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
+        // Computed once, used for both the durable display field below and
+        // the telemetry payload, so the two can never disagree.
+        Integer scanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
+        // Durable, so main()'s "Last scan" line can show it on a later,
+        // separate page-render execution - the local variable above only
+        // lives for this one closure.
+        state.lastScanDurationSeconds = scanDurationSeconds
         // Derived from APP_NAME rather than a separate flag, so this can
         // never drift out of sync with which build is actually running -
         // APP_NAME is already the one place that differs between the Dev
@@ -2605,7 +2617,7 @@ void finishScan(data = null) {
             nodes           : (graph.nodes ?: []).size(),
             edges           : (graph.edges ?: []).size(),
             timestamp       : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
-            durationSeconds : ((now() - scanStartedAtMs) / 1000).intValue()
+            durationSeconds : scanDurationSeconds
         ]])
     }
     amTrace('F3.finish.claim-result', lockToken, traceAttempt, [src: traceOrigin, won: finished])
@@ -5541,7 +5553,17 @@ String scanStatusJson(boolean forceRunning = false) {
     if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
     else if (state.scanPhase == 'apps') liveScan = liveAppScan()
     int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
-    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : state.scanDone
+    // liveScan null while state.scanRunning is still true, for this SAME
+    // phase, means finalizeXPhase() already removed the accumulator - which
+    // only happens after that phase's own completion invariant was already
+    // verified true. state.scanDone itself may not be durably visible yet
+    // to this concurrent execution (state commits only when finalizeXPhase's
+    // own execution returns), so falling back to it here can read the
+    // pre-finalization value the phase started with - reproduced live
+    // 2026-08-28 as a false "0 of 112 (0%)" flash right before "scan
+    // complete". The phase is provably done by the time liveScan is null
+    // for state's own current phase, so total is the correct fallback.
+    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: state.scanTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
         running: forceRunning || (state.scanRunning as boolean),
