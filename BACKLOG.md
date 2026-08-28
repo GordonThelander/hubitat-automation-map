@@ -174,9 +174,10 @@ current ad-hoc `AM-TRACE` log prose), and a build step that strips developer com
 source's commentary. Development comments and diagnostic-only wording must never be exposed in the
 production UI, exports, logs, telemetry, or generated source. The design also contains mandatory
 runbooks for safe hub deployment and disciplined telemetry assessment, so future sessions do not
-improvise either process. Full agreed design is in
-`Supporting Docs/production_build_methodology.md`, worked out jointly by Claude and Codex on
-2026-08-28.
+improvise either process. Full agreed design lives in the private, cross-project
+`production-protocol` repo (`production_build_methodology.md`), not in this repo - moved there
+2026-08-28 so it is reusable across projects instead of scoped to this one:
+https://github.com/GordonThelander/production-protocol/blob/main/production_build_methodology.md
 
 **Status: design agreed, nothing implemented.**
 
