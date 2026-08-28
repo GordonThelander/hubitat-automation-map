@@ -29,7 +29,7 @@
 
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = '1.0.0'
+@Field static final String DRIVER_VERSION = '1.0.1'
 @Field static final String TELEMETRY_URL = 'https://script.google.com/macros/s/AKfycbxaVq68SM7ZB3szzIa0dH6x9CIQaIRLpMZbIy21tM4rhTvO1jArkfN4o3mqSmd1Cxdt/exec'
 
 metadata {
@@ -67,6 +67,11 @@ void report(Map data) {
         contentType      : "application/json",
         requestContentType: "application/json",
         body             : body,
+        // Apps Script normally redirects its web-app response to a
+        // googleusercontent URL. Ask Hubitat to follow that redirect so the
+        // final JSON acknowledgement can be inspected when the platform
+        // supports it. The callback also handles an exposed redirect safely.
+        followRedirects  : true,
         timeout          : 10
     ]
     try {
@@ -100,11 +105,18 @@ private Map validateReport(Map data) {
 
 void telemetryResponse(resp, Map data = null) {
     try {
-        boolean transportOk = resp != null && !resp.hasError() && resp.status == 200
+        int status = (resp?.status ?: 0) as int
+        boolean redirected = status in [301, 302, 303, 307, 308]
+        boolean transportOk = resp != null && !resp.hasError() && status == 200
         Map responseBody = transportOk ? (resp.getJson() as Map) : null
         boolean accepted = transportOk && responseBody?.ok == true
-        String detail = accepted ? "ok" :
-            (responseBody?.error ? "rejected: ${responseBody.error}" : "error: HTTP ${resp?.status ?: 'unknown'}")
+        // Hubitat may expose Apps Script's normal redirect instead of
+        // following it. The POST has reached and executed the web app at that
+        // point, but the redirected JSON body is unavailable, so report the
+        // precise state as submitted rather than the false error previously
+        // shown on the child device.
+        String detail = accepted ? "ok" : redirected ? "submitted" :
+            (responseBody?.error ? "rejected: ${responseBody.error}" : "error: HTTP ${status ?: 'unknown'}")
         sendEvent(name: "lastStatus", value: detail.take(255))
     } catch (Exception ex) {
         // hasError()/status can themselves throw on some failure shapes - never
