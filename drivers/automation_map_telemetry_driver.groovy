@@ -29,7 +29,7 @@
 
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = '1.0.3'
+@Field static final String DRIVER_VERSION = '1.0.4'
 @Field static final String TELEMETRY_URL = 'https://script.google.com/macros/s/AKfycbxaVq68SM7ZB3szzIa0dH6x9CIQaIRLpMZbIy21tM4rhTvO1jArkfN4o3mqSmd1Cxdt/exec'
 
 metadata {
@@ -65,7 +65,11 @@ void report(Map data) {
         // Optional - the app-side fetch is best-effort and silent on
         // failure, so this can legitimately be null. Not part of
         // validateReport()'s required-field check for that reason.
-        hardwareId     : data?.hardwareId
+        hardwareId     : data?.hardwareId,
+        // Comma-separated fixed category codes (e.g. "registry_timeout"),
+        // never free text - an empty string is the normal, healthy case,
+        // not a validation failure.
+        errors         : data?.errors
     ]
     Map params = [
         uri              : TELEMETRY_URL,
@@ -105,6 +109,11 @@ private Map validateReport(Map data) {
     // fetch that could fail - required, unlike hardwareId.
     if (!(data.durationSeconds instanceof Number) || data.durationSeconds < 0 || data.durationSeconds >= 100000) {
         return [ok: false, error: "invalid durationSeconds"]
+    }
+    // Always present as a string (empty when healthy), unlike hardwareId -
+    // the app always computes and joins this list, even to "".
+    if (!(data.errors instanceof CharSequence)) {
+        return [ok: false, error: "invalid errors"]
     }
     if (!(data.timestamp instanceof CharSequence) ||
         !(data.timestamp.toString() ==~ /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)) {

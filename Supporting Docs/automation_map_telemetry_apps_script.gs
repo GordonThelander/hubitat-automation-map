@@ -7,7 +7,7 @@
  *  below, not by a secret. A secret shipped in public driver source
  *  authenticates no one; worst case of abuse here is junk rows in the sheet.
  *
- *  @version 1.3.0
+ *  @version 1.4.0
  *  @author  Gordon Thelander
  *  @see     https://github.com/GordonThelander/hubitat-automation-map
  *
@@ -41,7 +41,7 @@
 // /exec URL proves which version is actually DEPLOYED - editing and saving the
 // editor does not update a live deployment, and without this marker a stale
 // deployment is indistinguishable from a current one.
-const SCRIPT_VERSION = '1.3.0';
+const SCRIPT_VERSION = '1.4.0';
 
 const SHEET_ID = '1-DCdtaMa4c70AeHwj7Y8ai_Jl_XO2MPxQpkmwVozjtU';
 const SHEET_NAME = 'Telemetry';
@@ -50,8 +50,14 @@ const MAX_STRING_LENGTH = 40;
 // rather than being buried among the version/count fields.
 const HEADERS = [
   'hardwareId', 'receivedAt', 'scanTimestamp', 'durationSeconds',
-  'firmwareVersion', 'appVersion', 'apps', 'devices', 'nodes', 'edges'
+  'firmwareVersion', 'appVersion', 'apps', 'devices', 'nodes', 'edges', 'errors'
 ];
+
+// Fixed allowlist, not free text - a code outside this set is rejected
+// rather than silently stored, so "no free text" stays actually true rather
+// than merely documented. Extend this list, not the validation shape, when
+// the app learns to detect a new failure category.
+const KNOWN_ERROR_CODES = ['registry_timeout', 'registry_error', 'hub_variable_inventory_failed'];
 
 function doGet(e) {
   return json_({
@@ -117,6 +123,7 @@ function validatedRow_(payload) {
   // Optional - the Hubitat-side fetch is best-effort and can legitimately be
   // absent. Not required here for that reason, unlike firmwareVersion/appVersion.
   const hardwareId = sanitiseString_(payload.hardwareId);
+  const errors = sanitiseErrorCodes_(payload.errors);
 
   if (!firmwareVersion || !appVersion) {
     throw new Error('Missing firmwareVersion or appVersion');
@@ -136,8 +143,22 @@ function validatedRow_(payload) {
     apps,
     devices,
     nodes,
-    edges
+    edges,
+    errors
   ];
+}
+
+// Comma-separated codes in, comma-separated codes out - anything not in
+// KNOWN_ERROR_CODES is dropped silently rather than stored, so a future
+// unrecognised code (a bug, or a tampered payload) can never introduce free
+// text into the sheet even if the driver-side validation is ever bypassed.
+function sanitiseErrorCodes_(value) {
+  if (value === null || value === undefined || value === '') return '';
+  return String(value)
+    .split(',')
+    .map(function (code) { return code.trim(); })
+    .filter(function (code) { return KNOWN_ERROR_CODES.indexOf(code) !== -1; })
+    .join(',');
 }
 
 function sanitiseString_(value) {

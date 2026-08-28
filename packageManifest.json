@@ -26,7 +26,7 @@
       "namespace": "Hubitat Integrations",
       "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/drivers/automation_map_telemetry_driver.groovy",
       "required": true,
-      "version": "1.0.3"
+      "version": "1.0.4"
     }
   ]
 }
