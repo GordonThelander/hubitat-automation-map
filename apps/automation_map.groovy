@@ -2500,9 +2500,14 @@ void finishScan(data = null) {
         // rather than adding a new state field for it - the token already IS
         // the scan's start timestamp, just formatted for lock identity.
         Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
+        // Derived from APP_NAME rather than a separate flag, so this can
+        // never drift out of sync with which build is actually running -
+        // APP_NAME is already the one place that differs between the Dev
+        // and production source (line 75/APP_NAME's own comment).
+        String reportedAppVersion = APP_NAME.contains('(Dev)') ? "${APP_VERSION}-dev" : APP_VERSION
         runIn(1, 'reportTelemetry', [data: [
             firmwareVersion : (location?.hub?.firmwareVersionString ?: 'unknown') as String,
-            appVersion      : APP_VERSION,
+            appVersion      : reportedAppVersion,
             apps            : (state.appInfo as Map).size(),
             devices         : (state.deviceLabels as Map).size(),
             nodes           : (graph.nodes ?: []).size(),
