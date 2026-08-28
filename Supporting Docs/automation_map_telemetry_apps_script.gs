@@ -25,9 +25,23 @@
  *  5. Run setupTelemetrySheet once and approve the requested spreadsheet access.
  *  6. Deploy as a Web App: execute as yourself, access set to Anyone.
  *  7. Open the /exec URL. Do not continue until it returns JSON containing
- *     "ok":true and "configured":true.
+ *     "ok":true, "configured":true, and a "scriptVersion" matching
+ *     SCRIPT_VERSION below. A mismatched scriptVersion means the deployment is
+ *     serving older code: saving the editor does NOT update a live deployment.
+ *     Use Deploy -> Manage deployments -> edit -> Version: New version.
  *  8. Put that verified /exec URL into TELEMETRY_URL in the Hubitat driver.
+ *
+ *  Note on the header row: setupTelemetrySheet only writes HEADERS into an
+ *  EMPTY sheet. Adding a column to HEADERS later does not relabel an existing
+ *  sheet, so add the new header cell by hand. Data still lands in the new
+ *  column either way; only the label is missing.
  */
+
+// Bumped whenever this file changes. doGet returns it, so a single GET on the
+// /exec URL proves which version is actually DEPLOYED - editing and saving the
+// editor does not update a live deployment, and without this marker a stale
+// deployment is indistinguishable from a current one.
+const SCRIPT_VERSION = '1.1.0';
 
 const SHEET_ID = 'REPLACE_WITH_YOUR_SPREADSHEET_ID';
 const SHEET_NAME = 'Telemetry';
@@ -42,7 +56,9 @@ function doGet(e) {
     ok: true,
     service: 'Automation Map Telemetry',
     method: 'GET',
+    scriptVersion: SCRIPT_VERSION,
     configured: isConfigured_(),
+    columns: HEADERS.length,
     time: new Date().toISOString()
   });
 }
