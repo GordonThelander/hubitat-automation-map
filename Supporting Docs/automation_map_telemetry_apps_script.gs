@@ -34,7 +34,7 @@ const SHEET_NAME = 'Telemetry';
 const MAX_STRING_LENGTH = 40;
 const HEADERS = [
   'receivedAt', 'scanTimestamp', 'firmwareVersion', 'appVersion',
-  'apps', 'devices', 'nodes', 'edges'
+  'apps', 'devices', 'nodes', 'edges', 'hardwareId'
 ];
 
 function doGet(e) {
@@ -93,6 +93,9 @@ function validatedRow_(payload) {
   const nodes = requireInt_(payload.nodes, 'nodes');
   const edges = requireInt_(payload.edges, 'edges');
   const timestamp = sanitiseString_(payload.timestamp);
+  // Optional - the Hubitat-side fetch is best-effort and can legitimately be
+  // absent. Not required here for that reason, unlike firmwareVersion/appVersion.
+  const hardwareId = sanitiseString_(payload.hardwareId);
 
   if (!firmwareVersion || !appVersion) {
     throw new Error('Missing firmwareVersion or appVersion');
@@ -109,7 +112,8 @@ function validatedRow_(payload) {
     apps,
     devices,
     nodes,
-    edges
+    edges,
+    hardwareId
   ];
 }
 
