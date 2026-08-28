@@ -26,6 +26,12 @@ Same privacy rules already established for the telemetry work: no device names, 
 names, hub identifier, local IP, or external token in any event. Diagnostic construction must
 short-circuit before reading or formatting fields when disabled - no cost when off.
 
+Development comments, trace explanations, internal notes, and diagnostic-only wording must never be
+rendered or otherwise exposed to production users. Keeping that material in the annotated Dev source
+does not authorize including it in the generated production artifact, its UI, exports, logs, or
+telemetry. The production build and production-profile checks must fail closed if any allowlisted Dev
+marker or diagnostic-only user-facing text survives generation.
+
 Start with only this core list. Add a field only when a real troubleshooting case actually needs it.
 A bounded, downloadable Dev-only diagnostic bundle (so a tester can send one coherent report instead of
 screenshots from multiple log pages) is a later, separately reviewed increment - not part of the first
@@ -86,6 +92,110 @@ Explicit build-profile constants, replacing today's implicit app-name-derived ch
 
 Normal functional code must not branch on these except for diagnostics, Dev identity, and explicitly
 approved test-only facilities.
+
+## Hub deployment runbook
+
+Deployment, committing, pushing, and promotion are separate gates. Gordon's authorization must name
+the intended target or profile. Permission to deploy Dev does not authorize a Git push, a production
+deployment, or promotion to `main`.
+
+### Preflight
+
+1. Re-read the current branch, HEAD, working-tree status, relevant diff, and active queue claim.
+2. Preserve unrelated changes. Confirm the source identity, version, and build channel before doing
+   anything to the hub.
+3. Run `validate.ps1`, `validate.ps1 -SelfTest`, `check_template.sh`, and `groovyc` with temporary
+   compiler output. A failed or unavailable gate stops deployment.
+4. Confirm no production and Dev scans will overlap during a performance or correctness test,
+   especially on a large or older hub.
+
+### Required Dev deployment method
+
+- Use `deploy-hub.ps1`, not an MCP inline edit, browser paste, or improvised HTTP request.
+- Use `-WhatIf` first for an unfamiliar source/target combination or after changing the deployment
+  tool.
+- The tool must resolve exactly one Apps Code target named `Automation Map (Dev)`, make a recoverable
+  backup before writing, verify the saved SHA-256 against the local source, and confirm that the hub
+  revision increased.
+- The current tool is Dev-only. Never weaken or repurpose its exact-name protection for production.
+- A production deployment requires a separately reviewed production-profile equivalent that targets
+  the exact production Apps Code entry and deploys only the generated production candidate.
+
+As of 2026-08-28, `deploy-hub.ps1` is still an untracked workspace file. It must be reviewed and
+committed separately before this runbook can be considered portable beyond the current workspace.
+Do not silently add it as part of a documentation-only change.
+
+### Deployment evidence and smoke test
+
+Record the branch and commit, or clearly identify a dirty diff, plus the local SHA-256, target Apps
+Code ID, old and new hub revisions, backup path, and validation results. Redact hub addresses,
+credentials, tokens, and private names before placing evidence in documentation or the queue.
+
+After deployment:
+
+1. Prove that the source read back from the hub has the exact local SHA-256.
+2. Open the app settings page and confirm the expected name and version.
+3. Run one controlled scan, then inspect the map, affected UI panels, AI export, telemetry, and the
+   complete logs for that generation.
+4. Treat a successful hub deployment as test evidence only. It does not authorize a push or release.
+
+### Failure and rollback
+
+Stop immediately on a wrong or ambiguous target, truncated source, validation failure, hash mismatch,
+or unexpected revision result. Restore the exact pre-deployment backup when restoration is required,
+then verify its hash. If a public `main` artifact is broken, first restore or revert the public artifact
+to close the exposure, then investigate. Do not build optional test infrastructure during an active
+incident unless it is necessary to restore safety.
+
+## Telemetry assessment runbook
+
+Telemetry is supporting evidence, not a conclusion. It can show version, topology counts, duration,
+and fixed error categories, but it cannot by itself prove phase ordering, rule out a race, or explain a
+duplicate finalization. Those questions require the complete correlated trace and hub logs.
+
+### Correlation and interpretation
+
+- Correlate the hardware model/code, firmware, app version and channel, apps/devices/nodes/edges,
+  exact scan timestamp, and the same generation's structured trace.
+- Distinguish the collector's `Received At` time from the scan's UTC timestamp and state the timezone
+  when discussing either.
+- Scan duration is measured from the generation/lock start through accepted completion. Do not derive
+  it only from the visible `scan started` log line.
+- A blank telemetry error field means no fixed error category was reported. It does not prove there
+  was no timing race, stale callback, or duplicate completion.
+- A telemetry delivery failure is separate from scan success. Assess both paths independently.
+
+### Performance methodology
+
+1. Record the first scan after a code reload or deployment as a cold run, not the baseline.
+2. Allow the hub to settle, then collect at least three comparable warm runs with no overlapping
+   production/Dev scan and no known competing workload.
+3. Compare the median warm duration and its range, not one isolated row. Keep firmware, app version,
+   topology, and test conditions comparable.
+4. Stable counts support a functional comparison, but identical counts do not prove semantic graph
+   equivalence. Count changes can also be legitimate when the hub configuration changed.
+5. Label each conclusion as observation, hypothesis, or confirmed cause. One anomalous duration calls
+   for correlation and repetition, not an immediate timeout patch.
+
+For example, the 2026-08-28 C-8 sequence had identical topology counts and durations of 35 seconds,
+then 59/47/43 seconds immediately around code reload activity, followed by 24/24/27 seconds. The
+defensible reading is cold-run and environmental variance followed by a stable warm cluster. It is not
+evidence of a fixed 2x regression or proof that timing is irrelevant.
+
+### Evidence required for timing or completion faults
+
+- Capture complete logs from endpoint entry or scan acquisition through terminal cleanup and any
+  recovery callback, with exact timestamps.
+- Include the entire structured trace for the same generation. A screenshot or telemetry row alone is
+  secondary evidence.
+- For a hang, duplicate completion, stale recovery, or registry-finalization report, retain the final
+  claim result and recovery decision. Do not infer them from message ordering across different scans.
+- Combine telemetry, trace evidence, the hub smoke test, and verified source identity before making a
+  release decision.
+
+Telemetry must remain bounded and privacy-preserving. Never send device, app, room, variable, or hub
+names; a unique hub identifier; IP address or location; credentials or tokens; free-form logs; or
+free-form error text. Use only the documented fixed categories and aggregate counts.
 
 ## Promotion invariant
 
