@@ -5579,6 +5579,12 @@ String buildMapHtml() {
 <html>
 <head>
 <meta charset="utf-8">
+<!-- Never disclose the hub page URL, its private LAN origin, or OAuth-bearing
+     path as referrer metadata when this page loads external libraries,
+     Community Utilities data, images, fonts, audio, or opens external links.
+     This changes request metadata only; it does not change any target URL,
+     same-origin hub request, credential handling, or CORS behaviour. -->
+<meta name="referrer" content="no-referrer">
 <!-- Without this a phone renders at a ~980px virtual width, so the small-screen
      media query never fires and the page silently shrinks to an unusable size
      instead of showing the desktop-only notice. -->
