@@ -2505,9 +2505,26 @@ void finishScan(data = null) {
         // APP_NAME is already the one place that differs between the Dev
         // and production source (line 75/APP_NAME's own comment).
         String reportedAppVersion = APP_NAME.contains('(Dev)') ? "${APP_VERSION}-dev" : APP_VERSION
+        // Category flags only, from state this closure already computed for
+        // its own purposes above - never raw log text, never anything that
+        // could carry a device/app/room name. Deliberately a fixed, small set
+        // rather than open text, so nothing here can leak identifying content
+        // and nothing downstream needs to sanitize free-form strings.
+        List scanErrorCodes = []
+        if (registryStalled) {
+            scanErrorCodes << 'registry_timeout'
+        } else if ("${state.registryMeta?.state}" == 'ERROR') {
+            // Distinct from timeout: the fetch completed but fetchRegistry's
+            // own try/catch caught an exception (network/parse failure).
+            scanErrorCodes << 'registry_error'
+        }
+        if ((state.hubVariableInventory as Map)?.status == 'failed') {
+            scanErrorCodes << 'hub_variable_inventory_failed'
+        }
         runIn(1, 'reportTelemetry', [data: [
             firmwareVersion : (location?.hub?.firmwareVersionString ?: 'unknown') as String,
             appVersion      : reportedAppVersion,
+            errors          : scanErrorCodes.join(','),
             apps            : (state.appInfo as Map).size(),
             devices         : (state.deviceLabels as Map).size(),
             nodes           : (graph.nodes ?: []).size(),
