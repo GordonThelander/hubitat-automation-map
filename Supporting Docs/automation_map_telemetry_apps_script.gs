@@ -7,7 +7,7 @@
  *  below, not by a secret. A secret shipped in public driver source
  *  authenticates no one; worst case of abuse here is junk rows in the sheet.
  *
- *  @version 1.0.0
+ *  @version 1.2.0
  *  @author  Gordon Thelander
  *  @see     https://github.com/GordonThelander/hubitat-automation-map
  *
@@ -41,14 +41,16 @@
 // /exec URL proves which version is actually DEPLOYED - editing and saving the
 // editor does not update a live deployment, and without this marker a stale
 // deployment is indistinguishable from a current one.
-const SCRIPT_VERSION = '1.1.0';
+const SCRIPT_VERSION = '1.2.0';
 
 const SHEET_ID = 'REPLACE_WITH_YOUR_SPREADSHEET_ID';
 const SHEET_NAME = 'Telemetry';
 const MAX_STRING_LENGTH = 40;
+// hardwareId sits third, immediately after scanTimestamp, so hub identity reads
+// next to when the scan ran rather than at the far right of the sheet.
 const HEADERS = [
-  'receivedAt', 'scanTimestamp', 'firmwareVersion', 'appVersion',
-  'apps', 'devices', 'nodes', 'edges', 'hardwareId'
+  'receivedAt', 'scanTimestamp', 'hardwareId', 'firmwareVersion', 'appVersion',
+  'apps', 'devices', 'nodes', 'edges'
 ];
 
 function doGet(e) {
@@ -120,16 +122,17 @@ function validatedRow_(payload) {
     throw new Error('Invalid timestamp');
   }
 
+  // Order must match HEADERS exactly.
   return [
     new Date(),        // server-side receipt time, authoritative
     timestamp,          // client-reported scan time
+    hardwareId,
     firmwareVersion,
     appVersion,
     apps,
     devices,
     nodes,
-    edges,
-    hardwareId
+    edges
   ];
 }
 
