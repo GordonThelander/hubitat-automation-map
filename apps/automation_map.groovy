@@ -2486,15 +2486,22 @@ void finishScan(data = null) {
 
         // Deferred, not called inline - a telemetry endpoint hiccup must never
         // delay or risk this closure's own state.graph publish. See README for
-        // exactly what this sends (four fields, nothing identifying) and why.
+        // exactly what this sends and why.
+        //
+        // durationSeconds reads the start time already embedded in lockToken
+        // ("lock-<epochMillis>-<random>", see its own acquisition comment)
+        // rather than adding a new state field for it - the token already IS
+        // the scan's start timestamp, just formatted for lock identity.
+        Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
         runIn(1, 'reportTelemetry', [data: [
-            firmwareVersion: (location?.hub?.firmwareVersionString ?: 'unknown') as String,
-            appVersion     : APP_VERSION,
-            apps           : (state.appInfo as Map).size(),
-            devices        : (state.deviceLabels as Map).size(),
-            nodes          : (graph.nodes ?: []).size(),
-            edges          : (graph.edges ?: []).size(),
-            timestamp      : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
+            firmwareVersion : (location?.hub?.firmwareVersionString ?: 'unknown') as String,
+            appVersion      : APP_VERSION,
+            apps            : (state.appInfo as Map).size(),
+            devices         : (state.deviceLabels as Map).size(),
+            nodes           : (graph.nodes ?: []).size(),
+            edges           : (graph.edges ?: []).size(),
+            timestamp       : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
+            durationSeconds : ((now() - scanStartedAtMs) / 1000).intValue()
         ]])
     }
     amTrace('F3.finish.claim-result', lockToken, traceAttempt, [src: traceOrigin, won: finished])

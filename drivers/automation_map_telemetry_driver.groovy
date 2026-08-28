@@ -29,7 +29,7 @@
 
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = '1.0.2'
+@Field static final String DRIVER_VERSION = '1.0.3'
 @Field static final String TELEMETRY_URL = 'https://script.google.com/macros/s/AKfycbxaVq68SM7ZB3szzIa0dH6x9CIQaIRLpMZbIy21tM4rhTvO1jArkfN4o3mqSmd1Cxdt/exec'
 
 metadata {
@@ -42,7 +42,7 @@ metadata {
         capability "Actuator"
         attribute "lastStatus", "string"
         attribute "lastSentAt", "string"
-        command "report", [[name: "data", type: "JSON_OBJECT", description: "firmwareVersion, appVersion, apps, devices, nodes, edges, timestamp, hardwareId (optional)"]]
+        command "report", [[name: "data", type: "JSON_OBJECT", description: "firmwareVersion, appVersion, apps, devices, nodes, edges, timestamp, durationSeconds, hardwareId (optional)"]]
     }
 }
 
@@ -61,6 +61,7 @@ void report(Map data) {
         nodes          : data?.nodes,
         edges          : data?.edges,
         timestamp      : data?.timestamp,
+        durationSeconds: data?.durationSeconds,
         // Optional - the app-side fetch is best-effort and silent on
         // failure, so this can legitimately be null. Not part of
         // validateReport()'s required-field check for that reason.
@@ -99,6 +100,11 @@ private Map validateReport(Map data) {
         if (!(value instanceof Number) || value < 0 || value >= 1000000) {
             return [ok: false, error: "invalid ${fieldName}"]
         }
+    }
+    // Always computable from the scan's own lock token, never an external
+    // fetch that could fail - required, unlike hardwareId.
+    if (!(data.durationSeconds instanceof Number) || data.durationSeconds < 0 || data.durationSeconds >= 100000) {
+        return [ok: false, error: "invalid durationSeconds"]
     }
     if (!(data.timestamp instanceof CharSequence) ||
         !(data.timestamp.toString() ==~ /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)) {

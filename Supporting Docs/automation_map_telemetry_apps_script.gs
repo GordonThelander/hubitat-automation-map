@@ -7,7 +7,7 @@
  *  below, not by a secret. A secret shipped in public driver source
  *  authenticates no one; worst case of abuse here is junk rows in the sheet.
  *
- *  @version 1.2.1
+ *  @version 1.3.0
  *  @author  Gordon Thelander
  *  @see     https://github.com/GordonThelander/hubitat-automation-map
  *
@@ -41,16 +41,16 @@
 // /exec URL proves which version is actually DEPLOYED - editing and saving the
 // editor does not update a live deployment, and without this marker a stale
 // deployment is indistinguishable from a current one.
-const SCRIPT_VERSION = '1.2.1';
+const SCRIPT_VERSION = '1.3.0';
 
 const SHEET_ID = '1-DCdtaMa4c70AeHwj7Y8ai_Jl_XO2MPxQpkmwVozjtU';
 const SHEET_NAME = 'Telemetry';
 const MAX_STRING_LENGTH = 40;
-// hardwareId sits third, immediately after scanTimestamp, so hub identity reads
-// next to when the scan ran rather than at the far right of the sheet.
+// hardwareId leads, so hub identity reads before the time-related columns
+// rather than being buried among the version/count fields.
 const HEADERS = [
-  'receivedAt', 'scanTimestamp', 'hardwareId', 'firmwareVersion', 'appVersion',
-  'apps', 'devices', 'nodes', 'edges'
+  'hardwareId', 'receivedAt', 'scanTimestamp', 'durationSeconds',
+  'firmwareVersion', 'appVersion', 'apps', 'devices', 'nodes', 'edges'
 ];
 
 function doGet(e) {
@@ -111,6 +111,9 @@ function validatedRow_(payload) {
   const nodes = requireInt_(payload.nodes, 'nodes');
   const edges = requireInt_(payload.edges, 'edges');
   const timestamp = sanitiseString_(payload.timestamp);
+  // Always computable from the scan's own lock token on the Hubitat side,
+  // never an external fetch - required, unlike hardwareId below.
+  const durationSeconds = requireInt_(payload.durationSeconds, 'durationSeconds');
   // Optional - the Hubitat-side fetch is best-effort and can legitimately be
   // absent. Not required here for that reason, unlike firmwareVersion/appVersion.
   const hardwareId = sanitiseString_(payload.hardwareId);
@@ -124,9 +127,10 @@ function validatedRow_(payload) {
 
   // Order must match HEADERS exactly.
   return [
+    hardwareId,
     new Date(),        // server-side receipt time, authoritative
     timestamp,          // client-reported scan time
-    hardwareId,
+    durationSeconds,
     firmwareVersion,
     appVersion,
     apps,
