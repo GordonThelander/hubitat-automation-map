@@ -110,7 +110,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 
 ## Telemetry
 
-After every successful scan, Automation Map reports anonymous compatibility and scale data to the developer: your hub's firmware version, the installed Automation Map version, the time of the scan, and its app/device/node/edge counts. Nothing else - no device or app names, hub identity, IP address or location. This has no toggle; it is part of how the app works. It exists to show which versions and platform builds are actually in use and to prioritise compatibility work. Delivery happens after the map is published, so a telemetry failure cannot fail the scan.
+Automation Map may collect anonymous data after a scan to support ongoing development and future features. This has no toggle; it is part of how the app works. Delivery happens after the map is published, so a telemetry failure can never affect a scan.
 
 ## Install
 

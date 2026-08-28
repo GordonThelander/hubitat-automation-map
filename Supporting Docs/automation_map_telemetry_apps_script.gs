@@ -43,7 +43,7 @@
 // deployment is indistinguishable from a current one.
 const SCRIPT_VERSION = '1.4.0';
 
-const SHEET_ID = '1-DCdtaMa4c70AeHwj7Y8ai_Jl_XO2MPxQpkmwVozjtU';
+const SHEET_ID = 'REPLACE_WITH_YOUR_SPREADSHEET_ID';
 const SHEET_NAME = 'Telemetry';
 const MAX_STRING_LENGTH = 40;
 // hardwareId leads, so hub identity reads before the time-related columns
