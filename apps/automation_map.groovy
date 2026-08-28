@@ -201,11 +201,18 @@ void reportTelemetry(Map data) {
 // never logs (confirmed - it only returns ok/error), and nothing here adds
 // a log line either: a failed fetch just means hardwareId is absent from
 // this one telemetry row, not a warning anyone has to see.
+//
+// Reads 'model' (e.g. "C-8"), not 'hardwareID' - confirmed live against the
+// raw endpoint on 2026-08-28: /hub2/hubData has no hardwareID field at all,
+// which is why every row sent under the original code came back empty. It
+// already returns the friendly model name directly, so no hex lookup table
+// is needed - the field is named hardwareId for continuity with the driver
+// and Apps Script's existing schema, but the value is the model string.
 String fetchHubHardwareId() {
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/hubData", 10, [contentType: 'application/json'])
     if (!result.ok || !(result.data instanceof Map)) return null
-    def id = (result.data as Map).hardwareID
-    return id ? "${id}" : null
+    def model = (result.data as Map).model
+    return model ? "${model}" : null
 }
 
 // On by default (00:30 production, 01:00 Dev when the time is left blank) -
