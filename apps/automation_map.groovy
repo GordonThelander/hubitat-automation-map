@@ -187,10 +187,25 @@ void reportTelemetry(Map data) {
     def telemetryDevice = getChildDevice("${app.id}-telemetry")
     if (!telemetryDevice) return
     try {
-        telemetryDevice.report(data)
+        Map payload = new LinkedHashMap(data)
+        payload.hardwareId = fetchHubHardwareId()
+        telemetryDevice.report(payload)
     } catch (Exception ex) {
         log.warn "${app.label}: telemetry report failed: ${ex.message}"
     }
+}
+
+// Best-effort only, and deliberately silent on failure - this runs off the
+// deferred telemetry path, never inside finishScan()'s own claimed closure,
+// so it can never slow down or risk scan completion. httpFetch() itself
+// never logs (confirmed - it only returns ok/error), and nothing here adds
+// a log line either: a failed fetch just means hardwareId is absent from
+// this one telemetry row, not a warning anyone has to see.
+String fetchHubHardwareId() {
+    Map result = httpFetch("${LOOPBACK_BASE}/hub2/hubData", 10, [contentType: 'application/json'])
+    if (!result.ok || !(result.data instanceof Map)) return null
+    def id = (result.data as Map).hardwareID
+    return id ? "${id}" : null
 }
 
 // On by default (00:30 production, 01:00 Dev when the time is left blank) -

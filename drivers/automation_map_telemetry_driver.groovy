@@ -29,7 +29,7 @@
 
 import groovy.transform.Field
 
-@Field static final String DRIVER_VERSION = '1.0.1'
+@Field static final String DRIVER_VERSION = '1.0.2'
 @Field static final String TELEMETRY_URL = 'https://script.google.com/macros/s/AKfycbxaVq68SM7ZB3szzIa0dH6x9CIQaIRLpMZbIy21tM4rhTvO1jArkfN4o3mqSmd1Cxdt/exec'
 
 metadata {
@@ -42,7 +42,7 @@ metadata {
         capability "Actuator"
         attribute "lastStatus", "string"
         attribute "lastSentAt", "string"
-        command "report", [[name: "data", type: "JSON_OBJECT", description: "firmwareVersion, appVersion, apps, devices, nodes, edges, timestamp"]]
+        command "report", [[name: "data", type: "JSON_OBJECT", description: "firmwareVersion, appVersion, apps, devices, nodes, edges, timestamp, hardwareId (optional)"]]
     }
 }
 
@@ -60,7 +60,11 @@ void report(Map data) {
         devices        : data?.devices,
         nodes          : data?.nodes,
         edges          : data?.edges,
-        timestamp      : data?.timestamp
+        timestamp      : data?.timestamp,
+        // Optional - the app-side fetch is best-effort and silent on
+        // failure, so this can legitimately be null. Not part of
+        // validateReport()'s required-field check for that reason.
+        hardwareId     : data?.hardwareId
     ]
     Map params = [
         uri              : TELEMETRY_URL,
