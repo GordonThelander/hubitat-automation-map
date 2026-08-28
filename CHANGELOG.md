@@ -4,6 +4,14 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.1.2
+
+Adds the Automation Map Telemetry Driver, a new bundled driver that reports anonymous hub firmware version, Automation Map version, and scan counts (apps/devices/nodes/edges) to a fixed collection endpoint after every scan. No credential in the driver: the endpoint is open ingestion, protected by strict server-side payload validation rather than a secret shipped in public source. On by default, no toggle, disclosed in the README. Automation Map creates its own child device instance automatically; delivery is deferred so a telemetry failure can never affect scan publication. Also fixes a false `error: HTTP 302` status the driver reported for a successful send, caused by treating Apps Script's redirect response as a transport failure instead of following it. Built collaboratively with Codex, who resolved the live Apps Script deployment and both driver-side fixes. Verified end to end on the Dev hub: a real scan produced a genuine row in the telemetry sheet with correct data, and the status now reads `submitted`/`ok` instead of a false error.
+
+## 2.1.1
+
+Version bump only, no functional change - keeps the manifest's tracked version in sync with the production release after a Hubitat Package Manager version-tracking mismatch (HPM's own installed-version bookkeeping is separate from the app's live code and is only updated by an HPM-driven install/update).
+
 ## 2.1.0
 
 Makes Insights concise and actionable with plain-language explanations, reasons a pattern may be normal, and practical next checks. The same guidance is included in the AI-friendly export. Adds reviewed defaults for common external systems, reconciles Hub Variable identities that include a trailing period, and corrects the installation-page description of how apps are discovered. Released to the Dev channel for hub testing.
