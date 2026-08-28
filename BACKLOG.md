@@ -166,6 +166,25 @@ from Automation Map, compare against `location.hub.firmwareVersionString`, and l
 honestly as "latest known as of `releasedAt`" rather than "latest available" so the crawl lag stays
 visible. Report only - never trigger an install from within Automation Map itself.
 
+### 16. Structured Dev diagnostics and a comment-stripping production build
+
+Gordon wants two things: a small structured trace schema for Dev troubleshooting (replacing the
+current ad-hoc `AM-TRACE` log prose), and a build step that strips developer commentary out of what
+`main`/HPM actually distributes, since end users installing via HPM do not need the annotated Dev
+source's commentary. Full agreed design is in
+`Supporting Docs/production_build_methodology.md`, worked out jointly by Claude and Codex on
+2026-08-28.
+
+**Status: design agreed, nothing implemented.**
+
+**Next action:** wait for the registry-finalization-race correctness investigation to close (item's
+own tracking is in the `Bucket/Queue` coordination record, not this file - the short version is it
+needs Steve's large C-5 hub `AM-TRACE` trace before that fix can be promoted). No work on this item
+starts before that closes, and even then only once Gordon starts the next phase himself. First actual
+step, once started, is a small feasibility spike proving the Groovy-lexer-based comment stripper works
+correctly on `apps/automation_map.groovy` alone - see the spec doc for the full spike scope before any
+CI or branch-protection work is considered.
+
 ## Later / v3
 
 ### 11. Move graph derivation into the browser
