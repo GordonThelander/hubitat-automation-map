@@ -171,7 +171,10 @@ visible. Report only - never trigger an install from within Automation Map itsel
 Gordon wants two things: a small structured trace schema for Dev troubleshooting (replacing the
 current ad-hoc `AM-TRACE` log prose), and a build step that strips developer commentary out of what
 `main`/HPM actually distributes, since end users installing via HPM do not need the annotated Dev
-source's commentary. Full agreed design is in
+source's commentary. Development comments and diagnostic-only wording must never be exposed in the
+production UI, exports, logs, telemetry, or generated source. The design also contains mandatory
+runbooks for safe hub deployment and disciplined telemetry assessment, so future sessions do not
+improvise either process. Full agreed design is in
 `Supporting Docs/production_build_methodology.md`, worked out jointly by Claude and Codex on
 2026-08-28.
 
