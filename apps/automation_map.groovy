@@ -791,6 +791,28 @@ void clearAbandonedScan() {
     amTrace('C1.recovery.enter', traceGen, traceAttemptId(),
             [devAcc: asyncDeviceScanActive, appAcc: asyncAppScanActive])
 
+    // Unconditional - not gated by TRACE_ENABLED like traceGen above. Real
+    // synchronization state, read regardless of whether tracing is on: the
+    // one durable field naming which generation state.scanRunning currently
+    // claims to belong to.
+    String activeGen = (state.activeGenerationToken ?: null) as String
+    String currentLock = SCAN_LOCKS.get("${app.id}") as String
+
+    // Tombstoned AND no live lock. currentLock must be checked, not just the
+    // tombstone: a newer generation can hold a live lock (bare or
+    // "finishing:") while this execution's own state snapshot still shows
+    // the OLD activeGenerationToken - state only commits durably at the end
+    // of a whole execution, so this read can lag a newer generation's own
+    // commit. Only an empty lock plus a tombstone for the durable value
+    // together prove genuine resurrection rather than a live newer scan this
+    // execution simply hasn't seen commit yet.
+    if (activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))) {
+        amTrace('C0.recovery.tombstoned', activeGen, traceAttemptId(), [action: 'clear-only'])
+        log.info "${app.label}: clearing resurrected scan flags for an already-completed generation"
+        state.scanRunning = false
+        return
+    }
+
     // A "finishing:<token>:<since>" value means finishGeneration() is
     // already mid-publish for the current generation (see its own comment) -
     // actively wrapping up, not stuck. Recovering it here on sight would
@@ -800,7 +822,6 @@ void clearAbandonedScan() {
     // reboot) rather than merely throwing, which no in-process finally can
     // cover. FINISHING_RECOVERY_SEC bounds how long this function trusts
     // "actively finishing" before treating it as stranded instead.
-    String currentLock = SCAN_LOCKS.get("${app.id}") as String
     if (currentLock != null && currentLock.startsWith('finishing:')) {
         List parts = currentLock.split(':') as List
         Long finishingSince = parts.size() >= 3 ? (parts[2] as Long) : 0L
@@ -866,11 +887,16 @@ void clearAbandonedScan() {
             // ORIGINAL generation this recovery believes it is acting on;
             // currentToken is the freshly minted recovery token. If traceGen
             // names a generation that already completed, the durable flags
-            // driving this branch were resurrected rather than genuine.
+            // driving this branch were resurrected rather than genuine - the
+            // tombstone check above now catches that case before this branch
+            // is even reached, but activeGen is still passed through as
+            // logicalGen so this termination's own tombstone (should this
+            // really be the first time this generation finishes) lands on
+            // the right identity rather than the substitute recovery token.
             amTrace('C2.recovery.decision', traceGen, traceAttemptId(),
                     [decision: 'finish-now', recoveryToken: currentToken, appResultsReady: true])
             log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
-            finishScan([lockToken: currentToken, origin: 'recovery'])
+            finishScan([lockToken: currentToken, origin: 'recovery', logicalGen: activeGen])
         } else {
             // The async results lived only in the lost static accumulator and
             // cannot be reconstructed safely. Terminate truthfully and require
@@ -879,7 +905,8 @@ void clearAbandonedScan() {
                     [decision: 'data-lost', recoveryToken: currentToken, appResultsReady: false])
             log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
             markScanFinished(currentToken,
-                'The scan working data was lost before it could be published. Press Scan to run it again.')
+                'The scan working data was lost before it could be published. Press Scan to run it again.',
+                activeGen)
         }
         return
     }
@@ -900,8 +927,13 @@ void clearAbandonedScan() {
         if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
         abandonedToken = recoveryToken
     }
+    // activeGen as logicalGen for the same reason as the apps-phase branch
+    // above: abandonedToken can also be a substitute recovery token distinct
+    // from the original generation's identity, and every recovery-minted
+    // token must obey the same tombstone-identity rule.
     markScanFinished(abandonedToken,
-        'The previous scan stopped before it finished. Press Scan to run it again.')
+        'The previous scan stopped before it finished. Press Scan to run it again.',
+        activeGen)
     log.warn "${app.label}: clearing an abandoned scan"
 }
 
@@ -1099,6 +1131,51 @@ ConcurrentHashMap liveAppScan() {
 // exactly how a late execution could adopt a newer generation's identity.
 @Field static final ConcurrentHashMap<String, String> SCAN_LOCKS = new ConcurrentHashMap<>()
 
+// Registry-finalization-race remediation. REGISTRY_RESULTS holds each
+// generation's registry outcome (meta + matches + createdAt), written once by
+// fetchRegistry() and consulted by finishScan() after its finishGeneration()
+// claim - not before it, which is what let a stale pre-claim state.registryMeta
+// snapshot publish a contradictory FAILED verdict against a concurrent success.
+// TERMINAL_TOMBSTONES records that a generation's terminal transition already
+// ran, keyed by its LOGICAL identity (see finishGeneration()'s logicalGen
+// parameter) rather than whichever CAS token happened to claim it, so
+// clearAbandonedScan() can tell a genuinely abandoned scan apart from one
+// whose durable scanRunning/appResultsReady flags were resurrected by a late
+// whole-execution state commit after the scan had already finished. Both are
+// static, not state: immune to that same resurrection, and correctly wiped by
+// an app code reload exactly like SCAN_LOCKS - clearAbandonedScan()'s existing
+// reload-recovery path is deliberately left as the fallback for that case,
+// not replaced by this.
+@Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
+@Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
+
+// Composite key matching SCAN_LOCKS's own app.id scoping - collision across
+// app instances is already astronomically unlikely given the token's own
+// embedded timestamp+random, this makes it impossible by construction instead.
+String genKey(String token) { return "${app.id}:${token}" }
+
+// Called once per scan acquisition (see startScan()), not TRACE_ENABLED-gated
+// - this is real synchronization state, not instrumentation. Retention is
+// generous relative to the 45s watchdog and 30s registry timeout so neither
+// map can be swept out from under a still-plausible late callback, while
+// still bounding both maps against unbounded growth across many scans.
+// Snapshots each entrySet() into a plain list first, then removes
+// conditionally (remove(key, exactValue)) - safe against a concurrent writer
+// replacing an entry mid-sweep, and avoids depending on removeIf()'s
+// iterator-based removal support on Hubitat's Groovy runtime.
+void sweepGenerationRecords() {
+    long cutoff = now() - GENERATION_RECORD_RETENTION_MS
+    new ArrayList(TERMINAL_TOMBSTONES.entrySet()).each { entry ->
+        if ((entry.value as Long) < cutoff) TERMINAL_TOMBSTONES.remove(entry.key, entry.value)
+    }
+    new ArrayList(REGISTRY_RESULTS.entrySet()).each { entry ->
+        Map v = entry.value as Map
+        Long createdAt = (v?.createdAt ?: 0L) as Long
+        if (createdAt < cutoff) REGISTRY_RESULTS.remove(entry.key, entry.value)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // TEMPORARY INSTRUMENTATION - registry/finalization race investigation.
 //
@@ -1219,7 +1296,7 @@ Map probeCompatibility() {
 // Returns true if this call actually became the one to terminate the
 // generation, false if the token no longer owns the lock - a stale/
 // superseded caller, correctly discarded, not an error.
-boolean finishGeneration(String token, String error = null, Closure publishWork = null) {
+boolean finishGeneration(String token, String error = null, String logicalGen = null, Closure publishWork = null) {
     // TEMPORARY INSTRUMENTATION: every terminal attempt, won or lost, so
     // concurrent attempts on one generation are visible as separate lines.
     String traceAttempt = traceAttemptId()
@@ -1230,6 +1307,13 @@ boolean finishGeneration(String token, String error = null, Closure publishWork 
         amTrace('T1.terminal.lost', token, traceAttempt, [reason: 'cas-failed'])
         return false
     }
+    // logicalGen defaults to the CAS token itself - correct for every normal
+    // termination, where the two are the same value. Only clearAbandonedScan()'s
+    // recovery paths pass a different logicalGen: a fresh CAS token substitutes
+    // for a lock that is no longer there to reclaim, but the tombstone must
+    // still land on the ORIGINAL generation's identity for a later resurrection
+    // check to find it.
+    String tombstoneKey = genKey(logicalGen ?: token)
     try {
         if (publishWork != null) publishWork()
         if (error != null) state.scanError = error
@@ -1237,6 +1321,7 @@ boolean finishGeneration(String token, String error = null, Closure publishWork 
         log.warn "${app.label}: scan termination failed: ${ex.message}"
         state.scanError = "${ex.message}"
     } finally {
+        TERMINAL_TOMBSTONES.put(tombstoneKey, now())
         state.scanRunning = false
         SCAN_LOCKS.remove("${app.id}", finishingValue)
     }
@@ -1247,8 +1332,8 @@ boolean finishGeneration(String token, String error = null, Closure publishWork 
 // Thin wrapper for every terminal path with nothing to publish - kept as
 // the name the rest of the file already calls, so none of those nine call
 // sites needed to change again for this round.
-void markScanFinished(String token, String error = null) {
-    finishGeneration(token, error, null)
+void markScanFinished(String token, String error = null, String logicalGen = null) {
+    finishGeneration(token, error, logicalGen, null)
 }
 
 // Cheap "is my token still the current owner" check - caught in review as
@@ -1287,6 +1372,7 @@ Map startScan() {
     // Nothing branches on this value - it is written and read for logging.
     state.activeGenerationToken = lockToken
     traceSweep(lockToken)
+    sweepGenerationRecords()
     amTrace('scan.acquire', lockToken, traceAttemptId())
     // The one unambiguous "a scan genuinely began" line, at the single choke
     // point every entry path (manual /scan, the scheduled overnight trigger,
@@ -2336,6 +2422,14 @@ void fetchRegistry(jobData = null) {
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
+    // Written unconditionally, keyed by this generation's own token, not
+    // gated on ownsLock() below - the finalizer consults this after its own
+    // claim instead of a pre-claim state snapshot, so a superseded write here
+    // cannot corrupt a different generation's entry, and nothing will ever
+    // look up a superseded token's entry once that generation has already
+    // terminated. See REGISTRY_RESULTS's own comment.
+    REGISTRY_RESULTS.put(genKey(lockToken), [meta: meta, matches: matches, createdAt: now()])
+
     // Re-checked here, not only trusted from the entry check above - the
     // registry fetch is a real 30-second-timeout HTTP call, and abandonment
     // plus a fresh acquisition can interleave during it exactly as easily as
@@ -2368,61 +2462,21 @@ void fetchRegistry(jobData = null) {
 // branch - see markScanFinished()'s comment.
 void finishScan(data = null) {
     String lockToken = data?.lockToken as String
+    // The logical generation this termination belongs to - defaults to the
+    // CAS token itself (the normal case). clearAbandonedScan()'s recovery
+    // path passes a different value: a fresh CAS token substitutes for a lock
+    // that's no longer there to reclaim, but the tombstone below must still
+    // land on the ORIGINAL generation's identity. See finishGeneration()'s
+    // own comment.
+    String logicalGen = (data?.logicalGen ?: lockToken) as String
     // Parsed before the first trace line so F1 already carries both. 'origin'
     // is TEMPORARY INSTRUMENTATION: it is only ever logged, never branched on.
     String traceOrigin = (data?.origin ?: 'unknown') as String
     String traceAttempt = traceAttemptId()
-    // regRead1/regRead2 are the freshness experiment: the identical durable
-    // field read twice within one execution, either side of the terminal
-    // claim. If a concurrent registry publication is proven to have landed
-    // between them and the two still agree, that is direct evidence of
-    // whole-execution snapshot semantics.
-    String regRead1 = TRACE_ENABLED ? "${state.registryMeta?.state}" : '-'
-    amTrace('F1.finish.enter', lockToken, traceAttempt, [src: traceOrigin, regRead1: regRead1])
-    // Nothing is written to state above this point, deliberately - caught
-    // in review: an earlier version stamped state.scanHeartbeat and
-    // conditionally rewrote state.registryMeta before ever checking
-    // ownership, so a stale/superseded execution could still corrupt a
-    // newer generation's registry status even though it would correctly
-    // fail the finishing claim moments later and publish nothing else.
-    // Read-and-compute-locally is fine before the claim (nothing is
-    // committed by it), only writing state is not.
+    amTrace('F1.finish.enter', lockToken, traceAttempt, [src: traceOrigin])
 
-    // Still PENDING means fetchRegistry never reached its own bookkeeping, so
-    // this execution is the watchdog firing rather than the normal chain. Say
-    // so. The alternative is what shipped before: an app that had tried and
-    // failed reporting that it had never tried, which is worse than an error.
-    // Computed here, written only inside the protected publish below - a real
-    // defensive copy, not just a local variable NAME. Caught in review:
-    // `state.registryMeta` returns the SAME live Map object state already
-    // holds, not a snapshot, so mutating it in place (even before ever
-    // reassigning state.registryMeta = regMeta) risks the same "mutate a
-    // state-held collection directly" hazard this file already treats as a
-    // confirmed bug class elsewhere (see the appInfo/capsByDev
-    // replace-not-merge comments) - a stale execution could alter a NEWER
-    // generation's registry status through this shared reference before its
-    // own finishGeneration() claim ever gets checked, let alone fails.
-    Map regMeta = new LinkedHashMap((state.registryMeta ?: [:]) as Map)
-    boolean registryStalled = "${regMeta.state}" == 'PENDING'
-    if (registryStalled) {
-        regMeta.state = 'FAILED'
-        regMeta.error = 'the registry fetch did not complete'
-    }
-
-    // buildGraph() moved INSIDE the protected closure below, not run before
-    // the claim - caught in review (reproduced live 2026-08-24): ownership
-    // was previously claimed only once building finished, so nothing
-    // stopped every 1.5s status poll's own recovery attempt from building
-    // the same graph redundantly in parallel, all racing for one claim that
-    // at most one of them could ever win. Worse, when the static lock had
-    // been reset entirely (an app code reload wipes @Field state but not
-    // durable state.scanRunning) every single attempt lost the claim, so
-    // the graph was rebuilt and discarded forever with no path to recovery.
-    // Claiming first means at most one execution ever runs buildGraph() at
-    // all for a given generation; every other concurrent caller's claim
-    // fails immediately and does no work.
-    amTrace('F2.finish.pre-claim', lockToken, traceAttempt, [src: traceOrigin, stalled: registryStalled])
-    boolean finished = finishGeneration(lockToken, null) {
+    amTrace('F2.finish.pre-claim', lockToken, traceAttempt, [src: traceOrigin])
+    boolean finished = finishGeneration(lockToken, null, logicalGen) {
         // F3b isolates the cost of the inventory + graph build inside the
         // claimed closure, which was previously only inferable from log-gap
         // arithmetic against the next line to be emitted.
@@ -2436,17 +2490,38 @@ void finishScan(data = null) {
         // definite, current-generation answer to read rather than stale state
         // from a previous scan.
         state.hubVariableInventory = fetchHubVariableInventory()
+
+        // Registry outcome resolved HERE, after the claim, from the
+        // generation-keyed REGISTRY_RESULTS store fetchRegistry() writes to -
+        // not from a state.registryMeta snapshot taken before this claim,
+        // which a concurrent registry completion could already have made
+        // stale. Absent means fetchRegistry() has not reached its own
+        // bookkeeping for this generation yet: this execution is the
+        // watchdog firing rather than the normal chain. Say so. The
+        // alternative is what shipped before: an app that had tried and
+        // failed reporting that it had never tried, which is worse than an
+        // error.
+        Map regResult = REGISTRY_RESULTS.get(genKey(lockToken)) as Map
+        boolean registryTimedOut = (regResult == null)
+        amTrace('F4.finish.registry-decision', lockToken, traceAttempt,
+                [src: traceOrigin, resolved: !registryTimedOut])
+        if (registryTimedOut) {
+            state.registryMeta = [state: 'FAILED', fetched: null, entries: 0, matched: 0,
+                                   error: 'the registry fetch did not complete', schemaVersion: null]
+            log.warn "${app.label}: registry fetch did not complete, continuing without it"
+        } else {
+            Map regMeta = (regResult.meta as Map)
+            // Only on success, so a failed fetch keeps the last good set
+            // rather than silently emptying the map of everything the
+            // registry contributed - same rule fetchRegistry() itself
+            // applies to its own state.registryMatches write, enforced again
+            // here at the point of use.
+            if (!regMeta.error) state.registryMatches = (regResult.matches as List)
+            state.registryMeta = regMeta
+        }
+
         Map graph = buildGraph()
         state.scanHeartbeat = now()
-        // Second half of the freshness experiment - same field as regRead1,
-        // read after the claim, inside the same execution.
-        amTrace('F4.finish.pre-registry-decision', lockToken, traceAttempt,
-                [src: traceOrigin, regRead1: regRead1, regRead2: "${state.registryMeta?.state}",
-                 stalled: registryStalled])
-        if (registryStalled) {
-            state.registryMeta = regMeta
-            log.warn "${app.label}: registry fetch did not complete, continuing without it"
-        }
         state.graph = graph
         state.graphVersion = GRAPH_SCHEMA
 
@@ -2511,7 +2586,7 @@ void finishScan(data = null) {
         // rather than open text, so nothing here can leak identifying content
         // and nothing downstream needs to sanitize free-form strings.
         List scanErrorCodes = []
-        if (registryStalled) {
+        if (registryTimedOut) {
             scanErrorCodes << 'registry_timeout'
         } else if ("${state.registryMeta?.state}" == 'ERROR') {
             // Distinct from timeout: the fetch completed but fetchRegistry's
