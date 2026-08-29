@@ -4,6 +4,20 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.1.3
+
+Fixes the registry-finalization stale-snapshot race: a finalizer entering with a stale, pre-commit
+registry snapshot now resolves correctly through a generation-keyed lookup instead of publishing an
+incomplete result, and a completed generation can never be republished. Also fixes the settings page
+showing stale "Scanning..."/"Building map" text after a scan has actually completed, and closes a gap
+where auto-scan could start a second scan without checking the live scan lock. Built collaboratively
+with Codex across extensive design review and correction. Verified on Gordon's own hub - a genuine
+state resurrection caught and cleared in under half a second, down from roughly 90 seconds before this
+fix, and a settings-page fetch at the exact instant of true completion showed no stale text - and via a
+controlled Dev-only test forcing the registry watchdog specifically to win the finalizer claim, which
+completed cleanly with exactly one result and no duplicate telemetry row. Independently confirmed on
+Steve's own C-5 hardware, which exercised the same stale-snapshot hazard on the ordinary chained path.
+
 ## 2.1.2
 
 Adds the Automation Map Telemetry Driver, a new bundled driver that reports anonymous data to support ongoing development and future features, after every scan. No credential in the driver: the endpoint is open ingestion, protected by strict server-side payload validation rather than a secret shipped in public source. On by default, no toggle, disclosed in the README. Automation Map creates its own child device instance automatically; delivery is deferred so a telemetry failure can never affect scan publication. Also fixes a false `error: HTTP 302` status the driver reported for a successful send, caused by treating Apps Script's redirect response as a transport failure instead of following it. Built collaboratively with Codex, who resolved the live Apps Script deployment and both driver-side fixes. Verified end to end on the Dev hub: a real scan produced a genuine row in the telemetry sheet with correct data, and the status now reads `submitted`/`ok` instead of a false error.
