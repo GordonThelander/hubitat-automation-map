@@ -1,12 +1,12 @@
 {
   "packageName": "Automation Map (Dev)",
   "author": "Gordon Thelander",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "minimumHEVersion": "2.5.1",
-  "dateReleased": "2026-08-28",
+  "dateReleased": "2026-08-29",
   "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/dev/README.md",
   "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "DEV CHANNEL - this manifest tracks the development branch, not the production release.\n\n2.1.2 - Adds the Automation Map Telemetry Driver: reports anonymous data to support ongoing development and future features, after every scan, disclosed in the README, no toggle. Fixes a false error status the driver reported for a successful send (Apps Script's redirect response was being read as an HTTP error).\n\n2.1.1 - Version bump only, no functional change; keeps Dev in sync with the production release.\n\n2.1.0 - Makes Insights concise and actionable with plain-language explanations and next checks, shares that guidance with the AI-friendly export, adds reviewed defaults for common external systems, reconciles Hub Variable identities that include a trailing period, and corrects the installation-page description of app discovery. Dev-hub testing build.\n\n2.0.14 - Adds authoritative Hub Variable inventory via Hubitat's in-process getAllGlobalVars() API (replacing the purely reference-derived list), Connector reconciliation, structured device-attribute writeSource, and export schema 4. Dev-hub testing build, not yet verified - see Supporting Docs/hub_variable_v2014_implementation_spec.md for the design record.\n\nComplete history: https://github.com/GordonThelander/hubitat-automation-map/blob/dev/CHANGELOG.md",
+  "releaseNotes": "DEV CHANNEL - this manifest tracks the development branch, not the production release.\n\n2.1.3 - Fixes the registry-finalization stale-snapshot race and closes the watchdog-boundary path: a finalizer entering with a stale registry snapshot now resolves correctly instead of publishing an incomplete result, and a completed generation can never be republished. Also fixes the settings page showing stale scanning/building-map text after a scan has actually completed. Verified on the Dev hub, including a controlled test forcing the registry watchdog to win the finalizer claim, and independently on a second, larger hub.\n\n2.1.2 - Adds the Automation Map Telemetry Driver: reports anonymous data to support ongoing development and future features, after every scan, disclosed in the README, no toggle. Fixes a false error status the driver reported for a successful send (Apps Script's redirect response was being read as an HTTP error).\n\n2.1.1 - Version bump only, no functional change; keeps Dev in sync with the production release.\n\n2.1.0 - Makes Insights concise and actionable with plain-language explanations and next checks, shares that guidance with the AI-friendly export, adds reviewed defaults for common external systems, reconciles Hub Variable identities that include a trailing period, and corrects the installation-page description of app discovery. Dev-hub testing build.\n\n2.0.14 - Adds authoritative Hub Variable inventory via Hubitat's in-process getAllGlobalVars() API (replacing the purely reference-derived list), Connector reconciliation, structured device-attribute writeSource, and export schema 4. Dev-hub testing build, not yet verified - see Supporting Docs/hub_variable_v2014_implementation_spec.md for the design record.\n\nComplete history: https://github.com/GordonThelander/hubitat-automation-map/blob/dev/CHANGELOG.md",
   "apps": [
     {
       "id": "2c2c28d6-f6eb-4c88-afad-d9d32a6013bc",
@@ -16,7 +16,7 @@
       "required": true,
       "oauth": true,
       "primary": true,
-      "version": "2.1.2"
+      "version": "2.1.3"
     }
   ],
   "drivers": [
