@@ -75,7 +75,8 @@ remaining variable-model correctness question.
 
 **Next action:** capture a fresh fixture containing identically named Local and Hub Variables,
 verify identity and edge separation in the graph, pivots and AI-friendly export, then fix only if
-the current build still conflates them.
+the current build still conflates them. The proposed identity, classification, export, and fixture
+contract is in `Supporting Docs/local_hub_variable_identity_proposal.md`, pending Claude review.
 
 **Done when:** the fixture proves that Local and Hub Variable identities and relationships remain
 separate across every output, or a verified fix makes them separate.
@@ -188,6 +189,34 @@ starts before that closes, and even then only once Gordon starts the next phase 
 step, once started, is a small feasibility spike proving the Groovy-lexer-based comment stripper works
 correctly on `apps/automation_map.groovy` alone - see the spec doc for the full spike scope before any
 CI or branch-protection work is considered.
+
+### 17. Add anonymous Variable coverage counts to telemetry
+
+Variable discovery and Local-versus-Hub classification are now substantial product features, but the
+current telemetry records only overall topology counts. Add bounded aggregate counts so testing can
+show how widely these features are exercised and how often classification needs review across real
+hubs.
+
+**Proposed fields:**
+
+- `hubVariables`
+- `hubVariableConnectors`
+- `localVariables`
+- `ambiguousVariableReferences`
+- `unresolvedVariableReferences`
+
+These are counts only. Never transmit variable names or values, owning rule names, Connector device
+IDs, Hub Variable types, a unique hub identifier, or any other identifying or free-form content.
+
+**Next action:** define the exact count sources from the completed scan graph, then update the
+Automation Map payload, telemetry driver validation/forwarding, Apps Script validation and headers,
+and the live Google Sheet columns as one versioned schema change. Existing rows may remain blank in
+the new columns. Do not implement only one layer because the current strict validators will reject or
+discard a partial schema change.
+
+**Done when:** one controlled Dev scan writes all five non-negative integer counts to the expected
+columns, invalid payloads are rejected, existing telemetry fields remain unchanged, and inspection
+confirms that no variable name, value, owner or Connector identity can enter the payload.
 
 ## Later / v3
 

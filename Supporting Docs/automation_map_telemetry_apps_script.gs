@@ -7,7 +7,7 @@
  *  below, not by a secret. A secret shipped in public driver source
  *  authenticates no one; worst case of abuse here is junk rows in the sheet.
  *
- *  @version 1.4.0
+ *  @version 1.4.2
  *  @author  Gordon Thelander
  *  @see     https://github.com/GordonThelander/hubitat-automation-map
  *
@@ -41,11 +41,12 @@
 // /exec URL proves which version is actually DEPLOYED - editing and saving the
 // editor does not update a live deployment, and without this marker a stale
 // deployment is indistinguishable from a current one.
-const SCRIPT_VERSION = '1.4.0';
+const SCRIPT_VERSION = '1.4.2';
 
-const SHEET_ID = 'REPLACE_WITH_YOUR_SPREADSHEET_ID';
+const SHEET_ID = '1-DCdtaMa4c70AeHwj7Y8ai_Jl_XO2MPxQpkmwVozjtU';
 const SHEET_NAME = 'Telemetry';
 const MAX_STRING_LENGTH = 40;
+const RECEIVED_TIME_ZONE = 'Australia/Perth';
 // hardwareId leads, so hub identity reads before the time-related columns
 // rather than being buried among the version/count fields.
 const HEADERS = [
@@ -82,7 +83,7 @@ function doPost(e) {
     lock.waitLock(10000);
     try {
       const sheet = getTelemetrySheet_();
-      sheet.appendRow(row);
+      appendTelemetryRow_(sheet, row);
     } finally {
       lock.releaseLock();
     }
@@ -135,8 +136,8 @@ function validatedRow_(payload) {
   // Order must match HEADERS exactly.
   return [
     hardwareId,
-    new Date(),        // server-side receipt time, authoritative
-    timestamp,          // client-reported scan time
+    formatReceivedAt_(new Date()), // server receipt time in Perth local time
+    formatScanTimestamp_(timestamp), // client scan time in UTC
     durationSeconds,
     firmwareVersion,
     appVersion,
@@ -146,6 +147,49 @@ function validatedRow_(payload) {
     edges,
     errors
   ];
+}
+
+function formatReceivedAt_(date) {
+  return Utilities.formatDate(date, RECEIVED_TIME_ZONE, 'yyyy-MM-dd HH:mm:ss');
+}
+
+function formatScanTimestamp_(timestamp) {
+  return timestamp.replace('T', ' ');
+}
+
+function appendTelemetryRow_(sheet, row) {
+  const nextRow = sheet.getLastRow() + 1;
+  // Sheets otherwise recognises these ISO-looking strings as dates and
+  // silently replaces the requested display format with the spreadsheet
+  // locale's format.
+  sheet.getRange(nextRow, 2, 1, 2).setNumberFormat('@');
+  sheet.getRange(nextRow, 1, 1, row.length).setValues([row]);
+}
+
+function migrateTelemetryTimestampColumns() {
+  const sheet = getTelemetrySheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 'No telemetry rows to migrate';
+
+  const range = sheet.getRange(2, 2, lastRow - 1, 2);
+  const values = range.getValues().map(function (row) {
+    return [normaliseReceivedAtValue_(row[0]), normaliseScanTimestampValue_(row[1])];
+  });
+  range.setNumberFormat('@');
+  range.setValues(values);
+  return `Migrated ${values.length} telemetry row(s)`;
+}
+
+function normaliseReceivedAtValue_(value) {
+  if (value instanceof Date) return formatReceivedAt_(value);
+  return String(value || '');
+}
+
+function normaliseScanTimestampValue_(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, 'UTC', "yyyy-MM-dd HH:mm:ss'Z'");
+  }
+  return String(value || '').replace('T', ' ');
 }
 
 // Comma-separated codes in, comma-separated codes out - anything not in
