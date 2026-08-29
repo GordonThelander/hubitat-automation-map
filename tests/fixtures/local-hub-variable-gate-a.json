@@ -1,0 +1,48 @@
+{
+  "hub": {
+    "modelCode": "000D",
+    "firmware": "2.5.1.174",
+    "ruleMachineVersion": "5.1.8"
+  },
+  "hubDefinitions": [
+    { "name": "AMGateA_HubOnly", "type": "string" },
+    { "name": "AMGateA_Shared", "type": "string" },
+    { "name": "AMGateA_Connector", "type": "string", "deviceId": 3601, "attribute": "Variable" },
+    { "name": "AMGateA_NumShared", "type": "integer" }
+  ],
+  "rules": [
+    {
+      "ownerAppId": "3076",
+      "localDefinitions": [
+        { "name": "AMGateA_LocalOnly", "type": "string" },
+        { "name": "AMGateA_Shared", "type": "string" },
+        { "name": "AMGateA_Connector", "type": "string" },
+        { "name": "AMGateA_NumLocalOnly", "type": "integer" },
+        { "name": "AMGateA_NumShared", "type": "integer" }
+      ],
+      "references": [
+        { "name": "AMGateA_NumLocalOnly", "operation": "write", "evidenceKind": "structured-setting", "field": "xVarV.1", "expectedScope": "local" },
+        { "name": "AMGateA_NumShared", "operation": "write", "evidenceKind": "structured-setting", "field": "xVarV.2", "expectedScope": "ambiguous" },
+        { "name": "AMGateA_NumShared", "operation": "write", "evidenceKind": "structured-setting", "field": "xVarV.3", "expectedScope": "ambiguous" }
+      ]
+    },
+    {
+      "ownerAppId": "3077",
+      "localDefinitions": [
+        { "name": "AMGateA_Shared", "type": "string" },
+        { "name": "AMGateA_NumShared", "type": "integer" }
+      ],
+      "references": [
+        { "name": "AMGateA_NumShared", "operation": "write", "evidenceKind": "structured-setting", "field": "xVarV.1", "expectedScope": "ambiguous" }
+      ]
+    },
+    {
+      "ownerAppId": "3078",
+      "fixtureState": "hub-definition-deleted",
+      "localDefinitions": [],
+      "references": [
+        { "name": "AMGateA_Deleted", "operation": "write", "evidenceKind": "structured-setting", "field": "xVarV.1", "expectedScope": "unresolved", "platformBrokenMarker": true }
+      ]
+    }
+  ]
+}

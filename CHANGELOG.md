@@ -4,6 +4,87 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.1.6
+
+Local Variables (belong to one rule only) become first-class nodes on the network graph, not just
+names inside the rule detail card - a real, decoded action like "Set Local Variable X" now has
+somewhere to appear on the map itself. Seeded from each rule's own declarations rather than from
+references, so a Local Variable that is declared but never written or read is still shown, isolated on
+the same shelf an orphaned app already uses (a separate `unreferencedLocal` marker, deliberately not
+the existing inert-app flag, so app-only counts and findings are unaffected). Owner-scoped identity
+throughout: two rules can each declare their own same-named Local Variable, and they render as two
+distinct nodes, never merged - the same identity guarantee Gate C (2.1.4) established for correctly
+telling Local and Hub Variable references apart. Adds a Focus local variable picker and pivot table
+support alongside the existing app/device/Hub Variable ones. Graph storage schema bumped 7 to 8 and the
+AI-friendly export schema bumped 5 to 6, since edges[] can now target a Local Variable in addition to a
+Hub Variable - the schema prose documents how to tell them apart without guessing. Built collaboratively
+with Codex across a reviewed design and implementation-plan cycle. Dev-only testing build, not yet
+verified on the Dev hub.
+
+**2026-08-29 fix**: `graphVersion` moves from `state` to `atomicState`. A page load landing within about a
+second of a scan's completion could read a stale pre-commit `state` snapshot - `state.graph` still null,
+left over from the value scan-start assigns - and `shouldAutoScan()` would read that as "never scanned",
+genuinely auto-starting a second scan. Confirmed live via hub trace logs (a completed generation's own
+`noGraph` read `true` on the very next page load) and reproduced by hammering the settings-page render
+immediately after a real scan completion. `atomicState` commits on every write instead of once at the end
+of an execution, closing the window; a one-time migration backfills the field for installs that already
+have a graph stored under the old key, so this deploy does not itself trigger a false "stale format,
+please rescan" message. Verified on the Dev hub: 20 consecutive post-completion checks (real scan, rapid
+repeated settings-page renders) all read `noGraph=false`, versus the pre-fix trace showing it flip `true`.
+
+**2026-08-30 fix**: `state.graph` itself (not just `graphVersion`) could still be clobbered back to null by
+an unrelated execution's own end-of-run `state` write-back landing after the real finalizer had already
+committed it - confirmed live as the cause of the "View Automation Map" link (and the app/device/node
+counts above it) silently disappearing after a scan, stuck across repeated app opens since nothing else
+rewrites `state.graph` until the next scan does. Rather than move the whole (large) graph to `atomicState`
+too - risking the memory failure the 2026-08-13 fix exists to avoid - `selfHealGraphIfNeeded()` now treats
+`atomicState.graphVersion` (immune to this race) as proof a graph should exist, and if `state.graph` is
+missing anyway, rebuilds it locally from the scan's other results (`appInfo`, device maps, a fresh Hub
+Variable read) instead of requiring a full rescan; those inputs are written earlier in the pipeline than
+`state.graph` itself, so they are not lost by the same race. Verified live on the Dev hub: the exact defect
+reproduced naturally (real scan, real app reopen through Hubitat's own UI), the trace log shows
+`selfHealGraphIfNeeded()` firing and rebuilding within about a second of the corruption, and the map link
+and counts were correct on every check for the following two minutes.
+
+## 2.1.5
+
+Adds short `[LOC]`/`[HVR]`/`[CON]` class tags to the Hub Variable Focus dropdown and the rule detail
+variables card, matching the existing app/device Focus tag convention (2.0.0) so a variable's class is
+visible at a glance rather than requiring a click-through. `[HVR]` (Hub Variable) is a new code, chosen
+deliberately over reusing `APP_TYPE_TAGS`'s existing `HUB` code - that one means "built-in Hubitat app",
+a different axis from variable scope, and reusing it risked conflating the two. The Hub Variable Focus
+dropdown shows `[CON]` for a Connector-backed Hub Variable and `[HVR]` for a plain one, reading the same
+authoritative `connectorDeviceId` the graph already resolves; the rule detail card shows `[LOC]` for a
+proven Local reference and `[HVR]` for a proven Hub reference, with no tag on a Needs-review entry since
+its class is, by definition, not known. No new backend or export schema fields - every tag reads a value
+already resolved by Gate C (2.1.4). Built collaboratively with Codex. Verified on the Dev hub against
+fixture rule 3079: both tag branches confirmed against real classified data (a proven Hub reference and
+a Connector-backed Hub Variable), with no regression on the earlier Gate A fixtures. Dev-only testing
+build, not yet promoted to production.
+
+## 2.1.4
+
+Correctly distinguishes Rule Machine Local Variables (belong to one rule) from Hub Variables (shared
+hub-wide) and Variable Connector devices, instead of treating every structured variable reference as a
+Hub Variable. Empirically established that a same-named Local and Hub Variable in one rule cannot be
+told apart from stored configuration alone - Rule Machine silently resolves the write to the Local
+variable at runtime, but the persisted action storage gives no way to recover which one the author
+intended - so this case is now reported as genuinely ambiguous rather than guessed at, and a reference
+this app cannot confirm against the hub's own authoritative variable list is reported as unresolved
+rather than falling back to a weaker-guarantee node. Adds a Local/Hub/Needs-review variables section to
+the rule detail panel, and corresponding `localVariables`/`variableReferences`/
+`nonResolvedVariableReferences` fields to the AI-friendly export (schema 5) - the export's Hub Variable
+topology guarantee is strictly stronger as a result, which is why the schema version bumped rather than
+just adding fields. Built collaboratively with Codex across an extensive empirical fixture-capture and
+review process. Verified on the Dev hub: classification exactly matched Gate A's fixture predictions
+across all three test rules, Hub Variable graph topology and corrected flow labels rendered correctly
+with no invented relationships from ambiguous or unresolved references, the Local/Needs-review rule
+detail card rendered correctly on a live rule, no variable value appeared anywhere, and scan
+finalization/telemetry stayed single-shot. The card's Hub section was not exercised by a dedicated
+fixture - it shares the same renderer and already-verified scope filter as the Local section, so this
+is not treated as a coverage gap. Dev-only testing build, not yet promoted to production or verified on
+a second hub.
+
 ## 2.1.3
 
 Fixes the registry-finalization stale-snapshot race: a finalizer entering with a stale, pre-commit

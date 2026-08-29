@@ -15,3 +15,9 @@ Bucket/
 
 # Source snapshots created before direct deployment to the development hub.
 .hubitat-backups/
+
+# Local Google Apps Script tooling state. OAuth credentials and project
+# mappings must never be committed.
+.clasprc.json
+.clasp.json
+.apps-script-backups/

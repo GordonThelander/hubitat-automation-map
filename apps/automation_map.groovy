@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.1.3'
+@Field static final String APP_VERSION = '2.1.6'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -92,7 +92,16 @@ import java.util.concurrent.atomic.AtomicInteger
 // identity data, none of which existed when a production v2.0.4 instance's
 // graph was last built. Forces graphIsStale() to catch that upgrade instead
 // of silently exposing an old-shaped graph to new rendering code.
-@Field static final String GRAPH_SCHEMA = '6'
+// Bumped 6->7 for Gate C (v2.1.4): graph.ruleVariables is a new first-class
+// property the page now consumes (focused rule panel), and the old
+// reference-derived Hub Variable node fallback is retired - an old-schema
+// cached graph has neither, so graphIsStale() must force a rebuild rather
+// than render it as if it had already been through classification.
+// Bumped 7->8 (v2.1.6): Local Variable nodes/edges and the unreferencedLocal
+// node property are new. Without this bump an upgraded instance could render
+// a cached schema-7 graph and silently omit the whole feature until the next
+// manual scan (Codex 311 correction 2).
+@Field static final String GRAPH_SCHEMA = '8'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -288,6 +297,8 @@ Map main() {
         }
     }
     clearAbandonedScan()
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
     // Computed once here, after recovery has run, and threaded through every
     // current-running UI decision below - see scanEffectivelyActive()'s own
     // comment for why neither signal alone is sufficient.
@@ -406,6 +417,15 @@ Map main() {
                             style: 'embedded', state: 'complete', required: false,
                        )
                     }
+                } else if (!scanActive && atomicState.graphVersion != null) {
+                    // Confirmed live 2026-08-30: state.graph can read null for one request
+                    // immediately after a scan completes - the same per-execution commit-
+                    // timing gap graphVersion's own move to atomicState (2026-08-29) closed
+                    // for shouldAutoScan(). state.graph itself stays as-is here (it is large;
+                    // moving it to atomicState too risks the memory failure the 2026-08-13
+                    // fix exists to avoid), so this says so honestly instead of silently
+                    // showing nothing - self-corrects on the next reload.
+                    paragraph "<span style='color:#2e7d32'>Scan complete - finishing up, reload in a moment to see the map.</span>"
                 }
                 href(
                     name: 'baselineComparisonLink', title: "<span style='color:#1976d2'>Baseline Comparison</span>",
@@ -491,6 +511,45 @@ void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
 }
 
+// One-time migration (added 2026-08-29, graphVersion moved to atomicState to
+// close the race below): backfills atomicState.graphVersion from the legacy
+// state.graphVersion an existing install already has on disk, so a graph
+// stored before this fix deployed is not mistaken for missing or stale.
+// Idempotent - a no-op once atomicState.graphVersion is set for real.
+void migrateGraphVersionIfNeeded() {
+    if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
+        atomicState.graphVersion = state.graphVersion
+    }
+}
+
+// Self-heals a race confirmed live 2026-08-30: state.graph can be clobbered
+// back to null by an unrelated execution's own end-of-run state write-back
+// landing after the real finalizer already committed it - not merely stale
+// for one request, but stuck that way across repeated app opens, since
+// nothing else rewrites state.graph until the next scan does. Moving the
+// whole (large) graph to atomicState would avoid this too, but risks the
+// memory failure the 2026-08-13 fix exists to avoid - so instead, treat
+// atomicState.graphVersion (immune to this race - see shouldAutoScan()) as
+// proof a graph SHOULD exist, and if state.graph is missing anyway, rebuild
+// it locally from the scan's other results rather than requiring a full
+// rescan. Safe to do: buildGraph()'s other inputs (appInfo, device maps) are
+// all written earlier in the pipeline than state.graph itself, so they are
+// not lost by this same race - guarded on appInfo being present so this
+// never fabricates a graph from truly-missing data. hubVariableInventory is
+// refetched too (a cheap in-process call, no HTTP) since it is the one
+// buildGraph() input written in the same late closure as state.graph and so
+// could itself be one generation stale here.
+void selfHealGraphIfNeeded() {
+    if (state.graph != null) return
+    if (atomicState.graphVersion == null) return
+    if (scanEffectivelyActive()) return
+    if (!(state.appInfo)) return
+    log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
+    state.hubVariableInventory = fetchHubVariableInventory()
+    state.graph = buildGraph()
+    atomicState.graphVersion = GRAPH_SCHEMA
+}
+
 // True when the app is ready to work but has never produced a map. Opening it in
 // that state starts a scan on its own, so an install that somehow got past
 // installed() without scanning still recovers rather than sitting idle.
@@ -505,7 +564,14 @@ void appButtonHandler(String btn) {
 // either a live scan or genuinely interrupted work, either way not safe to
 // auto-start over.
 boolean shouldAutoScan() {
-    boolean noGraph = !state.graph
+    // atomicState.graphVersion, not state.graph: confirmed live 2026-08-29 - a
+    // page load landing right after a completed scan can still read a stale
+    // pre-commit state snapshot (state.graph null, left over from scan start),
+    // reads noGraph true, and genuinely auto-starts a second scan. atomicState
+    // commits on every write, so this signal cannot go stale that way.
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
+    boolean noGraph = (atomicState.graphVersion == null)
     boolean noLiveLock = SCAN_LOCKS.get("${app.id}") == null
     boolean noDurableRunning = !state.scanRunning
     boolean noScanError = !state.scanError
@@ -513,7 +579,12 @@ boolean shouldAutoScan() {
     if (TRACE_ENABLED) {
         amTrace('auto-scan.decision', (state.activeGenerationToken ?: '-') as String, traceAttemptId(),
                 [installed: (app.installationState == 'COMPLETE'), noGraph: noGraph, noLiveLock: noLiveLock,
-                 noDurableRunning: noDurableRunning, noScanError: noScanError, result: result])
+                 noDurableRunning: noDurableRunning, noScanError: noScanError, result: result,
+                 // graphPresent, separate from noGraph above: lets a future incident distinguish
+                 // "no graph at all" from "atomicState says one exists but state.graph itself is
+                 // missing" (the 2026-08-30 clobbered-state.graph race) without guessing after the
+                 // fact - selfHealGraphIfNeeded() already ran above, so this also confirms recovery.
+                 graphPresent: (state.graph != null)])
     }
     return result
 }
@@ -796,7 +867,9 @@ if (document.readyState !== 'loading') { amStartScan(); }
 }
 
 boolean graphIsStale() {
-    return state.graph && state.graphVersion != GRAPH_SCHEMA
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
+    return state.graph && atomicState.graphVersion != GRAPH_SCHEMA
 }
 
 // A scan that stops without finishing leaves scanRunning set, which disables the
@@ -1547,7 +1620,7 @@ Map startScan() {
     // accumulator disappeared on a code reload". Recovery may build a graph
     // only after this marker is committed true by finalizeAppPhase.
     state.appResultsReady = false
-    state.graphVersion = null
+    atomicState.graphVersion = null
     // Dropped, not merely marked stale. Holding the previous graph while
     // appInfo fills doubles peak state for the whole scan - this is Gordon's
     // own hub, and on 2026-08-13, at 74 apps, that was enough to kill a scan
@@ -2679,7 +2752,7 @@ void finishScan(data = null) {
         Map graph = buildGraph()
         state.scanHeartbeat = now()
         state.graph = graph
-        state.graphVersion = GRAPH_SCHEMA
+        atomicState.graphVersion = GRAPH_SCHEMA
 
         // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
         // 61KB of a 244KB state on this hub, a quarter of everything stored, held
@@ -3080,6 +3153,14 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             if ("${out.type}".startsWith('Rule-')) {
                 out.hubVarWrites = extractHubVariableWrites(data)
                 out.hubVarReads = extractHubVariableReads(data)
+                // Raw, value-free Local Variable definitions (Gate C, v2.1.4) -
+                // classification against these plus the authoritative Hub
+                // inventory happens later, in buildGraph(), once that inventory
+                // is available (see classifyRuleVariableReferences() there).
+                // Extracted here regardless of hubVarWrites/Reads being empty,
+                // so a rule with only Local definitions and no Hub-shaped
+                // reference at all still gets its definitions published.
+                out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
             }
 
             // An app with no devices, no rule links and no endpoints used to be
@@ -3276,7 +3357,12 @@ List extractHubVariableWrites(Map data) {
         // inventory, so stripping it disconnects valid reads and writes.
         String varName = "${settingValues["xVarV.${num}"] ?: ''}"
         if (!varName) return
-        Map write = [variable: varName]
+        // actionNum/field added for Gate C (v2.1.4): joins a classified reference
+        // back to this exact flow step for actionLabel(), and is the raw
+        // reference's own evidence field for the classifier - see
+        // classifyVariableReference(). Purely additive; every existing reader of
+        // .variable/.sourceDevice/etc. is unaffected.
+        Map write = [variable: varName, actionNum: "${num}", field: "xVarV.${num}"]
         // Only the device-attribute source has been observed. A fixed value or
         // another variable as the source is unconfirmed, so this is left
         // absent rather than guessed - the variable node and WRITE edge are
@@ -3343,14 +3429,31 @@ List extractHubVariableReads(Map data) {
     // the free-text block below for why that alone is not proof. A name
     // seen both ways stays confirmed; structured evidence is never
     // downgraded by an unconfirmed match on the same name.
-    Map found = [:]
+    //
+    // A List, deduplicated by name+usageRole+field (Gate C correction, Codex
+    // 287): keying by name+role alone collapsed two distinct condition fields
+    // referencing the same variable (e.g. xVar_3 and xVar_7, both role
+    // 'condition') into one record, losing exactly the per-reference field
+    // evidence the plan requires. Including the field in the dedup identity
+    // keeps every distinct structured occurrence as its own raw reference,
+    // while still guarding against the same (groupId, item) pair somehow
+    // being visited twice.
+    List found = []
+    Set<String> foundKeys = new LinkedHashSet<>()
     evalMap.each { groupId, expr ->
-        if ("${groupId}" == '0' && !hasPredicate) return
+        String role = ("${groupId}" == '0') ? 'required-expression' : 'condition'
+        if (role == 'required-expression' && !hasPredicate) return
         (expr instanceof List ? expr as List : []).each { item ->
             String s = "${item}"
             if (settingValues["rCapab_${s}"] != 'Variable') return
             String varName = "${settingValues["xVar_${s}"] ?: ''}"
-            if (varName) found[varName] = true
+            if (!varName) return
+            String field = "xVar_${s}"
+            String key = "${varName}|${role}|${field}"
+            if (foundKeys.add(key)) {
+                found << [variable: varName, confirmed: true, usageRole: role,
+                          evidenceKind: 'structured-setting', field: field]
+            }
         }
     }
 
@@ -3365,7 +3468,13 @@ List extractHubVariableReads(Map data) {
         if (settingValues[capabKey] != 'Variable') return
         String num = capabKey.replaceAll('^tCapab', '')
         String varName = "${settingValues["xVar${num}"] ?: ''}"
-        if (varName) found[varName] = true
+        if (!varName) return
+        String field = "xVar${num}"
+        String key = "${varName}|trigger|${field}"
+        if (foundKeys.add(key)) {
+            found << [variable: varName, confirmed: true, usageRole: 'trigger',
+                      evidenceKind: 'structured-setting', field: field]
+        }
     }
 
     // Free-text interpolation - lowest priority per the spec's own
@@ -3382,10 +3491,10 @@ List extractHubVariableReads(Map data) {
     // the pattern alone produced exactly this on Gordon's live hub -
     // "device"/"time"/"date" reported as Hub Variables read by real
     // production rules (Barking, Perimeter Closed, Mode Alarm Reminder),
-    // none of which have ever created a variable by those names. buildGraph()
-    // only keeps a candidate if the same name is independently confirmed
-    // somewhere else on the hub via a structured reference - see the
-    // confirmedVarNames pre-pass there.
+    // none of which have ever created a variable by those names. Gate C
+    // (v2.1.4) replaces the old hub-wide confirmedVarNames promotion with
+    // classifyVariableReference()'s same-rule-only establishedScopes - see
+    // that function and Gate C decision 2.
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
         String settingType = "${s.type}"
@@ -3393,11 +3502,16 @@ List extractHubVariableReads(Map data) {
         String val = "${s.value ?: ''}"
         (val =~ /%([A-Za-z_][A-Za-z0-9_]*)%/).findAll().each { m ->
             String varName = "${m[1]}"
-            if (varName && !found.containsKey(varName)) found[varName] = false
+            String field = "${s.name}"
+            String key = "${varName}|text-token|${field}"
+            if (foundKeys.add(key)) {
+                found << [variable: varName, confirmed: false, usageRole: null,
+                          evidenceKind: 'text-token', field: field]
+            }
         }
     }
 
-    return found.collect { name, confirmed -> [variable: name, confirmed: confirmed] }
+    return found
 }
 
 List buildRuleFlow(Map data) {
@@ -3807,19 +3921,39 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         devices: devices,
         ruleTargets: ruleTargets,
         selfTarget: selfTarget,
+        // Gate C (v2.1.4): join key back to this exact getSetVariable action's
+        // classified reference - see extractHubVariableWrites()'s matching
+        // `field` and buildGraph()'s correctFlowVariableLabels(). Same
+        // "xVarV.<n>" form both places read/write, computed independently
+        // here rather than threaded through, since this function already has
+        // num and method and needs no other data extraction. null for every
+        // other action kind - nothing else is joined post-classification.
+        variableField: (method == 'getSetVariable') ? "xVarV.${num}" : null,
     ]
 }
 
 String actionLabel(String method, String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
     switch (method) {
         case 'getSetVariable':
-            // xVarV.<n> holds the target Hub Variable name. Verified against
+            // xVarV.<n> holds the target variable name. Verified against
             // one fixture (rule 2981, "_Test Variables") to carry a trailing
             // period - "TestHubUptime." - not yet confirmed whether that is
             // always present or an artifact of this specific picker state, so
             // it is stripped rather than assumed absent on other rules.
+            //
+            // Deliberately scope-neutral ("Set Variable", not "Set Hub
+            // Variable") since Gate C (v2.1.4): this label is built during
+            // per-app discovery, before the authoritative Hub Variable
+            // inventory is fetched (that happens later, at finalization), so
+            // Local-versus-Hub classification is not yet possible at this
+            // point in the pipeline. buildGraph()'s correctFlowVariableLabels()
+            // rewrites this to "Set Local/Hub Variable ..." once classified -
+            // see that function's own comment for why the join happens there
+            // instead of here, and Supporting Docs/
+            // local_hub_variable_identity_proposal.md / WIP/
+            // local_hub_variable_gate_c_integration_plan.md for the design.
             String varName = (settingValues["xVarV.${num}"] ?: '').replaceAll(/\.$/, '')
-            if (!varName) return 'Set Hub Variable [unresolved]'
+            if (!varName) return 'Set Variable [unresolved]'
             // valStringOp.<n> discriminates what the value is being set FROM.
             // Only the device-attribute source has been observed so far - a
             // fixed value or another variable as the source is unconfirmed
@@ -3827,9 +3961,9 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
             if (settingValues["valStringOp.${num}"] == 'Device attribute') {
                 String attr = settingValues["tCustomAttr.${num}"]
                 List srcDevices = settingDevices["customDev.${num}"] ?: []
-                if (attr && srcDevices) return "Set Hub Variable ${varName} from ${srcDevices[0]}.${attr}"
+                if (attr && srcDevices) return "Set Variable ${varName} from ${srcDevices[0]}.${attr}"
             }
-            return "Set Hub Variable ${varName}"
+            return "Set Variable ${varName}"
         case 'getOnOffSwitch':
             return settingValues["onOff.${num}"] == 'true' ? 'On' : 'Off'
         case 'getSetColorTemp':
@@ -4485,6 +4619,361 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     return matches.size() == 1 ? "${matches[0]}" : raw
 }
 
+// ===================================================================================================================
+// Local, Hub, and Connector Variable identity (Gate C, v2.1.4)
+//
+// Ports the Gate B classifier (tests/support/VariableReferenceClassifier.groovy)
+// into the app itself - Hubitat apps are single-file scripts with no runtime
+// access to external class files, so the pure, value-free classification logic
+// is reproduced here as plain functions rather than referenced. Keep the two in
+// sync by hand; tests/variable-reference-classifier.groovy plus
+// tests/fixtures/local-hub-variable-gate-a.json remain the source of truth for
+// behaviour - this is the deployed copy, unit-testable independently.
+//
+// See Supporting Docs/local_hub_variable_identity_proposal.md and
+// WIP/local_hub_variable_gate_a_evidence.md for the design and the empirical
+// findings this implements: allLocalVars is a value-free Local definition
+// inventory only (Gate A 2.1), a structured xVarV/xVar_/xVar reference alone
+// does not prove Hub scope (Gate A 2.3-2.4), a same-name Local/Hub collision
+// stays ambiguous even though runtime shadowing was observed on firmware
+// 2.5.1.174 (Gate A 2.4 - observed behaviour is not license to invent author
+// intent), and Connector association is device-ID only, never name-based
+// (Gate A 2.5).
+@Field static final Set<String> AM_VAR_BUILT_IN_TOKENS = ['device', 'time', 'date', 'value', 'text'] as Set<String>
+
+// Reads appState.allLocalVars for one Rule Machine rule and returns definition
+// metadata only - Gate A 2.1 confirmed this inventory holds declaration values,
+// not current runtime values (those live in separate lv_<name> state entries
+// this app does not read), and Automation Map never needs or exports values.
+List extractLocalVariableDefinitions(Map data, String ownerAppId) {
+    Map st = [:]
+    (data.appState ?: []).each { e ->
+        if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
+    }
+    Map allLocalVars = (st.allLocalVars ?: [:]) as Map
+    List out = []
+    allLocalVars.each { name, meta ->
+        String varName = "${name}"
+        if (!varName) return
+        Map m = (meta instanceof Map) ? (meta as Map) : [:]
+        out << [
+            identity: "${ownerAppId}:${varName}",
+            name: varName,
+            variableType: normalizeHubVariableType(m.type as String),
+        ]
+    }
+    return out
+}
+
+// Classifies one raw variable reference against this rule's Local definitions
+// and the authoritative Hub definitions. Pure and value-free: no Hubitat
+// access, no graph writes, no logging. context: ownerAppId, localDefinitions,
+// hubDefinitions, optional builtInTokens, optional establishedScopes (name ->
+// 'local'/'hub', built only from this SAME rule's own resolved structured
+// references - Gate C decision 2, never hub-wide).
+Map classifyVariableReference(Map reference, Map context) {
+    String rawName = amVarText(reference.name)
+    if (!rawName) throw new IllegalArgumentException('reference.name is required')
+
+    String ownerAppId = amVarText(context.ownerAppId)
+    Map<String, Map> localDefinitions = amVarDefinitionsByName(context.localDefinitions)
+    Map<String, Map> hubDefinitions = amVarDefinitionsByName(context.hubDefinitions)
+    Set<String> builtInTokens = ((context.builtInTokens ?: AM_VAR_BUILT_IN_TOKENS) as Collection)
+        .collect { amVarText(it).toLowerCase() }
+        .findAll { it } as Set<String>
+
+    String evidenceKind = amVarText(reference.evidenceKind ?: 'structured-setting')
+    String provenScope = amVarText(reference.provenScope ?: reference.scopeHint).toLowerCase()
+    String scopeSource = amVarText(reference.scopeSource)
+
+    if (provenScope && !(provenScope in ['local', 'hub'])) {
+        throw new IllegalArgumentException("Unsupported proven scope '${provenScope}'")
+    }
+    if (provenScope && !scopeSource) {
+        throw new IllegalArgumentException('A proven scope requires scopeSource evidence')
+    }
+
+    // Free-text substitution proves only that text contains %Name%. It does
+    // not independently prove Name is a variable or which scope owns it. A
+    // separately established scope (same rule only) may promote it.
+    if (evidenceKind == 'text-token' && !provenScope) {
+        provenScope = amVarIndependentlyEstablishedScope(rawName, context.establishedScopes)
+        if (provenScope) scopeSource = 'independently-established-reference'
+    }
+
+    if (evidenceKind == 'text-token' && !provenScope) {
+        boolean builtIn = builtInTokens.contains(rawName.toLowerCase())
+        return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+            scope: null,
+            status: 'ignored',
+            canonicalName: null,
+            localIdentity: null,
+            candidateScopes: [],
+            candidates: [:],
+            reason: builtIn ? 'built-in-token-without-independent-scope' :
+                'weak-text-reference-without-independent-scope'
+        ]
+    }
+
+    Map localMatch = amVarMatchWithinScope(rawName, localDefinitions)
+    Map hubMatch = amVarMatchWithinScope(rawName, hubDefinitions)
+
+    if (provenScope) {
+        Map selected = provenScope == 'local' ? localMatch : hubMatch
+        return amVarClassifiedForProvenScope(reference, rawName, ownerAppId, evidenceKind,
+            scopeSource, provenScope, selected)
+    }
+
+    List<String> candidateScopes = []
+    if (localMatch.status == 'matched') candidateScopes << 'local'
+    if (hubMatch.status == 'matched') candidateScopes << 'hub'
+
+    if (candidateScopes == ['local']) {
+        return amVarResolved(reference, rawName, ownerAppId, evidenceKind, scopeSource,
+            'local', localMatch.canonicalName as String, localMatch.matchKind as String)
+    }
+    if (candidateScopes == ['hub']) {
+        return amVarResolved(reference, rawName, ownerAppId, evidenceKind, scopeSource,
+            'hub', hubMatch.canonicalName as String, hubMatch.matchKind as String)
+    }
+
+    Map candidates = [local: localMatch.candidates ?: [], hub: hubMatch.candidates ?: []]
+    if (candidateScopes.size() == 2 || localMatch.status == 'multiple' || hubMatch.status == 'multiple') {
+        return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+            scope: 'ambiguous',
+            status: 'ambiguous',
+            canonicalName: null,
+            localIdentity: null,
+            candidateScopes: candidateScopes,
+            candidates: candidates,
+            reason: candidateScopes.size() == 2 ? 'same-name-cross-scope' :
+                'normalization-produced-multiple-candidates'
+        ]
+    }
+
+    return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+        scope: 'unresolved',
+        status: 'unresolved',
+        canonicalName: null,
+        localIdentity: null,
+        candidateScopes: [],
+        candidates: candidates,
+        reason: 'no-definition-in-either-scope'
+    ]
+}
+
+private Map amVarClassifiedForProvenScope(Map reference, String rawName, String ownerAppId,
+        String evidenceKind, String scopeSource, String provenScope, Map selected) {
+    if (selected.status == 'matched') {
+        return amVarResolved(reference, rawName, ownerAppId, evidenceKind, scopeSource,
+            provenScope, selected.canonicalName as String, selected.matchKind as String)
+    }
+    if (selected.status == 'multiple') {
+        return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+            scope: 'ambiguous',
+            status: 'ambiguous',
+            canonicalName: null,
+            localIdentity: null,
+            candidateScopes: [provenScope],
+            candidates: [(provenScope): selected.candidates ?: []],
+            reason: 'normalization-produced-multiple-candidates'
+        ]
+    }
+    return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+        scope: 'unresolved',
+        status: 'unresolved',
+        canonicalName: null,
+        localIdentity: null,
+        candidateScopes: [provenScope],
+        candidates: [(provenScope): []],
+        reason: 'definition-missing-in-proven-scope'
+    ]
+}
+
+private Map amVarResolved(Map reference, String rawName, String ownerAppId, String evidenceKind,
+        String scopeSource, String scope, String canonicalName, String matchKind) {
+    if (scope == 'local' && !ownerAppId) {
+        throw new IllegalArgumentException('context.ownerAppId is required for a Local Variable')
+    }
+    return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+        scope: scope,
+        status: 'resolved',
+        canonicalName: canonicalName,
+        localIdentity: scope == 'local' ? "${ownerAppId}:${canonicalName}" : null,
+        candidateScopes: [scope],
+        candidates: [(scope): [canonicalName]],
+        reason: matchKind == 'exact' ? 'exact-name-in-one-scope' :
+            'one-unambiguous-normalized-match-in-one-scope'
+    ]
+}
+
+private Map amVarBaseResult(Map reference, String rawName, String ownerAppId,
+        String evidenceKind, String scopeSource) {
+    return [
+        name: rawName,
+        ownerAppId: ownerAppId ?: null,
+        operation: amVarText(reference.operation ?: 'read'),
+        usageRole: reference.containsKey('usageRole') ? reference.usageRole : null,
+        evidence: [
+            kind: evidenceKind,
+            field: amVarText(reference.field) ?: null,
+            scopeSource: scopeSource ?: null
+        ]
+    ]
+}
+
+// One-trailing-period fallback only, matching canonicalHubVariableName()'s own
+// bound - a comparable form shared with Hub name resolution elsewhere in this
+// file, but kept independent here since this operates on a caller-supplied
+// definition map, not the authoritative hub inventory.
+private Map amVarMatchWithinScope(String rawName, Map<String, Map> definitions) {
+    if (definitions.containsKey(rawName)) {
+        return [status: 'matched', canonicalName: rawName, matchKind: 'exact', candidates: [rawName]]
+    }
+    String comparable = amVarRemoveOneTrailingPeriod(rawName)
+    List<String> matches = definitions.keySet().findAll { String candidate ->
+        amVarRemoveOneTrailingPeriod(candidate) == comparable
+    }.sort()
+    if (matches.size() == 1) {
+        return [status: 'matched', canonicalName: matches[0], matchKind: 'normalized', candidates: matches]
+    }
+    if (matches.size() > 1) {
+        return [status: 'multiple', canonicalName: null, matchKind: 'normalized', candidates: matches]
+    }
+    return [status: 'none', canonicalName: null, matchKind: null, candidates: []]
+}
+
+private Map<String, Map> amVarDefinitionsByName(Object rawDefinitions) {
+    Map<String, Map> out = new LinkedHashMap<>()
+    if (rawDefinitions instanceof Map) {
+        (rawDefinitions as Map).each { Object name, Object definition ->
+            String key = amVarText(name)
+            if (key) out[key] = definition instanceof Map ? new LinkedHashMap(definition as Map) : [:]
+        }
+    } else if (rawDefinitions instanceof Collection) {
+        (rawDefinitions as Collection).each { Object definition ->
+            if (!(definition instanceof Map)) return
+            String key = amVarText((definition as Map).name)
+            if (key) out[key] = new LinkedHashMap(definition as Map)
+        }
+    }
+    return out
+}
+
+private String amVarIndependentlyEstablishedScope(String rawName, Object establishedScopes) {
+    if (!(establishedScopes instanceof Map)) return ''
+    String scope = amVarText((establishedScopes as Map)[rawName]).toLowerCase()
+    return scope in ['local', 'hub'] ? scope : ''
+}
+
+private String amVarRemoveOneTrailingPeriod(String value) {
+    return value?.endsWith('.') ? value.substring(0, value.length() - 1) : value
+}
+
+private String amVarText(Object value) {
+    return value == null ? '' : "${value}".trim()
+}
+
+// Classifies one rule's variable references, combining raw writes/reads into
+// the classifier's per-reference input, then splitting results into resolved
+// (local/hub) and non-resolved (ambiguous/unresolved) buckets. 'ignored' weak-
+// text results are intentionally dropped - Gate C keeps them an internal
+// diagnostic outcome, not exported or graphed (integration plan section 3.4).
+Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List localDefinitions,
+        Map hubDefinitions, String ownerAppId) {
+    List raw = []
+    (hubVarWrites ?: []).each { Map w ->
+        if (!w.variable) return
+        raw << [name: w.variable, operation: 'write', evidenceKind: 'structured-setting', field: w.field]
+    }
+    (hubVarReads ?: []).each { Map r ->
+        if (!r.variable) return
+        raw << [name: r.variable, operation: 'read', usageRole: r.usageRole,
+                 evidenceKind: r.evidenceKind, field: r.field]
+    }
+
+    // Same-rule-only weak-text promotion (Gate C decision 2): a structured
+    // reference resolved earlier in this SAME rule may establish scope for a
+    // %Name% token processed afterward. Never seeded from another rule - this
+    // map exists fresh per rule, per call.
+    Map establishedScopes = [:]
+    Map context = [ownerAppId: ownerAppId, localDefinitions: localDefinitions,
+                   hubDefinitions: hubDefinitions, establishedScopes: establishedScopes]
+
+    // Structured references classified first, so their resolved scope is
+    // available to promote a weak text-token reference processed afterward -
+    // matches the integration plan section 3.3 ordering.
+    List structured = raw.findAll { it.evidenceKind != 'text-token' }
+    List weakText = raw.findAll { it.evidenceKind == 'text-token' }
+
+    List resolved = []
+    List nonResolved = []
+    (structured + weakText).each { Map reference ->
+        Map result = classifyVariableReference(reference, context)
+        if (result.status == 'resolved') {
+            // Seeded under both the raw stored spelling and the resolved
+            // canonical name (Gate C correction, Codex 287): a structured
+            // "Example." that normalizes to "Example" must still promote a
+            // same-rule %Example% text token, which naturally uses the
+            // canonical spelling, not the trailing-period one. No further
+            // normalization happens here - the lookup side still requires an
+            // exact match against one of these two seeded spellings, so this
+            // stays bounded rather than introducing fuzzy matching.
+            String canonical = result.canonicalName as String
+            if (canonical && !establishedScopes.containsKey(canonical)) establishedScopes[canonical] = result.scope
+            String rawResultName = result.name as String
+            if (rawResultName && !establishedScopes.containsKey(rawResultName)) establishedScopes[rawResultName] = result.scope
+        }
+        if (result.status == 'ignored') return
+        if (result.status == 'resolved') resolved << result
+        else nonResolved << result
+    }
+    return [variableReferences: resolved, nonResolvedVariableReferences: nonResolved]
+}
+
+// Post-classification join (Gate C, v2.1.4): actionLabel() cannot classify at
+// flow-build time - Hub Variable inventory is not available during per-app
+// discovery, only later at finalization (see actionLabel()'s own comment) -
+// so it emits a neutral "Set Variable X" label there. This walks the already-
+// built flow steps once classification has actually run and corrects each
+// getSetVariable step's label using the SAME normalized records published in
+// ruleVariables, joined by the variableField/evidence.field this file adds
+// for exactly this purpose. Satisfies the integration plan's requirement
+// (section 5) that the flow label and the rule-detail section read the same
+// classification records rather than being able to disagree.
+void correctFlowVariableLabels(Map flows, Map ruleVariables) {
+    flows.each { String appNodeId, Object stepsObj ->
+        if (!(stepsObj instanceof List)) return
+        List refs = (ruleVariables[appNodeId]?.variableReferences ?: []) as List
+        List nonResolved = (ruleVariables[appNodeId]?.nonResolvedVariableReferences ?: []) as List
+        Map byField = [:]
+        (refs + nonResolved).each { Map r -> if (r.evidence?.field) byField["${r.evidence.field}"] = r }
+        (stepsObj as List).each { Object step ->
+            if (!(step instanceof Map)) return
+            Map s = step as Map
+            String field = s.variableField as String
+            if (!field) return
+            Map r = byField[field] as Map
+            if (!r) return
+            String currentLabel = s.label as String
+            if (!currentLabel?.startsWith('Set Variable ')) return
+            String rest = currentLabel.substring('Set Variable '.length())
+            int fromIdx = rest.indexOf(' from ')
+            String suffix = fromIdx >= 0 ? rest.substring(fromIdx) : ''
+            String varName = (r.canonicalName ?: r.name) as String
+            if (r.status == 'resolved' && r.scope == 'local') {
+                s.label = "Set Local Variable ${varName}${suffix}"
+            } else if (r.status == 'resolved' && r.scope == 'hub') {
+                s.label = "Set Hub Variable ${varName}${suffix}"
+            } else if (r.status == 'ambiguous') {
+                s.label = "Set Variable ${varName} (scope ambiguous)${suffix}"
+            } else if (r.status == 'unresolved') {
+                s.label = "Set Variable ${varName} (unresolved)${suffix}"
+            }
+        }
+    }
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -4502,27 +4991,44 @@ Map buildGraph() {
     Map nameCache = [:]
     Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
 
-    // Every Hub Variable name confirmed anywhere on the hub via a structured
-    // reference (a write, or a condition/trigger read - never free text on
-    // its own). Collected hub-wide, in its own pass, before any edge is
-    // drawn: a free-text candidate found in one app can only be trusted
-    // against structured evidence that might live in a completely different
-    // app's rule. See extractHubVariableReads for why an unconfirmed match
-    // cannot be trusted alone - Rule Machine's own %device%/%time%/%date%
-    // notification tokens match the same pattern as a real Hub Variable
-    // reference and are not one.
     Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
     Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
-    Set confirmedVarNames = []
+
+    // Classified per rule (Gate C, v2.1.4), replacing the old hub-wide
+    // confirmedVarNames promotion described above in earlier versions - only
+    // a same-rule structured reference may now promote a weak %Name% text
+    // token (Gate C decision 2; see classifyRuleVariableReferences()). Local
+    // Variable definitions and references never enter hub-wide promotion at
+    // all - published separately below as graph.ruleVariables, owner-scoped.
+    // Only resolved, hub-scoped records from this pass ever reach a node or
+    // edge - see the write/read loop further down.
+    Map ruleVariables = [:]
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        (appMap.hubVarWrites ?: []).each { Map w ->
-            if (w.variable) confirmedVarNames << canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
-        }
-        (appMap.hubVarReads ?: []).each { Map r ->
-            if (r.variable && r.confirmed) confirmedVarNames << canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
-        }
+        // Gated to Rule Machine (Codex 290 correction), matching
+        // extractHubVariableWrites/Reads()'s own gate exactly -
+        // processAppRelationships() initializes hubVarWrites/hubVarReads to
+        // an empty list for EVERY app unconditionally (see its own `out =
+        // [...]` literal), so a containsKey() check here always passed and
+        // admitted every installed app, integrations included, into
+        // classification. localVariables is genuinely Rule-Machine-only
+        // (only ever set inside that same gate), but checked the same way
+        // for consistency and clarity.
+        if (!"${appMap.type}".startsWith('Rule-')) return
+        String classifyAppNodeId = "a${appId}"
+        Map classified = classifyRuleVariableReferences(
+            (appMap.hubVarWrites ?: []) as List,
+            (appMap.hubVarReads ?: []) as List,
+            (appMap.localVariables ?: []) as List,
+            hubVarInventoryVars,
+            classifyAppNodeId
+        )
+        ruleVariables[classifyAppNodeId] = [
+            localVariables: (appMap.localVariables ?: []) as List,
+            variableReferences: classified.variableReferences,
+            nonResolvedVariableReferences: classified.nonResolvedVariableReferences,
+        ]
     }
 
     // Authoritative Hub Variable inventory (v2.0.14), published by finishScan()
@@ -4532,15 +5038,35 @@ Map buildGraph() {
     // write/read loop below, so that loop's existing `if (!nodes[varNodeId])`
     // guards naturally treat an inventory-sourced node as already present
     // (parent spec 6.3 reconciliation) instead of overwriting it.
-    boolean hubVarInventoryComplete = "${hubVarInventory.status}" == 'complete'
-    // Findings: a proven structured reference to a name absent from a COMPLETE
-    // inventory (not promoted to a node - parent spec 6.3, a design review
-    // point 5). There is no equivalent "Connector missing" finding: a
-    // reported Connector deviceId is trusted unconditionally below (confirmed
-    // against live hub data), so no code path can
-    // ever fail to resolve one - see the synthesized-node comment just below
-    // for why, and the orphan/stale-ID limitation this trade-off leaves.
+    //
+    // Findings: a proven-Hub-scoped structured reference absent from
+    // authoritative inventory (not promoted to a node - parent spec 6.3).
+    // Gate C (v2.1.4) semantic migration (Codex 290): this is now filtered
+    // from classified evidence, not populated by the old raw-name loop. Gate
+    // A found no persisted scope discriminator, so nothing in this pipeline
+    // ever sets provenScope on a raw reference - a classified 'unresolved'
+    // record's candidateScopes is therefore always [] today (no-definition-
+    // in-either-scope), never ['hub'] specifically. The filter below is the
+    // honest, forward-compatible boundary for a future discriminator, not
+    // something expected to populate right now - deliberately narrower than
+    // "any non-resolved record": cross-scope ambiguity, unknown-scope
+    // unresolved, and Local references must never appear in this Hub-only
+    // legacy finding. The complete set, correctly labelled either way, is in
+    // ruleVariables[appId].nonResolvedVariableReferences for Increment 2.
+    //
+    // There is no equivalent "Connector missing" finding: a reported
+    // Connector deviceId is trusted unconditionally below (confirmed against
+    // live hub data), so no code path can ever fail to resolve one - see the
+    // synthesized-node comment just below for why, and the orphan/stale-ID
+    // limitation this trade-off leaves.
     List unresolvedHubVarReferences = []
+    ruleVariables.each { String ruleAppNodeId, Map rv ->
+        ((rv.nonResolvedVariableReferences ?: []) as List).each { Map r ->
+            if (r.status == 'unresolved' && r.candidateScopes == ['hub']) {
+                unresolvedHubVarReferences << [name: (r.canonicalName ?: r.name), appId: ruleAppNodeId, kind: r.operation]
+            }
+        }
+    }
     int hubVarConnectorCount = 0
     hubVarInventoryVars.each { String varName, meta ->
         if (!varName) return
@@ -4601,15 +5127,14 @@ Map buildGraph() {
         // and was being marked so before this - dimmed amber, labelled "no
         // device or rule relationship", despite drawing a real edge on the
         // map underneath that label. Checked against what will actually be
-        // drawn, not just whether hubVarReads is non-empty - an unconfirmed
-        // free-text candidate that confirmedVarNames goes on to filter out
-        // must not itself count as a relationship, or an app with only a
-        // false-positive candidate would be wrongly called non-inert too.
-        boolean hasVarRelationship = (appMap.hubVarWrites ?: []) ||
-            (appMap.hubVarReads ?: []).any { Map r ->
-                String canonical = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
-                r.confirmed == true || confirmedVarNames.contains(canonical)
-            }
+        // drawn (Gate C, v2.1.4: a classified, resolved, hub-scoped
+        // reference), not just whether hubVarReads is non-empty - Local,
+        // ambiguous, and unresolved evidence draws nothing on the whole-map
+        // graph (plan section 4.1) and must not count as a relationship
+        // either, or a rule with only Local or unresolved evidence would be
+        // wrongly called non-inert too.
+        boolean hasVarRelationship = ((ruleVariables["a${appId}"]?.variableReferences ?: []) as List)
+            .any { Map r -> r.scope == 'hub' }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         String appNodeId = "a${appId}"
         String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
@@ -4733,72 +5258,181 @@ Map buildGraph() {
         // Hub Variables: shared, hub-scoped state, not owned by any one app -
         // so unlike a device the node is identified by name, not by an id the
         // scan discovered it under.
-        (appMap.hubVarWrites ?: []).each { Map w ->
-            String varName = canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
+        //
+        // Gate C (v2.1.4): only classified, resolved, hub-scoped records reach
+        // here now. A resolved 'hub' record's canonicalName is guaranteed
+        // present in hubVarInventoryVars - that is what "resolved hub" means
+        // from classifyVariableReference(), whose hubDefinitions input IS this
+        // same hubVarInventoryVars map - so the old reference-derived node
+        // fallback and its hubVarInventoryComplete gate are retired (Gate C
+        // decision 3). A structured reference this app cannot confirm against
+        // the authoritative inventory - whether the inventory was incomplete
+        // or the name genuinely does not exist, Gate A found no way to tell
+        // those apart from stored fields alone - is now classified unresolved
+        // and simply does not reach graph topology, rather than manufacturing
+        // a weaker-guarantee node from an unproven name. unresolvedHubVarReferences
+        // is populated further up, from this same classified data (filtered to
+        // status=='unresolved' && candidateScopes==['hub'] only) - see that
+        // block's own comment for why it is empty on every input this
+        // pipeline can currently produce.
+        Map writesByField = [:]
+        (appMap.hubVarWrites ?: []).each { Map w -> if (w.field) writesByField["${w.field}"] = w }
+        List classifiedHubRefs = ((ruleVariables[appNodeId]?.variableReferences ?: []) as List)
+            .findAll { Map r -> r.scope == 'hub' }
+
+        classifiedHubRefs.findAll { it.operation == 'write' }.each { Map r ->
+            String varName = r.canonicalName as String
             if (!varName) return
             String varNodeId = "v${varName}"
-            // A proven structured write naming a variable absent from a
-            // COMPLETE authoritative inventory is an unresolved reference, not
-            // a node - it is not promoted (parent spec 6.3, a design review
-            // point 5). When inventory failed/is absent, behaviour below is
-            // unchanged from before v2.0.14 (reference-derived fallback).
-            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
-                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'write']
-                return
-            }
             if (!nodes[varNodeId]) {
+                // Defensive, not a live fallback: reaching here with no
+                // existing node would mean the inventory-seeding pass above
+                // and this classified 'hub' result disagree about
+                // hubVarInventoryVars, which should not be possible since both
+                // read the same map in the same buildGraph() execution.
                 nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
-                nodes[varNodeId].identitySource = 'reference-derived'
+                nodes[varNodeId].identitySource = 'hub-inventory'
             }
             String key = "${appNodeId}|${varNodeId}|write"
             if (seen.contains(key)) return
             seen << key
+            Map original = (writesByField["${r.evidence?.field}"] as Map) ?: [:]
             Map edge = [from: appNodeId, to: varNodeId, kind: 'write']
-            if (w.sourceDevice && w.sourceAttr) edge.detail = "from ${w.sourceDevice}.${w.sourceAttr}"
-            // Structured, ID-based writeSource - only emitted when the source
-            // device ID resolves in the discovered device set, never joined by
-            // display label alone (parent spec 7.2).
-            if (w.sourceDeviceId && w.sourceAttr && labels.containsKey("${w.sourceDeviceId}")) {
-                edge.writeSource = [kind: 'deviceAttribute', deviceId: "${w.sourceDeviceId}", attribute: "${w.sourceAttr}"]
+            if (original.sourceDevice && original.sourceAttr) {
+                edge.detail = "from ${original.sourceDevice}.${original.sourceAttr}"
+            }
+            // Structured, ID-based writeSource - only emitted when the
+            // source device ID resolves in the discovered device set,
+            // never joined by display label alone (parent spec 7.2).
+            if (original.sourceDeviceId && original.sourceAttr && labels.containsKey("${original.sourceDeviceId}")) {
+                edge.writeSource = [kind: 'deviceAttribute', deviceId: "${original.sourceDeviceId}", attribute: "${original.sourceAttr}"]
             }
             edges << edge
         }
+
         // Stored from-app-to-variable the same as a write, NOT reversed, even
         // though a read conceptually flows variable-to-rule - every edge on
         // this map has an app in `from` (see the comment on pivotKindOptions
-        // in the page template), and other code depends on that holding for
-        // every edge, not just device ones. The visual arrow is corrected
-        // instead, the same way a device trigger already is: 'read' joins
-        // 'trigger'/'constraint'/'monitor' in the JS inbound list so the
-        // arrowhead still points at the app despite `from` being the app.
-        (appMap.hubVarReads ?: []).each { Map r ->
-            String varName = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
+        // in the page template). The visual arrow is corrected instead, the
+        // same way a device trigger already is.
+        //
+        // Grouped by variable BEFORE any edge is created (Codex 290
+        // correction): graph-edge dedup still permits only one app|variable
+        // |read edge, but per-reference extraction can legitimately produce
+        // several classified read occurrences for the same pair (e.g. the
+        // same Hub Variable read in both a condition and a trigger).
+        // Assigning the first-encountered occurrence's role to that one edge
+        // would be iteration-order-dependent and could hide the others. The
+        // scalar usageRole field is only trusted when every occurrence for
+        // this pair shares one identical non-null role; otherwise it falls
+        // back to 'unknown-read', same as always producing that value did
+        // before this file tracked roles at all. The complete per-reference
+        // roles remain available in ruleVariables regardless.
+        Map readsByVarNode = [:]
+        classifiedHubRefs.findAll { it.operation != 'write' }.each { Map r ->
+            String varName = r.canonicalName as String
             if (!varName) return
-            // An unconfirmed (free-text-only) candidate is only drawn if
-            // some app, anywhere on the hub, confirms the same name via a
-            // structured reference. Otherwise it is exactly the RM-token
-            // false positive this pre-pass exists to catch - dropped
-            // silently rather than drawn as a guess.
-            if (r.confirmed != true && !confirmedVarNames.contains(varName)) return
-            String varNodeId = "v${varName}"
-            // Same unresolved-reference reconciliation as writes above.
-            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
-                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'read']
-                return
-            }
+            (readsByVarNode["v${varName}"] = (readsByVarNode["v${varName}"] ?: [])) << r
+        }
+        readsByVarNode.each { String varNodeId, List refs ->
             if (!nodes[varNodeId]) {
-                nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
-                nodes[varNodeId].identitySource = 'reference-derived'
+                nodes[varNodeId] = nodeEntry(varNodeId, (refs[0] as Map).canonicalName as String, 'hubVariable')
+                nodes[varNodeId].identitySource = 'hub-inventory'
             }
             String key = "${appNodeId}|${varNodeId}|read"
             if (seen.contains(key)) return
             seen << key
-            // usageRole: 'unknown-read' for every currently-decoded read; this
-            // app does not yet classify trigger/condition/action-input/
-            // text-substitution roles. Parent spec 6.2 explicitly prefers
-            // unknown-read over an invented role - first-class inventory is
-            // not delayed on complete role classification.
-            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']
+            // Codex 292 correction: filtering out null BEFORE the uniqueness
+            // check let [condition, null] collapse to the single-element set
+            // {condition}, wrongly asserting condition-only on a pair where
+            // one occurrence actually had no role at all. Null must survive
+            // into the set - a mix that includes null is exactly as untrusted
+            // as a mix of two different real roles, both correctly land on
+            // 'unknown-read' this way, and only a set that is BOTH size-one
+            // AND non-null passes.
+            // Named distinctUsageRoles, not roles - this nested closure sits
+            // inside the same outer per-app closure that already declares
+            // Map roles for device-role processing. Hubitat's own compiler
+            // (not local groovyc) rejected the name collision at deploy time:
+            // "the current scope already contains a variable of the name
+            // roles" - a real gap in local-only validation worth remembering.
+            Set<String> distinctUsageRoles = refs.collect { (it as Map).usageRole as String } as Set<String>
+            String usageRole = (distinctUsageRoles.size() == 1 && distinctUsageRoles.first() != null) ? distinctUsageRoles.first() : 'unknown-read'
+            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: usageRole]
+        }
+
+        // Local Variables (v2.1.6, queue 308/310/311): seeded from this rule's
+        // own declarations (ruleVariables[appNodeId].localVariables), not from
+        // references, so a declared-but-unused Local Variable still gets a
+        // node - the same completeness principle Hub Variable nodes already
+        // get from the authoritative inventory. Node ID is the owner-scoped
+        // identity string itself (e.g. "a3079:AMShow_LocalCount"), never the
+        // bare name - Gate A proved two different rules can each have their
+        // own same-named Local Variable, and merging those into one node
+        // would misrepresent them as shared. ownerAppId is stored explicitly
+        // (Codex 311 correction 1) rather than parsed back out of identity,
+        // so the owning rule can be resolved without a name-based join.
+        List localDefs = (ruleVariables[appNodeId]?.localVariables ?: []) as List
+        localDefs.each { Map d ->
+            String identity = d.identity as String
+            if (!identity) return
+            if (!nodes[identity]) {
+                String ownerLabel = (nodes[appNodeId]?.title ?: appNodeId) as String
+                nodes[identity] = nodeEntry(identity, d.name as String, 'localVariable', "Local Variable in ${ownerLabel}")
+                nodes[identity].ownerAppId = appNodeId
+                nodes[identity].variableType = d.variableType
+            }
+        }
+
+        // Edges mirror the Hub write/read blocks directly above, filtered on
+        // scope === 'local' instead of 'hub'. Safe by construction, not by an
+        // added check: variableReferences only ever holds status: 'resolved'
+        // records - ambiguous and unresolved live exclusively in
+        // nonResolvedVariableReferences (confirmed against live 3076 data in
+        // the 307 verification) - so this loop can never create an edge from
+        // an unproven reference.
+        List classifiedLocalRefs = ((ruleVariables[appNodeId]?.variableReferences ?: []) as List)
+            .findAll { Map r -> r.scope == 'local' }
+
+        classifiedLocalRefs.findAll { it.operation == 'write' }.each { Map r ->
+            String identity = r.localIdentity as String
+            if (!identity || !nodes[identity]) return
+            String key = "${appNodeId}|${identity}|write"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: identity, kind: 'write']
+        }
+
+        Map localReadsByNode = [:]
+        classifiedLocalRefs.findAll { it.operation != 'write' }.each { Map r ->
+            String identity = r.localIdentity as String
+            if (!identity || !nodes[identity]) return
+            (localReadsByNode[identity] = (localReadsByNode[identity] ?: [])) << r
+        }
+        localReadsByNode.each { String identity, List refs ->
+            String key = "${appNodeId}|${identity}|read"
+            if (seen.contains(key)) return
+            seen << key
+            Set<String> distinctLocalUsageRoles = refs.collect { (it as Map).usageRole as String } as Set<String>
+            String localUsageRole = (distinctLocalUsageRoles.size() == 1 && distinctLocalUsageRoles.first() != null) ? distinctLocalUsageRoles.first() : 'unknown-read'
+            edges << [from: appNodeId, to: identity, kind: 'read', usageRole: localUsageRole]
+        }
+    }
+
+    // Codex 311 correction 6: computed only after ALL Local read/write edges
+    // across every rule have been built and deduplicated - "unreferenced"
+    // means zero proven decoded Local edges exist anywhere on the graph, not
+    // merely that one rule's own extraction pass happened to find none.
+    // state.appsInert, inert-app Insights and every other .inert consumer
+    // stay keyed on .inert alone - this is a distinct field on purpose.
+    Set<String> referencedLocalIds = [] as Set
+    edges.each { Map e ->
+        String toId = e.to as String
+        if (nodes[toId] && nodes[toId].group == 'localVariable') referencedLocalIds << toId
+    }
+    nodes.each { String nid, Map n ->
+        if (n.group == 'localVariable' && !referencedLocalIds.contains(nid)) {
+            n.unreferencedLocal = true
         }
     }
 
@@ -4977,9 +5611,20 @@ Map buildGraph() {
         }
     }
 
+    // Both flows and ruleVariables are fully populated by every app at this
+    // point - safe to run the label join now, once, rather than per-app
+    // mid-loop where a later app's classification could not yet be trusted.
+    correctFlowVariableLabels(flows, ruleVariables)
+
     return [nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
-            hubVariableConnectorCount: hubVarConnectorCount]
+            hubVariableConnectorCount: hubVarConnectorCount,
+            // Gate C (v2.1.4): owner-scoped Local Variable definitions and
+            // classified references, keyed by the same app node ID as flows -
+            // consumed by the focused rule panel and, once Increment 2 wires
+            // it through, the AI export. Not merged into flows itself so
+            // existing flow rendering is untouched (integration plan 3.4/9.1).
+            ruleVariables: ruleVariables]
 }
 
 // Scheduled rather than called inline from a save handler so the web request
@@ -4990,7 +5635,7 @@ Map buildGraph() {
 // same job rather than queuing two rebuilds.
 void rebuildStoredGraph() {
     state.graph = buildGraph()
-    state.graphVersion = GRAPH_SCHEMA
+    atomicState.graphVersion = GRAPH_SCHEMA
 }
 
 // ===================================================================================================================
@@ -5709,6 +6354,8 @@ Map scanStatusMapping() {
 // pre-commit snapshot, not the winner's - reporting it as false would be a
 // truthfully-wrong "nothing is happening" while a scan genuinely starts.
 String scanStatusJson(boolean forceRunning = false) {
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
     // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
     // the phase-starting execution itself - never by a callback or reaper,
     // which must stay entirely state-free. During an active phase the true
@@ -5750,7 +6397,7 @@ String scanStatusJson(boolean forceRunning = false) {
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
         heartbeat: heartbeat,
-        graphVersion: state.graphVersion,
+        graphVersion: atomicState.graphVersion,
     ])
 }
 
@@ -5828,9 +6475,28 @@ String buildMapHtml() {
     // dual-export mode - schema 3 files remain readable by their own
     // consumers, but this app now generates schema 4 only (a design review
     // point 4).
+    // v2.1.4: schema 5 - Gate C. The unproven reference-derived Hub Variable
+    // fallback is retired: a structured reference this app cannot confirm
+    // against authoritative inventory no longer creates a weaker-guarantee
+    // node at all, only ever a fully confirmed hub-inventory one. That is a
+    // semantic correction to existing hubVariables[] topology, not just an
+    // additive field, so the version bump is required rather than optional -
+    // see Supporting Docs/local_hub_variable_identity_proposal.md and WIP/
+    // local_hub_variable_gate_c_integration_plan.md section 6.1. Also adds
+    // owner-scoped localVariables[]/variableReferences[]/
+    // nonResolvedVariableReferences[] to each ruleFlows[] entry.
+    // v2.1.6: schema 6 - Local Variables become first-class graph nodes, so
+    // edges[] can now target one. A write/read edge's target may therefore be
+    // either a Hub Variable (present in top-level hubVariables[]) or a Local
+    // Variable (present only nested, in ruleFlows[].localVariables[], keyed
+    // by identity) - flatten that nested collection once when resolving an
+    // edge target, rather than assuming hubVariables[] alone is complete.
+    // Deliberately not a duplicate top-level array (Codex 311 correction 7):
+    // ruleFlows[].localVariables[] is already the authoritative, owner-scoped
+    // source, used to seed the graph nodes themselves.
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 4,
+        exportSchemaVersion: 6,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -5937,6 +6603,7 @@ String buildMapHtml() {
   .sw-square { border-radius:2px; }
   .sw-diamond { width:10px; height:10px; border-radius:1px; transform:rotate(45deg); margin:1px 9px 1px 1px; }
   .sw-triangle { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:11px solid currentColor; background:none !important; margin-right:8px; }
+  .sw-triangle-down { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:11px solid currentColor; background:none !important; margin-right:8px; }
   .sw-outline { background:#2b2b2b; border:2px solid #e8a33d; box-sizing:border-box; }
   /* Deliberately not a variant of sw-outline. A deleted target and an unscanned
      rule are different findings, and sharing a style is what made them
@@ -6183,6 +6850,8 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - icon by type (light, door, sensor...), grey with no app focused. Wrong? Device icons panel.</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
   <div class="legend-row"><span class="swatch sw-triangle" style="color:#4fb3a9"></span>Hub Variable - shared state a rule writes or reads</div>
+  <div class="legend-row"><span class="swatch sw-triangle-down" style="color:#7986cb"></span>Local Variable - belongs to one rule only</div>
+  <div class="legend-row"><span class="swatch sw-triangle-down" style="color:#7986cb; opacity:0.55"></span>Local Variable, dashed - declared but no proven decoded reference in this rule</div>
   <div class="note" style="margin:2px 0 6px 0">Focus an app and each device instead takes the colour of its role below, shown as both a line and the dot the device itself becomes.</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#9b59b6"></span><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#16a085"></span><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
@@ -6190,8 +6859,8 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#7fae42"></span><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
-  <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub Variable's value</div>
-  <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub Variable in a condition or action</div>
+  <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub or Local Variable's value</div>
+  <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub or Local Variable in its decoded logic</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
@@ -6246,6 +6915,7 @@ String buildMapHtml() {
   <label>Focus app<input id="appSearch" type="search" placeholder="search apps..." autocomplete="off"><select id="appFilter" size="1"><option value="__all__">All apps</option></select></label>
   <label>Focus device<input id="deviceSearch" type="search" placeholder="search devices..." autocomplete="off"><select id="deviceFilter" size="1"><option value="__all__">All devices</option></select></label>
   <label>Focus hub variable<input id="hubVarSearch" type="search" placeholder="search hub variables..." autocomplete="off"><select id="hubVarFilter" size="1"><option value="__all__">All hub variables</option></select></label>
+  <label>Focus local variable<input id="localVarSearch" type="search" placeholder="search local variables..." autocomplete="off"><select id="localVarFilter" size="1"><option value="__all__">All local variables</option></select></label>
   <label>Show<select id="kindFilter">
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
@@ -6267,7 +6937,7 @@ String buildMapHtml() {
   <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="communityCard"></div></div>
+<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
@@ -6302,7 +6972,7 @@ const SCAN_META = ${scanMetaJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc' };
-const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9' };
+const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9', localVariable: '#7986cb' };
 
 // Device icon glyphs, keyed by n.icon (see ICON_RULES/autoDetectIconKey in the
 // Groovy source - the Groovy side decides WHICH key a device gets, this side
@@ -6371,7 +7041,7 @@ const KIND_LABEL = {
   exposed: 'Exposed', owns: 'Owns', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
   setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read'
 };
-const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable' };
+const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
 
 // Which edge kinds actually connect two node groups, keyed order-independently
 // (device|app and app|device are the same relationship read from either end).
@@ -6387,10 +7057,11 @@ function pivotKindOptions(g1, g2) {
   if (key === 'app|device') return ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'];
   if (key === 'app|external') return ['depends'];
   if (key === 'app|hubVariable') return ['write', 'read'];
+  if (key === 'app|localVariable') return ['write', 'read'];
   return [];
 }
 function pivotColOptions(rowGroup) {
-  return rowGroup === 'app' ? ['app', 'device', 'external', 'hubVariable'] : ['app'];
+  return rowGroup === 'app' ? ['app', 'device', 'external', 'hubVariable', 'localVariable'] : ['app'];
 }
 
 // The fixed menu (option A from the discussion): each entry is a ready-made
@@ -6620,6 +7291,14 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // "does not exist". Filled, not outlined: the app is real and installed,
   // only unread.
   if (n.unreadable) color = { background: '#4a1f1f', border: '#d9534f' };
+  // A Local Variable with no proven decoded reference in this rule (v2.1.6)
+  // - not read in a trigger, condition or action, and not written - its own
+  // dimmed variant, not n.inert (Codex 311
+  // correction 3: that flag feeds inert-APP layout, focus behaviour and
+  // Insights specifically, and reusing it would misreport this as an inert
+  // app). Dimmed the same visual way for the same reason: still real, just
+  // not connected to anything else on the map.
+  if (n.unreferencedLocal) color = { background: '#262a3d', border: '#7986cb' };
   // External systems get their own shape as well as their own colour, because
   // they are the only nodes on the map that nobody measured.
   //
@@ -6633,6 +7312,13 @@ function styledNode(n, useFullLabel, roleByDevice) {
   if (n.group === 'app') shape = 'square';
   else if (n.group === 'external') shape = 'diamond';
   else if (n.group === 'hubVariable') shape = 'triangle';
+  // Deliberately not 'diamond' or 'square' - fallbackSector() in
+  // sectorLayout below reads shape alone to place a node with no matching
+  // edge kind, and diamond specifically means "external system" there. A
+  // Local Variable is the opposite of external; triangleDown keeps it out
+  // of that check while still reading as "a variable, upside down from a
+  // Hub Variable's shared triangle" at a glance.
+  else if (n.group === 'localVariable') shape = 'triangleDown';
   else if (n.group === 'device') shape = 'icon';
   const styled = {
     // n.draw is the full identity without the hub's live status; n.title keeps
@@ -6675,8 +7361,10 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // Dashed outline as well as the dimmed fill. Two signals rather than one,
   // because the fill alone is close to the paused colour at a glance and these
   // mean very different things: paused is an app that would do something, inert
-  // is an app that has nothing to do it to.
-  if (n.inert) {
+  // is an app that has nothing to do it to. unreferencedLocal (v2.1.6) gets the
+  // same treatment for the same visual reason, but stays its own flag - see the
+  // colour block above for why it is never merged into n.inert.
+  if (n.inert || n.unreferencedLocal) {
     styled.shapeProperties = { borderDashes: [4, 3] };
     styled.size = 14;
     // The shelf position is re-applied on every render, not set once after the
@@ -6743,7 +7431,13 @@ document.fonts.ready.then(function () {
 let shelfDivider = null;
 
 function shelveInertNodes() {
-  const inertIds = ALL_NODES.filter(function (n) { return n.inert; })
+  // n.unreferencedLocal (v2.1.6) shares this shelf on purpose - both flags
+  // mean the same thing to this layout (no edges, physics would fling it to
+  // an empty margin) even though they mean different things everywhere else
+  // (Codex 311 correction 3). This filter is the one deliberately generalised
+  // spot; state.appsInert, Insights and n.inert's colour/label meaning are
+  // untouched.
+  const inertIds = ALL_NODES.filter(function (n) { return n.inert || n.unreferencedLocal; })
     .sort(function (a, b) { return a.title.localeCompare(b.title); })
     .map(function (n) { return n.id; });
   if (!inertIds.length) return;
@@ -6900,6 +7594,7 @@ function applyFilters() {
   const appVal = document.getElementById('appFilter').value;
   const devVal = document.getElementById('deviceFilter').value;
   const hubVarVal = document.getElementById('hubVarFilter').value;
+  const localVarVal = document.getElementById('localVarFilter').value;
   const kindVal = document.getElementById('kindFilter').value;
 
   let pool = ALL_EDGES;
@@ -6911,7 +7606,7 @@ function applyFilters() {
 
   let ids = null;
   let shownEdges = pool;
-  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : null));
+  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : (localVarVal !== '__all__' ? localVarVal : null)));
   if (focusId) {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
@@ -7088,6 +7783,12 @@ function sectorLayout(appId, styledNodes, shownEdges) {
 // focused app is a rule its decoded steps are drawn as a real flowchart.
 // ---------------------------------------------------------------------------
 const FLOWS = GRAPH.flows || {};
+// Gate C (v2.1.4): owner-scoped Local Variable definitions and classified
+// references, keyed the same way as FLOWS. Raw Groovy shape (canonicalName/
+// scope/status/candidateScopes/evidence), not the export's renamed fields -
+// the AI export builds its own shape from the same GRAPH.ruleVariables
+// separately, see buildExportPayload().
+const RULE_VARIABLES = GRAPH.ruleVariables || {};
 if (window.mermaid) {
   mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false } });
 }
@@ -7364,6 +8065,35 @@ function showInertPanel(node) {
       focusNode(a.getAttribute('data-node'));
     });
   });
+  // Gate C (v2.1.4), Codex 296 correction: without this, selecting a rule
+  // with variable evidence and then an inert app left the previous rule's
+  // list stale underneath this panel's own content - this path never touched
+  // ruleVariablesCard at all. Same centralized renderer as showFlow() uses,
+  // so an inert/unreadable app (which has no relationships, variable
+  // evidence included) correctly clears the container via that function's
+  // own empty-state branch, not a separate ad hoc clear here.
+  renderRuleVariablesCard(node.id);
+  renderCommunityCard(node);
+  bringToFront(flowPanel);
+}
+
+// A Local Variable with no proven decoded reference in this rule (v2.1.6) -
+// the same "click opened nothing" problem showInertPanel solved for an app
+// that references nothing, but a deliberately separate function (Codex 311
+// correction 3): the content here is variable-specific (which rule declared
+// it), not app-specific (schedule/subscription/child-app facts
+// showInertPanel reports), and conflating the two risked this eventually
+// growing app-shaped fields that make no sense on a variable.
+function showUnreferencedLocalPanel(node) {
+  const owner = ALL_NODES.filter(function (n) { return n.id === node.ownerAppId; })[0];
+  document.getElementById('flowTitle').textContent = node.title + ' (Local Variable)';
+  document.getElementById('flowSub').textContent = 'Declared in ' + (owner ? owner.title : 'a rule no longer on this map') + '.';
+  flowChart.innerHTML = '<p class="sub">No proven decoded reference in this rule - not read in a trigger, condition or action, and not written.</p>';
+  // Both correctly no-op on a non-rule/non-app node (their own group checks
+  // already handle that) - called anyway so switching here from a rule with
+  // stale content in either card actually clears it, the same discipline
+  // Codex's 296 correction established for showInertPanel above.
+  renderRuleVariablesCard(node.id);
   renderCommunityCard(node);
   bringToFront(flowPanel);
 }
@@ -7384,6 +8114,10 @@ function showFlow(appId) {
     document.getElementById('flowTitle').textContent = node ? node.title : 'App details';
     document.getElementById('flowSub').textContent = 'This app has no decoded rule flow to show.';
     flowChart.innerHTML = '';
+    // Gate C (v2.1.4): a rule can have variable evidence even when its step
+    // sequence itself could not be decoded (or genuinely has none) - shown
+    // regardless of which branch of this function is taken.
+    renderRuleVariablesCard(appId);
     renderCommunityCard(node);
     bringToFront(flowPanel);
     return;
@@ -7402,14 +8136,59 @@ function showFlow(appId) {
     // over whatever the user has actually picked since.
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
+    renderRuleVariablesCard(appId);
     renderCommunityCard(node);
     bringToFront(flowPanel);
   }).catch(function (err) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
+    renderRuleVariablesCard(appId);
     renderCommunityCard(node);
     bringToFront(flowPanel);
   });
+}
+
+// Gate C (v2.1.4). "names, operation, and usage role only, never values" -
+// see Supporting Docs/local_hub_variable_identity_proposal.md and WIP/
+// local_hub_variable_gate_c_integration_plan.md section 5. Reads the same
+// normalized classification records the flow labels themselves were
+// corrected against (see correctFlowVariableLabels() in Groovy), so this
+// section and the flow chart cannot disagree. Wording for ambiguous/
+// unresolved stays neutral - never "broken" unless Rule Machine's own
+// persisted marker already says so on the flow step itself.
+function renderRuleVariablesCard(appId) {
+  const box = document.getElementById('ruleVariablesCard');
+  if (!box) return;
+  const rv = RULE_VARIABLES[appId];
+  const refs = (rv && rv.variableReferences) || [];
+  const nonResolved = (rv && rv.nonResolvedVariableReferences) || [];
+  if (!refs.length && !nonResolved.length) { box.innerHTML = ''; return; }
+
+  // tag is the same [XXX] convention as the Focus dropdowns (queue 305/306) -
+  // LOC/HVR reflect only the already-proven scope filter below, never guessed.
+  function line(name, operation, usageRole, tag) {
+    const op = operation === 'write' ? 'writes' : 'reads';
+    const role = usageRole ? ' (' + extEsc(usageRole) + ')' : '';
+    const prefix = tag ? '[' + tag + '] ' : '';
+    return '<li>' + prefix + extEsc(name) + ' - ' + op + role + '</li>';
+  }
+
+  const localItems = refs.filter(function (r) { return r.scope === 'local'; })
+    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'LOC'); });
+  const hubItems = refs.filter(function (r) { return r.scope === 'hub'; })
+    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'HVR'); });
+  const reviewItems = nonResolved.map(function (r) {
+    const reason = r.status === 'ambiguous' ? 'scope not distinguishable from configuration' : 'no matching definition found';
+    return '<li>' + extEsc(r.name) + ' - ' + (r.operation === 'write' ? 'writes' : 'reads') + ', ' + reason + '</li>';
+  });
+
+  if (!localItems.length && !hubItems.length && !reviewItems.length) { box.innerHTML = ''; return; }
+
+  let html = '<h4>Variables used by this rule</h4>';
+  if (localItems.length) html += '<p class="sub">Local</p><ul>' + localItems.join('') + '</ul>';
+  if (hubItems.length) html += '<p class="sub">Hub</p><ul>' + hubItems.join('') + '</ul>';
+  if (reviewItems.length) html += '<p class="sub">Needs review</p><ul>' + reviewItems.join('') + '</ul>';
+  box.innerHTML = html;
 }
 
 const flowCloseBtn = document.getElementById('flowClose');
@@ -7834,9 +8613,33 @@ const DEVICE_ICON_TAGS = {
 function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
 }
+// Same convention for the Hub Variable Focus list (Gate C follow-up, agreed
+// with Gordon and Codex 2026-08-29, queue 305/306). Uses HVR rather than the
+// APP_TYPE_TAGS HUB code - that one already means "built-in Hubitat app", a
+// different axis from variable scope, and reusing it here would conflate the
+// two. connectorDeviceId is the same authoritative field buildGraph() already
+// resolves onto the node - no new backend field for this.
+function hubVarOptionText(n) {
+  return '[' + (n.connectorDeviceId ? 'CON' : 'HVR') + '] ' + n.title;
+}
+// A Local Variable's visible name is not unique across rules by design (Gate
+// A found two rules can each declare their own same-named one), so the
+// dropdown text has to name the owning rule to tell them apart - id alone
+// already does (ownerAppId-scoped identity), this is purely for a human
+// reading the list. Built once here rather than looked up per option: this
+// runs once per dropdown render, not once per keystroke.
+const APP_TITLE_BY_ID = {};
+ALL_NODES.forEach(function (n) { if (n.group === 'app') APP_TITLE_BY_ID[n.id] = n.title; });
+function localVarOptionText(n) {
+  const ownerTitle = APP_TITLE_BY_ID[n.ownerAppId] || 'an unknown rule';
+  const unused = n.unreferencedLocal ? ', unused' : '';
+  return '[LOC] ' + n.title + ' (in ' + ownerTitle + unused + ')';
+}
 function pickOptionText(n, group) {
   if (group === 'app') return appOptionText(n);
   if (group === 'device') return deviceOptionText(n);
+  if (group === 'hubVariable') return hubVarOptionText(n);
+  if (group === 'localVariable') return localVarOptionText(n);
   return n.title;
 }
 
@@ -9364,15 +10167,25 @@ function buildExportPayload(ext, icons, failedFetches) {
   });
   // v2.0.14, schema 4 (parent spec 11.3): variableType/identitySource/
   // connector come straight off the node - buildGraph() (Groovy) populates
-  // them from the authoritative getAllGlobalVars() inventory when available,
-  // or leaves them at their reference-derived defaults otherwise.
+  // them from the authoritative getAllGlobalVars() inventory.
+  // v2.1.4, schema 5 (Gate C): the reference-derived fallback this
+  // identitySource default used to cover is retired - every hubVariable node
+  // that can still exist is confirmed against authoritative inventory (Gate C
+  // decision 3), so identitySource is always 'hub-inventory' in practice now.
+  //
+  // Codex 296 correction: a missing/malformed identitySource must NOT default
+  // to 'hub-inventory' here - that would convert an absent or invalid
+  // provenance field into a POSITIVE claim of the highest confidence level
+  // this export has, exactly backwards for a defensive fallback. Falls back
+  // to null instead, so a genuine backend invariant violation stays visible
+  // to a consumer rather than being quietly asserted as confirmed.
   // currentValue stays null in every default export (parent spec 10) - no
   // opt-in value export exists yet.
   const hubVariables = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) {
     return {
       id: n.id, name: nameOf[n.id],
       variableType: n.variableType || null,
-      identitySource: n.identitySource || 'reference-derived',
+      identitySource: n.identitySource || null,
       connector: n.connectorDeviceId ? { deviceId: n.connectorDeviceId, connectorType: n.connectorType || null } : null,
       currentValue: null
     };
@@ -9387,13 +10200,15 @@ function buildExportPayload(ext, icons, failedFetches) {
       // false everywhere else, so it does not look like a real "no" for a
       // relationship kind the field was never about.
       stateful: e.kind === 'action' ? !!e.stateful : null,
-      // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated only for
-      // proven Hub Variable reads (Groovy currently always emits
-      // 'unknown-read' - role classification is not yet built, per parent
-      // spec 6.2's explicit preference for unknown-read over an invented
-      // role). writeSource is populated only when the write's source device
-      // ID resolved in the discovered device set -
-      // both null on every other relationship kind.
+      // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated on
+      // proven Hub or Local Variable read edges (schema 6, v2.1.6, extends
+      // this to Local reads) - a single trusted role (condition/trigger/
+      // etc.) when every decoded occurrence for that pair agrees, otherwise
+      // 'unknown-read' rather than an invented one, per parent spec 6.2's
+      // explicit preference. writeSource is Hub-write specific - populated
+      // only when a Hub Variable write's source device ID resolved in the
+      // discovered device set - null on every other relationship kind for
+      // both fields.
       usageRole: e.usageRole || null,
       writeSource: e.writeSource || null
     };
@@ -9434,7 +10249,12 @@ function buildExportPayload(ext, icons, failedFetches) {
     const n = nodeById[appId];
     const steps = (GRAPH.flows[appId] || []).map(function (step) {
       const out = {};
-      Object.keys(step).forEach(function (k) { if (k !== 'devices') out[k] = step[k]; });
+      // variableField (Gate C, v2.1.4) is an internal join key used only to
+      // correct this step's own label against its classified reference
+      // before export ever runs (see correctFlowVariableLabels() in Groovy)
+      // - excluded here the same way devices already is, not user-facing
+      // export data.
+      Object.keys(step).forEach(function (k) { if (k !== 'devices' && k !== 'variableField') out[k] = step[k]; });
       out.references = Array.isArray(step.devices)
         ? step.devices.map(function (nm) { return resolveFlowReference(nm, appId); }) : [];
       // ruleTargets are Rule Machine's own app-id-only setting values (no
@@ -9449,7 +10269,47 @@ function buildExportPayload(ext, icons, failedFetches) {
       }
       return out;
     });
-    return { appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps };
+    // Gate C (v2.1.4): owner-scoped Local Variable definitions and classified
+    // references, published by buildGraph() (Groovy) as GRAPH.ruleVariables,
+    // keyed by the same appId as flows. See Supporting Docs/
+    // local_hub_variable_identity_proposal.md and WIP/
+    // local_hub_variable_gate_c_integration_plan.md section 6.2 for the
+    // design. variableReferences is resolved (local/hub) evidence only -
+    // ambiguous and unresolved records live in nonResolvedVariableReferences
+    // instead, and neither ever contains a definition or runtime value.
+    const rv = (GRAPH.ruleVariables && GRAPH.ruleVariables[appId]) || {};
+    const localVariables = (rv.localVariables || []).map(function (v) {
+      return { identity: v.identity, name: v.name, variableType: v.variableType || null };
+    });
+    const variableReferences = (rv.variableReferences || []).map(function (r) {
+      return {
+        name: r.canonicalName || r.name,
+        scope: r.scope,
+        localIdentity: r.localIdentity || null,
+        operation: r.operation,
+        usageRole: r.usageRole || null,
+        evidenceKind: r.evidence ? r.evidence.kind : null,
+        field: r.evidence ? r.evidence.field : null
+      };
+    });
+    const nonResolvedVariableReferences = (rv.nonResolvedVariableReferences || []).map(function (r) {
+      return {
+        name: r.name,
+        status: r.status,
+        operation: r.operation,
+        usageRole: r.usageRole || null,
+        candidateScopes: r.candidateScopes || [],
+        evidenceKind: r.evidence ? r.evidence.kind : null,
+        field: r.evidence ? r.evidence.field : null,
+        reason: r.reason || null
+      };
+    });
+    return {
+      appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps,
+      localVariables: localVariables,
+      variableReferences: variableReferences,
+      nonResolvedVariableReferences: nonResolvedVariableReferences
+    };
   });
 
   // Was a plain boolean, !scanError - technically correct but misleadingly
@@ -9473,7 +10333,12 @@ function buildExportPayload(ext, icons, failedFetches) {
     contestedDeviceCount: contested.length,
     unreferencedDeviceCount: unreferencedDevices.length,
     inertAppCount: inertApps.length,
-    brokenRuleReferenceCount: brokenRuleReferences.length
+    brokenRuleReferenceCount: brokenRuleReferences.length,
+    // v2.1.4, schema 5 (Gate C): decoded evidence from the rules this export
+    // could read, NOT a hub-wide inventory the way hubVariableCount above is
+    // - see the limitations entry on this distinction.
+    localVariableCount: ruleFlows.reduce(function (sum, f) { return sum + (f.localVariables ? f.localVariables.length : 0); }, 0),
+    nonResolvedVariableReferenceCount: ruleFlows.reduce(function (sum, f) { return sum + (f.nonResolvedVariableReferences ? f.nonResolvedVariableReferences.length : 0); }, 0)
   };
   // What "apps[].hasDecodedFlow: false" can mean beyond "not a rule at
   // all" - named once here rather than only in the schema prose, so a
@@ -9481,7 +10346,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // English out of the schema block.
   const limitations = [
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
-    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
+    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub and Local Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
     'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
@@ -9489,7 +10354,14 @@ function buildExportPayload(ext, icons, failedFetches) {
     'Multiple writers on a Hub Variable (insights.hubVariables.multipleWriters) are not proof of a race condition - static configuration proves shared writers, not simultaneous execution.',
     'A Hub Variable connector is a synchronized projection of the same shared state (relationship: synchronizedWith), not an independent value - do not treat the variable and its connector device as two different things to reconcile.',
     'A Hub Variable write edge with a deviceAttribute writeSource means the rule copies or derives its write from that device attribute - it does not mean the device writes the Hub Variable directly.',
-    'A Connector deviceId Hubitat reports is trusted directly and always resolved into hubVariables[].connector - there is no check against a case where that Connector was later deleted or replaced outside the normal remove-connector flow. Such a stale or orphaned ID would still be reported here as a resolved connector; this export cannot distinguish that from a genuine one with the data it has.'
+    'A Connector deviceId Hubitat reports is trusted directly and always resolved into hubVariables[].connector - there is no check against a case where that Connector was later deleted or replaced outside the normal remove-connector flow. Such a stale or orphaned ID would still be reported here as a resolved connector; this export cannot distinguish that from a genuine one with the data it has.',
+    // v2.1.4, schema 5 (Gate C) - Local/Hub/Connector Variable identity notes.
+    'ruleFlows[].localVariables and summary.localVariableCount are decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariables[] is - a Local Variable belonging to a rule on an undecodable engine, or one this scan could not read, is simply absent, not counted as zero.',
+    'A Local Variable and a Hub Variable sharing the exact same name inside one rule cannot be told apart from stored Rule Machine configuration alone - this is a genuine platform ambiguity, not a decoding gap. Such a reference appears in ruleFlows[].nonResolvedVariableReferences with reason "same-name-cross-scope" and status "ambiguous", and creates no hubVariables[] edge.',
+    'A reference to a Local or Hub Variable that no longer exists appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than being silently dropped or treated as broken - Rule Machine itself may separately mark the underlying action broken (see the label on that flow step), which this export reflects but does not infer on its own.',
+    // v2.1.6, schema 6 - Local Variable graph nodes.
+    'A write/read edge in edges[] whose toId is absent from hubVariables[] is a Local Variable reference, not a data gap - resolve it by flattening ruleFlows[].localVariables[] and matching on identity (see the edges schema entry). Do not treat an unmatched toId as an error before checking there.',
+    'A Local Variable with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. The same "may simply be unused" caveat that already applies to a Hub Variable with insights.hubVariables.noDecodedUsage applies here too, just without a dedicated insights finding for it yet.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -9515,6 +10387,8 @@ function buildExportPayload(ext, icons, failedFetches) {
     'Do not frame contested devices, inert apps, or any other count as evidence the hub is in a bad state. A hub with dozens of rules and hundreds of devices will always show some of these as a normal by-product of scale - contested devices in particular are usually several ordinary rules sharing one light or switch (motion, time-of-day, manual override), not automations fighting. Avoid adversarial words - fighting, broken as an unqualified judgment, conflict - for anything the export itself does not use that word for; state the plain mechanism instead (the last app to run decides the outcome) and let the user judge whether it is intentional.',
     'State a count in proportion to the whole (e.g. "30 of 194 devices" rather than a bare "30 devices") so the user can judge scale themselves rather than be primed by an isolated number.',
     'Never infer a missing relationship solely because two names look similar.',
+    'Resolve a write/read edge target by its id against hubVariables[] first, then ruleFlows[].localVariables[] (matched by identity) - never by assuming every such edge targets a Hub Variable, and never by joining on the toName field alone.',
+    'Never join a ruleFlows[] localVariables or variableReferences record to anything outside its own appId by name alone - Local Variable identity is owner-scoped (see localIdentity), and the same visible name in two different rules is two different variables. A nonResolvedVariableReferences record with status "ambiguous" must be reported as genuinely ambiguous, never resolved to either scope by guessing.',
     'Open a first response with a short plain-language summary of what was understood - counts plus two or three specific named apps or devices as evidence the file was actually read, not a templated response.',
     'State findings before recommendations, in visibly separate sections.',
     'Surface scan-quality caveats (scan.status, unresolved or ambiguous references) in that opening summary, not after conclusions have already been presented.',
@@ -9559,12 +10433,12 @@ function buildExportPayload(ext, icons, failedFetches) {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
       apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
-      hubVariables: 'Hub-wide shared state - schema 4 (v2.0.14): every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules read or write. A variable found only via a decoded reference, with no matching inventory entry (inventory was unavailable for this scan), has identitySource "reference-derived" instead - a weaker guarantee: it was found in a decoded rule configuration at scan time, not confirmed against the authoritative variable list the hub itself reports. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations).',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable (see usageRole/writeSource below). synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4) is populated only on proven Hub Variable read edges - "unknown-read" is the only value this app currently produces (a real read was proven, its narrower role - trigger/condition/action-input/text-substitution - was not); null on every other edge. writeSource (schema 4) is populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including when a source detail exists but could not be resolved to an ID.',
-      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous.',
+      hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
+      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
-      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported; a variable in hubVariables[] with identitySource "reference-derived" instead of "hub-inventory" means this status was not "complete" when it was found. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
-      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data.',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry - see that schema entry for why a weaker-guarantee node is no longer manufactured here. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
+      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data. localVariableCount and nonResolvedVariableReferenceCount (schema 5, v2.1.4) total ruleFlows[].localVariables and ruleFlows[].nonResolvedVariableReferences across every decoded rule - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
       recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.',
       insightGuidance: 'The same deterministic interpretation catalogue shown in the on-hub Insights panel. categories explains each group and its recommended priority; findings gives what the observation means, why it may be normal when applicable, and what to check next. It is guidance for investigation, never authority to change the hub.'
@@ -9668,6 +10542,7 @@ document.getElementById('pivotClose').addEventListener('click', function () {
 const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
 const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
 const hubVarSelect = fillSelect('hubVarFilter', 'hubVarSearch', 'hubVariable', 'All hub variables');
+const localVarSelect = fillSelect('localVarFilter', 'localVarSearch', 'localVariable', 'All local variables');
 
 // Clicking a node is the first thing anyone tries, so it drills in: click an
 // app to see what it uses, click one of those devices to see everything else
@@ -9713,6 +10588,7 @@ function currentFocus() {
   if (appSelect.value !== '__all__') return appSelect.value;
   if (deviceSelect.value !== '__all__') return deviceSelect.value;
   if (hubVarSelect.value !== '__all__') return hubVarSelect.value;
+  if (localVarSelect.value !== '__all__') return localVarSelect.value;
   return null;
 }
 
@@ -9759,6 +10635,7 @@ function exitToWholeMap() {
   appSelect.value = '__all__';
   deviceSelect.value = '__all__';
   hubVarSelect.value = '__all__';
+  localVarSelect.value = '__all__';
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
   closeSecondaryPanels();
@@ -9815,6 +10692,7 @@ function focusNode(id) {
     forceSelect(appSelect, node.id, node.title);
     deviceSelect.value = '__all__';
     hubVarSelect.value = '__all__';
+    localVarSelect.value = '__all__';
     // An inert app has no edges by definition, so filtering the graph down to
     // its neighbourhood - what applyFilters does for every other app - leaves
     // nothing to draw: the whole map collapses to that one square. Nothing is
@@ -9836,13 +10714,33 @@ function focusNode(id) {
     forceSelect(hubVarSelect, node.id, node.title);
     appSelect.value = '__all__';
     deviceSelect.value = '__all__';
+    localVarSelect.value = '__all__';
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
+  } else if (node.group === 'localVariable') {
+    // Own branch, same reasoning as Hub Variable's above it - a Local
+    // Variable is neither an app nor a device. Referenced (has an edge)
+    // filters to its neighbourhood, which is always exactly its one owning
+    // rule by construction. Unreferenced mirrors the inert-app exemption
+    // just above: no edges means nothing for applyFilters to draw, so its
+    // own panel opens instead of collapsing the map to a lone dot.
+    forceSelect(localVarSelect, node.id, node.title);
+    appSelect.value = '__all__';
+    deviceSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
+    if (node.unreferencedLocal) {
+      showUnreferencedLocalPanel(node);
+    } else {
+      flowPanel.style.display = 'none';
+      syncLegendVisibility();
+      applyFilters();
+    }
   } else {
     forceSelect(deviceSelect, node.id, node.title);
     appSelect.value = '__all__';
     hubVarSelect.value = '__all__';
+    localVarSelect.value = '__all__';
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
@@ -9903,6 +10801,7 @@ appSelect.addEventListener('change', function () {
   if (appSelect.value !== '__all__') {
     deviceSelect.value = '__all__';
     hubVarSelect.value = '__all__';
+    localVarSelect.value = '__all__';
     closeSecondaryPanels();
   }
   applyFilters();
@@ -9917,6 +10816,7 @@ deviceSelect.addEventListener('change', function () {
   if (deviceSelect.value !== '__all__') {
     appSelect.value = '__all__';
     hubVarSelect.value = '__all__';
+    localVarSelect.value = '__all__';
     closeSecondaryPanels();
   }
   flowPanel.style.display = 'none';
@@ -9927,11 +10827,31 @@ hubVarSelect.addEventListener('change', function () {
   if (hubVarSelect.value !== '__all__') {
     appSelect.value = '__all__';
     deviceSelect.value = '__all__';
+    localVarSelect.value = '__all__';
     closeSecondaryPanels();
   }
   flowPanel.style.display = 'none';
   syncLegendVisibility();
   applyFilters();
+});
+localVarSelect.addEventListener('change', function () {
+  if (localVarSelect.value !== '__all__') {
+    appSelect.value = '__all__';
+    deviceSelect.value = '__all__';
+    hubVarSelect.value = '__all__';
+    closeSecondaryPanels();
+  }
+  // Same unreferenced exemption as focusNode's own localVariable branch -
+  // picking one straight from this dropdown must not collapse the map to a
+  // lone dot any more than clicking its node on the canvas would.
+  const picked = ALL_NODES.filter(function (n) { return n.id === localVarSelect.value; })[0];
+  if (picked && picked.unreferencedLocal) {
+    showUnreferencedLocalPanel(picked);
+  } else {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
+  }
 });
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 // Short synthesised confirmation tone, agreed with Gordon 2026-08-19 - no
