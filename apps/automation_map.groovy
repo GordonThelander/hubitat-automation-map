@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.1.6'
+@Field static final String APP_VERSION = '2.1.7'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -1588,6 +1588,12 @@ Map startScan() {
     state.deviceLabels = bulk.labels as Map
     state.deviceRooms = bulk.rooms as Map
     state.deviceTypes = bulk.types as Map
+    // Child device id -> its immediate parent device id, from the bulk
+    // fetch's tree walk. Not yet consumed anywhere - reserved for the
+    // separate parent/child relationship-rendering increment (component-
+    // device-discovery, part 2) so that work does not need to re-walk the
+    // endpoint to recover identity already known here.
+    state.deviceParents = bulk.parents as Map
     state.deviceCapabilities = [:]
     // Map of representative device id -> every device id sharing its driver
     // (deviceTypeId), including the representative itself. dispatchDeviceOne
@@ -2877,8 +2883,20 @@ void finishScan(data = null) {
 // data.name is the device's LABEL (not its type - a different bulk endpoint,
 // /device/list/data, calls the label "label" and puts the type in "name",
 // the opposite way round), data.type is the driver name, data.roomName is the
-// room. Confirmed flat - no nested children - and enumerates the identical
-// device set as the old /device/listJson?capability=capability.* call.
+// room.
+//
+// NOT flat. Corrected 2026-08-31 - every entry has the shape
+// {key, data, child, parent, children}: a device-owned component device
+// (isComponent: true, created by a parent device driver - Shelly, Bond, a
+// Matter bridge, this hub's own Hub Variable Connectors) can be represented
+// nested inside its parent's own children array rather than as a top-level
+// sibling. Confirmed live: this hub's "Variable Connectors" parent carries
+// all nine per-variable Connector devices this way. The walk below is
+// iterative and depth-agnostic - same reasoning as collectAppIds() - and
+// aggregates by device ID before building typeGroups, so a device exposed
+// both at the top level and beneath a parent (a partial record on either
+// side) is enriched from whichever record has each field, not double-
+// counted or overwritten by a blanker duplicate.
 //
 // Also groups devices by deviceTypeId (driver): capabilities are a property
 // of the driver, not the individual device, and every device sharing a
@@ -2891,7 +2909,7 @@ void finishScan(data = null) {
 // recover an endpoint-omitted room (or confirm it is genuinely unassigned)
 // without broadcasting one atypical response across its whole driver group.
 Map fetchDeviceListBulk() {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
@@ -2899,16 +2917,79 @@ Map fetchDeviceListBulk() {
         return out
     }
     Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-    Map typeGroups = [:]
-    (data.devices ?: []).each { entry ->
-        Map d = (entry instanceof Map) ? (entry.data as Map) : null
-        if (!d || d.id == null) return
-        String devId = "${d.id}"
-        if (d.name) out.labels[devId] = "${d.name}"
+    return aggregateDeviceTree(data)
+}
+
+// Pure, sandbox-compatible, no hub calls - kept separate from
+// fetchDeviceListBulk() specifically so it can be copied verbatim into a
+// synthetic-JSON test (tests/device-tree-discovery.groovy) without any live
+// endpoint. See that test for the full case list this walk is proven
+// against: flat responses, nested siblings, depth beyond one level, a device
+// duplicated across the top level and a child position, missing/malformed
+// entries, and the existing room/type-grouping fallback.
+//
+// First pass: walk every entry, top-level and nested at any depth,
+// aggregating raw fields per device ID. A field already set from an earlier
+// encounter of the same ID is never overwritten, so a sparse record on one
+// side of the tree cannot blank out a richer one already found on the
+// other side. parentId is recorded from the enclosing entry's own id as
+// each child is queued, not read from the child's own data - the endpoint's
+// child/parent fields on an entry describe that entry's own role, not which
+// specific parent it belongs to.
+//
+// Second pass: typeGroups built once, from the fully aggregated set, so a
+// device seen more than once during the walk (top level and nested, or
+// nested under more than one path) is grouped exactly once.
+Map aggregateDeviceTree(Map data) {
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], error: null]
+    Map<String, Map> byId = [:]
+    List order = []
+    List pending = []
+    (data.devices ?: []).each { pending << [node: it, parentId: null] }
+    while (pending) {
+        Map item = pending.remove(0) as Map
+        def node = item.node
+        if (!(node instanceof Map)) continue
+        Map entry = node as Map
+        // instanceof, not a bare `as` cast - Codex 346#1: a wrong-type data or
+        // children value must degrade to "absent" (skip this entry's own
+        // fields, still walk its valid children if any), not throw and lose
+        // every device still pending in the walk.
+        Map d = (entry.data instanceof Map) ? (entry.data as Map) : null
+        String entryId = (d && d.id != null) ? "${d.id}" : null
+        List kids = (entry.children instanceof List) ? (entry.children as List) : null
+        if (kids) kids.each { pending << [node: it, parentId: entryId] }
+        if (entryId == null || d == null) continue
+        Map agg = byId[entryId]
+        if (agg == null) {
+            agg = [:]
+            byId[entryId] = agg
+            order << entryId
+        }
+        if (!agg.name && d.name) agg.name = "${d.name}"
         String room = d.roomName == null ? '' : "${d.roomName}".trim()
-        if (room) out.rooms[devId] = room
-        if (d.type) out.types[devId] = "${d.type}"
-        String typeKey = room ? "${d.deviceTypeId}" : "room:${devId}"
+        if (!agg.room && room) agg.room = room
+        if (!agg.type && d.type) agg.type = "${d.type}"
+        if (agg.deviceTypeId == null && d.deviceTypeId != null) agg.deviceTypeId = "${d.deviceTypeId}"
+        if (!agg.parentId && item.parentId) agg.parentId = item.parentId as String
+    }
+    Map typeGroups = [:]
+    order.each { String devId ->
+        Map agg = byId[devId] as Map
+        // Codex 346#2: every valid ID is retained under the existing
+        // "Device <id>" fallback identity (see buildGraph()) even with no
+        // name in either record, rather than being silently absent from
+        // labels - and so from the graph and device count.
+        out.labels[devId] = (agg.name ?: "Device ${devId}") as String
+        if (agg.room) out.rooms[devId] = agg.room as String
+        if (agg.type) out.types[devId] = agg.type as String
+        if (agg.parentId) out.parents[devId] = agg.parentId as String
+        // Codex 346#3: the shared-group key requires BOTH a room AND a real
+        // deviceTypeId. A roomed device with no deviceTypeId previously fell
+        // through to the literal string "null", silently sharing one
+        // fetched-capability representative across every unrelated device
+        // that also happened to be missing a deviceTypeId.
+        String typeKey = (agg.room && agg.deviceTypeId != null) ? "${agg.deviceTypeId}" : "room:${devId}"
         List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
         group << devId
     }
@@ -5077,11 +5158,17 @@ Map buildGraph() {
         nodes[varNodeId].identitySource = 'hub-inventory'
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
-            // Connector devices do not appear in /hub2/devicesList, so
-            // getGlobalVar()'s deviceId is trusted directly - an ID-based
-            // reference, not the display-name join spec 7.2 warns against.
-            // When bulk discovery does find the device its real label is
-            // used; otherwise a minimal node is synthesized. Never write to
+            // Corrected 2026-08-31: a Connector device is not guaranteed absent
+            // from /hub2/devicesList - it can be nested inside a parent's
+            // children (fetchDeviceListBulk() now walks that tree), so bulk
+            // discovery finding it is the normal case going forward, not the
+            // exception this comment used to describe. getGlobalVar()'s
+            // deviceId is still trusted directly regardless - an ID-based
+            // reference, not the display-name join spec 7.2 warns against -
+            // since a bulk-list gap of some other kind must never be able to
+            // hide a variable's own reported Connector link. When bulk
+            // discovery does find the device its real label is used;
+            // otherwise a minimal node is synthesized. Never write to
             // `labels`: it may share state.deviceLabels' backing object.
             String devNodeId = "d${connDevId}"
             boolean discovered = labels.containsKey(connDevId)
@@ -10430,7 +10517,7 @@ function buildExportPayload(ext, icons, failedFetches) {
     insightGuidance: GUIDE,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
-      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
+      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
       apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
