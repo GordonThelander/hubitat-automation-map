@@ -139,6 +139,10 @@ Rule Machine directly.
 RMUtils, recent error status), then add a ranked Insights finding surfacing them, distinct from the
 existing structural findings.
 
+**Related bug found while designing item 18 (Codex, 370):** the app label already shows a duplicate
+inactive suffix on some live rules (observed as `[paused] [paused]`) - fix alongside the relabeling
+work in item 18, not a separate action.
+
 ### 10. Live Hubitat platform update check
 
 The existing "Hubitat release activity" panel only shows historical Community Utilities/Hubitat
@@ -238,6 +242,32 @@ in `buildGraph()` mirroring the existing app-paused mechanism, then add matching
 already carrying `"paused-or-disabled"`). Rendering/styling pieces are not automatable with this
 codebase's current test tooling (no JS harness) - verify those live, same as the component-device
 hierarchy work.
+
+**Design detail (Codex, 370, discussion-only when written; folded in for implementation 2026-08-31):**
+
+- Disabled device label: `Gary (Disabled)`. Paused rule: `__Parent's test (Paused)`. Node shape and
+  the existing grey inactive-app style are unchanged - only the label suffix is new.
+  **Unresolved (Codex review 372):** the original ask was for the suffix to render in red on the
+  canvas label itself. Implemented as plain text instead (2026-08-31) - colouring only a substring of
+  one vis-network label needs its per-node rich-text mode, a rendering path this codebase has never
+  used and has no test coverage for. Red *is* implemented on the native Focus dropdown options, per
+  the point below. Canvas-level red text remains an open decision for Gordon, not completed scope.
+- Disabled rule vs paused rule: only label a rule `(Disabled)` distinctly from `(Paused)` when the
+  hub signal reliably separates the two; otherwise `(Paused or disabled)` rather than guessing. The
+  app-scan code already reads both signals independently (`installedApp.disabled` and Rule Machine's
+  own `paused` appState) rather than one collapsed boolean, so in practice this case is expected to
+  resolve cleanly - not actually ambiguous once the two are kept separate instead of merged into one
+  `inactive` flag as they are today.
+- Leave the existing broken/missing/unscanned node styling (red border on a missing reference,
+  orange on an unscanned one) untouched - orthogonal to paused/disabled, and a node can legitimately
+  carry both.
+- Fix the duplicate-suffix bug (see item 9) as part of this, not separately.
+- Native `<option>` selectors (Focus device/app dropdowns) can't colour just a suffix reliably
+  cross-browser - keep the native selector, append the status text, and colour the whole option red
+  when disabled/paused rather than building a custom widget.
+- Preserve disabled/paused as structured node and export data, not only decorated label text. Do not
+  infer disabled state from anything indirect - missing subscriptions, inactivity, orphan status,
+  driver type, or parent-child position - only the hub's own reported `disabled` boolean.
 
 ## Later / v3
 
