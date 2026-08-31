@@ -56,7 +56,7 @@ check('old code throws NullPointerException on legacy state (deviceScanId null)'
     assert threw : 'expected the old code to throw, it did not'
 }
 
-println '--- Fixed code: legacy state (Codex fixture 1 and 2) ---'
+println '--- Fixed code: legacy state (fixture 1 and 2) ---'
 state = [scanPhase: 'apps', scanTotal: 113, appScanId: null]
 check("liveAppScan() returns null, does not throw, scanPhase='apps' appScanId absent") {
     assert liveAppScan() == null
@@ -66,7 +66,7 @@ check("liveDeviceScan() returns null, does not throw, scanPhase='devices' device
     assert liveDeviceScan() == null
 }
 
-println '--- Fixed code: id present, accumulator absent (Codex fixture: simulates a code reload) ---'
+println '--- Fixed code: id present, accumulator absent (fixture: simulates a code reload) ---'
 state = [scanPhase: 'apps', scanTotal: 50, appScanId: 'apps-9999999999-1234']
 check('liveAppScan() returns null when the id is a real string but the map was cleared by a reload') {
     assert liveAppScan() == null

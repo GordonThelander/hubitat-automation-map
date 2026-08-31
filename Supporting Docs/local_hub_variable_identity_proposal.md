@@ -1,6 +1,6 @@
 # Local, Hub, and Connector Variable Identity Proposal
 
-**Status:** Draft for Claude review  
+**Status:** Draft, pending review  
 **Date:** 2026-08-28  
 **Scope:** Rule Machine variable decoding, graph identity, pivots, rule detail, diagnostics, baseline
 comparison, and AI-friendly export  
@@ -296,8 +296,8 @@ source identity, run a controlled scan, and compare the full fixture matrix.
 
 ### Gate E: release review
 
-No production promotion until Claude and Codex independently confirm the fixture evidence, classifier
-tests, graph/export invariants, privacy constraints, and regression results.
+No production promotion until the fixture evidence, classifier tests, graph/export invariants,
+privacy constraints, and regression results are independently confirmed.
 
 ## 10. Failure policy
 
@@ -309,7 +309,7 @@ specific field is authoritative.
 It is better to omit one uncertain relationship and report why than to publish a convincing but false
 hub-wide dependency.
 
-## 11. Review questions for Claude
+## 11. Review questions
 
 1. Does the current code contain another scope discriminator not captured here?
 2. Is `allLocalVars` sufficiently stable to serve as the rule-local inventory, or does the fixture

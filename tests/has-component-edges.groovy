@@ -1,5 +1,5 @@
 // Synthetic fixture for the v2.1.7 increment 2 hierarchy-edge rendering
-// (Bucket/Queue 340/342/355). Modeled directly on Codex's live Dev fixture:
+// (Bucket/Queue 340/342/355). Modeled directly on a live Dev fixture:
 // parent device "Parentify" (3611) with children Anne/Bob/Cory/Dean/Emily
 // (3612-3616) - acceptance is exactly five deterministic hasComponent edges,
 // with no change to any other relationship kind.

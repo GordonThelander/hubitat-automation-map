@@ -76,7 +76,7 @@ remaining variable-model correctness question.
 **Next action:** capture a fresh fixture containing identically named Local and Hub Variables,
 verify identity and edge separation in the graph, pivots and AI-friendly export, then fix only if
 the current build still conflates them. The proposed identity, classification, export, and fixture
-contract is in `Supporting Docs/local_hub_variable_identity_proposal.md`, pending Claude review.
+contract is in `Supporting Docs/local_hub_variable_identity_proposal.md`, pending review.
 
 **Done when:** the fixture proves that Local and Hub Variable identities and relationships remain
 separate across every output, or a verified fix makes them separate.
@@ -139,9 +139,9 @@ Rule Machine directly.
 RMUtils, recent error status), then add a ranked Insights finding surfacing them, distinct from the
 existing structural findings.
 
-**Related bug found while designing item 18 (Codex, 370):** the app label already shows a duplicate
-inactive suffix on some live rules (observed as `[paused] [paused]`) - fix alongside the relabeling
-work in item 18, not a separate action.
+**Related bug found while designing item 18:** the app label already shows a duplicate inactive
+suffix on some live rules (observed as `[paused] [paused]`) - fix alongside the relabeling work in
+item 18, not a separate action.
 
 ### 10. Live Hubitat platform update check
 
@@ -243,11 +243,11 @@ already carrying `"paused-or-disabled"`). Rendering/styling pieces are not autom
 codebase's current test tooling (no JS harness) - verify those live, same as the component-device
 hierarchy work.
 
-**Design detail (Codex, 370, discussion-only when written; folded in for implementation 2026-08-31):**
+**Design detail (discussion-only when written; folded in for implementation 2026-08-31):**
 
 - Disabled device label: `Gary (Disabled)`. Paused rule: `__Parent's test (Paused)`. Node shape and
   the existing grey inactive-app style are unchanged - only the label suffix is new.
-  **Unresolved (Codex review 372):** the original ask was for the suffix to render in red on the
+  **Unresolved:** the original ask was for the suffix to render in red on the
   canvas label itself. Implemented as plain text instead (2026-08-31) - colouring only a substring of
   one vis-network label needs its per-node rich-text mode, a rendering path this codebase has never
   used and has no test coverage for. Red *is* implemented on the native Focus dropdown options, per

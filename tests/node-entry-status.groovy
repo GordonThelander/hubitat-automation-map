@@ -1,6 +1,6 @@
 // Fixture for nodeEntry()'s statusSuffix parameter (BACKLOG items 9/18,
 // Bucket/Queue 370-372). Replaces the earlier app-status-label.groovy -
-// that file tested a separate appStatusLabel() wrapper Codex's review (372)
+// that file tested a separate appStatusLabel() wrapper review 372
 // showed was the wrong place to fix this: the actual defects (truncation
 // eating the suffix, decorated names leaking into the AI export, hub
 // context being discarded) all live in nodeEntry() itself, so this tests
@@ -52,7 +52,7 @@ check('label/draw/title/name all just the plain name') {
     assert r1.name == 'Kitchen Light'
 }
 
-println '--- 2. Regression fixture for Codex review 372, issue 1: a long name must not lose its suffix to truncation ---'
+println '--- 2. Regression fixture for review 372, issue 1: a long name must not lose its suffix to truncation ---'
 // 30 characters on its own - already over the 24-char truncation
 // threshold before any suffix is even considered. The bug this reproduces:
 // baking "(Disabled)" into the string BEFORE truncation silently dropped
@@ -67,7 +67,7 @@ check('draw carries the full name (untruncated) plus the suffix') {
     assert r2.draw == "${longName} (Disabled)"
 }
 
-println '--- 3. Regression fixture for Codex review 372, issue 2: name must stay undecorated for the AI export ---'
+println '--- 3. Regression fixture for review 372, issue 2: name must stay undecorated for the AI export ---'
 def r3 = nodeEntry('a3', 'Mode Alarm Reminder', 'app', 'Rule-5.1', 'Mode Alarm Reminder', 'Paused')
 check('name has no live-status suffix and no truncation - safe as an export identity') {
     assert r3.name == 'Mode Alarm Reminder (Rule-5.1)'
@@ -77,7 +77,7 @@ check('draw and title DO carry the live-status suffix - it belongs in rendering,
     assert r3.title == 'Mode Alarm Reminder (Rule-5.1) (Paused)'
 }
 
-println '--- 4a. Live-shaped fixture for Codex review 374: real Dev hub data, statusInTitle=false ---'
+println '--- 4a. Live-shaped fixture for review 374: real Dev hub data, statusInTitle=false ---'
 // The exact shape confirmed live on Dev: Hubitat's own paused-app label
 // injection already reads literally "(Paused)" - identical wording to this
 // function's own suffix. fullLabel carries it as plain text (stripTags

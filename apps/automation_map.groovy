@@ -100,7 +100,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // Bumped 7->8 (v2.1.6): Local Variable nodes/edges and the unreferencedLocal
 // node property are new. Without this bump an upgraded instance could render
 // a cached schema-7 graph and silently omit the whole feature until the next
-// manual scan (Codex 311 correction 2).
+// manual scan (review 311, correction 2).
 // Bumped 8->9 (v2.1.7): new hasComponent edge kind (device-owned component
 // relationships, e.g. a Shelly/Bond/Matter-bridge child or a Hub Variable
 // Connector nested under its parent) changes the persisted graph shape.
@@ -1351,7 +1351,7 @@ void sweepGenerationRecords() {
 // amTrace() must return before constructing any field or reading any state
 // when disabled, so a silenced trace costs one boolean test per call.
 @Field static final boolean TRACE_ENABLED = true
-// Dev-only watchdog-boundary test gate (Part A Step 3). Per Codex 266 correction
+// Dev-only watchdog-boundary test gate (Part A Step 3). Per review 266 correction
 // 2: a compile-time constant, not a state field - there was no documented way
 // to set state.debugForceWatchdogWin through the app UI, an endpoint, or any
 // other path, so it was dead code as first written. Flip to true, deploy, run
@@ -2549,7 +2549,7 @@ void beginRegistryAndFinish(String lockToken) {
     // this interval and REGISTRY_RESULTS's publish timing (see fetchRegistry)
     // are altered, deterministically forcing the watchdog to reach its decision
     // point while the generation's real result is still deliberately staged.
-    // 3s / 15s (not 3s / 5s - Codex 266 correction 3): runIn() is not an exact
+    // 3s / 15s (not 3s / 5s - review 266, correction 3): runIn() is not an exact
     // real-time scheduler, particularly on a loaded hub, so a 2-second margin
     // does not reliably force the intended ordering. A wide margin here costs
     // nothing real since both delays are non-blocking scheduled work, not time
@@ -2959,7 +2959,7 @@ Map aggregateDeviceTree(Map data) {
         def node = item.node
         if (!(node instanceof Map)) continue
         Map entry = node as Map
-        // instanceof, not a bare `as` cast - Codex 346#1: a wrong-type data or
+        // instanceof, not a bare `as` cast - review 346, correction 1: a wrong-type data or
         // children value must degrade to "absent" (skip this entry's own
         // fields, still walk its valid children if any), not throw and lose
         // every device still pending in the walk.
@@ -2989,7 +2989,7 @@ Map aggregateDeviceTree(Map data) {
     Map typeGroups = [:]
     order.each { String devId ->
         Map agg = byId[devId] as Map
-        // Codex 346#2: every valid ID is retained under the existing
+        // review 346, correction 2: every valid ID is retained under the existing
         // "Device <id>" fallback identity (see buildGraph()) even with no
         // name in either record, rather than being silently absent from
         // labels - and so from the graph and device count.
@@ -2998,7 +2998,7 @@ Map aggregateDeviceTree(Map data) {
         if (agg.type) out.types[devId] = agg.type as String
         if (agg.parentId) out.parents[devId] = agg.parentId as String
         if (agg.disabled == true) (out.disabledDevices as List) << devId
-        // Codex 346#3: the shared-group key requires BOTH a room AND a real
+        // review 346, correction 3: the shared-group key requires BOTH a room AND a real
         // deviceTypeId. A roomed device with no deviceTypeId previously fell
         // through to the literal string "null", silently sharing one
         // fetched-capability representative across every unrelated device
@@ -3533,8 +3533,8 @@ List extractHubVariableReads(Map data) {
     // seen both ways stays confirmed; structured evidence is never
     // downgraded by an unconfirmed match on the same name.
     //
-    // A List, deduplicated by name+usageRole+field (Gate C correction, Codex
-    // 287): keying by name+role alone collapsed two distinct condition fields
+    // A List, deduplicated by name+usageRole+field (Gate C correction,
+    // review 287): keying by name+role alone collapsed two distinct condition fields
     // referencing the same variable (e.g. xVar_3 and xVar_7, both role
     // 'condition') into one record, losing exactly the per-reference field
     // evidence the plan requires. Including the field in the dedup identity
@@ -4620,14 +4620,14 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
 // markup not wording, specifically to avoid eating a legitimate name like
 // "Front Walkway Announce (Day)"), so statusSuffix is only ever appended,
 // never used to decide what to remove. Applied to label (AFTER truncation,
-// so a long name cannot cut it off - Codex review 372: the previous version
+// so a long name cannot cut it off - review 372: the previous version
 // baked it into `clean` before truncation, silently losing it on exactly
 // the names this feature most needs to flag) and draw - and deliberately
 // NEVER to name, which must stay exactly what it already was: the export's
 // stable, undecorated identity.
 //
 // statusInTitle controls whether statusSuffix ALSO gets appended to title.
-// Confirmed live (Codex review 374): Hubitat's own paused-app label
+// Confirmed live (review 374): Hubitat's own paused-app label
 // injection already reads literally "(Paused)" - identical wording to this
 // function's own suffix - so appending ours too produced a genuine visible
 // duplicate in the title specifically ("... (Paused) (Rule-5.1) (Paused)"),
@@ -5051,7 +5051,7 @@ Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List loc
         Map result = classifyVariableReference(reference, context)
         if (result.status == 'resolved') {
             // Seeded under both the raw stored spelling and the resolved
-            // canonical name (Gate C correction, Codex 287): a structured
+            // canonical name (Gate C correction, review 287): a structured
             // "Example." that normalizes to "Example" must still promote a
             // same-rule %Example% text token, which naturally uses the
             // canonical spelling, not the trailing-period one. No further
@@ -5166,7 +5166,7 @@ Map buildGraph() {
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        // Gated to Rule Machine (Codex 290 correction), matching
+        // Gated to Rule Machine (review 290 correction), matching
         // extractHubVariableWrites/Reads()'s own gate exactly -
         // processAppRelationships() initializes hubVarWrites/hubVarReads to
         // an empty list for EVERY app unconditionally (see its own `out =
@@ -5201,7 +5201,7 @@ Map buildGraph() {
     //
     // Findings: a proven-Hub-scoped structured reference absent from
     // authoritative inventory (not promoted to a node - parent spec 6.3).
-    // Gate C (v2.1.4) semantic migration (Codex 290): this is now filtered
+    // Gate C (v2.1.4) semantic migration (review 290): this is now filtered
     // from classified evidence, not populated by the old raw-name loop. Gate
     // A found no persisted scope discriminator, so nothing in this pipeline
     // ever sets provenScope on a raw reference - a classified 'unresolved'
@@ -5317,7 +5317,7 @@ Map buildGraph() {
         // app that is both disabled and separately left paused is still,
         // at the level a person cares about here, simply disabled.
         String statusWord = appMap.disabled ? 'Disabled' : (appMap.paused ? 'Paused' : null)
-        // statusInTitle false: confirmed live (Codex review 374) that
+        // statusInTitle false: confirmed live (review 374) that
         // Hubitat's own paused-app label injection already reads literally
         // "(Paused)" - appending our own suffix to the title too produced a
         // genuine visible duplicate there. label/draw are unaffected, built
@@ -5492,7 +5492,7 @@ Map buildGraph() {
         // in the page template). The visual arrow is corrected instead, the
         // same way a device trigger already is.
         //
-        // Grouped by variable BEFORE any edge is created (Codex 290
+        // Grouped by variable BEFORE any edge is created (review 290
         // correction): graph-edge dedup still permits only one app|variable
         // |read edge, but per-reference extraction can legitimately produce
         // several classified read occurrences for the same pair (e.g. the
@@ -5518,7 +5518,7 @@ Map buildGraph() {
             String key = "${appNodeId}|${varNodeId}|read"
             if (seen.contains(key)) return
             seen << key
-            // Codex 292 correction: filtering out null BEFORE the uniqueness
+            // review 292 correction: filtering out null BEFORE the uniqueness
             // check let [condition, null] collapse to the single-element set
             // {condition}, wrongly asserting condition-only on a pair where
             // one occurrence actually had no role at all. Null must survive
@@ -5546,7 +5546,7 @@ Map buildGraph() {
         // bare name - Gate A proved two different rules can each have their
         // own same-named Local Variable, and merging those into one node
         // would misrepresent them as shared. ownerAppId is stored explicitly
-        // (Codex 311 correction 1) rather than parsed back out of identity,
+        // (review 311, correction 1) rather than parsed back out of identity,
         // so the owning rule can be resolved without a name-based join.
         List localDefs = (ruleVariables[appNodeId]?.localVariables ?: []) as List
         localDefs.each { Map d ->
@@ -5595,7 +5595,7 @@ Map buildGraph() {
         }
     }
 
-    // Codex 311 correction 6: computed only after ALL Local read/write edges
+    // review 311, correction 6: computed only after ALL Local read/write edges
     // across every rule have been built and deduplicated - "unreferenced"
     // means zero proven decoded Local edges exist anywhere on the graph, not
     // merely that one rule's own extraction pass happened to find none.
@@ -6683,7 +6683,7 @@ String buildMapHtml() {
     // Variable (present only nested, in ruleFlows[].localVariables[], keyed
     // by identity) - flatten that nested collection once when resolving an
     // edge target, rather than assuming hubVariables[] alone is complete.
-    // Deliberately not a duplicate top-level array (Codex 311 correction 7):
+    // Deliberately not a duplicate top-level array (review 311, correction 7):
     // ruleFlows[].localVariables[] is already the authoritative, owner-scoped
     // source, used to seed the graph nodes themselves.
     // v2.1.7: schema 7 - edges[].kind can now be hasComponent (device-owned
@@ -7501,7 +7501,7 @@ function styledNode(n, useFullLabel, roleByDevice) {
   if (n.unreadable) color = { background: '#4a1f1f', border: '#d9534f' };
   // A Local Variable with no proven decoded reference in this rule (v2.1.6)
   // - not read in a trigger, condition or action, and not written - its own
-  // dimmed variant, not n.inert (Codex 311
+  // dimmed variant, not n.inert (review 311
   // correction 3: that flag feeds inert-APP layout, focus behaviour and
   // Insights specifically, and reusing it would misreport this as an inert
   // app). Dimmed the same visual way for the same reason: still real, just
@@ -7642,7 +7642,7 @@ function shelveInertNodes() {
   // n.unreferencedLocal (v2.1.6) shares this shelf on purpose - both flags
   // mean the same thing to this layout (no edges, physics would fling it to
   // an empty margin) even though they mean different things everywhere else
-  // (Codex 311 correction 3). This filter is the one deliberately generalised
+  // (review 311, correction 3). This filter is the one deliberately generalised
   // spot; state.appsInert, Insights and n.inert's colour/label meaning are
   // untouched.
   const inertIds = ALL_NODES.filter(function (n) { return n.inert || n.unreferencedLocal; })
@@ -8309,7 +8309,7 @@ function showInertPanel(node) {
       focusNode(a.getAttribute('data-node'));
     });
   });
-  // Gate C (v2.1.4), Codex 296 correction: without this, selecting a rule
+  // Gate C (v2.1.4), review 296 correction: without this, selecting a rule
   // with variable evidence and then an inert app left the previous rule's
   // list stale underneath this panel's own content - this path never touched
   // ruleVariablesCard at all. Same centralized renderer as showFlow() uses,
@@ -8323,7 +8323,7 @@ function showInertPanel(node) {
 
 // A Local Variable with no proven decoded reference in this rule (v2.1.6) -
 // the same "click opened nothing" problem showInertPanel solved for an app
-// that references nothing, but a deliberately separate function (Codex 311
+// that references nothing, but a deliberately separate function (review 311
 // correction 3): the content here is variable-specific (which rule declared
 // it), not app-specific (schedule/subscription/child-app facts
 // showInertPanel reports), and conflating the two risked this eventually
@@ -8336,7 +8336,7 @@ function showUnreferencedLocalPanel(node) {
   // Both correctly no-op on a non-rule/non-app node (their own group checks
   // already handle that) - called anyway so switching here from a rule with
   // stale content in either card actually clears it, the same discipline
-  // Codex's 296 correction established for showInertPanel above.
+  // the review 296 correction established for showInertPanel above.
   renderRuleVariablesCard(node.id);
   renderCommunityCard(node);
   bringToFront(flowPanel);
@@ -8858,7 +8858,7 @@ function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
 }
 // Same convention for the Hub Variable Focus list (Gate C follow-up, agreed
-// with Gordon and Codex 2026-08-29, queue 305/306). Uses HVR rather than the
+// 2026-08-29, queue 305/306). Uses HVR rather than the
 // APP_TYPE_TAGS HUB code - that one already means "built-in Hubitat app", a
 // different axis from variable scope, and reusing it here would conflate the
 // two. connectorDeviceId is the same authoritative field buildGraph() already
@@ -10333,7 +10333,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // "(Required Expression false)" but DOES carry "(Paused)"/"(Disabled)"
   // since v2.1.7 - the status is exposed separately as apps[].status/
   // devices[].disabled instead). Falls back to draw, then title, for any
-  // graph cached before name existed (Codex review 372: draw itself gained
+  // graph cached before name existed (review 372: draw itself gained
   // a live-status suffix this same version, so it is no longer a safe
   // identity fallback for a *current* graph, only for one old enough to
   // predate both fields).
@@ -10433,7 +10433,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // that can still exist is confirmed against authoritative inventory (Gate C
   // decision 3), so identitySource is always 'hub-inventory' in practice now.
   //
-  // Codex 296 correction: a missing/malformed identitySource must NOT default
+  // review 296 correction: a missing/malformed identitySource must NOT default
   // to 'hub-inventory' here - that would convert an absent or invalid
   // provenance field into a POSITIVE claim of the highest confidence level
   // this export has, exactly backwards for a defensive fallback. Falls back

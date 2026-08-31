@@ -24,16 +24,6 @@ if ($script:Clasp) {
     $script:ClaspPath = $script:Clasp.Source
 }
 if (-not $script:Clasp) {
-    $codexNodeDirectory = 'C:\Users\gordo\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin'
-    $codexClasp = 'C:\Users\gordo\AppData\Local\CodexTools\clasp\node_modules\.bin\clasp.cmd'
-    if ((Test-Path -LiteralPath (Join-Path $codexNodeDirectory 'node.exe')) -and
-        (Test-Path -LiteralPath $codexClasp)) {
-        $env:PATH = $codexNodeDirectory + [IO.Path]::PathSeparator + $env:PATH
-        $script:Clasp = Get-Item -LiteralPath $codexClasp
-        $script:ClaspPath = $codexClasp
-    }
-}
-if (-not $script:Clasp) {
     throw 'clasp was not found. Install Node.js 20 or newer, run npm install --global @google/clasp, then clasp login with spam.me.here.rather@gmail.com.'
 }
 
