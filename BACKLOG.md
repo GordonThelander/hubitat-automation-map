@@ -67,20 +67,6 @@ normal new tab, then verify local, Remote Admin and cloud access paths.
 **Done when:** the map reliably opens in a normal tab at the available browser size without
 regressing authenticated local or remote access.
 
-### 3. Revalidate Local Variable handling
-
-**Why now:** first-class Hub Variable support is now live, but older evidence suggested that an
-identically named Rule Machine Local Variable could be conflated with a Hub Variable. This is the
-remaining variable-model correctness question.
-
-**Next action:** capture a fresh fixture containing identically named Local and Hub Variables,
-verify identity and edge separation in the graph, pivots and AI-friendly export, then fix only if
-the current build still conflates them. The proposed identity, classification, export, and fixture
-contract is in `Supporting Docs/local_hub_variable_identity_proposal.md`, pending review.
-
-**Done when:** the fixture proves that Local and Hub Variable identities and relationships remain
-separate across every output, or a verified fix makes them separate.
-
 ## Next
 
 ### 4. Include Dashboard usage in cleanup findings
@@ -139,9 +125,10 @@ Rule Machine directly.
 RMUtils, recent error status), then add a ranked Insights finding surfacing them, distinct from the
 existing structural findings.
 
-**Related bug found while designing item 18:** the app label already shows a duplicate inactive
-suffix on some live rules (observed as `[paused] [paused]`) - fix alongside the relabeling work in
-item 18, not a separate action.
+**Related bug found while designing item 18, fixed 2026-08-31:** the app label was showing a
+duplicate inactive suffix on some live rules (observed as `[paused] [paused]`) - fixed as part of
+item 18's work (`nodeEntry()`'s `statusInTitle` parameter) and confirmed live: the same rule's title
+now reads `(Paused)` exactly once.
 
 ### 10. Live Hubitat platform update check
 
@@ -184,15 +171,15 @@ improvise either process. Full agreed design lives in the private, cross-project
 2026-08-28 so it is reusable across projects instead of scoped to this one:
 https://github.com/GordonThelander/production-protocol/blob/main/production_build_methodology.md
 
-**Status: design agreed, nothing implemented.**
+**Status: design agreed, nothing implemented.** The registry-finalization-race prerequisite this item
+was previously waiting on is closed (v2.1.3, Dev-verified and independently confirmed on Steve's C-5
+hardware; queue 270/271 record the controlled tests). That does not itself authorise starting this
+item - it just removes a stale blocker from this text.
 
-**Next action:** wait for the registry-finalization-race correctness investigation to close (item's
-own tracking is in the `Bucket/Queue` coordination record, not this file - the short version is it
-needs Steve's large C-5 hub `AM-TRACE` trace before that fix can be promoted). No work on this item
-starts before that closes, and even then only once Gordon starts the next phase himself. First actual
-step, once started, is a small feasibility spike proving the Groovy-lexer-based comment stripper works
-correctly on `apps/automation_map.groovy` alone - see the spec doc for the full spike scope before any
-CI or branch-protection work is considered.
+**Next action:** wait for Gordon to explicitly start this phase. No work begins before then. First
+actual step, once started, is a small feasibility spike proving the Groovy-lexer-based comment
+stripper works correctly on `apps/automation_map.groovy` alone - see the spec doc for the full spike
+scope before any CI or branch-protection work is considered.
 
 ### 17. Add anonymous Variable coverage counts to telemetry
 
@@ -222,52 +209,18 @@ discard a partial schema change.
 columns, invalid payloads are rejected, existing telemetry fields remain unchanged, and inspection
 confirms that no variable name, value, owner or Connector identity can enter the payload.
 
-### 18. Show disabled devices distinctly on the map
+### 19. Canvas-level red suffix for disabled/paused labels
 
-Devices disabled on the hub (Hubitat's own per-device Disabled toggle) render identically to active
-ones - a rule's trigger/constraint/action edge to a disabled device looks exactly as live as one to
-a working device, even though the device does nothing while disabled. Apps already get an
-equivalent treatment (paused/disabled apps get a distinct grey style and their own legend entry) -
-this is the same class of "config exists but is not actually live" gap, just on the device side,
-and related to but distinct from item 9's rule-health focus.
+Item 18 (shipped, see Hold / closed below) implemented the `(Disabled)`/`(Paused)` label suffix and coloured the
+native Focus dropdown options red for a disabled/paused entry, but left the canvas node label itself
+as plain text rather than colouring just the suffix red as originally asked for. Colouring part of
+one vis-network label needs its per-node rich-text mode (`font: {multi: 'html'}`) - a real, supported
+feature, but a rendering path this codebase has never used anywhere and has no test coverage for.
 
-The raw data already exists and is unused: confirmed live that `/hub2/devicesList` reports a
-`disabled` boolean per device, alongside the fields `aggregateDeviceTree()` already captures
-(id/name/room/type/deviceTypeId).
-
-**Next action:** capture `disabled` in `aggregateDeviceTree()`/`fetchDeviceListBulk()` the same way
-`deviceParents` was added, thread it to a new `state.deviceDisabled` set, flag it on the device node
-in `buildGraph()` mirroring the existing app-paused mechanism, then add matching legend/styling
-(and export field, likely another `exportSchemaVersion` bump for consistency with `apps[].status`
-already carrying `"paused-or-disabled"`). Rendering/styling pieces are not automatable with this
-codebase's current test tooling (no JS harness) - verify those live, same as the component-device
-hierarchy work.
-
-**Design detail (discussion-only when written; folded in for implementation 2026-08-31):**
-
-- Disabled device label: `Gary (Disabled)`. Paused rule: `__Parent's test (Paused)`. Node shape and
-  the existing grey inactive-app style are unchanged - only the label suffix is new.
-  **Unresolved:** the original ask was for the suffix to render in red on the
-  canvas label itself. Implemented as plain text instead (2026-08-31) - colouring only a substring of
-  one vis-network label needs its per-node rich-text mode, a rendering path this codebase has never
-  used and has no test coverage for. Red *is* implemented on the native Focus dropdown options, per
-  the point below. Canvas-level red text remains an open decision for Gordon, not completed scope.
-- Disabled rule vs paused rule: only label a rule `(Disabled)` distinctly from `(Paused)` when the
-  hub signal reliably separates the two; otherwise `(Paused or disabled)` rather than guessing. The
-  app-scan code already reads both signals independently (`installedApp.disabled` and Rule Machine's
-  own `paused` appState) rather than one collapsed boolean, so in practice this case is expected to
-  resolve cleanly - not actually ambiguous once the two are kept separate instead of merged into one
-  `inactive` flag as they are today.
-- Leave the existing broken/missing/unscanned node styling (red border on a missing reference,
-  orange on an unscanned one) untouched - orthogonal to paused/disabled, and a node can legitimately
-  carry both.
-- Fix the duplicate-suffix bug (see item 9) as part of this, not separately.
-- Native `<option>` selectors (Focus device/app dropdowns) can't colour just a suffix reliably
-  cross-browser - keep the native selector, append the status text, and colour the whole option red
-  when disabled/paused rather than building a custom widget.
-- Preserve disabled/paused as structured node and export data, not only decorated label text. Do not
-  infer disabled state from anything indirect - missing subscriptions, inactivity, orphan status,
-  driver type, or parent-child position - only the hub's own reported `disabled` boolean.
+**Next action:** Gordon's decision whether this is worth the risk of a rendering path with no
+automated coverage. If yes, scope it to only the nodes that need it (per-node font override, not a
+network-wide config change) and verify live on Dev before shipping, same as every other JS-only
+change in this codebase.
 
 ## Later / v3
 
@@ -298,6 +251,27 @@ never presenting stale data as a completed current scan.
 
 ## Hold / closed
 
+- **Show disabled devices distinctly on the map (was item 18):** completed and verified on Dev,
+  pending production release (2026-08-31) - disabled devices and paused/disabled rules get a
+  canonical label suffix, structured export fields (`devices[].disabled`, `apps[].status`
+  distinguishing `disabled`/`paused`), and coloured Focus dropdown entries. Also fixed the
+  duplicate-suffix bug noted under item 9. The canvas-level red-suffix piece was deliberately left
+  out - see item 19.
+- **Component-device (parent/child) discovery and rendering:** completed and verified on Dev,
+  pending production release (2026-08-31) - `/hub2/devicesList`'s hierarchical response (a
+  device-owned component, e.g. a Shelly/Bond/Matter-bridge child, nested inside its parent's own
+  `children` rather than as a top-level sibling) is now fully walked during discovery and rendered
+  as a `hasComponent` relationship on the graph and in the AI export, including correct
+  focus-expansion behaviour for an app that touches a child but not its parent directly.
+- **Revalidate Local Variable handling (was item 3):** completed and verified on Dev, pending
+  production release - identical names are not guessed or merged. A proven Local identity remains
+  owner-scoped to its rule, a proven Hub identity remains hub-scoped, and an indistinguishable
+  same-rule reference (persisted Rule Machine storage cannot always prove which was intended) is
+  reported as ambiguous rather than assigned to either scope. Gate C shipped in v2.1.4 with live Dev
+  verification; v2.1.6 added owner-scoped Local Variable graph nodes, focus and pivot support, and
+  resolvable export endpoints, independently accepted per queue 315-317. The proposal document's
+  `Draft`/`Implementation authorization: None` header is stale and should be corrected separately if
+  the document is retained.
 - **Hub Variable search:** shipped.
 - **Variable Connector association:** shipped.
 - **First-class Hub Variable identity, focus and export:** shipped.
