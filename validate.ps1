@@ -100,6 +100,87 @@ function Find-SuspectDollarSigns([string]$Text) {
     return $findings
 }
 
+# Finds every inline <script>...</script> block in the rendered HTML (skips
+# any tag with a src= attribute - those load external files, nothing to
+# check locally). Returns each block's body plus the source line its first
+# character sits on, so a syntax error can be pointed back at real source.
+function Get-InlineScriptBlocks([string]$Text) {
+    $blocks = New-Object 'System.Collections.Generic.List[pscustomobject]'
+    $regex = [regex]::new('(?is)<script(?<attrs>[^>]*)>(?<body>.*?)</script>')
+    foreach ($m in $regex.Matches($Text)) {
+        if ($m.Groups['attrs'].Value -match '\bsrc\s*=') { continue }
+        $body = $m.Groups['body'].Value
+        if ($body.Trim().Length -eq 0) { continue }
+        $line = ($Text.Substring(0, $m.Groups['body'].Index) -split "`n").Count
+        $blocks.Add([pscustomobject]@{ Line = $line; Body = $body })
+    }
+    return $blocks
+}
+
+# Stands in for every Groovy ${...} interpolation with an inert JS literal
+# (0), brace-depth aware so a closure inside the interpolation - e.g.
+# ${items.collect{ it.foo }.join(',')} - doesn't truncate the match at the
+# first inner '}'. The placeholder value is never meant to be meaningful,
+# only to leave the surrounding static JS text syntactically checkable.
+function Remove-GStringInterpolations([string]$Text) {
+    $sb = New-Object System.Text.StringBuilder
+    $i = 0
+    while ($i -lt $Text.Length) {
+        if ($Text[$i] -eq '$' -and ($i + 1) -lt $Text.Length -and $Text[$i + 1] -eq '{' -and ($i -eq 0 -or $Text[$i - 1] -ne '\')) {
+            $depth = 1
+            $j = $i + 2
+            while ($j -lt $Text.Length -and $depth -gt 0) {
+                if ($Text[$j] -eq '{') { $depth++ }
+                elseif ($Text[$j] -eq '}') { $depth-- }
+                $j++
+            }
+            [void]$sb.Append('0')
+            $i = $j
+        } else {
+            [void]$sb.Append($Text[$i])
+            $i++
+        }
+    }
+    return $sb.ToString()
+}
+
+# Runs each inline <script> block through `node --check` (syntax only,
+# nothing executes). This is the gate that would have caught the revision-35
+# apostrophe bug: a stray apostrophe inside a single-quoted JS string ended
+# the string early and broke the entire 444KB script, and neither the
+# GString byte-size nor dollar-sign gate looks for that - both are
+# Groovy-template concerns, not JS-string-escaping ones. Returns a single
+# sentinel finding '__NODE_MISSING__' if node isn't on PATH, so callers can
+# warn-and-skip instead of failing validation over an environment gap.
+function Test-InlineScriptSyntax([string]$Text, [string]$SourceLabel) {
+    $findings = New-Object 'System.Collections.Generic.List[string]'
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $nodeCmd) {
+        $findings.Add('__NODE_MISSING__')
+        return $findings
+    }
+    foreach ($block in (Get-InlineScriptBlocks $Text)) {
+        $jsText = Remove-GStringInterpolations $block.Body
+        $tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "validate-js-$([guid]::NewGuid().ToString('N')).js")
+        try {
+            Set-Content -LiteralPath $tmp -Value $jsText -NoNewline -Encoding UTF8
+            $stderr = & $nodeCmd.Source '--check' $tmp 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $stderrText = ($stderr | Out-String).Trim()
+                $lineOffset = 0
+                $lm = [regex]::Match($stderrText, [regex]::Escape($tmp) + ':(\d+)')
+                if ($lm.Success) { $lineOffset = [int]$lm.Groups[1].Value - 1 }
+                $realLine = $block.Line + $lineOffset
+                $errorSummary = ($stderrText -split "`r?`n" | Where-Object { $_ -match 'Error' } | Select-Object -First 1)
+                $findings.Add("$SourceLabel - script block starting at line $($block.Line), error near line $realLine`: $errorSummary")
+            }
+        } finally {
+            Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+        }
+    }
+    return $findings
+}
+
 function Match-Value([string]$Text, [string]$Pattern, [string]$Description) {
     $match = [regex]::Match($Text, $Pattern)
     if (-not $match.Success) {
@@ -147,6 +228,28 @@ try {
         $realLargest = Get-LargestGStringSegment $realText
         Assert-True ($realLargest.Bytes -lt $GStringByteWarn) "current source largest constant ($($realLargest.Bytes) bytes) is under the $GStringByteWarn-byte warning threshold"
         Assert-True ((Find-SuspectDollarSigns $realText).Count -eq 0) 'current source has no invalid dollar sign inside a GString'
+
+        Write-Host 'Self-test: inline <script> JS syntax gate' -ForegroundColor Cyan
+        if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+            Write-Host '  SKIP  node is not on PATH - JS syntax gate assertions skipped' -ForegroundColor Yellow
+        } else {
+            $goodFixture = '<script>var x = 1; function f(){ return x + ${count}; }</script>'
+            Assert-True ((Test-InlineScriptSyntax $goodFixture 'fixture').Count -eq 0) 'valid JS with a ${...} interpolation passes'
+
+            # Reproduces the actual revision-35 incident: an apostrophe inside a
+            # single-quoted JS string terminates it early.
+            $badFixture = '<script>var schema = { devices: ''walks the endpoint''s full tree'' };</script>'
+            Assert-True ((Test-InlineScriptSyntax $badFixture 'fixture').Count -gt 0) 'a stray apostrophe inside a single-quoted JS string is caught'
+
+            $nestedFixture = '<script>var y = ${items.collect{ it.foo }.join(",")};</script>'
+            Assert-True ((Test-InlineScriptSyntax $nestedFixture 'fixture').Count -eq 0) 'a ${...} interpolation containing a nested closure brace is matched correctly, not truncated early'
+
+            $srcFixture = '<script src="https://example.com/x.js"></script>'
+            Assert-True ((Test-InlineScriptSyntax $srcFixture 'fixture').Count -eq 0) 'a script tag with src= is skipped, not treated as an empty inline block'
+
+            $realJsFindings = Test-InlineScriptSyntax $realText $AppFile
+            Assert-True ($realJsFindings.Count -eq 0) 'current source: every inline <script> block is syntactically valid JS'
+        }
 
         if ($failures.Count -gt 0) {
             Write-Host "Self-test FAILED: $($failures.Count) assertion(s)." -ForegroundColor Red
@@ -326,6 +429,18 @@ try {
     if ($suspectDollars.Count -gt 0) {
         $detail = $suspectDollars -join [Environment]::NewLine
         Add-ValidationError ("Invalid dollar sign inside a GString template (Groovy will try to interpolate it):" + [Environment]::NewLine + $detail)
+    }
+
+    # Gate: every inline <script> block must be syntactically valid JS once
+    # ${...} interpolation markers are stood in for. Skips (warns, doesn't
+    # fail) when node isn't available - this is a real check, not a
+    # simulation, so it degrades rather than pretending to pass.
+    $jsFindings = Test-InlineScriptSyntax $appText $AppFile
+    if ($jsFindings.Count -gt 0 -and $jsFindings[0] -eq '__NODE_MISSING__') {
+        Write-Host 'Skipping JS syntax gate: node is not on PATH. Inline <script> blocks were not checked.' -ForegroundColor Yellow
+    } elseif ($jsFindings.Count -gt 0) {
+        $detail = $jsFindings -join [Environment]::NewLine
+        Add-ValidationError ("Inline <script> block failed a JavaScript syntax check:" + [Environment]::NewLine + $detail)
     }
 
     if ($errors.Count -gt 0) {
