@@ -164,7 +164,23 @@ function Test-InlineScriptSyntax([string]$Text, [string]$SourceLabel) {
         $tmp = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "validate-js-$([guid]::NewGuid().ToString('N')).js")
         try {
             Set-Content -LiteralPath $tmp -Value $jsText -NoNewline -Encoding UTF8
-            $stderr = & $nodeCmd.Source '--check' $tmp 2>&1
+            # node --check exits non-zero and writes to stderr on a syntax
+            # error - exactly the case this gate exists to catch. Under
+            # $ErrorActionPreference = 'Stop', Windows PowerShell (and
+            # PS7.3+'s $PSNativeCommandUseErrorActionPreference) promotes
+            # that into a terminating NativeCommandError before $LASTEXITCODE
+            # can be inspected, aborting the whole gate instead of returning
+            # a finding (caught live in Codex's own validation environment,
+            # not just theorised). Scope ErrorActionPreference to 'Continue'
+            # for this one call only, so a bad exit code is data, not a
+            # thrown exception.
+            $previousEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $stderr = & $nodeCmd.Source '--check' $tmp 2>&1
+            } finally {
+                $ErrorActionPreference = $previousEap
+            }
             if ($LASTEXITCODE -ne 0) {
                 $stderrText = ($stderr | Out-String).Trim()
                 $lineOffset = 0
