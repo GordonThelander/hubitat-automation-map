@@ -218,6 +218,27 @@ discard a partial schema change.
 columns, invalid payloads are rejected, existing telemetry fields remain unchanged, and inspection
 confirms that no variable name, value, owner or Connector identity can enter the payload.
 
+### 18. Show disabled devices distinctly on the map
+
+Devices disabled on the hub (Hubitat's own per-device Disabled toggle) render identically to active
+ones - a rule's trigger/constraint/action edge to a disabled device looks exactly as live as one to
+a working device, even though the device does nothing while disabled. Apps already get an
+equivalent treatment (paused/disabled apps get a distinct grey style and their own legend entry) -
+this is the same class of "config exists but is not actually live" gap, just on the device side,
+and related to but distinct from item 9's rule-health focus.
+
+The raw data already exists and is unused: confirmed live that `/hub2/devicesList` reports a
+`disabled` boolean per device, alongside the fields `aggregateDeviceTree()` already captures
+(id/name/room/type/deviceTypeId).
+
+**Next action:** capture `disabled` in `aggregateDeviceTree()`/`fetchDeviceListBulk()` the same way
+`deviceParents` was added, thread it to a new `state.deviceDisabled` set, flag it on the device node
+in `buildGraph()` mirroring the existing app-paused mechanism, then add matching legend/styling
+(and export field, likely another `exportSchemaVersion` bump for consistency with `apps[].status`
+already carrying `"paused-or-disabled"`). Rendering/styling pieces are not automatable with this
+codebase's current test tooling (no JS harness) - verify those live, same as the component-device
+hierarchy work.
+
 ## Later / v3
 
 ### 11. Move graph derivation into the browser
