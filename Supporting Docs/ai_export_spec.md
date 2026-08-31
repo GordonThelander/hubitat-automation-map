@@ -1,7 +1,7 @@
 # Automation Map AI Export Specification
 
 **Status:** implemented contract  
-**Export schema:** 7 (see sections 18-21 for the schema 4/5/6/7 deltas; sections 1-17 describe
+**Export schema:** 8 (see sections 18-22 for the schema 4/5/6/7/8 deltas; sections 1-17 describe
 schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
@@ -691,3 +691,36 @@ No new root field. `owns` (section 9) is unchanged in meaning and still never ha
 `hasComponent` is the one relationship kind in section 9's table with a device, not an app, as its
 source; a consumer that assumed every edge has an app endpoint (true of every other kind in this
 schema) must update that assumption for this one.
+
+## 22. Schema 8 (v2.1.7) delta
+
+Disabled state - both the per-device hub toggle and the per-app/rule status already carried in
+`apps[].status` - becomes structured, distinct data instead of a decorated label or a collapsed
+value. `graphSchemaVersion` moved 9 -> 10 alongside this change (device and app nodes gain new
+fields, same reasoning as every prior graph-shape bump in this history).
+
+### 22.1 `devices[]`: new `disabled` field
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `disabled` | boolean | The hub's own per-device Disabled toggle - `true` if the device is turned off entirely, independent of any app or rule state. Never inferred from anything indirect (missing subscriptions, inactivity, orphan status, driver type, or parent-child position) - always the hub's own reported value from `/hub2/devicesList`. |
+
+### 22.2 `apps[].status`: `paused-or-disabled` retired in favour of `disabled` and `paused`
+
+Prior schemas collapsed two independent hub signals into one status value. As of this schema they
+are reported separately:
+
+| Old value (schema 7 and earlier) | New value(s) (schema 8+) |
+| --- | --- |
+| `paused-or-disabled` | `disabled` (the app-level Disabled toggle, any app type) or `paused` (Rule Machine's own paused execution state, only ever true for a rule that has that concept) |
+
+When both are independently true for the same app, `status` reports `disabled` - the more
+encompassing of the two. A consumer that matched on the literal string `paused-or-disabled` will no
+longer see that value; it must match `disabled` and `paused` instead.
+
+### 22.3 What did not change
+
+No new root field beyond `devices[].disabled`. Every other `apps[]` field, and every field on every
+other node kind, is unchanged. The map's own paused/disabled visual treatment (grey fill, unchanged
+node shape and icon) is likewise unchanged - only the label text and this export's structured data
+gained the distinction.

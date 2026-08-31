@@ -13,7 +13,7 @@
 // app source.
 
 Map aggregateDeviceTree(Map data) {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
     Map<String, Map> byId = [:]
     List order = []
     List pending = []
@@ -40,6 +40,7 @@ Map aggregateDeviceTree(Map data) {
         if (!agg.type && d.type) agg.type = "${d.type}"
         if (agg.deviceTypeId == null && d.deviceTypeId != null) agg.deviceTypeId = "${d.deviceTypeId}"
         if (!agg.parentId && item.parentId) agg.parentId = item.parentId as String
+        if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
     }
     Map typeGroups = [:]
     order.each { String devId ->
@@ -48,6 +49,7 @@ Map aggregateDeviceTree(Map data) {
         if (agg.room) out.rooms[devId] = agg.room as String
         if (agg.type) out.types[devId] = agg.type as String
         if (agg.parentId) out.parents[devId] = agg.parentId as String
+        if (agg.disabled == true) (out.disabledDevices as List) << devId
         String typeKey = (agg.room && agg.deviceTypeId != null) ? "${agg.deviceTypeId}" : "room:${devId}"
         List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
         group << devId
@@ -309,6 +311,62 @@ check('roomed device with no deviceTypeId gets its own one-device fallback group
     assert r13.typeGroups['room:140'] == ['140']
     assert r13.typeGroups['room:141'] == ['141']
     assert !r13.typeGroups.containsKey('null')
+}
+
+println '--- 14. disabled boolean captured per device (item 18) ---'
+def d14 = [devices: [
+    [key: 'DEV-150', data: [id: 150, name: 'Disabled Sensor', roomName: 'Hall', disabled: true],
+     child: false, parent: false, children: []],
+    [key: 'DEV-151', data: [id: 151, name: 'Active Sensor', roomName: 'Hall', disabled: false],
+     child: false, parent: false, children: []],
+    [key: 'DEV-152', data: [id: 152, name: 'No Field Reported'],
+     child: false, parent: false, children: []],
+]]
+def r14 = aggregateDeviceTree(d14)
+check('a device reporting disabled true is in disabledDevices') { assert r14.disabledDevices.contains('150') }
+check('a device reporting disabled false is not in disabledDevices') { assert !r14.disabledDevices.contains('151') }
+check('a device that never reports the field at all is not in disabledDevices') { assert !r14.disabledDevices.contains('152') }
+check('disabledDevices contains exactly the one truly-disabled device') { assert r14.disabledDevices == ['150'] }
+
+println '--- 15. disabled: false from the first record is not shadowed by a later record reporting true (Codex review 372: the discriminating case) ---'
+def d15 = [devices: [
+    [key: 'DEV-160', data: [id: 160, name: 'Reports False Then True', disabled: false],
+     child: false, parent: true, children: [
+        [key: 'DEV-160', data: [id: 160, name: 'Reports False Then True', disabled: true],
+         child: false, parent: true, children: []],
+     ]],
+]]
+def r15 = aggregateDeviceTree(d15)
+check('the first record explicitly reporting false wins - a later record reporting true does not overwrite it') {
+    assert !r15.disabledDevices.contains('160')
+    assert r15.disabledDevices.isEmpty()
+}
+
+println '--- 16. disabled: false from the first record is not shadowed by a later record omitting the field entirely ---'
+def d16 = [devices: [
+    [key: 'DEV-161', data: [id: 161, name: 'Reports False Then Omits', disabled: false],
+     child: false, parent: true, children: [
+        [key: 'DEV-161', data: [id: 161, name: 'Reports False Then Omits'],
+         child: false, parent: true, children: []],
+     ]],
+]]
+def r16 = aggregateDeviceTree(d16)
+check('the first record explicitly reporting false wins - a later record silent on the field does not overwrite it') {
+    assert !r16.disabledDevices.contains('161')
+    assert r16.disabledDevices.isEmpty()
+}
+
+println '--- 17. disabled: true from the first record is not shadowed by a later record reporting false (the reverse direction) ---'
+def d17 = [devices: [
+    [key: 'DEV-162', data: [id: 162, name: 'Reports True Then False', disabled: true],
+     child: false, parent: true, children: [
+        [key: 'DEV-162', data: [id: 162, name: 'Reports True Then False', disabled: false],
+         child: false, parent: true, children: []],
+     ]],
+]]
+def r17 = aggregateDeviceTree(d17)
+check('the first record explicitly reporting true wins - a later record reporting false does not overwrite it') {
+    assert r17.disabledDevices == ['162']
 }
 
 println ''

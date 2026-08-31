@@ -104,7 +104,11 @@ import java.util.concurrent.atomic.AtomicInteger
 // Bumped 8->9 (v2.1.7): new hasComponent edge kind (device-owned component
 // relationships, e.g. a Shelly/Bond/Matter-bridge child or a Hub Variable
 // Connector nested under its parent) changes the persisted graph shape.
-@Field static final String GRAPH_SCHEMA = '9'
+// Bumped 9->10 (v2.1.7): device/app nodes gained disabled/paused fields
+// (item 18) - a cached schema-9 graph predates them, so the disabled-device
+// and paused/disabled-rule label suffixes and export status values would
+// silently be absent until the next manual scan without this bump.
+@Field static final String GRAPH_SCHEMA = '10'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -1592,11 +1596,12 @@ Map startScan() {
     state.deviceRooms = bulk.rooms as Map
     state.deviceTypes = bulk.types as Map
     // Child device id -> its immediate parent device id, from the bulk
-    // fetch's tree walk. Not yet consumed anywhere - reserved for the
-    // separate parent/child relationship-rendering increment (component-
-    // device-discovery, part 2) so that work does not need to re-walk the
-    // endpoint to recover identity already known here.
+    // fetch's tree walk. Consumed by buildHasComponentEdges() to draw the
+    // parent/child relationship (component-device-discovery, part 2).
     state.deviceParents = bulk.parents as Map
+    // Every device id the hub itself reports disabled. A List, not a Map -
+    // sparse and only ever tested for membership (item 18).
+    state.deviceDisabled = bulk.disabledDevices as List
     state.deviceCapabilities = [:]
     // Map of representative device id -> every device id sharing its driver
     // (deviceTypeId), including the representative itself. dispatchDeviceOne
@@ -2912,7 +2917,7 @@ void finishScan(data = null) {
 // recover an endpoint-omitted room (or confirm it is genuinely unassigned)
 // without broadcasting one atypical response across its whole driver group.
 Map fetchDeviceListBulk() {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
@@ -2944,7 +2949,7 @@ Map fetchDeviceListBulk() {
 // device seen more than once during the walk (top level and nested, or
 // nested under more than one path) is grouped exactly once.
 Map aggregateDeviceTree(Map data) {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
     Map<String, Map> byId = [:]
     List order = []
     List pending = []
@@ -2975,6 +2980,11 @@ Map aggregateDeviceTree(Map data) {
         if (!agg.type && d.type) agg.type = "${d.type}"
         if (agg.deviceTypeId == null && d.deviceTypeId != null) agg.deviceTypeId = "${d.deviceTypeId}"
         if (!agg.parentId && item.parentId) agg.parentId = item.parentId as String
+        // First record that actually reports the field wins - a truthy check
+        // would treat a legitimate `disabled: false` the same as "field
+        // absent", which for a boolean is wrong: false is real information,
+        // not emptiness.
+        if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
     }
     Map typeGroups = [:]
     order.each { String devId ->
@@ -2987,6 +2997,7 @@ Map aggregateDeviceTree(Map data) {
         if (agg.room) out.rooms[devId] = agg.room as String
         if (agg.type) out.types[devId] = agg.type as String
         if (agg.parentId) out.parents[devId] = agg.parentId as String
+        if (agg.disabled == true) (out.disabledDevices as List) << devId
         // Codex 346#3: the shared-group key requires BOTH a room AND a real
         // deviceTypeId. A roomed device with no deviceTypeId previously fell
         // through to the literal string "null", silently sharing one
@@ -3162,7 +3173,15 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             (data.appState ?: []).each { e ->
                 if (e instanceof Map && e.name == 'paused' && e.value == true) paused = true
             }
-            out.inactive = (installedApp?.disabled == true) || paused
+            // Kept as two distinct signals, not just one collapsed boolean
+            // (item 18): installedApp.disabled is a universal, hub-level flag
+            // for any app type; paused is Rule Machine's own appState and
+            // only ever true for a rule that actually has that concept. Both
+            // are already independently and reliably readable here - nothing
+            // about them is genuinely ambiguous once they are not merged.
+            out.disabled = (installedApp?.disabled == true)
+            out.paused = paused
+            out.inactive = out.disabled || out.paused
 
             Map roles = [:]
             List stateful = []
@@ -4575,11 +4594,14 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
     return flow
 }
 
-// Three label forms, not two, and each is drawn somewhere different:
+// Four label forms now, not three, and each is drawn (or read) somewhere
+// different:
 //
-//   label  short, drawn on the canvas with nothing focused
-//   draw   full identity, drawn on the canvas with an app focused
-//   title  everything including hub status, shown only on hover
+//   label   short, drawn on the canvas with nothing focused
+//   draw    full identity, drawn on the canvas with an app focused
+//   title   everything including hub status, shown only on hover
+//   name    stable identity, no live status of any kind baked in - what the
+//           AI export's nameOf() reads (item 18 correction)
 //
 // draw exists because Hubitat injects live status into an app's label, and on
 // a focused map that status was the widest thing on screen and identical on
@@ -4589,7 +4611,34 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
 // drawLabel defaults to fullLabel, so a caller with nothing to strip - every
 // device, and any app the hub has not annotated - passes one argument as before
 // and gets identical output.
-Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null) {
+//
+// statusSuffix (item 18) is Paused/Disabled/null - a second, later kind of
+// status from this app's own scan of hub state, distinct from whatever
+// Hubitat itself already injected into fullLabel. Deliberately NOT merged
+// with subtitle or stripped from anything: this codebase already rejected
+// pattern-matching hub-injected text once (see stripStatusMarkup, keyed on
+// markup not wording, specifically to avoid eating a legitimate name like
+// "Front Walkway Announce (Day)"), so statusSuffix is only ever appended,
+// never used to decide what to remove. Applied to label (AFTER truncation,
+// so a long name cannot cut it off - Codex review 372: the previous version
+// baked it into `clean` before truncation, silently losing it on exactly
+// the names this feature most needs to flag) and draw - and deliberately
+// NEVER to name, which must stay exactly what it already was: the export's
+// stable, undecorated identity.
+//
+// statusInTitle controls whether statusSuffix ALSO gets appended to title.
+// Confirmed live (Codex review 374): Hubitat's own paused-app label
+// injection already reads literally "(Paused)" - identical wording to this
+// function's own suffix - so appending ours too produced a genuine visible
+// duplicate in the title specifically ("... (Paused) (Rule-5.1) (Paused)"),
+// not a hypothetical one. label/draw are unaffected (built from the already
+// -stripped drawLabel, never carry the hub's own wording at all), only
+// title is at risk, because title alone is built from the unstripped
+// fullLabel. Devices never receive Hubitat's app-status markup in their
+// label at all, so there is no duplication risk there and the caller
+// leaves this at its default (true).
+Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null,
+              String statusSuffix = null, boolean statusInTitle = true) {
     String label = fullLabel ?: id
     String clean = drawLabel ?: label
     // Truncation runs on the cleaned text, so a name that is short in its own
@@ -4598,11 +4647,17 @@ Map nodeEntry(String id, String fullLabel, String group, String subtitle = null,
     // (Requi…", which is longer, uglier and no more informative.
     String shortLabel = clean
     if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
+    if (statusSuffix) shortLabel = "${shortLabel} (${statusSuffix})"
+    String canonicalName = subtitle ? "${clean} (${subtitle})" : clean
+    String drawText = statusSuffix ? "${canonicalName} (${statusSuffix})" : canonicalName
+    String titleText = subtitle ? "${label} (${subtitle})" : label
+    if (statusSuffix && statusInTitle) titleText = "${titleText} (${statusSuffix})"
     return [
         id: id,
         label: shortLabel,
-        draw: subtitle ? "${clean} (${subtitle})" : clean,
-        title: subtitle ? "${label} (${subtitle})" : label,
+        draw: drawText,
+        title: titleText,
+        name: canonicalName,
         group: group,
     ]
 }
@@ -5082,6 +5137,7 @@ Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
     Map deviceTypes = (state.deviceTypes ?: [:]) as Map
+    Set disabledDevices = (state.deviceDisabled ?: []) as Set
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
@@ -5247,12 +5303,6 @@ Map buildGraph() {
             .any { Map r -> r.scope == 'hub' }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         String appNodeId = "a${appId}"
-        String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
-        // [paused] is this app's own annotation, not the hub's, so it belongs on
-        // the drawn label too. drawLabel is absent from a scan taken before it
-        // existed, hence the fallback rather than a forced rescan.
-        String appDraw = (appMap.drawLabel ?: appMap.label) as String
-        if (appMap.inactive) appDraw = "${appDraw} [paused]"
         // An inert app's subtitle carries why it is empty instead of its engine.
         // The engine is the less useful of the two here: "Rule Machine" on a
         // square with no edges raises the question, "holds 46 apps" answers it.
@@ -5262,7 +5312,18 @@ Map buildGraph() {
         boolean isSelfFamily = "${appMap.type}".startsWith(APP_FAMILY)
         String subtitle = unreadable ? 'could not be read' :
             (inert ? (isSelfFamily ? 'reads the whole hub, drives nothing' : inertReason(appMap.inert as Map, appInfo, appMap.parent as String)) : (appMap.type as String))
-        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
+        // Disabled (a universal, hub-level flag) takes precedence over
+        // paused (Rule Machine-specific) when both happen to be true - an
+        // app that is both disabled and separately left paused is still,
+        // at the level a person cares about here, simply disabled.
+        String statusWord = appMap.disabled ? 'Disabled' : (appMap.paused ? 'Paused' : null)
+        // statusInTitle false: confirmed live (Codex review 374) that
+        // Hubitat's own paused-app label injection already reads literally
+        // "(Paused)" - appending our own suffix to the title too produced a
+        // genuine visible duplicate there. label/draw are unaffected, built
+        // from the already-stripped drawLabel.
+        nodes[appNodeId] = nodeEntry(appNodeId, appMap.label as String, 'app', subtitle,
+                                      appMap.drawLabel as String, statusWord, false)
         // The raw underlying type, unconditionally - subtitle above is
         // overwritten with the inert/unreadable reason for those nodes, so it
         // cannot be used to tell a rule apart from any other app once a node
@@ -5276,6 +5337,8 @@ Map buildGraph() {
         // mapping, so it never reaches the AI-friendly export.
         if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
         if (appMap.inactive) nodes[appNodeId].inactive = true
+        if (appMap.disabled) nodes[appNodeId].disabled = true
+        if (appMap.paused) nodes[appNodeId].paused = true
         if (unreadable) {
             nodes[appNodeId].unreadable = true
             nodes[appNodeId].reason = subtitle
@@ -5341,7 +5404,10 @@ Map buildGraph() {
         roles.each { String devId, devRoles ->
             String devNodeId = "d${devId}"
             if (!nodes[devNodeId]) {
-                nodes[devNodeId] = nodeEntry(devNodeId, (labels[devId] ?: "Device ${devId}") as String, 'device')
+                String devLabel = (labels[devId] ?: "Device ${devId}") as String
+                boolean devDisabled = disabledDevices.contains(devId)
+                nodes[devNodeId] = nodeEntry(devNodeId, devLabel, 'device', null, null, devDisabled ? 'Disabled' : null)
+                if (devDisabled) nodes[devNodeId].disabled = true
                 // The user's own correction wins outright when one exists;
                 // only otherwise is it worth asking the name/capability
                 // fallback what this device is.
@@ -5556,7 +5622,10 @@ Map buildGraph() {
         String devNodeId = "d${devId}"
         if (nodes[devNodeId]) return
 
-        nodes[devNodeId] = nodeEntry(devNodeId, (label ?: "Device ${devId}") as String, 'device')
+        boolean devDisabled = disabledDevices.contains(devId)
+        String devLabel = (label ?: "Device ${devId}") as String
+        nodes[devNodeId] = nodeEntry(devNodeId, devLabel, 'device', null, null, devDisabled ? 'Disabled' : null)
+        if (devDisabled) nodes[devNodeId].disabled = true
         nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
             autoDetectIconKeyForDevice((label ?: '') as String, deviceCaps[devId] as List,
                                        deviceTypes[devId] as String)
@@ -6621,9 +6690,14 @@ String buildMapHtml() {
     // component of a parent device), a device-to-device relationship with no
     // app endpoint at all - the first edge kind this export has ever had
     // that isn't app-centric.
+    // v2.1.7: schema 8 - devices[] gains a disabled boolean (item 18).
+    // apps[].status's collapsed 'paused-or-disabled' value is retired in
+    // favour of distinct 'disabled'/'paused' values - the hub already
+    // reports these as two separate signals, not one, so this export no
+    // longer merges them; disabled wins when both are true.
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 7,
+        exportSchemaVersion: 8,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -6971,10 +7045,11 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
-  <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
+  <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled - label ends "(Paused)" or "(Disabled)"</div>
   <div class="legend-row"><span class="swatch sw-square sw-inert"></span>App with no device or rule relationship - its label says why</div>
   <div class="legend-row"><span class="swatch sw-square sw-unreadable"></span>Could not be read during the scan - rescan to retry</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - icon by type (light, door, sensor...), grey with no app focused. Wrong? Device icons panel.</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device disabled on the hub - same colour and icon as any device, label ends "(Disabled)"</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
   <div class="legend-row"><span class="swatch sw-triangle" style="color:#4fb3a9"></span>Hub Variable - shared state a rule writes or reads</div>
   <div class="legend-row"><span class="swatch sw-triangle-down" style="color:#7986cb"></span>Local Variable - belongs to one rule only</div>
@@ -8833,6 +8908,9 @@ function fillSelect(selectId, searchId, group, allLabel) {
       if (q && n.title.toLowerCase().indexOf(q) < 0) return;
       const opt = document.createElement('option');
       opt.value = n.id; opt.textContent = pickOptionText(n, group);
+      // Native <option> elements cannot reliably colour just a suffix
+      // across browsers (item 18) - colour the whole option red instead.
+      if (n.disabled || n.paused) opt.style.color = '#e57373';
       sel.appendChild(opt);
       shown++;
     });
@@ -8843,6 +8921,7 @@ function fillSelect(selectId, searchId, group, allLabel) {
       if (cur) {
         const opt = document.createElement('option');
         opt.value = cur.id; opt.textContent = pickOptionText(cur, group);
+        if (cur.disabled || cur.paused) opt.style.color = '#e57373';
         sel.appendChild(opt);
       }
     }
@@ -10248,13 +10327,18 @@ function ref(id, nameOf) { return { id: id, name: nameOf[id] || id }; }
 function buildExportPayload(ext, icons, failedFetches) {
   const nodeById = {};
   ALL_NODES.forEach(function (n) { nodeById[n.id] = n; });
-  // n.draw is the stable identity with no live-status suffix baked in
-  // (n.title is "Mode Alarm Reminder (Required Expression false) (Rule-5.1)",
-  // n.draw is "Mode Alarm Reminder (Rule-5.1)" - the status is exposed
-  // separately as apps[].status instead). Falls back to title for any
-  // graph cached before draw existed.
+  // n.name is the stable identity with no live-status suffix baked in at
+  // all (n.title is "Mode Alarm Reminder (Required Expression false)
+  // (Rule-5.1) (Paused)", n.draw is the same minus the hub-injected
+  // "(Required Expression false)" but DOES carry "(Paused)"/"(Disabled)"
+  // since v2.1.7 - the status is exposed separately as apps[].status/
+  // devices[].disabled instead). Falls back to draw, then title, for any
+  // graph cached before name existed (Codex review 372: draw itself gained
+  // a live-status suffix this same version, so it is no longer a safe
+  // identity fallback for a *current* graph, only for one old enough to
+  // predate both fields).
   const nameOf = {};
-  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.draw || n.title; });
+  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.name || n.draw || n.title; });
 
   const flowIds = {};
   Object.keys(GRAPH.flows || {}).forEach(function (id) { flowIds[id] = true; });
@@ -10318,13 +10402,20 @@ function buildExportPayload(ext, icons, failedFetches) {
       id: n.id, name: nameOf[n.id],
       room: ic ? ic.room : null,
       iconCategory: n.icon || 'unknown',
-      capabilities: ic ? ic.capabilities : null
+      capabilities: ic ? ic.capabilities : null,
+      disabled: !!n.disabled
     };
   });
   const apps = ALL_NODES.filter(function (n) { return n.group === 'app'; }).map(function (n) {
     return {
       id: n.id, name: nameOf[n.id], appType: n.appType || null,
-      status: n.missing ? 'deleted-but-referenced' : n.unreadable ? 'unreadable' : n.inactive ? 'paused-or-disabled' :
+      // v2.1.7, schema 8: 'disabled' and 'paused' replace the collapsed
+      // 'paused-or-disabled' value - the hub reports these as two distinct
+      // signals (installedApp.disabled, Rule Machine's own paused appState),
+      // not one, so this export no longer merges them. disabled wins when
+      // both happen to be true, matching the map's own label precedence.
+      status: n.missing ? 'deleted-but-referenced' : n.unreadable ? 'unreadable' :
+        n.disabled ? 'disabled' : n.paused ? 'paused' :
         n.unscanned ? 'unscanned' : n.inert ? 'inert' : 'active',
       parentId: n.parent || null,
       childIds: n.kids || [],
@@ -10599,8 +10690,8 @@ function buildExportPayload(ext, icons, failedFetches) {
     insightGuidance: GUIDE,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
-      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
-      apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
+      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
