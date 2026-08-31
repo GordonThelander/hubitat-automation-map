@@ -101,7 +101,10 @@ import java.util.concurrent.atomic.AtomicInteger
 // node property are new. Without this bump an upgraded instance could render
 // a cached schema-7 graph and silently omit the whole feature until the next
 // manual scan (Codex 311 correction 2).
-@Field static final String GRAPH_SCHEMA = '8'
+// Bumped 8->9 (v2.1.7): new hasComponent edge kind (device-owned component
+// relationships, e.g. a Shelly/Bond/Matter-bridge child or a Hub Variable
+// Connector nested under its parent) changes the persisted graph shape.
+@Field static final String GRAPH_SCHEMA = '9'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -5055,6 +5058,26 @@ void correctFlowVariableLabels(Map flows, Map ruleVariables) {
     }
 }
 
+// Pure, sandbox-compatible, no hub calls - same copy-verbatim-into-a-test
+// convention as aggregateDeviceTree() (tests/has-component-edges.groovy).
+// For each state.deviceParents entry, emits one edge {from: parentNodeId,
+// to: childNodeId, kind: 'hasComponent'} only when both the parent and
+// child already exist as graph nodes - silently skips otherwise (recovers
+// on a later scan, never fails the graph). A separate kind from 'owns':
+// owns already means "an app created this device" in every existing
+// consumer of that field; this is device-to-device with no app involved,
+// and conflating the two would make owns ambiguous everywhere it's read.
+List buildHasComponentEdges(Set nodeIds, Map deviceParents) {
+    List result = []
+    deviceParents.each { childId, parentId ->
+        String childNodeId = "d${childId}"
+        String parentNodeId = "d${parentId}"
+        if (!nodeIds.contains(childNodeId) || !nodeIds.contains(parentNodeId)) return
+        result << [from: parentNodeId, to: childNodeId, kind: 'hasComponent']
+    }
+    return result
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -5539,6 +5562,19 @@ Map buildGraph() {
                                        deviceTypes[devId] as String)
         String note = (iconNotes[devId] as String)?.trim()
         if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
+    }
+
+    // Device-owned component relationships (a Shelly/Bond/Matter-bridge
+    // child, a Hub Variable Connector nested under its parent) - run after
+    // every discovered device already has a node above, so a parent or
+    // child known only through bulk inventory (never referenced by any app)
+    // still has somewhere to attach. Deduped through the same `seen` set
+    // every other edge source uses.
+    buildHasComponentEdges(nodes.keySet(), (state.deviceParents ?: [:]) as Map).each { Map hc ->
+        String key = "${hc.from}|${hc.to}|${hc.kind}"
+        if (seen.contains(key)) return
+        seen << key
+        edges << hc
     }
 
     // App-to-app edges are emitted in a second pass, so a link is still drawn
@@ -6581,9 +6617,13 @@ String buildMapHtml() {
     // Deliberately not a duplicate top-level array (Codex 311 correction 7):
     // ruleFlows[].localVariables[] is already the authoritative, owner-scoped
     // source, used to seed the graph nodes themselves.
+    // v2.1.7: schema 7 - edges[].kind can now be hasComponent (device-owned
+    // component of a parent device), a device-to-device relationship with no
+    // app endpoint at all - the first edge kind this export has ever had
+    // that isn't app-centric.
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 6,
+        exportSchemaVersion: 7,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -6946,6 +6986,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#7fae42"></span><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5c6bc0"></span><span class="line" style="border-color:#5c6bc0"></span>Has component - device-owned component of a parent device (e.g. Shelly, Bond, a Matter bridge)</div>
   <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub or Local Variable's value</div>
   <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub or Local Variable in its decoded logic</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
@@ -7011,6 +7052,7 @@ String buildMapHtml() {
     <option value="action">Actions only</option>
     <option value="exposed">Exposed only</option>
     <option value="owns">Ownership only</option>
+    <option value="hasComponent">Has component only</option>
     <option value="rulelinks">Rule to rule only</option>
     <option value="depends">External systems only</option>
   </select></label>
@@ -7058,7 +7100,7 @@ const GRAPH = ${jsonStr};
 const SCAN_META = ${scanMetaJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
-                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc' };
+                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', hasComponent: '#5c6bc0' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9', localVariable: '#7986cb' };
 
 // Device icon glyphs, keyed by n.icon (see ICON_RULES/autoDetectIconKey in the
@@ -7125,19 +7167,23 @@ const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
 // different ways.
 const KIND_LABEL = {
   trigger: 'Trigger', constraint: 'Constraint', monitor: 'Monitor', action: 'Action',
-  exposed: 'Exposed', owns: 'Owns', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
+  exposed: 'Exposed', owns: 'Owns', hasComponent: 'Has component', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
   setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read'
 };
 const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
 
 // Which edge kinds actually connect two node groups, keyed order-independently
 // (device|app and app|device are the same relationship read from either end).
-// Every edge on this map has an app in `from` - buildGraph never creates one
-// the other way round - so 'device' and 'external' never appear as a source
-// group here, only as a target. That is a fact about the data, not a design
-// choice made here, and it is what makes every combination this map can
-// produce meaningful: there is no such thing as a Device x External pivot,
-// because no edge on the graph could ever populate one.
+// Every edge on this map EXCEPT hasComponent has an app in `from` - that one
+// is device-to-device, added in v2.1.7, and deliberately excluded from pivot
+// support rather than given a device|device entry: the pivot feature is
+// app-centric by construction (pivotColOptions() only offers multiple
+// columns when rowGroup === 'app'), and a device-to-device relationship
+// doesn't fit that shape. The relationship stays fully present on the graph
+// and in the AI export either way - only the pivot-table view omits it.
+// 'device' and 'external' still never appear as a source group here, only as
+// a target - true for every OTHER edge kind, not a blanket fact about the
+// data anymore.
 function pivotKindOptions(g1, g2) {
   const key = [g1, g2].sort().join('|');
   if (key === 'app|app') return ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
@@ -7664,16 +7710,52 @@ window.addEventListener('resize', function () {
   refitTimer = setTimeout(function () { network.fit({ animation: false }); }, 200);
 });
 
+// Three passes, not one, so a hasComponent (device-owned component) edge
+// shows up in focus views it doesn't itself touch directly:
+// 1. One-hop edges touching the focus node directly - unchanged behaviour
+//    for every other edge kind.
+// 2. A visible hasComponent child pulls in its not-yet-visible parent, plus
+//    that edge - one-directional and not recursive, so adding the parent
+//    here does not itself cascade to the parent's other children. Covers an
+//    app that touches a component child but never references the parent.
+// 3. Backfill any hasComponent edge where both ends are already visible
+//    (from pass 1, pass 2, or the focus node itself) - catches a second
+//    app-touched sibling of a parent pass 2 just added, regardless of which
+//    order pass 2 happened to visit edges in.
 function neighborhood(nodeId, edgePool) {
   const ids = {};
   ids[nodeId] = true;
   const edgeList = [];
+  const addedKeys = {};
+  const addEdge = function (e) {
+    const key = e.from + '|' + e.to + '|' + e.kind;
+    if (addedKeys[key]) return;
+    addedKeys[key] = true;
+    edgeList.push(e);
+  };
+
   edgePool.forEach(function (e) {
     if (e.from === nodeId || e.to === nodeId) {
       ids[e.from] = true; ids[e.to] = true;
-      edgeList.push(e);
+      addEdge(e);
     }
   });
+
+  edgePool.forEach(function (e) {
+    if (e.kind !== 'hasComponent') return;
+    if (ids[e.to] && !ids[e.from]) {
+      ids[e.from] = true;
+      addEdge(e);
+    }
+  });
+
+  edgePool.forEach(function (e) {
+    if (e.kind !== 'hasComponent') return;
+    if (ids[e.from] && ids[e.to]) {
+      addEdge(e);
+    }
+  });
+
   return { ids: ids, edgeList: edgeList };
 }
 
@@ -10521,7 +10603,7 @@ function buildExportPayload(ext, icons, failedFetches) {
       apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry - see that schema entry for why a weaker-guarantee node is no longer manufactured here. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',

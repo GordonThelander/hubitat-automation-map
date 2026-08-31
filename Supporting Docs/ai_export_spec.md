@@ -1,7 +1,8 @@
 # Automation Map AI Export Specification
 
 **Status:** implemented contract  
-**Export schema:** 3  
+**Export schema:** 7 (see sections 18-21 for the schema 4/5/6/7 deltas; sections 1-17 describe
+schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
 
@@ -73,7 +74,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `4` as of v2.0.14 (see section 18). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `7` as of v2.1.7 (see sections 18-21). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
@@ -473,7 +474,19 @@ schema-3 `hubVariables` array is a complete inventory, since schema 3 never clai
 | --- | --- | --- |
 | `variableType` | string or null | `Number`, `Decimal`, `String`, `Boolean`, `DateTime`, or `null` if the platform's reported type spelling was not recognized. |
 | `identitySource` | enum | `hub-inventory` (confirmed against the hub's own authoritative Hub Variable list this scan) or `reference-derived` (found only via a decoded rule reference; a weaker guarantee - see section 7 for how to read `scan.hubVariableInventory.status`). |
-| `connector` | object or null | `{deviceId, connectorType}` whenever the hub itself reports a linked Connector device for this variable; `null` when it reports none. **Revised from the original design:** Connector devices do not appear in the same bulk device-enumeration the rest of `devices[]` is built from (a live platform finding, not a design choice - see `Supporting Docs/hub_variable_v2014_implementation_spec.md`), so a resolvable `deviceId` is trusted directly from the hub rather than requiring independent confirmation (confirmed acceptable against live hub data). `connector.deviceId` always resolves in `devices[].id`; that device entry has `iconCategory: "connector"` and, when independent discovery genuinely did not find it, `room`/`capabilities` are both `null` (same null semantics as any other device missing from that fetch - section 8.1) - otherwise its real reported data is used. `connectorType` is the device's own reported type when independent discovery did find it, otherwise the projected Connector attribute label Hubitat itself reports (observed live: `"Variable"`, `"Humidity"`) - not necessarily the underlying driver's name. There is no `unresolvedConnectors` finding (see 18.4): trusting the reported `deviceId` unconditionally means no code path can fail to resolve one. The one gap this leaves - a Connector manually deleted out from under its variable, bypassing the normal remove-connector flow - is documented as export prose in `limitations`, not as a structured field, since no code path can currently populate one. |
+| `connector` | object or null | `{deviceId, connectorType}` whenever the hub itself reports a linked Connector device for this variable; `null` when it reports none. **Revised from the original design, and revised again in schema 7:** a resolvable `deviceId` is
+trusted directly from the hub rather than requiring independent confirmation (confirmed acceptable
+against live hub data), because Connector devices were originally believed not to appear in the
+same bulk device-enumeration the rest of `devices[]` is built from. That premise turned out to be
+wrong, not just incomplete: `/hub2/devicesList` does include them, nested inside a parent entry's
+own `children` array rather than as a top-level sibling (see section 21) - the schema-4/5/6
+discovery code simply never read that far into the response. As of schema 7, bulk discovery
+finds a Connector device the same way it finds any other device-owned component, so `room`/
+`capabilities` resolve to real data in the normal case; they are still `null` only in the narrower
+case every other device already tolerates (this device genuinely absent from the fetch that
+supplied room/capabilities for this scan - section 8.1), not as an expected default for Connectors
+specifically the way earlier schemas described. `connector.deviceId` always resolves in
+`devices[].id`. `connectorType` is the device's own reported type when independent discovery did find it, otherwise the projected Connector attribute label Hubitat itself reports (observed live: `"Variable"`, `"Humidity"`) - not necessarily the underlying driver's name. There is no `unresolvedConnectors` finding (see 18.4): trusting the reported `deviceId` unconditionally means no code path can fail to resolve one. The one gap this leaves - a Connector manually deleted out from under its variable, bypassing the normal remove-connector flow - is documented as export prose in `limitations`, not as a structured field, since no code path can currently populate one. |
 | `currentValue` | JSON scalar or null | Always `null` in this release. No opt-in value export exists yet. |
 
 `identitySource: "hub-inventory"` means every variable the hub itself reports appears here, even
@@ -564,3 +577,117 @@ No baseline-comparator behaviour changed in this release. No current-value expor
 noted above. Section 15's recommended-AI-behaviour guidance applies to Hub Variable findings with
 no modification - the Hub-Variable-specific tone notes in section 18.4 above are elaborations of
 that same guidance, not exceptions to it.
+
+## 19. Schema 5 (v2.1.4, Gate C) delta
+
+Rule Machine can reference a **Local Variable** (scoped to one rule) using stored configuration
+indistinguishable, in general, from a Hub Variable reference. Schema 4 treated every such
+reference as a Hub Variable candidate. Schema 5 correctly separates the two instead of guessing,
+and reports a reference this export cannot confirm either way as unresolved rather than emitting a
+weaker-guarantee Hub Variable node. Design record: `Supporting Docs/
+local_hub_variable_identity_proposal.md`.
+
+This section covers concise deltas only - see the live export's own embedded `schema.limitations`
+array for the exact current wording, which is authoritative if this document and an export ever
+disagree (section 4).
+
+### 19.1 `ruleFlows[]` additions
+
+```json
+{
+  "localVariables": [ { "identity": "a2988:MyCounter", "name": "MyCounter", "variableType": "Number" } ],
+  "variableReferences": [ {
+    "name": "MyCounter", "scope": "local", "localIdentity": "a2988:MyCounter",
+    "operation": "write", "usageRole": null, "evidenceKind": "action", "field": "value"
+  } ],
+  "nonResolvedVariableReferences": [ {
+    "name": "Overloadcount", "status": "ambiguous", "operation": "read", "usageRole": null,
+    "candidateScopes": ["local", "hub"], "evidenceKind": "condition", "field": "compareTo",
+    "reason": "same-name-cross-scope"
+  } ]
+}
+```
+
+- `localVariables[]` - this rule's own declarations, keyed by `identity` (owner-scoped -
+  `"<appId>:<name>"` - two rules with their own same-named Local Variable never collide). Decoded
+  evidence from the rules this export could read, not a hub-wide inventory the way `hubVariables[]`
+  is: a Local Variable belonging to a rule on an undecodable engine, or one this scan could not
+  read, is simply absent, not counted as zero.
+- `variableReferences[]` - resolved (local or hub scope confirmed) reads/writes only.
+  `localIdentity` is non-null exactly when `scope` is `"local"`, joining back to this same rule's
+  own `localVariables[]` entry - a Local Variable reference is always satisfied by its own owning
+  rule, never another rule's declaration.
+- `nonResolvedVariableReferences[]` - a reference this export could not safely resolve, in either
+  of two distinct ways `status` distinguishes: `"ambiguous"` (a Local and Hub Variable share the
+  exact same name inside this one rule - a genuine Rule Machine storage-format ambiguity, not a
+  decoding gap; `candidateScopes` lists which scopes collided) or `"unresolved"` (the name matches
+  nothing this export can confirm - possibly renamed, deleted, or a decoder limitation). Neither
+  case creates a `hubVariables[]` edge or a Local Variable definition.
+
+### 19.2 What did not change
+
+`hubVariables[]`'s own shape and `identitySource` semantics (section 18.1) are unchanged - a Local
+Variable is never listed there under any circumstance, by design. `edges[]`'s `write`/`read` kinds
+still only ever target a Hub Variable in this schema; Local Variable edges do not exist until
+schema 6 (section 20).
+
+## 20. Schema 6 (v2.1.6) delta
+
+Local Variables become first-class graph nodes and export citizens, not just names inside
+`ruleFlows[]`. A Local Variable that is declared but never read or written by its own rule is now
+still represented, isolated the same way an orphaned app already was. Owner-scoped identity
+(section 19) is what makes this safe: two rules' own same-named Local Variables render as two
+distinct nodes, never merged. `graphSchemaVersion` moved 7 -> 8 alongside this change, since the
+persisted graph shape itself gained a node kind.
+
+### 20.1 `edges[]` can now target a Local Variable
+
+An edge whose `relationship` is `write` or `read` and whose `toId` is **absent from
+`hubVariables[]`** is a Local Variable reference, not a data gap. Resolve it by flattening every
+`ruleFlows[].localVariables[]` array (across all rules) and matching `toId` against `identity` -
+there is no separate top-level Local Variable array; this flattening is intentional so the export
+does not carry the same data twice. Do not treat an unmatched `toId` as an error before checking
+there first.
+
+### 20.2 New limitation: an unreferenced Local Variable is not evidence of a problem
+
+A Local Variable with no matching `edges[]` entry has no proven decoded reference in that rule -
+not read in a trigger, condition, or action, and not written. The same "may simply be unused"
+caveat that already applies to a Hub Variable in `insights.hubVariables.noDecodedUsage` (section
+18.4) applies here too, just without a dedicated `insights` finding for it yet.
+
+### 20.3 What did not change
+
+`hubVariables[]` is unaffected - Local Variables are not, and will not be, added to it; the two
+remain structurally distinct because their scope (one rule versus hub-wide) is a real platform
+difference, not a presentational one. No new root field was added for this change - both new
+capabilities (19 and 20) live entirely inside the existing `ruleFlows[]` and `edges[]` arrays.
+
+## 21. Schema 7 (v2.1.7) delta
+
+Device discovery gained a second relationship kind. `graphSchemaVersion` moved 8 -> 9 alongside
+this change (a new edge kind, like the schema-6 Local Variable node kind, changes the persisted
+graph shape the export is built from).
+
+### 21.1 `edges[]`: new `hasComponent` relationship
+
+| Relationship | Meaning |
+| --- | --- |
+| `hasComponent` | A device-owned component device (`isComponent: true`, created by a parent *device driver* rather than an app - Shelly, Bond, and Matter bridges are confirmed examples) belongs to its parent device. Structural inventory ownership, like `owns` (section 9), but device-to-device rather than app-to-device - `fromId` is a device, not an app, which no other relationship in section 9's table does. Not evidence either device commands the other. |
+
+Background: `/hub2/devicesList`, the endpoint every `devices[]` record is built from, returns a
+hierarchical response - a device-owned component can be represented nested inside its parent
+entry's own `children` array rather than as a top-level sibling. Before this schema, such a
+component was invisible to discovery entirely if nothing else (a rule, a dashboard, another app)
+happened to reference it independently. It is not specific to Matter, or to any one integration -
+the distinguishing property is `isComponent: true` on a device-owned child, not "has a parent" in
+general; an app-owned child device (for example, several Kasa/Tapo/CoCoHue integrations' own
+devices) does not set that flag and was never affected.
+
+### 21.2 What did not change
+
+No new root field. `owns` (section 9) is unchanged in meaning and still never has a device as
+`fromId` - only `hasComponent` does. Pivot-table-style consumers of this export should note that
+`hasComponent` is the one relationship kind in section 9's table with a device, not an app, as its
+source; a consumer that assumed every edge has an app endpoint (true of every other kind in this
+schema) must update that assumption for this one.
