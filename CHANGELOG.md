@@ -17,9 +17,8 @@ distinct nodes, never merged - the same identity guarantee Gate C (2.1.4) establ
 telling Local and Hub Variable references apart. Adds a Focus local variable picker and pivot table
 support alongside the existing app/device/Hub Variable ones. Graph storage schema bumped 7 to 8 and the
 AI-friendly export schema bumped 5 to 6, since edges[] can now target a Local Variable in addition to a
-Hub Variable - the schema prose documents how to tell them apart without guessing. Built collaboratively
-with Codex across a reviewed design and implementation-plan cycle. Dev-only testing build, not yet
-verified on the Dev hub.
+Hub Variable - the schema prose documents how to tell them apart without guessing. Dev-only testing
+build, not yet verified on the Dev hub.
 
 **2026-08-29 fix**: `graphVersion` moves from `state` to `atomicState`. A page load landing within about a
 second of a scan's completion could read a stale pre-commit `state` snapshot - `state.graph` still null,
@@ -57,7 +56,7 @@ dropdown shows `[CON]` for a Connector-backed Hub Variable and `[HVR]` for a pla
 authoritative `connectorDeviceId` the graph already resolves; the rule detail card shows `[LOC]` for a
 proven Local reference and `[HVR]` for a proven Hub reference, with no tag on a Needs-review entry since
 its class is, by definition, not known. No new backend or export schema fields - every tag reads a value
-already resolved by Gate C (2.1.4). Built collaboratively with Codex. Verified on the Dev hub against
+already resolved by Gate C (2.1.4). Verified on the Dev hub against
 fixture rule 3079: both tag branches confirmed against real classified data (a proven Hub reference and
 a Connector-backed Hub Variable), with no regression on the earlier Gate A fixtures. Dev-only testing
 build, not yet promoted to production.
@@ -75,8 +74,7 @@ rather than falling back to a weaker-guarantee node. Adds a Local/Hub/Needs-revi
 the rule detail panel, and corresponding `localVariables`/`variableReferences`/
 `nonResolvedVariableReferences` fields to the AI-friendly export (schema 5) - the export's Hub Variable
 topology guarantee is strictly stronger as a result, which is why the schema version bumped rather than
-just adding fields. Built collaboratively with Codex across an extensive empirical fixture-capture and
-review process. Verified on the Dev hub: classification exactly matched Gate A's fixture predictions
+just adding fields. Verified on the Dev hub: classification exactly matched Gate A's fixture predictions
 across all three test rules, Hub Variable graph topology and corrected flow labels rendered correctly
 with no invented relationships from ambiguous or unresolved references, the Local/Needs-review rule
 detail card rendered correctly on a live rule, no variable value appeared anywhere, and scan
@@ -91,8 +89,8 @@ Fixes the registry-finalization stale-snapshot race: a finalizer entering with a
 registry snapshot now resolves correctly through a generation-keyed lookup instead of publishing an
 incomplete result, and a completed generation can never be republished. Also fixes the settings page
 showing stale "Scanning..."/"Building map" text after a scan has actually completed, and closes a gap
-where auto-scan could start a second scan without checking the live scan lock. Built collaboratively
-with Codex across extensive design review and correction. Verified on Gordon's own hub - a genuine
+where auto-scan could start a second scan without checking the live scan lock. Verified on Gordon's
+own hub - a genuine
 state resurrection caught and cleared in under half a second, down from roughly 90 seconds before this
 fix, and a settings-page fetch at the exact instant of true completion showed no stale text - and via a
 controlled Dev-only test forcing the registry watchdog specifically to win the finalizer claim, which
@@ -101,7 +99,7 @@ Steve's own C-5 hardware, which exercised the same stale-snapshot hazard on the 
 
 ## 2.1.2
 
-Adds the Automation Map Telemetry Driver, a new bundled driver that reports anonymous data to support ongoing development and future features, after every scan. No credential in the driver: the endpoint is open ingestion, protected by strict server-side payload validation rather than a secret shipped in public source. On by default, no toggle, disclosed in the README. Automation Map creates its own child device instance automatically; delivery is deferred so a telemetry failure can never affect scan publication. Also fixes a false `error: HTTP 302` status the driver reported for a successful send, caused by treating Apps Script's redirect response as a transport failure instead of following it. Built collaboratively with Codex, who resolved the live Apps Script deployment and both driver-side fixes. Verified end to end on the Dev hub: a real scan produced a genuine row in the telemetry sheet with correct data, and the status now reads `submitted`/`ok` instead of a false error.
+Adds the Automation Map Telemetry Driver, a new bundled driver that reports anonymous data to support ongoing development and future features, after every scan. No credential in the driver: the endpoint is open ingestion, protected by strict server-side payload validation rather than a secret shipped in public source. On by default, no toggle, disclosed in the README. Automation Map creates its own child device instance automatically; delivery is deferred so a telemetry failure can never affect scan publication. Also fixes a false `error: HTTP 302` status the driver reported for a successful send, caused by treating Apps Script's redirect response as a transport failure instead of following it. Verified end to end on the Dev hub: a real scan produced a genuine row in the telemetry sheet with correct data, and the status now reads `submitted`/`ok` instead of a false error.
 
 ## 2.1.1
 

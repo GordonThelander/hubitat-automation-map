@@ -199,7 +199,7 @@ check('two writes to the same variable name are distinguished by variableField, 
     assert flows.a10[1].label == 'Set Variable Foo (unresolved)'
 }
 
-// Minimal reproduction of the graph read-edge usageRole aggregation (Codex 292
+// Minimal reproduction of the graph read-edge usageRole aggregation (review 292
 // correction): only a role set that is BOTH size-one AND non-null is trusted.
 Closure aggregateReadUsageRole = { List roles ->
     Set<String> distinct = roles as Set<String>

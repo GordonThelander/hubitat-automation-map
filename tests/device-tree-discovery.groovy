@@ -160,7 +160,7 @@ check('duplicate id: first-seen (top-level) label wins, not overwritten by the s
     assert r5.labels['40'] == 'Duplicate Top'
 }
 
-println '--- 5b. Partial top-level record enriched by a richer nested record (Codex correction 339#1) ---'
+println '--- 5b. Partial top-level record enriched by a richer nested record (review 339, correction 1) ---'
 def d5b = [devices: [
     [key: 'DEV-50', data: [id: 50, name: 'Partial Device'], child: false, parent: false, children: []],
     entry(60, 'Enricher Parent', 'Office', 'Driver C', 600, false, true, [
@@ -259,7 +259,7 @@ check('regression: roomed top-level device groups normally by deviceTypeId') {
     assert r10.typeGroups['1100'] == ['111']
 }
 
-println '--- 11. Wrong-type data and children (Codex correction 346#1) ---'
+println '--- 11. Wrong-type data and children (review 346, correction 1) ---'
 def d11 = [devices: [
     // data is a String, not a Map - must be treated as absent, not thrown on,
     // and must not block a well-formed sibling from being processed.
@@ -286,7 +286,7 @@ check('wrong-type children: no exception propagates from the malformed collectio
     assert true  // reaching this line at all is the assertion
 }
 
-println '--- 12. Device ID with no name anywhere (Codex correction 346#2) ---'
+println '--- 12. Device ID with no name anywhere (review 346, correction 2) ---'
 def d12 = [devices: [
     [key: 'DEV-130', data: [id: 130, roomName: 'Garage', type: 'Driver H', deviceTypeId: 1300],
      child: false, parent: false, children: []],
@@ -299,7 +299,7 @@ check('id-only device still gets its real room and type despite the missing name
     assert r12.rooms['130'] == 'Garage' && r12.types['130'] == 'Driver H'
 }
 
-println '--- 13. Roomed entry with no deviceTypeId (Codex correction 346#3) ---'
+println '--- 13. Roomed entry with no deviceTypeId (review 346, correction 3) ---'
 def d13 = [devices: [
     [key: 'DEV-140', data: [id: 140, name: 'Roomed No TypeId A', roomName: 'Study'],
      child: false, parent: false, children: []],
@@ -328,7 +328,7 @@ check('a device reporting disabled false is not in disabledDevices') { assert !r
 check('a device that never reports the field at all is not in disabledDevices') { assert !r14.disabledDevices.contains('152') }
 check('disabledDevices contains exactly the one truly-disabled device') { assert r14.disabledDevices == ['150'] }
 
-println '--- 15. disabled: false from the first record is not shadowed by a later record reporting true (Codex review 372: the discriminating case) ---'
+println '--- 15. disabled: false from the first record is not shadowed by a later record reporting true (review 372: the discriminating case) ---'
 def d15 = [devices: [
     [key: 'DEV-160', data: [id: 160, name: 'Reports False Then True', disabled: false],
      child: false, parent: true, children: [

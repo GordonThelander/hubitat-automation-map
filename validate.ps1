@@ -170,7 +170,7 @@ function Test-InlineScriptSyntax([string]$Text, [string]$SourceLabel) {
             # PS7.3+'s $PSNativeCommandUseErrorActionPreference) promotes
             # that into a terminating NativeCommandError before $LASTEXITCODE
             # can be inspected, aborting the whole gate instead of returning
-            # a finding (caught live in Codex's own validation environment,
+            # a finding (caught live in a separate validation environment,
             # not just theorised). Scope ErrorActionPreference to 'Continue'
             # for this one call only, so a bad exit code is data, not a
             # thrown exception.
