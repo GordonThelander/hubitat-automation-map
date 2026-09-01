@@ -1,5 +1,7 @@
 param(
     [string]$AppFile = 'apps/automation_map.groovy',
+    [string]$ManifestFile = 'packageManifest.json',
+    [string]$RepositoryFile = 'repository.json',
     # Exercises each gate below against a known-bad fixture and against the
     # real source, then exits. A gate nobody has seen fail is not evidence of
     # anything.
@@ -279,14 +281,14 @@ try {
     $manifest = $null
     $repository = $null
     try {
-        $manifest = Get-Content -LiteralPath 'packageManifest.json' -Raw | ConvertFrom-Json
+        $manifest = Get-Content -LiteralPath $ManifestFile -Raw | ConvertFrom-Json
     } catch {
-        Add-ValidationError "packageManifest.json is not valid JSON: $($_.Exception.Message)"
+        Add-ValidationError "$ManifestFile is not valid JSON: $($_.Exception.Message)"
     }
     try {
-        $repository = Get-Content -LiteralPath 'repository.json' -Raw | ConvertFrom-Json
+        $repository = Get-Content -LiteralPath $RepositoryFile -Raw | ConvertFrom-Json
     } catch {
-        Add-ValidationError "repository.json is not valid JSON: $($_.Exception.Message)"
+        Add-ValidationError "$RepositoryFile is not valid JSON: $($_.Exception.Message)"
     }
 
     $appName = Match-Value $appText "@Field\s+static\s+final\s+String\s+APP_NAME\s*=\s*'([^']+)'" 'APP_NAME'

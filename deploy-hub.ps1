@@ -1,6 +1,7 @@
 param(
     [string]$HubUrl = 'http://10.0.0.125',
     [string]$AppFile = 'apps/automation_map.groovy',
+    [int]$InstalledAppId = 0,
     [switch]$SkipValidation,
     [switch]$WhatIf
 )
@@ -60,8 +61,20 @@ try {
     $hubBase = $HubUrl.TrimEnd('/')
     $apps = Invoke-RestMethod -Uri "$hubBase/hub2/appsList" -Method Get -TimeoutSec 20
     $matches = @($apps.userAppTypes | Where-Object { $_.name -eq $expectedAppName })
+    if ($matches.Count -gt 1 -and $InstalledAppId -gt 0) {
+        $installedStatus = [string](Invoke-RestMethod -Uri "$hubBase/installedapp/statusJson/$InstalledAppId" -Method Get -TimeoutSec 20)
+        $installedName = [regex]::Match($installedStatus, '"installedApp"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"').Groups[1].Value
+        $appTypeIdText = [regex]::Match($installedStatus, '"appTypeId"\s*:\s*(\d+)').Groups[1].Value
+        if ($installedName -ne $expectedAppName -or -not $appTypeIdText) {
+            throw "Installed app $InstalledAppId did not identify itself as '$expectedAppName' with an Apps Code ID. Production was not touched."
+        }
+        $installedAppTypeId = [int]$appTypeIdText
+        $matches = @($matches | Where-Object { [int]$_.id -eq $installedAppTypeId })
+        Write-Host "Resolved duplicate Apps Code names through installed Dev app $InstalledAppId -> Apps Code ID $installedAppTypeId."
+    }
     if ($matches.Count -ne 1) {
-        throw "Expected exactly one '$expectedAppName' Apps Code entry, found $($matches.Count). Production was not touched."
+        $guidance = if ($InstalledAppId -gt 0) { " Installed app $InstalledAppId did not resolve exactly one match." } else { ' Supply -InstalledAppId to correlate an installed Dev instance.' }
+        throw "Expected exactly one '$expectedAppName' Apps Code entry, found $($matches.Count).$guidance Production was not touched."
     }
 
     $appId = [int]$matches[0].id
