@@ -6726,7 +6726,7 @@ Map renderMapMapping() {
             status: 200,
             contentType: 'text/html',
             data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map - scan in progress</title></head>
-<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<body style="background:#062733; color:#eee; font-family:ui-sans-serif, system-ui, sans-serif; padding:2em; line-height:1.5">
 <h2>Scan in progress</h2>
 <p>The map is temporarily unavailable while Automation Map discovers and publishes the new data.</p>
 <p>Return to the Automation Map app when the scan has completed, then open the map again.</p>
@@ -6739,7 +6739,7 @@ Map renderMapMapping() {
             status: 200,
             contentType: 'text/html',
             data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
-<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<body style="background:#062733; color:#eee; font-family:ui-sans-serif, system-ui, sans-serif; padding:2em; line-height:1.5">
 <h2>This map is out of date</h2>
 <p>It was saved in a format this release no longer reads.
 Relationship types have changed since then, so the graph would render without role colours.</p>
@@ -6856,6 +6856,14 @@ String buildMapHtml() {
      bumped - they are tied to these exact files, not the package version. -->
 <script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js" integrity="sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP" crossorigin="anonymous"></script>
+<!-- Mulish - matches the typeface used across gordonthelander.github.io/HPM_Manifest_Crawl/
+     (Hubitat Community Utilities), per Gordon's request to bring this page's look closer to
+     that one. A font stylesheet only affects rendering, not script execution, so this does not
+     carry the same same-origin-token risk the pinned JS libraries above are guarded against -
+     no integrity pin needed for the same reason. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
@@ -6873,7 +6881,7 @@ String buildMapHtml() {
     font-weight: normal;
     font-style: normal;
   }
-  html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
+  html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
   #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; max-width:340px; }
   #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
@@ -6881,13 +6889,23 @@ String buildMapHtml() {
   #showFilterLabel { margin-top:10px; }
   #controls select { width:100%; box-sizing:border-box; }
   #controls button, #controls select, #controls option { font-size:14px; font-family:inherit; }
-  #controls button { margin-top:2px; cursor:pointer; }
+  /* Left to the browser default before this, every unstyled button (Insights,
+     External systems, Pivot tables, Device icons, AI friendly export, Hubitat
+     release activity, Exit map) rendered as a stark light-grey pill against
+     this dark panel - the only two that looked deliberate were "Show all"
+     and "Community utilities", which already set their own inline colours.
+     Blue accent taken from gordonthelander.github.io/HPM_Manifest_Crawl/
+     (Hubitat Community Utilities) - #17699a/#eef7fc there on a light card,
+     inverted here for a dark one so every plain action button reads as one
+     deliberate family instead of an unstyled default. */
+  #controls button { margin-top:2px; cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:4px; padding:5px 8px; }
+  #controls button:hover { background:#1a4d6b; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
      harness verified in Bucket/combobox-harness/. Closed control is a plain
      non-editable button; the search field lives inside the popup only. */
   .cb { position:relative; }
-  .cb-button { width:100%; box-sizing:border-box; padding:3px 8px; font:inherit; text-align:left; border:1px solid #6a7078; border-radius:3px; background:#0a2530; color:#eee; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .cb-button { width:100%; box-sizing:border-box; padding:3px 8px; font:inherit; text-align:left; border:1px solid #1e5878; border-radius:3px; background:#0a2530; color:#eee; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:6px; }
   .cb-button:focus { outline:2px solid #4a90d9; outline-offset:-1px; }
   .cb-button-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cb-arrow { flex:none; color:#cfd8dc; font-size:12px; }
@@ -6896,10 +6914,10 @@ String buildMapHtml() {
      150px control truncated every real app/device name to a few characters.
      #controls is pinned to the right edge of the screen, so the popup grows
      leftward off the button's right edge rather than off-screen. */
-  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #6a7078; border-radius:4px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
+  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:4px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
   /* The dedicated search field - first row of the popup, auto-focused on
      open, visually its own zone (bottom border) above the options list. */
-  .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #6a7078; background:#0d3446; color:#eee; }
+  .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #1e5878; background:#0d3446; color:#eee; }
   .cb-search::placeholder { color:#8fc4e0; font-style:italic; opacity:1; }
   .cb-search:focus { outline:none; }
   .cb-list { list-style:none; margin:0; padding:0; max-height:260px; overflow-y:auto; }
@@ -7275,14 +7293,14 @@ String buildMapHtml() {
     <option value="rulelinks">Rule to rule only</option>
     <option value="depends">External systems only</option>
   </select></label>
-  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214;">Show all</button>
+  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
   <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
   <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div>
