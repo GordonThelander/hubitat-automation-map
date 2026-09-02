@@ -6882,12 +6882,26 @@ String buildMapHtml() {
     font-style: normal;
   }
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
-  #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; max-width:340px; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
-  #controls label { display:block; margin-bottom:2px; }
-  #showFilterLabel { margin-top:10px; }
-  #controls select { width:100%; box-sizing:border-box; }
+  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:999px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
+  /* Fixed width, matching #status exactly (was max-width, sized to
+     content) - the two need to line up regardless of viewport width, not
+     just coincidentally happen to at one particular size. */
+  /* Fixed width (matching #status) made rows wrap more, running the panel
+     off the bottom of the screen - smaller text plus a hard max-height/
+     scroll safety net so it can never do that again regardless of viewport
+     height or how much the legend itself grows later. */
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:12px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
+  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
+  /* Small bold letter-spaced label above each control - the same "eyebrow"
+     treatment gordonthelander.github.io/HPM_Manifest_Crawl/ uses above its
+     own headings (e.g. "COMMUNITY TOOLS FOR HUBITAT"), borrowed for shape/
+     type only, not its light-card colours. */
+  #controls label { display:block; margin-bottom:3px; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; }
+  #showFilterLabel { margin-top:22px; }
+  /* The one remaining native <select> (Show/kindFilter) was left to the
+     browser's own default white dropdown chrome - now matches the pill
+     buttons and combobox next to it instead of standing out as unstyled. */
+  #controls select { width:100%; box-sizing:border-box; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:5px 10px; }
   #controls button, #controls select, #controls option { font-size:14px; font-family:inherit; }
   /* Left to the browser default before this, every unstyled button (Insights,
      External systems, Pivot tables, Device icons, AI friendly export, Hubitat
@@ -6898,14 +6912,25 @@ String buildMapHtml() {
      (Hubitat Community Utilities) - #17699a/#eef7fc there on a light card,
      inverted here for a dark one so every plain action button reads as one
      deliberate family instead of an unstyled default. */
-  #controls button { margin-top:2px; cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:4px; padding:5px 8px; }
+  /* Pill-shaped, matching the rounded buttons/badges on
+     gordonthelander.github.io/HPM_Manifest_Crawl/ - shape only, this app
+     stays on its own dark background rather than that site's light one. */
+  #controls button { margin-top:2px; cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; }
   #controls button:hover { background:#1a4d6b; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
      harness verified in Bucket/combobox-harness/. Closed control is a plain
      non-editable button; the search field lives inside the popup only. */
-  .cb { position:relative; }
-  .cb-button { width:100%; box-sizing:border-box; padding:3px 8px; font:inherit; text-align:left; border:1px solid #1e5878; border-radius:3px; background:#0a2530; color:#eee; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  /* Every combobox mounts inside a <label> (see initCombo/HTML below), and
+     the new eyebrow-label styling on #controls label - tiny, bold, letter-
+     spaced, uppercase, blue - is otherwise inherited by everything nested
+     inside it. .cb-opt and .cb-search have no font-weight/text-transform/
+     letter-spacing/colour of their own to block that (confirmed live:
+     .cb-search measured at 11px/800/blue - the label's values, not its
+     own), so it stops here instead, restoring normal text for the whole
+     combobox subtree regardless of which label it happens to sit inside. */
+  .cb { position:relative; font-weight:400; font-size:14px; letter-spacing:normal; text-transform:none; color:#eee; }
+  .cb-button { width:100%; box-sizing:border-box; padding:4px 12px; font:inherit; text-align:left; border:1px solid #1e5878; border-radius:999px; background:#0a2530; color:#eee; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:6px; }
   .cb-button:focus { outline:2px solid #4a90d9; outline-offset:-1px; }
   .cb-button-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cb-arrow { flex:none; color:#cfd8dc; font-size:12px; }
@@ -6914,7 +6939,7 @@ String buildMapHtml() {
      150px control truncated every real app/device name to a few characters.
      #controls is pinned to the right edge of the screen, so the popup grows
      leftward off the button's right edge rather than off-screen. */
-  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:4px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
+  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:12px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
   /* The dedicated search field - first row of the popup, auto-focused on
      open, visually its own zone (bottom border) above the options list. */
   .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #1e5878; background:#0d3446; color:#eee; }
@@ -6942,7 +6967,7 @@ String buildMapHtml() {
      width - a left:X% value has no way to track that reliably, which is
      why the panel's own 150px->300px widening (item, live 2026-09-02) threw
      the previous left:82% off centre under Exit map. */
-  #hubWatermark { position:fixed; top:68%; right:160px; transform:translate(50%, -50%);
+  #hubWatermark { position:fixed; top:76%; right:160px; transform:translate(50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
   /* Hub photo specifically shown at half the Christmas tree's size, per
@@ -6951,12 +6976,14 @@ String buildMapHtml() {
   /* First shipped as a bare 1em glyph with no background - reported as "had to
      go hunting for it". A visible pill with its own border and a hover state
      reads as a button; a lone triangle in a wall of text does not. */
-  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:bold; padding:2px; border-radius:4px; }
+  /* Matches the right-hand panel's own theme: blue accent border/background
+     on the toggle pill, letter-spaced accent-blue heading text. */
+  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:800; letter-spacing:0.4px; color:#7fb6d6; padding:2px; border-radius:4px; }
   #legend-head:hover { background:rgba(255,255,255,0.10); }
-  #legend-toggle { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.35); color:#fff; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:5px; padding:0; cursor:pointer; }
+  #legend-toggle { background:#123a52; border:1px solid #1e5878; color:#cfe9fb; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:999px; padding:0; cursor:pointer; }
   #legend.collapsed #legend-body { display:none; }
   #legend.collapsed { padding:6px 10px; }
-  .legend-row { display:flex; align-items:center; margin:4px 0; }
+  .legend-row { display:flex; align-items:center; margin:3px 0; }
   /* Shape is per row now. The old single .swatch rule forced border-radius 50%
      on every swatch, so the legend drew a circle for an app that the map draws
      as a square, and rotating that circle 45 degrees for an external system was
@@ -7104,6 +7131,10 @@ String buildMapHtml() {
   #icons table { border-collapse:collapse; width:100%; font-size:0.8em; }
   #icons th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #icons td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
+  /* Same AMIcons glyph the map itself draws for this device (ICON_GLYPHS),
+     shown here too so the effective icon is visible at a glance instead of
+     only as text inside the override dropdown. */
+  .devIconGlyph { font-family:'AMIcons'; display:inline-block; width:16px; margin-right:6px; text-align:center; color:#7fb6d6; }
   #icons tr.overridden td { background:rgba(79,179,169,0.09); }
   #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -8931,21 +8962,28 @@ function renderCommunityCard(node) {
   const box = document.getElementById('communityCard');
   if (!box) return;
   const seq = ++communityCardRequestSeq;
-  if (!node || node.group !== 'app') { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  // box.hidden, not just an empty innerHTML - the card's own light background
+  // still painted a blank box with nothing in it (reported live: a plain
+  // white rectangle with no text). Emptying the content was never enough on
+  // its own to remove the box from the page.
+  if (!node || node.group !== 'app') { box.innerHTML = ''; box.hidden = true; ccApplyClickable(box, null); return; }
   // A child app is an instance the user built inside an engine - a rule, a
   // button rule, a notifier. No community package exists for one, so the card
   // could only ever say "nothing found". Show nothing instead.
-  if (node.parent) { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  if (node.parent) { box.innerHTML = ''; box.hidden = true; ccApplyClickable(box, null); return; }
+  box.hidden = false;
   box.innerHTML = '<h4>Community information</h4><p class="sub">Checking Community Utilities...</p>';
   ccApplyClickable(box, null);
   loadCommunityContext().then(function (data) {
     if (seq !== communityCardRequestSeq) return;
     const rendered = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated, node.appType);
+    box.hidden = false;
     box.innerHTML = rendered.html;
     ccApplyClickable(box, rendered.clickUrl);
   }).catch(function (e) {
     if (seq !== communityCardRequestSeq) return;
     console.warn('Community information unavailable: ' + e.message);
+    box.hidden = false;
     box.innerHTML = '<h4>Community information</h4><p class="sub">Community information is temporarily unavailable.</p>';
     ccApplyClickable(box, null);
   });
@@ -10622,7 +10660,7 @@ function iconsRender(message, filter) {
     const isOverridden = d.override && d.override !== 'auto';
     const isUnknown = iconsEffectiveKey(d) === 'unknown';
     h += '<tr' + (isOverridden ? ' class="overridden"' : '') + '>';
-    h += '<td>' + extEsc(d.name) + '</td>';
+    h += '<td><span class="devIconGlyph">' + (ICON_GLYPHS[iconsEffectiveKey(d)] || ICON_GLYPHS.unknown) + '</span>' + extEsc(d.name) + '</td>';
     h += '<td>' + extEsc(d.room) + '</td>';
     h += '<td>' + extEsc(labels[d.detected] || d.detected) + '</td>';
     h += '<td><select data-dev="' + extEsc(d.id) + '">';
