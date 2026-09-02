@@ -6856,14 +6856,6 @@ String buildMapHtml() {
      bumped - they are tied to these exact files, not the package version. -->
 <script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js" integrity="sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP" crossorigin="anonymous"></script>
-<!-- Mulish - matches the typeface used across gordonthelander.github.io/HPM_Manifest_Crawl/
-     (Hubitat Community Utilities), per Gordon's request to bring this page's look closer to
-     that one. A font stylesheet only affects rendering, not script execution, so this does not
-     carry the same same-origin-token risk the pinned JS libraries above are guarded against -
-     no integrity pin needed for the same reason. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
@@ -6880,6 +6872,23 @@ String buildMapHtml() {
     src: url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/webfonts/fa-solid-900.woff2') format('woff2');
     font-weight: normal;
     font-style: normal;
+  }
+  /* Mulish - matches the typeface used across gordonthelander.github.io/HPM_Manifest_Crawl/
+     (Hubitat Community Utilities), per Gordon's request to bring this page's look closer to
+     that one. Self-hosted from this repo rather than fetched live from Google Fonts on every
+     page load - this app just removed its own telemetry driver because a call to any third
+     party read as intrusive to some users, and a live Google Fonts request is the same class
+     of thing even though it carries no app data. Single variable-weight WOFF2 (Latin subset
+     only; this app's own UI text is English) covers every weight actually used (400/600/700/
+     800) with one file - Google Fonts serves the identical file for all of them, confirmed by
+     diffing the returned @font-face rules for each weight. SIL Open Font License 1.1 permits
+     bundling/self-hosting freely; no attribution required, credited here anyway. */
+  @font-face {
+    font-family: 'Mulish';
+    src: url('https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Fonts/Mulish-VariableWeight-latin.woff2') format('woff2');
+    font-weight: 400 800;
+    font-style: normal;
+    font-display: swap;
   }
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:999px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }

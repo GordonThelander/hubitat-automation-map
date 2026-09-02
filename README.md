@@ -97,7 +97,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 
 - **OAuth must be enabled on the app**, since the map is served as a web page from your hub. See Install below.
 - **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
-- **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN, the device icon font loads from cdnjs, and the watermark and click sound effects load from GitHub. The hub itself does not need internet.
+- **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN, the device icon font loads from cdnjs, and the watermark, click sound effect, and UI typeface (Mulish, self-hosted rather than fetched from Google Fonts) load from GitHub. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
 - **Tested only on platform 2.5.1.152.** `minimumHEVersion` in the manifest matches; HPM will not offer this app on an earlier build.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
