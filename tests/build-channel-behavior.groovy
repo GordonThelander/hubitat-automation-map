@@ -7,6 +7,12 @@
 // apps/automation_map.groovy so a regression there is caught here without
 // needing the full Hubitat sandbox.
 //
+// The copied-closures section above only proves the LOGIC is correct in
+// isolation - it would stay green even if a real call site in the app drifted
+// from that logic, or were hardcoded back to a literal (review, queue 440).
+// The source-bound section below closes that gap by reading the actual app
+// file and asserting the expected call-site shapes/counts are present in it.
+//
 // Run with: groovy tests/build-channel-behavior.groovy
 
 // --- isDevBuild(), copied verbatim ---
@@ -89,6 +95,45 @@ check('dev channel resolves asset branch to dev') {
 }
 check('production channel resolves asset branch to main') {
     assert assetBranch('production') == 'main'
+}
+
+// --- Source-bound assertions (review, queue 440): read the real app file,
+// resolved as a sibling of THIS script's own location (not the process cwd -
+// same pattern tools/production-builder/*.groovy use), and prove each
+// expected call-site shape/count is actually present in it. ---
+File thisScriptFile = new File(this.class.protectionDomain.codeSource.location.toURI())
+File appFile = new File(thisScriptFile.parentFile.parentFile, 'apps/automation_map.groovy')
+String src = appFile.getText('UTF-8')
+
+println '--- Source-bound: the app file itself matches the behavioral matrix above ---'
+check('appFile resolves and is readable') {
+    assert appFile.exists() : "expected ${appFile.absolutePath} to exist"
+    assert src.length() > 0
+}
+check('the Dev/production asset branch appears at all three asset URL sites (font, watermark, sound)') {
+    String needle = "\${isDevBuild() ? 'dev' : 'main'}"
+    int count = src.count(needle)
+    assert count == 3 : "expected exactly 3 occurrences of ${needle}, found ${count}"
+}
+check('defaultAutoScanTime() uses isDevBuild() for the 01:00/00:30 split') {
+    assert src.contains("isDevBuild() ? '01:00' : '00:30'")
+}
+check('traceOn() includes both channel and diagnostic level 2') {
+    def m = (src =~ /(?s)boolean traceOn\(\)\s*\{(.*?)\}/)
+    assert m.find() : 'traceOn() function body not found in source'
+    String body = m.group(1)
+    assert body.contains('isDevBuild()') : 'traceOn() body missing isDevBuild()'
+    assert body.contains('DIAGNOSTIC_LEVEL == 2') : 'traceOn() body missing DIAGNOSTIC_LEVEL == 2'
+}
+check('debugForceWatchdogWin includes both channel and diagnostic level 2') {
+    def m = (src =~ /boolean debugForceWatchdogWin = ([^\n]+)/)
+    assert m.find() : 'debugForceWatchdogWin assignment not found in source'
+    String line = m.group(1)
+    assert line.contains('isDevBuild()') : 'debugForceWatchdogWin assignment missing isDevBuild()'
+    assert line.contains('DIAGNOSTIC_LEVEL == 2') : 'debugForceWatchdogWin assignment missing DIAGNOSTIC_LEVEL == 2'
+}
+check('no executable app-name-derived channel check remains') {
+    assert !src.contains('APP_NAME.contains') : 'found a reintroduced APP_NAME.contains(...) channel check'
 }
 
 println "${pass} passed, ${fail} failed"
