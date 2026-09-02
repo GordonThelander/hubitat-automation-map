@@ -108,9 +108,11 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
 - On the current Dev build, a scan of roughly 200 devices normally completes well under a minute. The production v2.0.4 serial scanner can take about two minutes on a similarly sized hub. Hub load and app count still affect both figures.
 
-## Telemetry
+## Diagnostic logging
 
-Automation Map may collect anonymous data after a scan to support ongoing development and future features. This has no toggle; it is part of how the app works. Delivery happens after the map is published, so a telemetry failure can never affect a scan.
+Automation Map logs quietly by default. A settings-page toggle enables detailed diagnostic logging for troubleshooting - off by default, and it auto-disables itself after an hour so it can't be left running by accident. Nothing here is transmitted anywhere; it only writes to your own hub's log.
+
+As of v2.1.8, Automation Map no longer reports anonymous telemetry to a remote service. Earlier versions (2.1.2-2.1.7) did, via a bundled telemetry driver; that driver and everything that fed it are removed. An instance upgrading from one of those versions removes its own leftover telemetry device automatically.
 
 ## Install
 
