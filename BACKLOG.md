@@ -13,7 +13,19 @@ not a release commitment.
 Every active item states its next action. Detailed research belongs in Supporting Docs or commit
 history, not in this delivery list.
 
+## Release gate
+
+The v2.1.7 Dev line is not ready for production promotion until Steve has retested the original
+missing component-device scenario on his hub and the result has been reviewed. This dependency does
+not authorize a production deployment, branch push or release.
+
+**Next action:** wait for Steve's external result. If it confirms the corrected discovery and
+rendering behaviour, assess release readiness separately and ask Gordon for explicit promotion
+authorization.
+
 ## Now
+
+## Next
 
 ### 1. Desktop UI review and map workspace modernisation
 
@@ -55,19 +67,27 @@ usability issue, not cosmetic polish.
 and Export; only one primary panel is open at a time; ordinary text is comfortably readable; and
 the graph remains useful while tools are opened and closed.
 
-### 2. Open Automation Map in a normal browser tab
+**Status:** audit, low-risk proposal, desktop wireframe and acceptance matrix completed on
+2026-08-31 in `WIP/desktop_ui_review_and_modernisation.md`. The next implementation gate is Phase 1,
+the structural workspace shell. Source implementation, Dev deployment, commit, push and production
+promotion remain separately authorised actions.
 
-**Why now:** Hubitat's generated link opens a fixed-width popup that is cramped for the graph and
-can be blocked by browsers. This is a contained usability fix that supports the wider desktop UI
-work without depending on its redesign.
+**Live feedback from Gordon's own testing (2026-09-02) - implemented ahead of the fuller audit/
+wireframe, all three confirmed live on Automation Map (Dev) / Apps Code 1210:**
 
-**Next action:** replace the framework popup link with a safe plain link that opens the map in a
-normal new tab, then verify local, Remote Admin and cloud access paths.
-
-**Done when:** the map reliably opens in a normal tab at the available browser size without
-regressing authenticated local or remote access.
-
-## Next
+- The External Systems "Community information" card (e.g. the LIFX Light Manager tile) is narrower
+  (`#communityCard` max-width). Done.
+- Spacing added between the top Focus dropdowns and the "Show" relationship filter below them
+  (`#showFilterLabel` margin-top). Done.
+- The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single combined
+  combobox each, replacing the old search-input-stacked-above-a-select pair. Proven standalone first
+  in `Bucket/combobox-harness/` (31 automated checks) before porting, then iterated live against
+  Gordon's own feedback: a non-editable closed control (label + arrow) opens a popup whose first row
+  is a dedicated, auto-focused search field, with the filtered options list directly below it and no
+  pinned "All X" row once a filter term is typed. `#controls` widened 150px -> 300px and the hub
+  watermark image repositioning tracks the panel's own right-anchored geometry (`right:` instead of
+  a fixed `left:` percentage) so the two cannot drift out of alignment again the way they did when
+  the panel first widened. Done.
 
 ### 4. Include Dashboard usage in cleanup findings
 
@@ -99,21 +119,6 @@ overrides and icon choices.
 
 **Next action:** define a versioned schema, conflict rules, preview step and validation behaviour.
 Never import scan results or secrets as configuration.
-
-### 8. Scan-schedule setting descriptions never render
-
-Not urgent - cosmetic, and has been present in production (confirmed on the live v2.0.4 instance,
-unrelated to any recent work) without being noticed until now.
-
-The `autoScanEnabled` and `autoScanTime` inputs both set a `description:` ("On by default at
-00:30/01:00...", "Leave blank for 00:30/01:00.") that never appears in Hubitat's rendered settings
-page - confirmed on both the Dev and production instances, same gap on both, so this is a platform
-rendering limitation for `bool`/`time` input descriptions, not something broken in this app's code.
-The Hours/Minutes fields showing empty is correct - no time has ever been explicitly set, and the
-default only applies internally at scheduling time, never as a pre-filled value.
-
-**Next action:** replace the two `description:` attributes with a `paragraph` element instead,
-since plain paragraphs render reliably everywhere else in this app.
 
 ### 9. Surface broken or disabled rules in Insights
 
@@ -176,51 +181,16 @@ was previously waiting on is closed (v2.1.3, Dev-verified and independently conf
 hardware; queue 270/271 record the controlled tests). That does not itself authorise starting this
 item - it just removes a stale blocker from this text.
 
+A narrower slice of the logging half was implemented separately as v2.1.8 (see Hold/closed) - an on-demand,
+runtime-toggle-gated diagnostic channel available in both Dev and production, off by default. That
+is not this item: the structured, privacy-safe Dev-only trace schema replacing `AM-TRACE`, and the
+comment-stripping production build, are both still fully unstarted and still gated on Gordon
+starting this phase explicitly.
+
 **Next action:** wait for Gordon to explicitly start this phase. No work begins before then. First
 actual step, once started, is a small feasibility spike proving the Groovy-lexer-based comment
 stripper works correctly on `apps/automation_map.groovy` alone - see the spec doc for the full spike
 scope before any CI or branch-protection work is considered.
-
-### 17. Add anonymous Variable coverage counts to telemetry
-
-Variable discovery and Local-versus-Hub classification are now substantial product features, but the
-current telemetry records only overall topology counts. Add bounded aggregate counts so testing can
-show how widely these features are exercised and how often classification needs review across real
-hubs.
-
-**Proposed fields:**
-
-- `hubVariables`
-- `hubVariableConnectors`
-- `localVariables`
-- `ambiguousVariableReferences`
-- `unresolvedVariableReferences`
-
-These are counts only. Never transmit variable names or values, owning rule names, Connector device
-IDs, Hub Variable types, a unique hub identifier, or any other identifying or free-form content.
-
-**Next action:** define the exact count sources from the completed scan graph, then update the
-Automation Map payload, telemetry driver validation/forwarding, Apps Script validation and headers,
-and the live Google Sheet columns as one versioned schema change. Existing rows may remain blank in
-the new columns. Do not implement only one layer because the current strict validators will reject or
-discard a partial schema change.
-
-**Done when:** one controlled Dev scan writes all five non-negative integer counts to the expected
-columns, invalid payloads are rejected, existing telemetry fields remain unchanged, and inspection
-confirms that no variable name, value, owner or Connector identity can enter the payload.
-
-### 19. Canvas-level red suffix for disabled/paused labels
-
-Item 18 (shipped, see Hold / closed below) implemented the `(Disabled)`/`(Paused)` label suffix and coloured the
-native Focus dropdown options red for a disabled/paused entry, but left the canvas node label itself
-as plain text rather than colouring just the suffix red as originally asked for. Colouring part of
-one vis-network label needs its per-node rich-text mode (`font: {multi: 'html'}`) - a real, supported
-feature, but a rendering path this codebase has never used anywhere and has no test coverage for.
-
-**Next action:** Gordon's decision whether this is worth the risk of a rendering path with no
-automated coverage. If yes, scope it to only the nodes that need it (per-node font override, not a
-network-wide config change) and verify live on Dev before shipping, same as every other JS-only
-change in this codebase.
 
 ## Later / v3
 
@@ -251,12 +221,61 @@ never presenting stale data as a completed current scan.
 
 ## Hold / closed
 
+- **Open Automation Map in a normal browser tab (was item 2):** dropped as infeasible within the
+  Hubitat-generated app UI, which controls the map link's small pop-out window. Do not pursue a link
+  rewrite unless Hubitat later exposes a supported way for the app to choose normal-tab behaviour.
 - **Show disabled devices distinctly on the map (was item 18):** completed and verified on Dev,
   pending production release (2026-08-31) - disabled devices and paused/disabled rules get a
   canonical label suffix, structured export fields (`devices[].disabled`, `apps[].status`
   distinguishing `disabled`/`paused`), and coloured Focus dropdown entries. Also fixed the
   duplicate-suffix bug noted under item 9. The canvas-level red-suffix piece was deliberately left
   out - see item 19.
+- **Scan-schedule setting shows its real default (was item 8):** local review and automated gates
+  passed, deployed to Automation Map (Dev) (Apps Code 1210 / instance 3083), and confirmed live in
+  Gordon's own testing (2026-09-02) - the Hours/Minutes field now shows its actual default
+  (00:30 production, 01:00 Dev) pre-filled via the input's own `defaultValue`, rather than appearing
+  blank with an explanatory `description:` that never rendered on `bool`/`time` inputs. A
+  `paragraph` states the display-vs-saved nuance. A separate effective-default helper
+  (`autoScanEffectivelyEnabled()`) treats a genuinely unsaved `null` the same as the toggle's own
+  displayed-on default, since Hubitat does not necessarily populate `settings` with a displayed
+  default before the first save - without it, a truly fresh install could read the toggle as off and
+  hide the time input entirely. One helper function is the single source for the default time across
+  the input, the paragraph, and the scheduler's own blank-time fallback, so the three can't drift
+  apart.
+- **v2.1.8 production cleanup - telemetry removed, on-demand diagnostic logging added:** local
+  review and automated gates passed, deployed to Automation Map (Dev) (Apps Code 1210 / instance
+  3083). Diagnostic-toggle placement and off/on/off logging behaviour independently verified live
+  by Gordon (2026-09-02) - `AM-TRACE` present only while enabled, gated routine lines correct, the
+  two anomaly lines at `warn`. The telemetry-child migration test (clean deletion, plus a
+  deliberately-referenced device failing safely) is explicitly **waived by Gordon**, not passed -
+  low affected population, easy manual fallback. The Automation Map
+  Telemetry Driver and everything that fed it (`ensureTelemetryDevice()`/`reportTelemetry()`/
+  `fetchHubHardwareId()`, the manifest driver entry, the README disclosure) are removed outright
+  rather than made optional - community reaction to an always-present reporting driver was that it
+  read as intrusive regardless of what it actually collected. An upgrading instance removes its own
+  leftover telemetry child device automatically (best-effort, exact-DNI `deleteChildDevice()`; if
+  Hubitat refuses because it's still referenced elsewhere, the settings page shows a fixed warning -
+  never the raw exception text, which is internal diagnostic detail and stays in the log only - and
+  retries the next time settings are saved, not on a schedule of its own). In its place, a
+  settings-page toggle enables on-demand diagnostic logging for troubleshooting - off by default,
+  with a durable expiry timestamp (not just a scheduled job, which a missed hub-down window could
+  leave stuck) enforcing the one-hour auto-disable even if the scheduled handler itself is missed;
+  the settings page reconciles a stale "on" display back to off on its own next render. Only
+  routine/lifecycle log lines are gated behind it (installs, scheduling confirmations, endpoint-entry
+  logs, successful saves, expected superseded-generation discards, registry counts, scan
+  start/completion detail); the temporary `AM-TRACE` path is Dev-only regardless of the toggle,
+  per the existing agreement not to make it part of the reusable production logging design. Failures
+  and degraded outcomes that can leave the map incomplete or stale stay unconditionally logged
+  regardless of the toggle. Both the removed remote-telemetry approach and the new local-logging
+  approach are documented for reuse at `https://github.com/GordonThelander/hubitat_dev_utililities`
+  under "Application Telemetry Methods", sanitized and parameterized rather than copied with real
+  identifiers.
+- **Add anonymous Variable coverage counts to telemetry (was item 17):** cancelled, superseded by
+  the decision to remove remote telemetry entirely rather than extend it (2026-09-02).
+
+  This is a narrower, immediately-authorised slice of item 16 below, not a substitute for it -
+  item 16's structured Dev-only race trace and its comment-stripping production build remain
+  separate, still gated on Gordon starting that phase explicitly.
 - **Component-device (parent/child) discovery and rendering:** completed and verified on Dev,
   pending production release (2026-08-31) - `/hub2/devicesList`'s hierarchical response (a
   device-owned component, e.g. a Shelly/Bond/Matter-bridge child, nested inside its parent's own

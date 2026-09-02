@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.1.7'
+@Field static final String APP_VERSION = '2.1.8'
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -154,115 +154,185 @@ preferences {
 }
 
 void installed() {
-    log.info "${app.label} installed"
-    ensureTelemetryDevice()
+    if (diagOn()) log.info "${app.label} installed"
     // Pressing Done is the first moment the instance exists and work can be
     // scheduled for it, so the first scan starts here rather than asking the
     // user to press Done and then come back in to start one - which reads as
     // though the install did not take.
-    log.info "${app.label}: starting first scan"
+    if (diagOn()) log.info "${app.label}: starting first scan"
     startScan()
     scheduleAutoScan()
 }
 
 void updated() {
-    log.info "${app.label} updated"
-    // Also called here, not only from installed() - an instance upgraded from
-    // a version that predates telemetry has no child device yet, and updated()
-    // is what actually runs on that upgrade.
-    ensureTelemetryDevice()
-    // Rescheduled on every updated(), which is also how this survives a hub
-    // reboot - Hubitat re-runs updated() for every installed app on boot, so
-    // the schedule() call here re-establishes the cron rather than relying
-    // on it having persisted through the restart. Not directly confirmed on
-    // this hub; standard platform behaviour, worth a real reboot test if
-    // this schedule is ever reported as silently not firing.
+    if (diagOn()) log.info "${app.label} updated"
+    // v2.1.8: telemetry is removed. An instance upgraded from a version
+    // that created the telemetry child device (v2.1.2-2.1.7) needs it
+    // cleaned up - see migrateRemoveTelemetryDevice().
+    migrateRemoveTelemetryDevice()
+    // Rescheduled on every updated() so any change to the enabled toggle or
+    // chosen time takes effect immediately.
     scheduleAutoScan()
+    scheduleDiagnosticLoggingExpiry()
 }
 
-// One child device per instance, created once and reused - the report() call
-// after every scan just fetches it by DNI rather than re-deriving anything.
-// Failure here (e.g. the driver isn't installed for some reason) is logged
-// and swallowed, never thrown - telemetry must never be able to block a
-// scan-triggering install/update.
-void ensureTelemetryDevice() {
+// v2.1.8: on-demand diagnostic logging for troubleshooting, off by default.
+// diagOn() is the single gate every routine/lifecycle log line in this file
+// checks - always wrapping the WHOLE log statement, not evaluating a
+// message first and passing it through a gated function, so a disabled
+// toggle costs nothing: an off diagOn() line never builds its string.
+// Failures and degraded outcomes (invariant violations, watchdog timeouts,
+// failed fetch/finalization/recovery) are never gated by this - they stay
+// logged unconditionally elsewhere in this file regardless of the toggle,
+// so a quiet install can never lose visibility into something actually
+// going wrong.
+// review 392: requires a durable deadline, not just the setting -
+// settings.diagnosticLoggingEnabled alone would let the toggle stay
+// reported "on" past its hour if the scheduled auto-disable job was ever
+// missed (a one-shot runIn() job does not fire late or catch up if the hub
+// was down at its due time - unlike a recurring schedule(), which Hubitat
+// does re-establish). state.diagnosticLoggingExpiresAt is the actual
+// authority; the scheduled job below is only a best-effort prompt to flip
+// the displayed setting at the right moment.
+boolean diagOn() {
+    if (settings.diagnosticLoggingEnabled != true) return false
+    Long expiresAt = (state.diagnosticLoggingExpiresAt ?: 0) as Long
+    return expiresAt > 0 && now() < expiresAt
+}
+
+// Sets the durable deadline ONCE, on the off-to-on transition, and never
+// pushes it out again - review 392: pressing Done for an unrelated
+// setting while this stays on must not silently extend the window past
+// what the user actually turned on. A later updated() call while it is
+// already on (with an existing deadline and job) leaves both alone.
+void scheduleDiagnosticLoggingExpiry() {
+    if (settings.diagnosticLoggingEnabled != true) {
+        unschedule('disableDiagnosticLogging')
+        state.remove('diagnosticLoggingExpiresAt')
+        return
+    }
+    if (!state.diagnosticLoggingExpiresAt) {
+        state.diagnosticLoggingExpiresAt = now() + 3600000L
+        unschedule('disableDiagnosticLogging')
+        runIn(3600, 'disableDiagnosticLogging')
+    }
+}
+
+// runIn handler - flips the setting back off once the durable deadline has
+// passed. Also reached via the settings-page reconciliation (main page
+// render) if the scheduled job itself was missed - either path converges
+// on the same state. updateSetting() (not settings.x = false, which does
+// not persist a dynamicPage input's value) is the documented API for an
+// app changing its own setting outside of page submission. Gated by
+// diagOn() being the CALLER's job, not this function's - this line always
+// logs, telling the user their diagnostic session just ended, including if
+// they were away from the settings page when it expired.
+void disableDiagnosticLogging() {
+    app.updateSetting('diagnosticLoggingEnabled', [type: 'bool', value: false])
+    state.remove('diagnosticLoggingExpiresAt')
+    log.info "${app.label}: diagnostic logging auto-disabled after one hour"
+}
+
+// v2.1.8 migration only - telemetry itself is removed. Best-effort exact-DNI
+// deletion of the child device earlier versions created, matching how
+// ensureTelemetryDevice() used to create it: never allowed to block
+// installed()/updated(). Idempotent once it succeeds, or if the device was
+// never there in the first place - state.telemetryMigrationDone short-
+// circuits every later call so a completed migration is never retried or
+// logged again. A deletion failure (Hubitat can refuse it while the device
+// is still referenced elsewhere - a dashboard, another app) leaves the
+// device intact and does NOT set that flag, so the next updated() - the
+// next time settings are saved, not a hub reboot; this function is only
+// ever called from updated() - retries it in case the reference has since
+// been cleared; the failure is also recorded in state for the settings
+// page to surface as a visible, actionable warning rather than only a log
+// line.
+void migrateRemoveTelemetryDevice() {
+    if (state.telemetryMigrationDone) return
     String dni = "${app.id}-telemetry"
-    if (getChildDevice(dni)) return
+    if (!getChildDevice(dni)) {
+        state.telemetryMigrationDone = true
+        state.remove('telemetryRemovalFailed')
+        return
+    }
     try {
-        addChildDevice('Hubitat Integrations', 'Automation Map Telemetry Driver', dni,
-            [name: 'Automation Map Telemetry Driver', label: 'Automation Map Telemetry', isComponent: true])
+        deleteChildDevice(dni)
+        state.telemetryMigrationDone = true
+        state.remove('telemetryRemovalFailed')
+        // One-time routine confirmation, gated like any other - review 392:
+        // this would otherwise make an upgrade noisy even with diagnostics
+        // off.
+        if (diagOn()) log.info "${app.label}: removed the former telemetry device - telemetry is discontinued as of this version."
     } catch (Exception ex) {
-        log.warn "${app.label}: could not create telemetry device: ${ex.message}"
+        // review 392: state.telemetryRemovalFailed is a fixed flag,
+        // not the exception text - ex.message is internal diagnostic text,
+        // not HTML-escaped, and must never be interpolated directly into
+        // rendered settings-page HTML. The real detail stays in this log
+        // line only. Retries the next time settings are saved (updated()),
+        // not on hub restart - migrateRemoveTelemetryDevice() is only
+        // called from updated(), which does not run on reboot.
+        state.telemetryRemovalFailed = true
+        log.warn "${app.label}: could not remove the former telemetry device automatically (${ex.message}) - it may still be referenced elsewhere (a dashboard, another app). Clear the reference and remove it manually from the Devices page; this app will retry the next time you save these settings."
     }
 }
 
-// runIn handler - see the finishScan() call site for what data is sent and why
-// it is deferred. Missing device or a failed report is logged and swallowed;
-// a scan that already published successfully must never be affected by this.
-void reportTelemetry(Map data) {
-    def telemetryDevice = getChildDevice("${app.id}-telemetry")
-    if (!telemetryDevice) return
-    try {
-        Map payload = new LinkedHashMap(data)
-        payload.hardwareId = fetchHubHardwareId()
-        telemetryDevice.report(payload)
-    } catch (Exception ex) {
-        log.warn "${app.label}: telemetry report failed: ${ex.message}"
-    }
+// Single source of truth for the default automatic-scan time - Dev and
+// production differ only so a Dev install running alongside production on
+// the same hub doesn't compete with it for the same loopback endpoints at
+// the same second. Used for the settings-page input's defaultValue, the
+// paragraph explaining it, and the scheduler's own blank-time fallback
+// below, so the displayed default, the explanation, and what actually runs
+// cannot drift out of sync with each other the way three separately
+// hardcoded strings could (v2.1.8; item 8).
+String defaultAutoScanTime() {
+    return APP_NAME.contains('(Dev)') ? '01:00' : '00:30'
 }
 
-// Best-effort only, and deliberately silent on failure - this runs off the
-// deferred telemetry path, never inside finishScan()'s own claimed closure,
-// so it can never slow down or risk scan completion. httpFetch() itself
-// never logs (confirmed - it only returns ok/error), and nothing here adds
-// a log line either: a failed fetch just means hardwareId is absent from
-// this one telemetry row, not a warning anyone has to see.
-//
-// Reads 'model' (e.g. "C-8"), not 'hardwareID' - confirmed live against the
-// raw endpoint on 2026-08-28: /hub2/hubData has no hardwareID field at all,
-// which is why every row sent under the original code came back empty. It
-// already returns the friendly model name directly, so no hex lookup table
-// is needed - the field is named hardwareId for continuity with the driver
-// and Apps Script's existing schema, but the value is the model string.
-String fetchHubHardwareId() {
-    Map result = httpFetch("${LOOPBACK_BASE}/hub2/hubData", 10, [contentType: 'application/json'])
-    if (!result.ok || !(result.data instanceof Map)) return null
-    def model = (result.data as Map).model
-    return model ? "${model}" : null
+// Cron expression (sec min hour day month weekday) for defaultAutoScanTime()
+// - derived from it, not a second hardcoded time, so the two can never say
+// different things. Only used when autoScanTime is blank; an explicitly
+// chosen time is always scheduled from the input's own stored value instead.
+String defaultAutoScanCron() {
+    List parts = defaultAutoScanTime().tokenize(':')
+    return "0 ${parts[1]} ${parts[0]} * * ?"
 }
 
-// On by default (00:30 production, 01:00 Dev when the time is left blank) -
+// The bool input's own defaultValue: true is a DISPLAY default only -
+// review 392: Hubitat does not necessarily populate settings with a
+// displayed default until the page is refreshed/saved, so a genuinely
+// fresh, never-saved install can have settings.autoScanEnabled read null
+// even while the toggle visually shows on. A bare truthy check on that
+// value would then read as "off" on first render - hiding the time input
+// the settings page is meant to show by default, and skipping the very
+// first scheduled scan this app is supposed to run automatically out of
+// the box. Treat only an explicit false as off; null/missing counts as on,
+// matching the toggle's own displayed default. Used everywhere this
+// setting is read, not just the scheduler, so the page and the schedule
+// can never disagree about what "on" means.
+boolean autoScanEffectivelyEnabled() {
+    return settings.autoScanEnabled != false
+}
+
+// On by default (see defaultAutoScanTime()) when the time is left blank -
 // the app-wide scan-first-then-explore experience this app is built around
 // is better served by a map that keeps itself current than by one that goes
-// stale until someone remembers to press Scan. The two defaults differ only
-// so a Dev install running alongside production on the same hub doesn't
-// compete with it for the same loopback endpoints at the same second - an
-// explicitly chosen time on either instance is never overridden. The toggle
-// below is still there to opt out entirely. Rescheduled (not just scheduled
-// once) every time this runs, so turning the toggle off actually cancels a
+// stale until someone remembers to press Scan. The toggle below is still
+// there to opt out entirely. Rescheduled (not just scheduled once) every
+// time this runs, so turning the toggle off actually cancels a
 // previously-running schedule rather than leaving it firing.
 void scheduleAutoScan() {
     unschedule('scheduledScanHandler')
-    if (!settings.autoScanEnabled) return
+    if (!autoScanEffectivelyEnabled()) return
     if (settings.autoScanTime) {
         // schedule() accepts the exact string a Hubitat "time" input stores
         // and reschedules it daily - standard, documented platform pattern,
         // not yet confirmed live against this specific input on this hub.
         schedule(settings.autoScanTime as String, 'scheduledScanHandler')
-    } else if (APP_NAME.contains('(Dev)')) {
-        // A Dev install sitting on its own explicit "01:00 (default)" text
-        // (see the settings page) - kept off production's 00:30 so the two
-        // don't compete for the same hub CPU/loopback endpoints at the same
-        // second when both are installed side by side, as they are on
-        // Gordon's own hub. Only the blank-time fallback differs; an
-        // explicitly chosen time on either instance is untouched above.
-        schedule('0 0 1 * * ?', 'scheduledScanHandler')
     } else {
-        // Cron default: 00:30:00 every day (sec min hour day month weekday).
-        schedule('0 30 0 * * ?', 'scheduledScanHandler')
+        schedule(defaultAutoScanCron(), 'scheduledScanHandler')
     }
-    String defaultLabel = APP_NAME.contains('(Dev)') ? '01:00 (default)' : '00:30 (default)'
-    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
+    String defaultLabel = "${defaultAutoScanTime()} (default)"
+    if (diagOn()) log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
 }
 
 // Guarded against overlapping a scan already in progress - a manual press
@@ -272,15 +342,15 @@ void scheduleAutoScan() {
 // already handles a scan that genuinely got stuck.
 void scheduledScanHandler() {
     if (state.scanRunning) {
-        log.info "${app.label}: scheduled scan skipped, one is already running"
+        if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
         return
     }
-    log.info "${app.label}: starting scheduled overnight scan"
+    if (diagOn()) log.info "${app.label}: starting scheduled overnight scan"
     // state.scanRunning above is a fast-path check only, harmless if stale -
     // startScan()'s own atomic lock is what actually decides this correctly.
     Map result = startScan()
     if (!result.acquired) {
-        log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
+        if (diagOn()) log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
     }
 }
 
@@ -304,6 +374,27 @@ Map main() {
         }
     }
     clearAbandonedScan()
+    // review 394: diagnosticLoggingEnabled uses submitOnChange, which saves
+    // the setting and re-renders this page WITHOUT calling updated() -
+    // Done/Save Preferences is what calls updated(), a separate, later
+    // event. scheduleDiagnosticLoggingExpiry() must run here too, not only
+    // from updated(), or the very first render after a user turns the
+    // toggle on would see settings.diagnosticLoggingEnabled == true with no
+    // deadline set yet, and the reconciliation immediately below would turn
+    // it straight back off before updated() ever gets a chance to run - the
+    // toggle would appear to do nothing. Calling it first (idempotent - see
+    // its own comment, it only sets a deadline once) means the off-to-on
+    // transition's deadline exists before the reconciliation check reads
+    // it, while later page renders while it's already on, or while it's
+    // off, behave exactly as before.
+    scheduleDiagnosticLoggingExpiry()
+    // Reconciles a displayed-on toggle whose durable deadline has already
+    // passed but whose auto-disable job was missed (hub down at the due
+    // time) - the same self-healing principle as clearAbandonedScan()
+    // above, applied to this toggle instead of a stuck scan.
+    if (settings.diagnosticLoggingEnabled == true && !diagOn()) {
+        disableDiagnosticLogging()
+    }
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
     // Computed once here, after recovery has run, and threaded through every
@@ -333,6 +424,20 @@ Map main() {
             section {
                 if (oauthError) {
                     paragraph "<b style='color:#c0392b'>${oauthError}</b>"
+                }
+                // v2.1.8 migration: telemetry is removed, and this app tries
+                // to remove the old telemetry child device automatically on
+                // upgrade (migrateRemoveTelemetryDevice()). This only shows
+                // when that removal failed - most likely the device is still
+                // referenced elsewhere (a dashboard, another app) and
+                // Hubitat refused the deletion. Fixed wording only - review
+                // 392: the actual exception text is internal diagnostic
+                // detail, not HTML-escaped, and stays in the log
+                // only, never interpolated into this page. Retried the next
+                // time settings are saved, not on hub restart -
+                // migrateRemoveTelemetryDevice() only runs from updated().
+                if (state.telemetryRemovalFailed) {
+                    paragraph "<b style='color:#c0392b'>Could not remove the former telemetry device automatically</b>. It may still be referenced elsewhere - a dashboard, another app. Clear the reference, then remove <b>Automation Map Telemetry</b> manually from the Devices page, or save these settings again once the reference is cleared to retry automatically."
                 }
                 // The scan is started by fetching the app's own /scan endpoint
                 // rather than from a Hubitat button. runIn() called out of
@@ -461,14 +566,39 @@ Map main() {
                 paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for Community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
+                // Hubitat does not reliably render description: on bool/time
+                // inputs (confirmed live - item 8), so the explanation is a
+                // paragraph instead, which does render.
+                paragraph "Runs automatically once a day, on by default at ${defaultAutoScanTime()} - turn off below if you would rather press Scan yourself."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    description: "On by default at ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}. Turn off if you would rather press Scan yourself.",
                     defaultValue: true, submitOnChange: true
-                if (settings.autoScanEnabled) {
+                if (autoScanEffectivelyEnabled()) {
+                    // review 392: "that display updates once you press
+                    // Done" was inaccurate - the field already shows the
+                    // default; Done persists whichever value (default or
+                    // your own) is showing when you save, it doesn't change
+                    // what's displayed.
+                    paragraph "Shown pre-filled at the default (${defaultAutoScanTime()}) below - leave it as-is to keep the default, or set your own time. Press Done to save whichever is showing."
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
-                        description: "Leave blank for ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}.", required: false
+                        defaultValue: defaultAutoScanTime(), required: false
+                }
+            }
+            section {
+                // Placed after the scan-schedule section, not before it -
+                // Gordon's own live testing feedback (2026-09-02): this is a
+                // secondary, troubleshooting-only control, and the primary
+                // scan-schedule settings above it are what most visits to
+                // this page are actually about.
+                // description: does not render reliably on bool inputs
+                // (confirmed live - item 8), hence the paragraph instead.
+                paragraph "Writes extra detail to your hub's Logs page for troubleshooting - nothing here is transmitted anywhere. Off by default, and turns itself back off automatically after one hour so it can't be left running by accident."
+                input name: 'diagnosticLoggingEnabled', type: 'bool',
+                    title: 'Enable diagnostic logging',
+                    defaultValue: false, submitOnChange: true
+                if (settings.diagnosticLoggingEnabled) {
+                    paragraph "Diagnostic logging is currently <b>on</b> and will turn itself off within an hour. Turn it off here sooner if you are done before then."
                 }
             }
         }
@@ -583,7 +713,7 @@ boolean shouldAutoScan() {
     boolean noDurableRunning = !state.scanRunning
     boolean noScanError = !state.scanError
     boolean result = app.installationState == 'COMPLETE' && noGraph && noLiveLock && noDurableRunning && noScanError
-    if (TRACE_ENABLED) {
+    if (traceOn()) {
         amTrace('auto-scan.decision', (state.activeGenerationToken ?: '-') as String, traceAttemptId(),
                 [installed: (app.installationState == 'COMPLETE'), noGraph: noGraph, noLiveLock: noLiveLock,
                  noDurableRunning: noDurableRunning, noScanError: noScanError, result: result,
@@ -611,7 +741,7 @@ boolean scanEffectivelyActive() {
     boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
     boolean durable = state.scanRunning == true
     boolean effective = liveLock || durable
-    if (TRACE_ENABLED) {
+    if (traceOn()) {
         amTrace('display.lock-vs-state', (state.activeGenerationToken ?: '-') as String, traceAttemptId(),
                 [liveLock: liveLock, durableScanRunning: durable, effective: effective])
     }
@@ -912,7 +1042,7 @@ void clearAbandonedScan() {
                      [tombstoned: tombstoned, heartbeatWouldHaveBlocked: (beat > 0 && (now() - beat) < 90000)])
     if (tombstoned) {
         amTrace('C0.recovery.tombstoned', activeGen, traceAttemptId(), [action: 'clear-only'])
-        log.info "${app.label}: clearing resurrected scan flags for an already-completed generation"
+        log.warn "${app.label}: clearing resurrected scan flags for an already-completed generation"
         state.scanRunning = false
         return
     }
@@ -952,7 +1082,7 @@ void clearAbandonedScan() {
     // status poll once a scan passes the 90s heartbeat threshold, so it is
     // throttled per generation; the full C1 line below fires only when
     // recovery can actually reach a decision.
-    String traceGen = TRACE_ENABLED ? (activeGen ?: '-') : '-'
+    String traceGen = traceOn() ? (activeGen ?: '-') : '-'
     if (asyncDeviceScanActive || asyncAppScanActive) {
         amTraceThrottled('C1.recovery.declined', traceGen, null,
                          [declined: 'async-active', devAcc: asyncDeviceScanActive, appAcc: asyncAppScanActive])
@@ -1366,10 +1496,25 @@ void sweepGenerationRecords() {
 @Field static final ConcurrentHashMap<String, Long> TRACE_THROTTLE = new ConcurrentHashMap<>()
 @Field static final long TRACE_THROTTLE_MS = 30000L
 
-String traceAttemptId() { return TRACE_ENABLED ? "att-${TRACE_SEQ.incrementAndGet()}" : '-' }
+// v2.1.8 (review 392): this temporary trace format is explicitly NOT
+// part of the reusable production logging design agreed in review 388 -
+// Dev-only regardless of the runtime diagnostic toggle's own state, since a
+// production install can also turn that toggle on. Every trace-path
+// function below checks this single predicate first, so a disabled trace
+// costs one boolean test throughout - not just amTrace() itself, but
+// traceAttemptId() (which otherwise still increments TRACE_SEQ even with
+// tracing off), amTraceThrottled() (still touches TRACE_THROTTLE) and
+// traceSweep() (still walks it), plus every outer if-block elsewhere in
+// this file that builds an argument map before calling amTrace() - those
+// already skip the whole block once their own guard uses this predicate.
+boolean traceOn() {
+    return TRACE_ENABLED && APP_NAME.contains('(Dev)') && diagOn()
+}
+
+String traceAttemptId() { return traceOn() ? "att-${TRACE_SEQ.incrementAndGet()}" : '-' }
 
 void amTrace(String point, String gen, String attempt, Map extra = [:]) {
-    if (!TRACE_ENABLED) return
+    if (!traceOn()) return
     Long beat = (state.scanHeartbeat ?: 0) as Long
     String beatAge = beat > 0 ? "${((now() - beat) / 1000).intValue()}s" : '-'
     StringBuilder sb = new StringBuilder()
@@ -1390,7 +1535,7 @@ void amTrace(String point, String gen, String attempt, Map extra = [:]) {
 // Throttled variant for the declined-recovery case only. Keyed by generation
 // so a new scan is never silenced by the previous one's throttle entry.
 void amTraceThrottled(String point, String gen, String attempt, Map extra = [:]) {
-    if (!TRACE_ENABLED) return
+    if (!traceOn()) return
     String key = "${app.id}:${gen ?: '-'}:${point}"
     Long last = TRACE_THROTTLE.get(key)
     if (last != null && (now() - last) < TRACE_THROTTLE_MS) return
@@ -1400,7 +1545,7 @@ void amTraceThrottled(String point, String gen, String attempt, Map extra = [:])
 
 // Swept when a scan begins, so abandoned generations cannot accumulate.
 void traceSweep(String currentGen) {
-    if (!TRACE_ENABLED) return
+    if (!traceOn()) return
     String prefix = "${app.id}:"
     TRACE_THROTTLE.keySet().findAll {
         it.startsWith(prefix) && !it.startsWith("${prefix}${currentGen}:")
@@ -1550,7 +1695,7 @@ Map startScan() {
     // endpoint reached", which only proves the HTTP request arrived and says
     // nothing about whether it actually started one (it may have lost the
     // race, or found one already running).
-    log.info "${app.label}: scan started"
+    if (diagOn()) log.info "${app.label}: scan started"
     // Ownership-transfer flag, not an unconditional finally - success must
     // keep holding the lock for the whole scan, not release it here. Flipped
     // true only once responsibility has genuinely passed to markScanFinished
@@ -2062,7 +2207,7 @@ void finalizeDevicePhase(String scanId) {
     // hands off to startAppPhase() on success and never calls
     // markScanFinished() at all in that case.
     if (!ownsLock(scan.lockToken as String)) {
-        log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
         DEVICE_SCANS.remove(scanId)
         unschedule('deviceAsyncWatchdog')
         unschedule('deviceClaimReaper')
@@ -2113,7 +2258,7 @@ void startAppPhase(String lockToken) {
     // Fetched once here rather than per-app, same reasoning as appsList.
     Map appTypeNamespaceResult = fetchAppTypeNamespaces()
     if (appTypeNamespaceResult.error) {
-        log.info "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
+        log.warn "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
     }
     Map appListing = fetchInstalledAppIds()
     if (appListing.error) {
@@ -2130,7 +2275,7 @@ void startAppPhase(String lockToken) {
     // fresh acquisition can interleave during it exactly as easily as around
     // any other gap in this pipeline.
     if (!ownsLock(lockToken)) {
-        log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
         return
     }
     state.appIds = appIds as List
@@ -2467,7 +2612,7 @@ void finalizeAppPhase(String scanId) {
     // current, and this path hands off to beginRegistryAndFinish() on
     // success without ever calling markScanFinished().
     if (!ownsLock(scan.lockToken as String)) {
-        log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
         APP_SCANS.remove(scanId)
         unschedule('appAsyncWatchdog')
         unschedule('appClaimReaper')
@@ -2575,7 +2720,7 @@ void fetchRegistry(jobData = null) {
     // since started.
     if (!ownsLock(lockToken)) {
         amTrace('registry.superseded', lockToken, traceAttempt)
-        log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
         return
     }
     amTrace('R1.registry.enter', lockToken, traceAttempt)
@@ -2644,7 +2789,7 @@ void fetchRegistry(jobData = null) {
     // around any other gap in this pipeline.
     if (!ownsLock(lockToken)) {
         amTrace('registry.superseded-late', lockToken, traceAttempt)
-        log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
         return
     }
 
@@ -2658,7 +2803,14 @@ void fetchRegistry(jobData = null) {
     if (!meta.error) state.registryMatches = matches
     state.registryMeta = meta
     amTrace('R3.registry.assigned', lockToken, traceAttempt, [note: 'assignment-executed-not-commit-proven'])
-    log.info "${app.label}: registry ${meta.error ? 'unavailable' : "gave ${meta.matched} dependency match(es) from ${meta.entries} entries"}"
+    // Split by outcome (v2.1.8): registry unavailable is a degraded outcome
+    // (map still builds, just without registry-derived matches) and stays
+    // always logged; a normal match count is routine detail, gated.
+    if (meta.error) {
+        log.warn "${app.label}: registry unavailable, continuing without it"
+    } else if (diagOn()) {
+        log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
+    }
     amTrace('R4.registry.pre-finish', lockToken, traceAttempt)
     runIn(1, 'finishScan', [data: [lockToken: lockToken, origin: 'registry-chain']])
 }
@@ -2685,7 +2837,7 @@ void publishStagedRegistryResult(jobData = null) {
     }
     if (!ownsLock(lockToken)) {
         amTrace('registry.test-superseded', lockToken, traceAttempt)
-        log.info "${app.label}: watchdog-boundary test - staged registry result for a superseded generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: watchdog-boundary test - staged registry result for a superseded generation, discarding without publishing"
         return
     }
     Map meta = staged.meta as Map
@@ -2803,67 +2955,27 @@ void finishScan(data = null) {
         // above are, rather than recomputed at page-render time.
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
-        log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+        if (diagOn()) log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
         // Records that THIS attempt was the one that emitted the completion
-        // log and scheduled telemetry. A second such line for one generation
-        // is the duplicate-emission defect, directly observed.
-        amTrace('T1.terminal.emitted', lockToken, traceAttempt, [src: traceOrigin, emitted: 'completion+telemetry'])
+        // log. A second such line for one generation is the duplicate-
+        // emission defect, directly observed.
+        amTrace('T1.terminal.emitted', lockToken, traceAttempt, [src: traceOrigin, emitted: 'completion'])
 
-        // Deferred, not called inline - a telemetry endpoint hiccup must never
-        // delay or risk this closure's own state.graph publish. See README for
-        // exactly what this sends and why.
-        //
         // durationSeconds reads the start time already embedded in lockToken
         // ("lock-<epochMillis>-<random>", see its own acquisition comment)
         // rather than adding a new state field for it - the token already IS
         // the scan's start timestamp, just formatted for lock identity.
         Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
-        // Computed once, used for both the durable display field below and
-        // the telemetry payload, so the two can never disagree.
-        Integer scanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
         // Durable, so main()'s "Last scan" line can show it on a later,
-        // separate page-render execution - the local variable above only
-        // lives for this one closure.
-        state.lastScanDurationSeconds = scanDurationSeconds
-        // Derived from APP_NAME rather than a separate flag, so this can
-        // never drift out of sync with which build is actually running -
-        // APP_NAME is already the one place that differs between the Dev
-        // and production source (line 75/APP_NAME's own comment).
-        String reportedAppVersion = APP_NAME.contains('(Dev)') ? "${APP_VERSION}-dev" : APP_VERSION
-        // Category flags only, from state this closure already computed for
-        // its own purposes above - never raw log text, never anything that
-        // could carry a device/app/room name. Deliberately a fixed, small set
-        // rather than open text, so nothing here can leak identifying content
-        // and nothing downstream needs to sanitize free-form strings.
-        List scanErrorCodes = []
-        if (registryTimedOut) {
-            scanErrorCodes << 'registry_timeout'
-        } else if ("${state.registryMeta?.state}" == 'ERROR') {
-            // Distinct from timeout: the fetch completed but fetchRegistry's
-            // own try/catch caught an exception (network/parse failure).
-            scanErrorCodes << 'registry_error'
-        }
-        if ((state.hubVariableInventory as Map)?.status == 'failed') {
-            scanErrorCodes << 'hub_variable_inventory_failed'
-        }
-        runIn(1, 'reportTelemetry', [data: [
-            firmwareVersion : (location?.hub?.firmwareVersionString ?: 'unknown') as String,
-            appVersion      : reportedAppVersion,
-            errors          : scanErrorCodes.join(','),
-            apps            : (state.appInfo as Map).size(),
-            devices         : (state.deviceLabels as Map).size(),
-            nodes           : (graph.nodes ?: []).size(),
-            edges           : (graph.edges ?: []).size(),
-            timestamp       : new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
-            durationSeconds : scanDurationSeconds
-        ]])
+        // separate page-render execution.
+        state.lastScanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
     }
     amTrace('F3.finish.claim-result', lockToken, traceAttempt, [src: traceOrigin, won: finished])
     if (!finished) {
         // The claim is now checked before buildGraph() runs, so a
         // superseded generation never builds a graph at all any more - it
         // just loses the claim immediately and does nothing further.
-        log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
+        if (diagOn()) log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
     }
     // After finishGeneration's own finally has released the lock, so 'lock='
     // on this line shows the post-terminal state.
@@ -6312,7 +6424,7 @@ Map externalsSaveMapping() {
     // read state.graph, so the response is unaffected by the rebuild being
     // deferred.
     runIn(1, 'rebuildStoredGraph')
-    log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
+    if (diagOn()) log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
     return render(status: 200, contentType: 'application/json', data: externalsJson())
 }
 
@@ -6396,7 +6508,7 @@ Map iconOverridesSaveMapping() {
     // rebuildStoredGraph(), not inline - the overrides changed, the hub did
     // not, and iconOverridesJson() below does not read state.graph.
     runIn(1, 'rebuildStoredGraph')
-    log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
+    if (diagOn()) log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
 
@@ -6452,7 +6564,7 @@ Map scanMapping() {
     // Logging only from the catch below could not prove that - a throw in the
     // success path (scanStatusJson/render) would also leave the log silent while
     // Hubitat returned its HTML error page.
-    log.info "${app.label}: /scan endpoint reached"
+    if (diagOn()) log.info "${app.label}: /scan endpoint reached"
     try {
         // Guarded the same way scheduledScanHandler() already is - a repeat
         // GET while a scan is running must not restart it. Restarting orphans
@@ -6480,12 +6592,12 @@ Map scanMapping() {
         // has an accurate live state.scanRunning to report as-is.
         boolean casLost = false
         if (state.scanRunning) {
-            log.info "${app.label}: /scan reached while a scan is already running, not restarting"
+            if (diagOn()) log.info "${app.label}: /scan reached while a scan is already running, not restarting"
         } else {
             Map result = startScan()
             if (!result.acquired) {
                 casLost = true
-                log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
+                if (diagOn()) log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
             }
         }
         // Inside the try, not after it. Left outside, an exception in
@@ -6529,7 +6641,7 @@ Map scanStatusMapping() {
     // a second time for the same request. pv is the bounded, non-identifying
     // page-view value the client generated; no device/app/hub/variable name is
     // ever included.
-    if (TRACE_ENABLED && params.fp == '1') {
+    if (traceOn() && params.fp == '1') {
         boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
         boolean durable = state.scanRunning == true
         amTrace('display.first-poll', (params.pv ?: '-') as String, traceAttemptId(),
@@ -6764,12 +6876,38 @@ String buildMapHtml() {
   html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
   #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; max-width:340px; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:230px; }
+  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
   #controls label { display:block; margin-bottom:2px; }
+  #showFilterLabel { margin-top:10px; }
   #controls select { width:100%; box-sizing:border-box; }
-  #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
   #controls button, #controls select, #controls option { font-size:14px; font-family:inherit; }
   #controls button { margin-top:2px; cursor:pointer; }
+  /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
+     the old stacked search input + <select> pair, ported from the standalone
+     harness verified in Bucket/combobox-harness/. Closed control is a plain
+     non-editable button; the search field lives inside the popup only. */
+  .cb { position:relative; }
+  .cb-button { width:100%; box-sizing:border-box; padding:3px 8px; font:inherit; text-align:left; border:1px solid #6a7078; border-radius:3px; background:#0a2530; color:#eee; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .cb-button:focus { outline:2px solid #4a90d9; outline-offset:-1px; }
+  .cb-button-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cb-arrow { flex:none; color:#cfd8dc; font-size:12px; }
+  .cb-is-open .cb-arrow { transform:rotate(180deg); }
+  /* Right-aligned and wider than the closed button, not left:0/right:0 - the
+     150px control truncated every real app/device name to a few characters.
+     #controls is pinned to the right edge of the screen, so the popup grows
+     leftward off the button's right edge rather than off-screen. */
+  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #6a7078; border-radius:4px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
+  /* The dedicated search field - first row of the popup, auto-focused on
+     open, visually its own zone (bottom border) above the options list. */
+  .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #6a7078; background:#0d3446; color:#eee; }
+  .cb-search::placeholder { color:#8fc4e0; font-style:italic; opacity:1; }
+  .cb-search:focus { outline:none; }
+  .cb-list { list-style:none; margin:0; padding:0; max-height:260px; overflow-y:auto; }
+  .cb-opt { padding:4px 8px; cursor:pointer; white-space:normal; word-break:break-word; font-size:14px; line-height:1.3; }
+  .cb-opt-active { background:#34506b; }
+  .cb-opt-selected { font-weight:600; }
+  .cb-opt-sticky { font-style:italic; opacity:.9; border-top:1px dashed #4a4f57; }
+  .cb-count { padding:4px 8px; font-size:12px; color:#9aa4ad; border-top:1px solid #3a3f47; background:#031218; }
   #network { width:100%; height:100vh; }
   /* Sits behind the network canvas (earlier in DOM order, no z-index of its
      own, and vis-network's own canvas has no background fill so empty space
@@ -6777,10 +6915,16 @@ String buildMapHtml() {
      absolute - pinned to a fixed point on the actual screen regardless of
      where physics settles the graph's own bounding box. Moved off dead
      centre (was 50/50) since a fully-populated graph's own node cluster
-     tends to sit left-of-centre; positioned below #controls specifically
-     (not just anywhere clear of the graph) per Gordon's own instruction,
-     confirmed against a live screenshot rather than guessed. */
-  #hubWatermark { position:fixed; top:68%; left:82%; transform:translate(-50%, -50%);
+     tends to sit left-of-centre; positioned below #controls specifically,
+     horizontally centred under the Exit map button, per Gordon's own
+     instruction, confirmed against a live screenshot rather than guessed.
+     right, not left: #controls itself is anchored right:10px and 300px
+     wide, so its own horizontal centre is a fixed distance from the
+     viewport's RIGHT edge (10px + 150px = 160px) regardless of viewport
+     width - a left:X% value has no way to track that reliably, which is
+     why the panel's own 150px->300px widening (item, live 2026-09-02) threw
+     the previous left:82% off centre under Exit map. */
+  #hubWatermark { position:fixed; top:68%; right:160px; transform:translate(50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
   /* Hub photo specifically shown at half the Christmas tree's size, per
@@ -6873,7 +7017,7 @@ String buildMapHtml() {
      against #flow's own dark theme is the clearest way to say so at a glance.
      Overrides every #flow-inherited color (h4/.sub/a) that would otherwise
      stay light-on-light here. */
-  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; }
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:50%; }
   #communityCard h4 { color:#1a2733; margin-top:0; }
   #communityCard .sub { color:#4a5a63; }
   #communityCard a { color:#1565c0; }
@@ -7115,11 +7259,11 @@ String buildMapHtml() {
   <p>Open this same link on a computer.</p>
 </div>
 <div id="controls">
-  <label>Focus app<input id="appSearch" type="search" placeholder="search apps..." autocomplete="off"><select id="appFilter" size="1"><option value="__all__">All apps</option></select></label>
-  <label>Focus device<input id="deviceSearch" type="search" placeholder="search devices..." autocomplete="off"><select id="deviceFilter" size="1"><option value="__all__">All devices</option></select></label>
-  <label>Focus hub variable<input id="hubVarSearch" type="search" placeholder="search hub variables..." autocomplete="off"><select id="hubVarFilter" size="1"><option value="__all__">All hub variables</option></select></label>
-  <label>Focus local variable<input id="localVarSearch" type="search" placeholder="search local variables..." autocomplete="off"><select id="localVarFilter" size="1"><option value="__all__">All local variables</option></select></label>
-  <label>Show<select id="kindFilter">
+  <label>Focus app<span id="appComboMount"></span></label>
+  <label>Focus device<span id="deviceComboMount"></span></label>
+  <label>Focus hub variable<span id="hubVarComboMount"></span></label>
+  <label>Focus local variable<span id="localVarComboMount"></span></label>
+  <label id="showFilterLabel">Show<select id="kindFilter">
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
     <option value="constraint">Constraints only</option>
@@ -7835,10 +7979,10 @@ function neighborhood(nodeId, edgePool) {
 }
 
 function applyFilters() {
-  const appVal = document.getElementById('appFilter').value;
-  const devVal = document.getElementById('deviceFilter').value;
-  const hubVarVal = document.getElementById('hubVarFilter').value;
-  const localVarVal = document.getElementById('localVarFilter').value;
+  const appVal = appSelect.getValue();
+  const devVal = deviceSelect.getValue();
+  const hubVarVal = hubVarSelect.getValue();
+  const localVarVal = localVarSelect.getValue();
   const kindVal = document.getElementById('kindFilter').value;
 
   let pool = ALL_EDGES;
@@ -8887,51 +9031,390 @@ function pickOptionText(n, group) {
   return n.title;
 }
 
-// With 194 devices a plain dropdown is unusable, so each one gets a search box
-// that filters its options as you type. Rebuilt rather than hidden, because
-// hidden <option> elements are not reliably honoured across browsers.
-function fillSelect(selectId, searchId, group, allLabel) {
-  const sel = document.getElementById(selectId);
-  const search = document.getElementById(searchId);
-  const items = ALL_NODES.filter(function (n) { return n.group === group; })
-    .slice().sort(function (a, b) { return a.title.localeCompare(b.title); });
+// Combined combobox for the Focus dropdowns. Closed state is a plain,
+// non-editable button (label + arrow) - opening it reveals a popup whose
+// first row is a dedicated, auto-focused search field, with the scrollable
+// options list directly below it. Not the closed control doubling as the
+// search box - that shape was built, deployed and rejected live (Gordon's
+// reference: a spreadsheet-style searchable dropdown, 2026-09-02). Built and
+// verified standalone first in Bucket/combobox-harness/ (31 automated checks
+// + hands-on) before this port; unchanged from that harness version.
+// Framework-free ES5-ish idiom - no arrow functions, no template literals -
+// because this whole page is one Groovy GString and a JS template literal's
+// own interpolation syntax would collide with Groovy's.
+(function (root) {
+  'use strict';
 
-  function render(term) {
-    const q = (term || '').toLowerCase();
-    const keep = sel.value;
-    sel.innerHTML = '';
-    const all = document.createElement('option');
-    all.value = '__all__'; all.textContent = allLabel;
-    sel.appendChild(all);
-    let shown = 0;
-    items.forEach(function (n) {
-      if (q && n.title.toLowerCase().indexOf(q) < 0) return;
-      const opt = document.createElement('option');
-      opt.value = n.id; opt.textContent = pickOptionText(n, group);
-      // Native <option> elements cannot reliably colour just a suffix
-      // across browsers (item 18) - colour the whole option red instead.
-      if (n.disabled || n.paused) opt.style.color = '#e57373';
-      sel.appendChild(opt);
-      shown++;
-    });
-    // Keep the current selection visible even if it no longer matches, so
-    // typing does not silently reset the view.
-    if (keep && keep !== '__all__' && !sel.querySelector('option[value="' + keep + '"]')) {
-      const cur = items.filter(function (n) { return n.id === keep; })[0];
-      if (cur) {
-        const opt = document.createElement('option');
-        opt.value = cur.id; opt.textContent = pickOptionText(cur, group);
-        if (cur.disabled || cur.paused) opt.style.color = '#e57373';
-        sel.appendChild(opt);
+  var ALL = '__all__';
+  var DISABLED_COLOR = '#e57373';
+  var idSeq = 0;
+
+  function createCombobox(opts) {
+    opts = opts || {};
+    var uid = 'cb' + (++idSeq);
+    var mount = opts.mount;
+    if (!mount) { throw new Error('createCombobox: opts.mount is required'); }
+
+    var allLabel = opts.allLabel != null ? String(opts.allLabel) : 'All';
+    var onChange = typeof opts.onChange === 'function' ? opts.onChange : function () {};
+
+    var items = [];
+    var value = ALL;
+    var open = false;
+    var activeIndex = -1;   // index into `rows` (the currently rendered rows)
+    var rows = [];          // [{ value, label, disabled, el }]
+
+    // --- DOM -----------------------------------------------------------------
+    var elRoot = document.createElement('div');
+    elRoot.className = 'cb';
+    elRoot.setAttribute('data-cb', uid);
+
+    // Closed control - a plain button, not an editable field. Shows the
+    // current selection and an arrow; click/Enter/Space/ArrowDown opens the
+    // popup. Never receives typed text itself.
+    var elButton = document.createElement('button');
+    elButton.type = 'button';
+    elButton.className = 'cb-button';
+    elButton.setAttribute('aria-haspopup', 'listbox');
+    elButton.setAttribute('aria-expanded', 'false');
+
+    var elButtonLabel = document.createElement('span');
+    elButtonLabel.className = 'cb-button-label';
+
+    var elArrow = document.createElement('span');
+    elArrow.className = 'cb-arrow';
+    elArrow.setAttribute('aria-hidden', 'true');
+    elArrow.innerHTML = '&#9662;';
+
+    elButton.appendChild(elButtonLabel);
+    elButton.appendChild(elArrow);
+
+    var elPopup = document.createElement('div');
+    elPopup.className = 'cb-popup';
+    elPopup.hidden = true;
+
+    // The dedicated search field - first thing in the popup, auto-focused on
+    // open, always empty when it appears (never carries the selection text).
+    var elSearch = document.createElement('input');
+    elSearch.type = 'text';
+    elSearch.className = 'cb-search';
+    elSearch.autocomplete = 'off';
+    elSearch.spellcheck = false;
+    elSearch.setAttribute('role', 'searchbox');
+    elSearch.setAttribute('aria-autocomplete', 'list');
+    elSearch.setAttribute('aria-controls', uid + '-list');
+    if (opts.placeholder != null) { elSearch.placeholder = String(opts.placeholder); }
+
+    var elList = document.createElement('ul');
+    elList.className = 'cb-list';
+    elList.id = uid + '-list';
+    elList.setAttribute('role', 'listbox');
+
+    var elCount = document.createElement('div');
+    elCount.className = 'cb-count';
+    elCount.setAttribute('aria-live', 'polite');
+
+    elPopup.appendChild(elSearch);
+    elPopup.appendChild(elList);
+    elPopup.appendChild(elCount);
+    elRoot.appendChild(elButton);
+    elRoot.appendChild(elPopup);
+    mount.appendChild(elRoot);
+
+    // --- helpers -----------------------------------------------------------
+    function currentItem() {
+      if (value === ALL) { return null; }
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].id === value) { return items[i]; }
+      }
+      return null;
+    }
+
+    function selectionLabel() {
+      var it = currentItem();
+      if (!it) { return allLabel; }
+      return it.optionText != null ? it.optionText : it.title;
+    }
+
+    function sortItems(list) {
+      return list.slice().sort(function (a, b) {
+        return String(a.title).localeCompare(String(b.title));
+      });
+    }
+
+    // Filter on title only, keep the current selection visible even when it
+    // no longer matches - same contract fillSelect() used to guarantee.
+    function computeRows(term) {
+      var q = (term || '').toLowerCase();
+      var out = [];
+      // Reset row only makes sense against the full, unfiltered list - once
+      // actively searching, a plain filtered list reads cleaner.
+      if (!q) { out.push({ value: ALL, label: allLabel, disabled: false }); }
+      var seen = {};
+      var shown = 0;
+      for (var i = 0; i < items.length; i++) {
+        var n = items[i];
+        if (q && String(n.title).toLowerCase().indexOf(q) < 0) { continue; }
+        out.push({
+          value: n.id,
+          label: n.optionText != null ? n.optionText : n.title,
+          disabled: !!(n.disabled || n.paused)
+        });
+        seen[n.id] = true;
+        shown++;
+      }
+      if (value !== ALL && !seen[value]) {
+        var cur = currentItem();
+        if (cur) {
+          out.push({
+            value: cur.id,
+            label: cur.optionText != null ? cur.optionText : cur.title,
+            disabled: !!(cur.disabled || cur.paused),
+            sticky: true
+          });
+        }
+      }
+      return { rows: out, shown: shown, total: items.length };
+    }
+
+    function renderList() {
+      var res = computeRows(elSearch.value);
+      rows = res.rows;
+      elList.innerHTML = '';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        var li = document.createElement('li');
+        li.className = 'cb-opt' + (r.sticky ? ' cb-opt-sticky' : '');
+        li.id = uid + '-opt-' + i;
+        li.setAttribute('role', 'option');
+        li.textContent = r.label + (r.sticky ? '  (current selection)' : '');
+        if (r.disabled) { li.style.color = DISABLED_COLOR; }
+        if (r.value === value) { li.setAttribute('aria-selected', 'true'); li.className += ' cb-opt-selected'; }
+        li.setAttribute('data-idx', String(i));
+        r.el = li;
+        elList.appendChild(li);
+      }
+      elCount.textContent = res.shown + ' of ' + res.total + ' shown';
+      // Keep the active row in range and reflect it.
+      if (activeIndex >= rows.length) { activeIndex = rows.length - 1; }
+      paintActive();
+    }
+
+    function paintActive() {
+      for (var i = 0; i < rows.length; i++) {
+        if (!rows[i].el) { continue; }
+        if (i === activeIndex) {
+          rows[i].el.classList.add('cb-opt-active');
+          elSearch.setAttribute('aria-activedescendant', rows[i].el.id);
+          scrollIntoView(rows[i].el);
+        } else {
+          rows[i].el.classList.remove('cb-opt-active');
+        }
+      }
+      if (activeIndex < 0) { elSearch.removeAttribute('aria-activedescendant'); }
+    }
+
+    function scrollIntoView(el) {
+      var top = el.offsetTop;
+      var bottom = top + el.offsetHeight;
+      if (top < elList.scrollTop) { elList.scrollTop = top; }
+      else if (bottom > elList.scrollTop + elList.clientHeight) {
+        elList.scrollTop = bottom - elList.clientHeight;
       }
     }
-    sel.value = keep || '__all__';
-    search.title = shown + ' of ' + items.length + ' shown';
+
+    function openPopup() {
+      if (open) { return; }
+      open = true;
+      elPopup.hidden = false;
+      elRoot.classList.add('cb-is-open');
+      elButton.setAttribute('aria-expanded', 'true');
+      // Always starts empty - the search field never carries the selection
+      // text, so there is nothing to clear-on-reopen the way a merged
+      // input/display would need.
+      elSearch.value = '';
+      renderList();
+      activeIndex = indexOfValue(value);
+      paintActive();
+      elSearch.focus();
+      document.addEventListener('mousedown', onDocMouseDown, true);
+    }
+
+    function closePopup() {
+      if (!open) { return; }
+      open = false;
+      elPopup.hidden = true;
+      elRoot.classList.remove('cb-is-open');
+      elButton.setAttribute('aria-expanded', 'false');
+      elSearch.removeAttribute('aria-activedescendant');
+      activeIndex = -1;
+      document.removeEventListener('mousedown', onDocMouseDown, true);
+    }
+
+    function indexOfValue(v) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].value === v) { return i; }
+      }
+      return -1;
+    }
+
+    function commit(v, fireChange) {
+      var changed = v !== value;
+      value = v;
+      elButtonLabel.textContent = selectionLabel();
+      if (changed && fireChange !== false) {
+        onChange(value, currentItem());
+      }
+    }
+
+    function moveActive(delta) {
+      if (!rows.length) { return; }
+      var i = activeIndex;
+      // Skip nothing - disabled rows are still selectable in the native
+      // <select> this replaces, so keep them reachable.
+      i += delta;
+      if (i < 0) { i = rows.length - 1; }
+      if (i >= rows.length) { i = 0; }
+      activeIndex = i;
+      paintActive();
+    }
+
+    // --- events ----------------------------------------------------------
+    function onDocMouseDown(e) {
+      if (elRoot.contains(e.target)) { return; }
+      closePopup();
+    }
+
+    elButton.addEventListener('click', function () {
+      if (open) { closePopup(); } else { openPopup(); }
+    });
+
+    // Enter/Space already open it via the native click a button fires on
+    // activation - only ArrowDown needs its own handling here.
+    elButton.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' && !open) { e.preventDefault(); openPopup(); }
+    });
+
+    elSearch.addEventListener('input', function () {
+      activeIndex = -1;
+      renderList();
+      // Point at the first real match so Enter selects something sensible -
+      // skip past row 0 only when it is the reset row (computeRows omits it
+      // once a filter term is active, so most keystrokes land here already
+      // pointing at row 0, the actual first match).
+      if (rows.length) {
+        activeIndex = (rows[0].value === ALL && rows.length > 1) ? 1 : 0;
+      }
+      paintActive();
+    });
+
+    elSearch.addEventListener('keydown', function (e) {
+      switch (e.key) {
+        case 'ArrowDown': e.preventDefault(); moveActive(1); break;
+        case 'ArrowUp': e.preventDefault(); moveActive(-1); break;
+        case 'Home': e.preventDefault(); activeIndex = 0; paintActive(); break;
+        case 'End': e.preventDefault(); activeIndex = rows.length - 1; paintActive(); break;
+        case 'Enter':
+          e.preventDefault();
+          var pick = activeIndex >= 0 ? rows[activeIndex] : rows[0];
+          if (pick) { commit(pick.value, true); }
+          closePopup();
+          elButton.focus();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          closePopup();
+          elButton.focus();
+          break;
+        case 'Tab':
+          closePopup();
+          break;
+        default: break;
+      }
+    });
+
+    elList.addEventListener('mousemove', function (e) {
+      var li = e.target.closest ? e.target.closest('.cb-opt') : null;
+      if (!li) { return; }
+      var idx = parseInt(li.getAttribute('data-idx'), 10);
+      if (idx === activeIndex) { return; }
+      activeIndex = idx;
+      paintActive();
+    });
+
+    // mousedown, not click: fires before the search field's blur so focus
+    // handling stays simple.
+    elList.addEventListener('mousedown', function (e) {
+      var li = e.target.closest ? e.target.closest('.cb-opt') : null;
+      if (!li) { return; }
+      e.preventDefault();
+      var idx = parseInt(li.getAttribute('data-idx'), 10);
+      var pick = rows[idx];
+      if (pick) { commit(pick.value, true); }
+      closePopup();
+      elButton.focus();
+    });
+
+    // --- init ----------------------------------------------------------
+    items = sortItems(opts.items || []);
+    if (opts.value != null) { value = opts.value; }
+    elButtonLabel.textContent = selectionLabel();
+    renderList();
+
+    // --- public --------------------------------------------------------
+    return {
+      element: elRoot,
+      button: elButton,
+      searchInput: elSearch,
+      getValue: function () { return value; },
+      getItem: function () { return currentItem(); },
+      setValue: function (id, label) {
+        if (id == null || id === ALL) { commit(ALL, false); if (open) { renderList(); } return; }
+        var found = currentItemById(id);
+        if (!found && label != null) {
+          // forceSelect() equivalent: re-add an item the filter had removed.
+          items.push({ id: id, title: label, optionText: label });
+          items = sortItems(items);
+        }
+        commit(id, false);
+        if (open) { renderList(); }
+      },
+      setItems: function (next) {
+        items = sortItems(next || []);
+        if (value !== ALL && !currentItemById(value)) { value = ALL; }
+        elButtonLabel.textContent = selectionLabel();
+        if (open) { renderList(); }
+      },
+      open: openPopup,
+      close: closePopup,
+      focus: function () { elButton.focus(); }
+    };
+
+    function currentItemById(id) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].id === id) { return items[i]; }
+      }
+      return null;
+    }
   }
 
-  render('');
-  search.addEventListener('input', function () { render(search.value); });
-  return sel;
+  root.createCombobox = createCombobox;
+}(window));
+
+// Builds one Focus combobox: filters ALL_NODES to the given group, attaches
+// each node's decorated option text, and mounts it into the given element id.
+// Replaces fillSelect() + forceSelect() together - createCombobox's own
+// setValue(id, label) is forceSelect()'s re-add-if-filtered-out behaviour.
+function initCombo(mountId, group, allLabel, placeholder, onChange) {
+  const items = ALL_NODES.filter(function (n) { return n.group === group; });
+  items.forEach(function (n) { n.optionText = pickOptionText(n, group); });
+  return createCombobox({
+    mount: document.getElementById(mountId),
+    allLabel: allLabel,
+    placeholder: placeholder,
+    items: items,
+    onChange: onChange
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -10799,24 +11282,65 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   });
 })();
 
-const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
-const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
-const hubVarSelect = fillSelect('hubVarFilter', 'hubVarSearch', 'hubVariable', 'All hub variables');
-const localVarSelect = fillSelect('localVarFilter', 'localVarSearch', 'localVariable', 'All local variables');
-
-// Clicking a node is the first thing anyone tries, so it drills in: click an
-// app to see what it uses, click one of those devices to see everything else
-// touching it, and so on. A search filter may have removed the option from the
-// dropdown, so put it back before selecting it, otherwise the assignment is
-// silently ignored and the click appears to do nothing.
-function forceSelect(sel, id, label) {
-  if (!sel.querySelector('option[value="' + id + '"]')) {
-    const opt = document.createElement('option');
-    opt.value = id; opt.textContent = label;
-    sel.appendChild(opt);
+// Each combobox's onChange enforces the four-way focus exclusivity (picking
+// one clears the other three) the same way the old <select> 'change'
+// listeners did - setValue() never fires onChange itself, so these resets
+// cannot recurse into each other.
+const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...', function (value) {
+  if (value !== '__all__') {
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    closeSecondaryPanels();
   }
-  sel.value = id;
-}
+  applyFilters();
+  if (value === '__all__') {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+  } else {
+    showFlow(value);
+  }
+});
+const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'search devices...', function (value) {
+  if (value !== '__all__') {
+    appSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    closeSecondaryPanels();
+  }
+  flowPanel.style.display = 'none';
+  syncLegendVisibility();
+  applyFilters();
+});
+const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub variables', 'search hub variables...', function (value) {
+  if (value !== '__all__') {
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    closeSecondaryPanels();
+  }
+  flowPanel.style.display = 'none';
+  syncLegendVisibility();
+  applyFilters();
+});
+const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All local variables', 'search local variables...', function (value, item) {
+  if (value !== '__all__') {
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    closeSecondaryPanels();
+  }
+  // Same unreferenced exemption as focusNode's own localVariable branch -
+  // picking one straight from this dropdown must not collapse the map to a
+  // lone dot any more than clicking its node on the canvas would.
+  if (item && item.unreferencedLocal) {
+    showUnreferencedLocalPanel(item);
+  } else {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
+  }
+});
 
 // Browser Back is wired to the map's own focus changes rather than left
 // alone. Without it, Back from anywhere in the map leaves the map entirely
@@ -10845,10 +11369,10 @@ function focusLabel(id) {
 }
 
 function currentFocus() {
-  if (appSelect.value !== '__all__') return appSelect.value;
-  if (deviceSelect.value !== '__all__') return deviceSelect.value;
-  if (hubVarSelect.value !== '__all__') return hubVarSelect.value;
-  if (localVarSelect.value !== '__all__') return localVarSelect.value;
+  if (appSelect.getValue() !== '__all__') return appSelect.getValue();
+  if (deviceSelect.getValue() !== '__all__') return deviceSelect.getValue();
+  if (hubVarSelect.getValue() !== '__all__') return hubVarSelect.getValue();
+  if (localVarSelect.getValue() !== '__all__') return localVarSelect.getValue();
   return null;
 }
 
@@ -10892,10 +11416,10 @@ function closeSecondaryPanels() {
 }
 
 function exitToWholeMap() {
-  appSelect.value = '__all__';
-  deviceSelect.value = '__all__';
-  hubVarSelect.value = '__all__';
-  localVarSelect.value = '__all__';
+  appSelect.setValue('__all__');
+  deviceSelect.setValue('__all__');
+  hubVarSelect.setValue('__all__');
+  localVarSelect.setValue('__all__');
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
   closeSecondaryPanels();
@@ -10949,10 +11473,10 @@ function focusNode(id) {
   // than needing to be threaded into each branch separately.
   closeSecondaryPanels();
   if (node.group === 'app') {
-    forceSelect(appSelect, node.id, node.title);
-    deviceSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    localVarSelect.value = '__all__';
+    appSelect.setValue(node.id, node.title);
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
     // An inert app has no edges by definition, so filtering the graph down to
     // its neighbourhood - what applyFilters does for every other app - leaves
     // nothing to draw: the whole map collapses to that one square. Nothing is
@@ -10968,13 +11492,13 @@ function focusNode(id) {
     showFlow(node.id);
   } else if (node.group === 'hubVariable') {
     // Own branch, not the device else below - a Hub Variable used to fall
-    // into that branch by default (forceSelect(deviceSelect, ...)), which
-    // worked visually but mis-filed it as a device selection. Split out once
-    // this dropdown existed to give it somewhere correct to go.
-    forceSelect(hubVarSelect, node.id, node.title);
-    appSelect.value = '__all__';
-    deviceSelect.value = '__all__';
-    localVarSelect.value = '__all__';
+    // into that branch by default (setValue on deviceSelect), which worked
+    // visually but mis-filed it as a device selection. Split out once this
+    // dropdown existed to give it somewhere correct to go.
+    hubVarSelect.setValue(node.id, node.title);
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
@@ -10985,10 +11509,10 @@ function focusNode(id) {
     // rule by construction. Unreferenced mirrors the inert-app exemption
     // just above: no edges means nothing for applyFilters to draw, so its
     // own panel opens instead of collapsing the map to a lone dot.
-    forceSelect(localVarSelect, node.id, node.title);
-    appSelect.value = '__all__';
-    deviceSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
+    localVarSelect.setValue(node.id, node.title);
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
     if (node.unreferencedLocal) {
       showUnreferencedLocalPanel(node);
     } else {
@@ -10997,10 +11521,10 @@ function focusNode(id) {
       applyFilters();
     }
   } else {
-    forceSelect(deviceSelect, node.id, node.title);
-    appSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    localVarSelect.value = '__all__';
+    deviceSelect.setValue(node.id, node.title);
+    appSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
@@ -11057,62 +11581,6 @@ const canvasEl = document.getElementById('network');
 network.on('hoverNode', function () { canvasEl.style.cursor = 'pointer'; });
 network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 
-appSelect.addEventListener('change', function () {
-  if (appSelect.value !== '__all__') {
-    deviceSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    localVarSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  applyFilters();
-  if (appSelect.value === '__all__') {
-    flowPanel.style.display = 'none';
-    syncLegendVisibility();
-  } else {
-    showFlow(appSelect.value);
-  }
-});
-deviceSelect.addEventListener('change', function () {
-  if (deviceSelect.value !== '__all__') {
-    appSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    localVarSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  flowPanel.style.display = 'none';
-  syncLegendVisibility();
-  applyFilters();
-});
-hubVarSelect.addEventListener('change', function () {
-  if (hubVarSelect.value !== '__all__') {
-    appSelect.value = '__all__';
-    deviceSelect.value = '__all__';
-    localVarSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  flowPanel.style.display = 'none';
-  syncLegendVisibility();
-  applyFilters();
-});
-localVarSelect.addEventListener('change', function () {
-  if (localVarSelect.value !== '__all__') {
-    appSelect.value = '__all__';
-    deviceSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  // Same unreferenced exemption as focusNode's own localVariable branch -
-  // picking one straight from this dropdown must not collapse the map to a
-  // lone dot any more than clicking its node on the canvas would.
-  const picked = ALL_NODES.filter(function (n) { return n.id === localVarSelect.value; })[0];
-  if (picked && picked.unreferencedLocal) {
-    showUnreferencedLocalPanel(picked);
-  } else {
-    flowPanel.style.display = 'none';
-    syncLegendVisibility();
-    applyFilters();
-  }
-});
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 // Short synthesised confirmation tone, agreed with Gordon 2026-08-19 - no
 // audio file, no external asset, consistent with the rest of this page being

@@ -4,6 +4,79 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.1.8
+
+Production-cleanup release. Local review and automated gates passed; deployed to Automation Map
+(Dev) (Apps Code 1210 / instance 3083); diagnostic-toggle placement and off/on/off logging
+behaviour independently verified live by Gordon. The telemetry-child migration test (clean
+deletion, plus a deliberately-referenced device failing safely) is explicitly waived by Gordon, not
+passed - low affected population, easy manual fallback. The
+Automation Map Telemetry Driver and everything that fed it (`ensureTelemetryDevice()`,
+`reportTelemetry()`, `fetchHubHardwareId()`, the manifest driver entry, the README disclosure) are
+removed entirely rather than made optional - an always-present reporting driver read as intrusive
+to some users regardless of what it actually collected. An upgrading instance removes its own
+leftover telemetry child device automatically: exact-DNI, never forced, and if Hubitat refuses the
+deletion because the device is still referenced elsewhere, the settings page shows a fixed warning
+(never the raw exception text, which stays in the log only) and retries the next time settings are
+saved.
+
+In its place, a settings-page toggle enables on-demand diagnostic logging for troubleshooting - off
+by default. A durable expiry timestamp, not just a scheduled job, enforces the one-hour auto-disable
+even if the scheduled handler itself is missed (a one-shot job does not fire late or catch up if the
+hub is down when it comes due); an unrelated later settings save while the toggle stays on does not
+push the deadline out further, and the settings page reconciles a stale "on" display back to off on
+its own next render. Every routine/lifecycle log line in the app (installs, scheduling
+confirmations, endpoint-entry logs, successful saves, expected superseded-generation discards,
+registry counts, scan start/completion detail) is now gated behind this toggle; failures and
+degraded outcomes that can leave the map incomplete or stale stay unconditionally logged regardless
+of it. The temporary `AM-TRACE` diagnostic path stays Dev-only regardless of the toggle's own state,
+per the standing agreement not to make it part of the reusable production logging design.
+
+The automatic-scan Hours/Minutes field now shows its real default (00:30 production, 01:00 Dev)
+pre-filled, instead of appearing blank next to a `description:` that never rendered on `bool`/`time`
+inputs. One helper function is the single source for that default across the input, the explanatory
+paragraph, and the scheduler's own blank-time fallback. A separate effective-default helper treats a
+genuinely unsaved setting the same as its own displayed-on default, since Hubitat does not
+necessarily populate `settings` with a displayed default before the first save.
+
+Both the removed remote-telemetry approach and the new local-logging approach are documented for
+reuse at `https://github.com/GordonThelander/hubitat_dev_utililities` under "Application Telemetry
+Methods", sanitized and parameterized rather than copied with real identifiers.
+
+The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single combined
+combobox each, replacing the old search-input-stacked-above-a-select pair. Built and proven
+standalone first, then iterated live against direct feedback: the closed control is a plain,
+non-editable label-plus-arrow (an earlier version that let the closed control double as the search
+field was tried live and rejected in favour of this conventional shape); opening it reveals a popup
+whose first row is a dedicated, auto-focused search field, with the filtered options list directly
+below it; the unfiltered list still offers the "All X" reset row, but a typed filter narrows to
+matches only. The controls panel widened 150px -> 300px so option text is not truncated, and the hub
+watermark image now tracks the panel's own right-anchored position instead of a fixed percentage, so
+future panel-width changes cannot drift the two out of alignment the way they did here.
+
+## 2.1.7
+
+Device discovery now walks the complete tree `/hub2/devicesList` returns instead of only its
+top-level entries. A device-owned component device (`isComponent: true`, created by a parent device
+driver rather than an app - Shelly, Bond, and Matter bridges are the reported examples) can be
+represented nested inside its parent's own `children` array, invisible to the previous flat read
+regardless of whether the component was referenced by anything. Confirmed live: this hub's own
+"Variable Connectors" parent carries all nine per-variable Connector devices this way, previously
+invisible to bulk discovery and synthesized as bare placeholder nodes from Hub Variable metadata
+instead. Aggregates by device ID before grouping so a device exposed both at the top level and
+beneath a parent is enriched, not duplicated.
+
+The discovered parent/child relationship is rendered as a new `hasComponent` edge kind on the graph
+and in the AI-friendly export (graph schema 9, export schema 7), including correct focus-expansion
+behaviour for an app that touches a component child without referencing its parent directly.
+
+Also fixes a live regression introduced by this same discovery work: an apostrophe inside a
+single-quoted JS string in the page's inline script terminated the string early, breaking the
+entire embedded script and leaving the rendered map blank while the device/app counter still
+rendered. Fixed and confirmed live via a rendered page load with zero console errors. Reported by
+community tester Steve (oldcomputerwiz); his own case is not yet independently confirmed pending his
+hub's retest.
+
 ## 2.1.6
 
 Local Variables (belong to one rule only) become first-class nodes on the network graph, not just

@@ -321,20 +321,6 @@ try {
         }
     }
 
-    $telemetryScriptPath = 'Supporting Docs/automation_map_telemetry_apps_script.gs'
-    if (@($manifest.drivers).Count -gt 0) {
-        if (-not (Test-Path -LiteralPath $telemetryScriptPath)) {
-            Add-ValidationError "Telemetry Apps Script not found: $telemetryScriptPath"
-        } else {
-            $telemetryScript = Get-Content -LiteralPath $telemetryScriptPath -Raw
-            foreach ($requiredFunction in @('doGet', 'doPost', 'setupTelemetrySheet')) {
-                if ($telemetryScript -notmatch "(?m)^function\s+$requiredFunction\s*\(") {
-                    Add-ValidationError "Telemetry Apps Script is missing top-level function $requiredFunction."
-                }
-            }
-        }
-    }
-
     # Hubitat currently documents these as required fields with empty values.
     # Validate their presence, not whether they point to an image.
     if ($appText -notmatch "(?m)^\s*iconUrl:\s*(['""]).*?\1,?\s*$") {
@@ -356,7 +342,12 @@ try {
                 if ($manifest.documentationLink -notlike "*$expectedSegment*") {
                     Add-ValidationError "Manifest documentation link does not point to the $branch branch."
                 }
-                foreach ($manifestDriver in @($manifest.drivers)) {
+                # @($null) is a one-element array in PowerShell, not empty -
+                # a manifest with no drivers key at all (v2.1.8: telemetry's
+                # driver entry removed) would otherwise iterate once with a
+                # null $manifestDriver and fail below. Guard on the property
+                # actually being present first.
+                foreach ($manifestDriver in @($manifest.drivers | Where-Object { $_ })) {
                     if ($manifestDriver.location -notlike "*$expectedSegment*") {
                         Add-ValidationError "Manifest driver '$($manifestDriver.name)' location does not point to the $branch branch."
                     }
