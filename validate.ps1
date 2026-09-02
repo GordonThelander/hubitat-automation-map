@@ -102,6 +102,28 @@ function Find-SuspectDollarSigns([string]$Text) {
     return $findings
 }
 
+# Production-build profile gates (backlog item 16 phase 2b). Factored as
+# plain functions, not inlined into the main flow, so -SelfTest can exercise
+# each one directly against a fixture the same way every other gate here is
+# tested, not just trusted against the one real source file.
+function Test-BuildChannelValid([string]$Channel) {
+    # -cin, not -in: PowerShell's default string comparison is case-
+    # insensitive, which would accept 'Dev'/'PRODUCTION' as valid - exactly
+    # the kind of misspelling/mis-casing this gate exists to catch.
+    return $Channel -cin @('dev', 'production')
+}
+
+function Test-DiagnosticLevelValid([string]$LevelText) {
+    return $LevelText -in @('0', '1', '2')
+}
+
+# The old app-name-substring pattern isDevBuild() replaced - every Dev/
+# production behaviour difference must route through BUILD_CHANNEL now,
+# never re-derive it from the app's own display name.
+function Find-AppNameChannelChecks([string]$Text) {
+    return [regex]::Matches($Text, [regex]::Escape('APP_NAME.contains('))
+}
+
 # Finds every inline <script>...</script> block in the rendered HTML (skips
 # any tag with a src= attribute - those load external files, nothing to
 # check locally). Returns each block's body plus the source line its first
@@ -269,6 +291,17 @@ try {
             Assert-True ($realJsFindings.Count -eq 0) 'current source: every inline <script> block is syntactically valid JS'
         }
 
+        Write-Host 'Self-test: build-channel/diagnostic-level gate' -ForegroundColor Cyan
+        Assert-True (Test-BuildChannelValid 'dev') "'dev' is an allowed BUILD_CHANNEL value"
+        Assert-True (Test-BuildChannelValid 'production') "'production' is an allowed BUILD_CHANNEL value"
+        Assert-True (-not (Test-BuildChannelValid 'Dev')) 'a mis-cased BUILD_CHANNEL value is rejected'
+        Assert-True (-not (Test-BuildChannelValid 'staging')) 'an unrecognised BUILD_CHANNEL value is rejected'
+        Assert-True (Test-DiagnosticLevelValid '0') 'diagnostic level 0 is allowed'
+        Assert-True (Test-DiagnosticLevelValid '2') 'diagnostic level 2 is allowed'
+        Assert-True (-not (Test-DiagnosticLevelValid '3')) 'an undefined diagnostic level is rejected'
+        Assert-True ((Find-AppNameChannelChecks "if (APP_NAME.contains('(Dev)')) { }").Count -gt 0) 'a reintroduced app-name-derived channel check is caught'
+        Assert-True ((Find-AppNameChannelChecks $realText).Count -eq 0) 'current source has zero app-name-derived channel checks'
+
         if ($failures.Count -gt 0) {
             Write-Host "Self-test FAILED: $($failures.Count) assertion(s)." -ForegroundColor Red
             exit 1
@@ -294,6 +327,23 @@ try {
     $appName = Match-Value $appText "@Field\s+static\s+final\s+String\s+APP_NAME\s*=\s*'([^']+)'" 'APP_NAME'
     $appVersion = Match-Value $appText "@Field\s+static\s+final\s+String\s+APP_VERSION\s*=\s*'([^']+)'" 'APP_VERSION'
     $namespace = Match-Value $appText "namespace:\s*'([^']+)'" 'definition namespace'
+
+    # Production-build profile (backlog item 16 phase 2b). BUILD_CHANNEL/
+    # DIAGNOSTIC_LEVEL are the only allowed source of a Dev/production
+    # behaviour difference now - a misspelled or unrecognised value must
+    # fail validation rather than silently take isDevBuild()'s fail-closed
+    # (non-Dev) branch unnoticed.
+    $buildChannel = Match-Value $appText "@Field\s+static\s+final\s+String\s+BUILD_CHANNEL\s*=\s*'([^']+)'" 'BUILD_CHANNEL'
+    if ($null -ne $buildChannel -and -not (Test-BuildChannelValid $buildChannel)) {
+        Add-ValidationError "BUILD_CHANNEL '$buildChannel' is not one of the allowed values 'dev'/'production'."
+    }
+    $diagnosticLevelText = Match-Value $appText "@Field\s+static\s+final\s+int\s+DIAGNOSTIC_LEVEL\s*=\s*(-?\d+)" 'DIAGNOSTIC_LEVEL'
+    if ($null -ne $diagnosticLevelText -and -not (Test-DiagnosticLevelValid $diagnosticLevelText)) {
+        Add-ValidationError "DIAGNOSTIC_LEVEL '$diagnosticLevelText' is not one of the defined values 0/1/2."
+    }
+    if ((Find-AppNameChannelChecks $appText).Count -gt 0) {
+        Add-ValidationError 'Found an app-name-derived build-channel check (APP_NAME.contains(...)) - use isDevBuild() instead.'
+    }
 
     if ($null -ne $manifest) {
         if ($manifest.packageName -ne $appName) {

@@ -79,6 +79,35 @@ import java.util.concurrent.atomic.AtomicInteger
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
 @Field static final String APP_VERSION = '2.2.0'
+// Production-build profile (backlog item 16 / production_build_methodology.md
+// phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
+// production candidate; every intentional Dev/production behaviour
+// difference in this file must read this constant through isDevBuild(),
+// never APP_NAME directly - the app's own display name is cosmetic and must
+// not double as a build-channel signal the production builder has to parse.
+// DIAGNOSTIC_LEVEL: 0 = production (no internal developer trace or test
+// facility), 1 = reserved, no behaviour assigned yet, 2 = current Dev-only
+// trace/test facilities may run, still subject to their own existing
+// TRACE_ENABLED/DEV_TEST_FORCE_WATCHDOG_WIN/user-toggle gates. Governs
+// internal developer tracing and test hooks only - never the user-facing
+// diagnostic-logging toggle (diagOn()), which is a production feature in
+// its own right.
+@Field static final String BUILD_CHANNEL = 'dev'
+@Field static final int DIAGNOSTIC_LEVEL = 2
+
+// Single source of truth for "is this a Dev build", replacing the old
+// app-name-substring check at every one of its five call sites (backlog
+// item 16 phase 2b). Fails closed: an unrecognised BUILD_CHANNEL value is
+// treated as NOT a Dev build - the safer default, since every Dev-only
+// behaviour this gates (a wider default scan window, internal trace
+// facilities) is more permissive than production, never less -
+// validate.ps1 separately asserts BUILD_CHANNEL is exactly 'dev' or
+// 'production' so an unrecognised value never actually reaches this in
+// practice.
+boolean isDevBuild() {
+    return BUILD_CHANNEL == 'dev'
+}
+
 // Bumped ONLY when the shape of the scanned graph changes, so that a rendering
 // or scanning fix does not needlessly invalidate a good scan and force the user
 // to re-crawl every device and app.
@@ -285,7 +314,7 @@ void migrateRemoveTelemetryDevice() {
 // cannot drift out of sync with each other the way three separately
 // hardcoded strings could (v2.1.8; item 8).
 String defaultAutoScanTime() {
-    return APP_NAME.contains('(Dev)') ? '01:00' : '00:30'
+    return isDevBuild() ? '01:00' : '00:30'
 }
 
 // Cron expression (sec min hour day month weekday) for defaultAutoScanTime()
@@ -1508,7 +1537,7 @@ void sweepGenerationRecords() {
 // this file that builds an argument map before calling amTrace() - those
 // already skip the whole block once their own guard uses this predicate.
 boolean traceOn() {
-    return TRACE_ENABLED && APP_NAME.contains('(Dev)') && diagOn()
+    return TRACE_ENABLED && isDevBuild() && DIAGNOSTIC_LEVEL == 2 && diagOn()
 }
 
 String traceAttemptId() { return traceOn() ? "att-${TRACE_SEQ.incrementAndGet()}" : '-' }
@@ -2681,7 +2710,11 @@ void beginRegistryAndFinish(String lockToken) {
     // generation's own decision even if the constant were ever changed mid-test
     // (it should not be, but this costs nothing and removes the question). See
     // REGISTRY_TEST_STAGE's comment for the full watchdog-boundary test hook.
-    boolean debugForceWatchdogWin = TRACE_ENABLED && DEV_TEST_FORCE_WATCHDOG_WIN
+    // isDevBuild()/DIAGNOSTIC_LEVEL added alongside the pre-existing pair
+    // (phase 2b) - previously this hook had no build-channel gate at all,
+    // so a DEV_TEST_FORCE_WATCHDOG_WIN accidentally left true would have
+    // fired in production too, not just Dev.
+    boolean debugForceWatchdogWin = TRACE_ENABLED && DEV_TEST_FORCE_WATCHDOG_WIN && isDevBuild() && DIAGNOSTIC_LEVEL == 2
     runIn(1, 'fetchRegistry', [data: [lockToken: lockToken, debugForceWatchdogWin: debugForceWatchdogWin]])
     // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
     // dies takes the graph build down with it and the scan never completes
@@ -6886,7 +6919,7 @@ String buildMapHtml() {
      text itself, not a credit line - Fonts/OFL.txt (the exact upstream file) satisfies that. */
   @font-face {
     font-family: 'Mulish';
-    src: url('https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Fonts/Mulish-VariableWeight-latin.woff2') format('woff2');
+    src: url('https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Fonts/Mulish-VariableWeight-latin.woff2') format('woff2');
     font-weight: 400 800;
     font-style: normal;
     font-display: swap;
@@ -7349,7 +7382,7 @@ String buildMapHtml() {
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
 <div id="releaseActivity"><button id="releaseActivityClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody"></div></div>
-<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
+<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -11690,7 +11723,7 @@ function playSynthesizedFallback() {
 // (Pixabay Content License - free for this use, attribution not required,
 // credited in README anyway). Same lazy-load/branch-aware/fallback pattern
 // as playSynthesizedFallback() above.
-const COMMUNITY_UTILITIES_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/assets/community-utilities-sound.mp3';
+const COMMUNITY_UTILITIES_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/assets/community-utilities-sound.mp3';
 let communityUtilitiesAudio = null;
 function playCommunityUtilitiesSound() {
   try {
