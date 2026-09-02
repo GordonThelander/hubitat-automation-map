@@ -6882,7 +6882,8 @@ String buildMapHtml() {
      only; this app's own UI text is English) covers every weight actually used (400/600/700/
      800) with one file - Google Fonts serves the identical file for all of them, confirmed by
      diffing the returned @font-face rules for each weight. SIL Open Font License 1.1 permits
-     bundling/self-hosting freely; no attribution required, credited here anyway. */
+     bundling/self-hosting freely; its one redistribution condition is carrying the licence
+     text itself, not a credit line - Fonts/OFL.txt (the exact upstream file) satisfies that. */
   @font-face {
     font-family: 'Mulish';
     src: url('https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Fonts/Mulish-VariableWeight-latin.woff2') format('woff2');

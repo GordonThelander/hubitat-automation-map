@@ -15,13 +15,14 @@ history, not in this delivery list.
 
 ## Release gate
 
-The v2.1.7 Dev line is not ready for production promotion until Steve has retested the original
-missing component-device scenario on his hub and the result has been reviewed. This dependency does
-not authorize a production deployment, branch push or release.
+**Closed.** Steve retested the original missing component-device scenario on his own hub: Hubitat
+reported 351 devices and Automation Map matched it at 351; he specifically checked Aqara, Bond,
+Harmony, and Shelly devices and confirmed all were present, and described the release as "spot on"
+with nothing else discovered on his end. That is the external confirmation this gate required. No
+further response from Steve is needed for this specific defect.
 
-**Next action:** wait for Steve's external result. If it confirms the corrected discovery and
-rendering behaviour, assess release readiness separately and ask Gordon for explicit promotion
-authorization.
+This closure does not by itself authorize a production deployment, branch push, or release - see
+item 16 (production build) for what remains before any promotion.
 
 ## Now
 
