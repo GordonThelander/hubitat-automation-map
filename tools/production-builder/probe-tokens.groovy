@@ -1,9 +1,9 @@
 // Feasibility spike, phase 1: token-stream probe. Not the stripper itself -
 // this just dumps what GroovyLexer actually emits for a small fixture, to
-// confirm the NL-token-for-comments behaviour Codex reported before the real
+// confirm the NL-token-for-comments behaviour reported before the real
 // stripper is built on top of it. Guard shared with strip-comments.groovy
 // via pinned-guard.groovy so the two cannot drift on which Groovy build they
-// trust (Codex review, queue 430).
+// trust (review, queue 430).
 import org.apache.groovy.parser.antlr4.GroovyLexer
 import groovyjarjarantlr4.v4.runtime.CharStreams
 import groovyjarjarantlr4.v4.runtime.CommonTokenStream

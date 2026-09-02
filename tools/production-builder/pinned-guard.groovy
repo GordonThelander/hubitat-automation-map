@@ -1,13 +1,13 @@
 // Shared version+jar guard for every production-builder spike script -
 // centralized so probe-tokens.groovy and strip-comments.groovy cannot drift
-// out of sync on which Groovy build they trust (Codex review, queue 430).
+// out of sync on which Groovy build they trust (review, queue 430).
 //
 // A plain class, not a script. The `groovy` CLI does NOT auto-resolve a
 // sibling .groovy file as an importable class the way a full project
 // compile does - each caller loads this file explicitly via
 // `GroovyClassLoader.parseClass(File)`, resolving the File as a sibling of
 // its OWN running script location (not a hard-coded repo-root-relative
-// path, which silently depended on the caller's working directory - Codex
+// path, which silently depended on the caller's working directory -
 // review, queue 432).
 //
 // Comment classification (strip-comments.groovy) and the NL-token behaviour
