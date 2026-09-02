@@ -4,7 +4,7 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
-## 2.1.8
+## 2.2.0
 
 Production-cleanup release. Local review and automated gates passed; deployed to Automation Map
 (Dev) (Apps Code 1210 / instance 3083); diagnostic-toggle placement and off/on/off logging
@@ -53,6 +53,21 @@ below it; the unfiltered list still offers the "All X" reset row, but a typed fi
 matches only. The controls panel widened 150px -> 300px so option text is not truncated, and the hub
 watermark image now tracks the panel's own right-anchored position instead of a fixed percentage, so
 future panel-width changes cannot drift the two out of alignment the way they did here.
+
+A colour and typography pass brings the desktop UI closer to
+`gordonthelander.github.io/HPM_Manifest_Crawl/` (Hubitat Community Utilities) - Mulish typeface,
+pill-shaped buttons and a shared blue accent across every control that was previously left to the
+browser's own default styling, softer panel corners, small letter-spaced labels above each Focus
+control. The dark background and the graph's own node/edge colour system are unchanged - that is a
+separate, semantic legend, not general UI chrome. The typeface is self-hosted from this repo (a
+single variable-weight WOFF2, `Fonts/`, with its upstream SIL OFL 1.1 licence carried alongside it)
+rather than fetched live from Google Fonts on every page load, for the same reason this release
+removed its own telemetry driver - a call to any third party on every visit reads as intrusive to
+some users, and a live font request is the same category of thing even though it carries no app
+data. Two real defects were found and fixed during this pass, not cosmetic: a CSS inheritance leak
+that pulled the new small/bold label styling into the combobox popup wherever it happened to be
+nested inside a `<label>` element, and a "Community information" card that only cleared its own text
+when it had nothing to show rather than actually hiding, leaving a blank light rectangle on screen.
 
 ## 2.1.7
 
