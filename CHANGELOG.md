@@ -74,8 +74,9 @@ Also fixes a live regression introduced by this same discovery work: an apostrop
 single-quoted JS string in the page's inline script terminated the string early, breaking the
 entire embedded script and leaving the rendered map blank while the device/app counter still
 rendered. Fixed and confirmed live via a rendered page load with zero console errors. Reported by
-community tester Steve (oldcomputerwiz); his own case is not yet independently confirmed pending his
-hub's retest.
+community tester Steve (oldcomputerwiz); independently confirmed on his own hub - Hubitat and
+Automation Map both reported 351 devices, Aqara/Bond/Harmony/Shelly devices specifically checked
+and all present, described as "spot on".
 
 ## 2.1.6
 
