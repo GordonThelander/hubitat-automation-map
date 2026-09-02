@@ -124,6 +124,29 @@ function Find-AppNameChannelChecks([string]$Text) {
     return [regex]::Matches($Text, [regex]::Escape('APP_NAME.contains('))
 }
 
+# The obsolete registry/finalization-race trace instrumentation and forced-
+# watchdog-win test hook (backlog item 16 phase 2 cleanup, review queue 440/
+# 442/444), removed once Steve's independent 351/351-device retest closed
+# the investigation it existed to support. Bans the exact markers most
+# likely to be accidentally restored (e.g. a partial revert, or copying an
+# old snippet back in) - deliberately NOT a generic name like 'origin:' or
+# 'traceOn' that a later, separately reviewed structured diagnostic design
+# might legitimately reuse.
+function Find-ObsoleteTraceRemnants([string]$Text) {
+    $markers = @(
+        'AM-TRACE', 'TRACE_ENABLED', 'TRACE_SEQ', 'TRACE_THROTTLE',
+        'DEV_TEST_FORCE_WATCHDOG_WIN', 'REGISTRY_TEST_STAGE', 'debugForceWatchdogWin',
+        'publishStagedRegistryResult', 'amPageViewId', 'amFirstPoll'
+    )
+    $found = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($marker in $markers) {
+        if ([regex]::IsMatch($Text, [regex]::Escape($marker))) {
+            $found.Add($marker)
+        }
+    }
+    return $found
+}
+
 # Finds every inline <script>...</script> block in the rendered HTML (skips
 # any tag with a src= attribute - those load external files, nothing to
 # check locally). Returns each block's body plus the source line its first
@@ -301,6 +324,9 @@ try {
         Assert-True (-not (Test-DiagnosticLevelValid '3')) 'an undefined diagnostic level is rejected'
         Assert-True ((Find-AppNameChannelChecks "if (APP_NAME.contains('(Dev)')) { }").Count -gt 0) 'a reintroduced app-name-derived channel check is caught'
         Assert-True ((Find-AppNameChannelChecks $realText).Count -eq 0) 'current source has zero app-name-derived channel checks'
+        Assert-True ((Find-ObsoleteTraceRemnants "boolean debugForceWatchdogWin = true").Count -gt 0) 'a reintroduced obsolete trace/watchdog-test marker is caught'
+        Assert-True ((Find-ObsoleteTraceRemnants "log.info 'AM-TRACE at=foo'").Count -gt 0) 'a reintroduced AM-TRACE log line is caught'
+        Assert-True ((Find-ObsoleteTraceRemnants $realText).Count -eq 0) 'current source has zero obsolete trace/watchdog-test markers'
 
         if ($failures.Count -gt 0) {
             Write-Host "Self-test FAILED: $($failures.Count) assertion(s)." -ForegroundColor Red
@@ -343,6 +369,10 @@ try {
     }
     if ((Find-AppNameChannelChecks $appText).Count -gt 0) {
         Add-ValidationError 'Found an app-name-derived build-channel check (APP_NAME.contains(...)) - use isDevBuild() instead.'
+    }
+    $obsoleteTraceMarkers = Find-ObsoleteTraceRemnants $appText
+    if ($obsoleteTraceMarkers.Count -gt 0) {
+        Add-ValidationError "Found obsolete trace/watchdog-test marker(s) that should not exist in source: $($obsoleteTraceMarkers -join ', ')."
     }
 
     if ($null -ne $manifest) {

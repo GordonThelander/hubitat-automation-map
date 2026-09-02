@@ -85,13 +85,17 @@ import java.util.concurrent.atomic.AtomicInteger
 // difference in this file must read this constant through isDevBuild(),
 // never APP_NAME directly - the app's own display name is cosmetic and must
 // not double as a build-channel signal the production builder has to parse.
-// DIAGNOSTIC_LEVEL: 0 = production (no internal developer trace or test
-// facility), 1 = reserved, no behaviour assigned yet, 2 = current Dev-only
-// trace/test facilities may run, still subject to their own existing
-// TRACE_ENABLED/DEV_TEST_FORCE_WATCHDOG_WIN/user-toggle gates. Governs
-// internal developer tracing and test hooks only - never the user-facing
-// diagnostic-logging toggle (diagOn()), which is a production feature in
-// its own right.
+// DIAGNOSTIC_LEVEL: 0 is the production profile (no internal developer
+// trace or test facility). 1 is reserved, no behaviour assigned yet. 2 is
+// reserved for an explicitly reviewed Dev-only internal diagnostic or test
+// facility, gated on this level alongside its own dedicated flags - the
+// registry/finalization-race trace instrumentation and its forced-watchdog-
+// win test hook were the first such facility and used level 2 while the
+// investigation was open; both were removed once Steve's independent
+// 351/351-device retest closed it (backlog item 16 phase 2 cleanup), so no
+// level-2 facility is currently active. Governs internal developer tracing
+// and test hooks only - never the user-facing diagnostic-logging toggle
+// (diagOn()), which is a production feature in its own right.
 @Field static final String BUILD_CHANNEL = 'dev'
 @Field static final int DIAGNOSTIC_LEVEL = 2
 
@@ -99,9 +103,9 @@ import java.util.concurrent.atomic.AtomicInteger
 // app-name-substring check at every one of its five call sites (backlog
 // item 16 phase 2b). Fails closed: an unrecognised BUILD_CHANNEL value is
 // treated as NOT a Dev build - the safer default, since every Dev-only
-// behaviour this gates (a wider default scan window, internal trace
-// facilities) is more permissive than production, never less -
-// validate.ps1 separately asserts BUILD_CHANNEL is exactly 'dev' or
+// behaviour this currently gates (a wider default scan window, the
+// self-hosted-asset branch URLs) is more permissive than production, never
+// less - validate.ps1 separately asserts BUILD_CHANNEL is exactly 'dev' or
 // 'production' so an unrecognised value never actually reaches this in
 // practice.
 boolean isDevBuild() {
@@ -742,16 +746,6 @@ boolean shouldAutoScan() {
     boolean noDurableRunning = !state.scanRunning
     boolean noScanError = !state.scanError
     boolean result = app.installationState == 'COMPLETE' && noGraph && noLiveLock && noDurableRunning && noScanError
-    if (traceOn()) {
-        amTrace('auto-scan.decision', (state.activeGenerationToken ?: '-') as String, traceAttemptId(),
-                [installed: (app.installationState == 'COMPLETE'), noGraph: noGraph, noLiveLock: noLiveLock,
-                 noDurableRunning: noDurableRunning, noScanError: noScanError, result: result,
-                 // graphPresent, separate from noGraph above: lets a future incident distinguish
-                 // "no graph at all" from "atomicState says one exists but state.graph itself is
-                 // missing" (the 2026-08-30 clobbered-state.graph race) without guessing after the
-                 // fact - selfHealGraphIfNeeded() already ran above, so this also confirms recovery.
-                 graphPresent: (state.graph != null)])
-    }
     return result
 }
 
@@ -770,10 +764,6 @@ boolean scanEffectivelyActive() {
     boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
     boolean durable = state.scanRunning == true
     boolean effective = liveLock || durable
-    if (traceOn()) {
-        amTrace('display.lock-vs-state', (state.activeGenerationToken ?: '-') as String, traceAttemptId(),
-                [liveLock: liveLock, durableScanRunning: durable, effective: effective])
-    }
     return effective
 }
 
@@ -917,22 +907,10 @@ function amStartScan() {
 // shipped past dev.
 var amPolling = false;
 var amSawRunning = false;
-// Bounded, non-identifying page-view correlation value (6 random base36
-// chars) - lets a server-side trace tell which polls came from the SAME page
-// view without logging anything about the device, app or hub itself. Part A
-// Step 1's required "first status-poll on a fresh page load" trace: the
-// server cannot tell a new page's first poll apart from an ongoing polling
-// loop by log chronology alone, especially with multiple tabs open, so the
-// client marks it explicitly instead.
-var amPageViewId = Math.random().toString(36).slice(2, 8);
-var amFirstPoll = true;
 function amProgressPoll() {
   if (amPolling) return;
   amPolling = true;
-  var amIsFirstPoll = amFirstPoll;
-  amFirstPoll = false;
   var statusUrl = amPickURL('${getLocalURL('scan-status')}', '${getCloudURL('scan-status')}');
-  statusUrl += (statusUrl.indexOf('?') === -1 ? '?' : '&') + 'pv=' + amPageViewId + (amIsFirstPoll ? '&fp=1' : '');
   if (statusUrl.indexOf('http') === 0) {
     amPolling = false;
     return;
@@ -1065,12 +1043,7 @@ void clearAbandonedScan() {
     String activeGen = (state.activeGenerationToken ?: null) as String
     String currentLock = SCAN_LOCKS.get("${app.id}") as String
     boolean tombstoned = activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))
-    // Evidence that the reorder matters, not just a theoretical improvement -
-    // shows whether THIS poll would have been blocked by the old heartbeat gate.
-    amTraceThrottled('C0.recovery.tombstone-precheck', activeGen ?: '-', null,
-                     [tombstoned: tombstoned, heartbeatWouldHaveBlocked: (beat > 0 && (now() - beat) < 90000)])
     if (tombstoned) {
-        amTrace('C0.recovery.tombstoned', activeGen, traceAttemptId(), [action: 'clear-only'])
         log.warn "${app.label}: clearing resurrected scan flags for an already-completed generation"
         state.scanRunning = false
         return
@@ -1107,18 +1080,9 @@ void clearAbandonedScan() {
     // healthy in-progress scan and this function marking it abandoned.
     boolean asyncDeviceScanActive = state.scanPhase == 'devices' && liveDeviceScan() != null
     boolean asyncAppScanActive = state.scanPhase == 'apps' && liveAppScan() != null
-    // TEMPORARY INSTRUMENTATION. The declined case is reached on every 1.5s
-    // status poll once a scan passes the 90s heartbeat threshold, so it is
-    // throttled per generation; the full C1 line below fires only when
-    // recovery can actually reach a decision.
-    String traceGen = traceOn() ? (activeGen ?: '-') : '-'
     if (asyncDeviceScanActive || asyncAppScanActive) {
-        amTraceThrottled('C1.recovery.declined', traceGen, null,
-                         [declined: 'async-active', devAcc: asyncDeviceScanActive, appAcc: asyncAppScanActive])
         return
     }
-    amTrace('C1.recovery.enter', traceGen, traceAttemptId(),
-            [devAcc: asyncDeviceScanActive, appAcc: asyncAppScanActive])
 
     // A "finishing:<token>:<since>" value means finishGeneration() is
     // already mid-publish for the current generation (see its own comment) -
@@ -1190,9 +1154,9 @@ void clearAbandonedScan() {
             currentToken = recoveryToken
         }
         if (state.appResultsReady == true) {
-            // The duplicate-completion path from the incident. traceGen is the
+            // The duplicate-completion path from the incident. activeGen is the
             // ORIGINAL generation this recovery believes it is acting on;
-            // currentToken is the freshly minted recovery token. If traceGen
+            // currentToken is the freshly minted recovery token. If activeGen
             // names a generation that already completed, the durable flags
             // driving this branch were resurrected rather than genuine - the
             // tombstone check above now catches that case before this branch
@@ -1200,16 +1164,12 @@ void clearAbandonedScan() {
             // logicalGen so this termination's own tombstone (should this
             // really be the first time this generation finishes) lands on
             // the right identity rather than the substitute recovery token.
-            amTrace('C2.recovery.decision', traceGen, traceAttemptId(),
-                    [decision: 'finish-now', recoveryToken: currentToken, appResultsReady: true])
             log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
-            finishScan([lockToken: currentToken, origin: 'recovery', logicalGen: activeGen])
+            finishScan([lockToken: currentToken, logicalGen: activeGen])
         } else {
             // The async results lived only in the lost static accumulator and
             // cannot be reconstructed safely. Terminate truthfully and require
             // a new scan rather than publish a valid-looking empty/partial map.
-            amTrace('C2.recovery.decision', traceGen, traceAttemptId(),
-                    [decision: 'data-lost', recoveryToken: currentToken, appResultsReady: false])
             log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
             markScanFinished(currentToken,
                 'The scan working data was lost before it could be published. Press Scan to run it again.',
@@ -1455,21 +1415,6 @@ ConcurrentHashMap liveAppScan() {
 // not replaced by this.
 @Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
-// Dev-only watchdog-boundary test hook (registry-finalization-race remediation,
-// Part A Step 3, added 2026-08-29). Holds a real, already-fetched registry
-// result back from REGISTRY_RESULTS for a few seconds so the shortened
-// registry-watchdog can deterministically win the finalizer claim on demand,
-// without ever blocking a Hubitat execution or touching production timing.
-// Both TRACE_ENABLED and a generation's own captured debugForceWatchdogWin flag
-// must be true for any of this to activate - see beginRegistryAndFinish(),
-// fetchRegistry() and publishStagedRegistryResult(). Every other install, and
-// this install once the flag is unset, behaves exactly as before this hook
-// existed. Not swept on a timer like REGISTRY_RESULTS/TERMINAL_TOMBSTONES -
-// publishStagedRegistryResult() always removes its own entry, whether it
-// publishes or discards, so a leak here is only possible if the hub itself
-// restarts inside the 3-15s test window, which is inconsequential test-only
-// residue, not a production correctness concern.
-@Field static final ConcurrentHashMap<String, Map> REGISTRY_TEST_STAGE = new ConcurrentHashMap<>()
 @Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
 
 // Composite key matching SCAN_LOCKS's own app.id scoping - collision across
@@ -1477,9 +1422,9 @@ ConcurrentHashMap liveAppScan() {
 // embedded timestamp+random, this makes it impossible by construction instead.
 String genKey(String token) { return "${app.id}:${token}" }
 
-// Called once per scan acquisition (see startScan()), not TRACE_ENABLED-gated
-// - this is real synchronization state, not instrumentation. Retention is
-// generous relative to the 45s watchdog and 30s registry timeout so neither
+// Called once per scan acquisition (see startScan()) - real synchronization
+// bookkeeping, not diagnostic. Retention is generous relative to the 45s
+// watchdog and 30s registry timeout so neither
 // map can be swept out from under a still-plausible late callback, while
 // still bounding both maps against unbounded growth across many scans.
 // Snapshots each entrySet() into a plain list first, then removes
@@ -1497,90 +1442,6 @@ void sweepGenerationRecords() {
         if (createdAt < cutoff) REGISTRY_RESULTS.remove(entry.key, entry.value)
     }
 }
-
-// ---------------------------------------------------------------------------
-// TEMPORARY INSTRUMENTATION - registry/finalization race investigation.
-//
-// Pure observation. Nothing below changes a scan, a lock transition, a
-// publication, a recovery decision or a timeout. Remove the whole block, the
-// amTrace() call sites (grep 'amTrace(') and the three 'origin' data-map keys
-// once the investigation concludes.
-//
-// Flip TRACE_ENABLED to false to silence it without unpicking the call sites.
-// amTrace() must return before constructing any field or reading any state
-// when disabled, so a silenced trace costs one boolean test per call.
-@Field static final boolean TRACE_ENABLED = true
-// Dev-only watchdog-boundary test gate (Part A Step 3). Per review 266 correction
-// 2: a compile-time constant, not a state field - there was no documented way
-// to set state.debugForceWatchdogWin through the app UI, an endpoint, or any
-// other path, so it was dead code as first written. Flip to true, deploy, run
-// the one controlled test, then flip back to false and redeploy immediately -
-// never commit or push it true. Gated together with TRACE_ENABLED at every use.
-@Field static final boolean DEV_TEST_FORCE_WATCHDOG_WIN = false
-@Field static final AtomicInteger TRACE_SEQ = new AtomicInteger(0)
-// Generation-scoped throttle for the high-frequency declined-recovery line
-// only. scanStatusJson polls every 1.5s and reaches clearAbandonedScan every
-// time, so an unthrottled line there would bury the rare lines that matter.
-// Diagnostic-only: nothing reads this to make a decision.
-@Field static final ConcurrentHashMap<String, Long> TRACE_THROTTLE = new ConcurrentHashMap<>()
-@Field static final long TRACE_THROTTLE_MS = 30000L
-
-// v2.1.8 (review 392): this temporary trace format is explicitly NOT
-// part of the reusable production logging design agreed in review 388 -
-// Dev-only regardless of the runtime diagnostic toggle's own state, since a
-// production install can also turn that toggle on. Every trace-path
-// function below checks this single predicate first, so a disabled trace
-// costs one boolean test throughout - not just amTrace() itself, but
-// traceAttemptId() (which otherwise still increments TRACE_SEQ even with
-// tracing off), amTraceThrottled() (still touches TRACE_THROTTLE) and
-// traceSweep() (still walks it), plus every outer if-block elsewhere in
-// this file that builds an argument map before calling amTrace() - those
-// already skip the whole block once their own guard uses this predicate.
-boolean traceOn() {
-    return TRACE_ENABLED && isDevBuild() && DIAGNOSTIC_LEVEL == 2 && diagOn()
-}
-
-String traceAttemptId() { return traceOn() ? "att-${TRACE_SEQ.incrementAndGet()}" : '-' }
-
-void amTrace(String point, String gen, String attempt, Map extra = [:]) {
-    if (!traceOn()) return
-    Long beat = (state.scanHeartbeat ?: 0) as Long
-    String beatAge = beat > 0 ? "${((now() - beat) / 1000).intValue()}s" : '-'
-    StringBuilder sb = new StringBuilder()
-    sb << "AM-TRACE at=${point}"
-    sb << " g=${gen ?: '-'}"
-    sb << " a=${attempt ?: '-'}"
-    sb << " src=${extra.src ?: '-'}"
-    sb << " lock=${SCAN_LOCKS.get("${app.id}") ?: '-'}"
-    sb << " reg=${state.registryMeta?.state ?: '-'}"
-    sb << " run=${state.scanRunning}"
-    sb << " ph=${state.scanPhase ?: '-'}"
-    sb << " ready=${state.appResultsReady}"
-    sb << " beat=${beat} beatAge=${beatAge}"
-    extra.each { k, v -> if (k != 'src') sb << " ${k}=${v}" }
-    log.info sb.toString()
-}
-
-// Throttled variant for the declined-recovery case only. Keyed by generation
-// so a new scan is never silenced by the previous one's throttle entry.
-void amTraceThrottled(String point, String gen, String attempt, Map extra = [:]) {
-    if (!traceOn()) return
-    String key = "${app.id}:${gen ?: '-'}:${point}"
-    Long last = TRACE_THROTTLE.get(key)
-    if (last != null && (now() - last) < TRACE_THROTTLE_MS) return
-    TRACE_THROTTLE.put(key, now())
-    amTrace(point, gen, attempt, extra)
-}
-
-// Swept when a scan begins, so abandoned generations cannot accumulate.
-void traceSweep(String currentGen) {
-    if (!traceOn()) return
-    String prefix = "${app.id}:"
-    TRACE_THROTTLE.keySet().findAll {
-        it.startsWith(prefix) && !it.startsWith("${prefix}${currentGen}:")
-    }.each { TRACE_THROTTLE.remove(it) }
-}
-// --------------------------- end instrumentation ---------------------------
 
 // Everything this app knows comes from undocumented hub endpoints, so on a hub
 // unlike the one it was written against it must say WHY it found nothing rather
@@ -1641,14 +1502,9 @@ Map probeCompatibility() {
 // generation, false if the token no longer owns the lock - a stale/
 // superseded caller, correctly discarded, not an error.
 boolean finishGeneration(String token, String error = null, String logicalGen = null, Closure publishWork = null) {
-    // TEMPORARY INSTRUMENTATION: every terminal attempt, won or lost, so
-    // concurrent attempts on one generation are visible as separate lines.
-    String traceAttempt = traceAttemptId()
-    amTrace('T1.terminal.attempt', token, traceAttempt, [hasPublishWork: publishWork != null])
     if (token == null) return false
     String finishingValue = "finishing:${token}:${now()}"
     if (!SCAN_LOCKS.replace("${app.id}", token, finishingValue)) {
-        amTrace('T1.terminal.lost', token, traceAttempt, [reason: 'cas-failed'])
         return false
     }
     // logicalGen defaults to the CAS token itself - correct for every normal
@@ -1669,7 +1525,6 @@ boolean finishGeneration(String token, String error = null, String logicalGen = 
         state.scanRunning = false
         SCAN_LOCKS.remove("${app.id}", finishingValue)
     }
-    amTrace('T1.terminal.won', token, traceAttempt, [released: true])
     return true
 }
 
@@ -1710,14 +1565,17 @@ Map startScan() {
     // see markScanFinished()'s comment for the full reasoning.
     String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
     if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) return [acquired: false]
-    // TEMPORARY INSTRUMENTATION: durable trace identity only. Recovery mints
-    // its own token because the original is gone by then, so without this the
-    // trace cannot say which generation a recovery believed it was acting on.
-    // Nothing branches on this value - it is written and read for logging.
+    // Durable identity for this generation, read back by clearAbandonedScan()'s
+    // own tombstone precheck (activeGen -> TERMINAL_TOMBSTONES.containsKey
+    // (genKey(activeGen))): a resurrected durable state.scanRunning after this
+    // generation has already terminated is only
+    // distinguishable from a genuinely still-running scan by checking whether
+    // ITS OWN token is already tombstoned, which requires knowing that token.
+    // Recovery mints a fresh substitute token because the original SCAN_LOCKS
+    // entry is gone by then, so without this durable copy a recovery execution
+    // would have no way to know which generation it is really acting on.
     state.activeGenerationToken = lockToken
-    traceSweep(lockToken)
     sweepGenerationRecords()
-    amTrace('scan.acquire', lockToken, traceAttemptId())
     // The one unambiguous "a scan genuinely began" line, at the single choke
     // point every entry path (manual /scan, the scheduled overnight trigger,
     // any future caller) already funnels through - distinct from "/scan
@@ -2705,35 +2563,13 @@ void beginRegistryAndFinish(String lockToken) {
     // structurally cannot record that it started.
     state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
                           matched: 0, error: null, schemaVersion: null]
-    // Captured once, here, and threaded through jobData rather than re-read from
-    // the compile-time constant by either downstream execution - matches this
-    // generation's own decision even if the constant were ever changed mid-test
-    // (it should not be, but this costs nothing and removes the question). See
-    // REGISTRY_TEST_STAGE's comment for the full watchdog-boundary test hook.
-    // isDevBuild()/DIAGNOSTIC_LEVEL added alongside the pre-existing pair
-    // (phase 2b) - previously this hook had no build-channel gate at all,
-    // so a DEV_TEST_FORCE_WATCHDOG_WIN accidentally left true would have
-    // fired in production too, not just Dev.
-    boolean debugForceWatchdogWin = TRACE_ENABLED && DEV_TEST_FORCE_WATCHDOG_WIN && isDevBuild() && DIAGNOSTIC_LEVEL == 2
-    runIn(1, 'fetchRegistry', [data: [lockToken: lockToken, debugForceWatchdogWin: debugForceWatchdogWin]])
+    runIn(1, 'fetchRegistry', [data: [lockToken: lockToken]])
     // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
     // dies takes the graph build down with it and the scan never completes
     // at all. Scheduling finishScan again for the same handler replaces
     // this job, so the normal path cancels the watchdog simply by
     // rescheduling it one second out.
-    //
-    // Shortened to 3s under the same dual gate when the watchdog-boundary test
-    // is active - the registry fetch itself is never slowed or blocked; only
-    // this interval and REGISTRY_RESULTS's publish timing (see fetchRegistry)
-    // are altered, deterministically forcing the watchdog to reach its decision
-    // point while the generation's real result is still deliberately staged.
-    // 3s / 15s (not 3s / 5s - review 266, correction 3): runIn() is not an exact
-    // real-time scheduler, particularly on a loaded hub, so a 2-second margin
-    // does not reliably force the intended ordering. A wide margin here costs
-    // nothing real since both delays are non-blocking scheduled work, not time
-    // anyone waits on synchronously.
-    Integer watchdogSec = debugForceWatchdogWin ? 3 : 45
-    runIn(watchdogSec, 'finishScan', [data: [lockToken: lockToken, origin: 'registry-watchdog']])
+    runIn(45, 'finishScan', [data: [lockToken: lockToken]])
 }
 
 // Runs as its own scheduled execution between the app phase and the graph
@@ -2746,17 +2582,14 @@ void beginRegistryAndFinish(String lockToken) {
 // visible state rather than a silent absence.
 void fetchRegistry(jobData = null) {
     String lockToken = jobData?.lockToken as String
-    String traceAttempt = traceAttemptId()
     // Checked before the very first write, including the heartbeat stamp -
     // this is a separately scheduled execution that can in principle fire
     // late, after its own generation was abandoned and a newer one has
     // since started.
     if (!ownsLock(lockToken)) {
-        amTrace('registry.superseded', lockToken, traceAttempt)
         if (diagOn()) log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
         return
     }
-    amTrace('R1.registry.enter', lockToken, traceAttempt)
     state.scanHeartbeat = now()
     List types = discoveredAppTypes()
     List matches = []
@@ -2795,19 +2628,6 @@ void fetchRegistry(jobData = null) {
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
-    // Dev-only watchdog-boundary test hook (Part A Step 3). The real HTTP fetch
-    // above already ran and finished normally - only the PUBLISH step is held
-    // back, in a separate bounded map, so the shortened watchdog scheduled by
-    // beginRegistryAndFinish() gets its deterministic chance to win the
-    // finalizer claim before this generation's real result becomes visible to
-    // it. See REGISTRY_TEST_STAGE's own comment for the full mechanism.
-    if (jobData?.debugForceWatchdogWin == true) {
-        REGISTRY_TEST_STAGE.put(genKey(lockToken), [meta: meta, matches: matches, createdAt: now()])
-        amTrace('registry.test-staged', lockToken, traceAttempt, [delaySec: 15])
-        runIn(15, 'publishStagedRegistryResult', [data: [lockToken: lockToken]])
-        return
-    }
-
     // Written unconditionally, keyed by this generation's own token, not
     // gated on ownsLock() below - the finalizer consults this after its own
     // claim instead of a pre-claim state snapshot, so a superseded write here
@@ -2821,21 +2641,14 @@ void fetchRegistry(jobData = null) {
     // plus a fresh acquisition can interleave during it exactly as easily as
     // around any other gap in this pipeline.
     if (!ownsLock(lockToken)) {
-        amTrace('registry.superseded-late', lockToken, traceAttempt)
         if (diagOn()) log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
         return
     }
 
-    // R2/R3 bracket the assignment only. Neither proves Hubitat COMMITTED it
-    // durably: state commits at execution end and there is no post-return
-    // hook to observe. Correlate R4 against the finish execution's own entry
-    // line rather than reading R3 as proof that publication had landed.
-    amTrace('R2.registry.pre-publish', lockToken, traceAttempt, [outcome: meta.error ? 'ERROR' : 'OK'])
     // Only on success, so a failed fetch keeps the last good set rather than
     // silently emptying the map of everything the registry contributed.
     if (!meta.error) state.registryMatches = matches
     state.registryMeta = meta
-    amTrace('R3.registry.assigned', lockToken, traceAttempt, [note: 'assignment-executed-not-commit-proven'])
     // Split by outcome (v2.1.8): registry unavailable is a degraded outcome
     // (map still builds, just without registry-derived matches) and stays
     // always logged; a normal match count is routine detail, gated.
@@ -2844,43 +2657,7 @@ void fetchRegistry(jobData = null) {
     } else if (diagOn()) {
         log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
     }
-    amTrace('R4.registry.pre-finish', lockToken, traceAttempt)
-    runIn(1, 'finishScan', [data: [lockToken: lockToken, origin: 'registry-chain']])
-}
-
-// Dev-only watchdog-boundary test continuation (Part A Step 3, added
-// 2026-08-29). Fires after the shortened watchdog scheduled by
-// beginRegistryAndFinish() has already had its chance to win the finalizer
-// claim. Retrieves the staged result and follows the exact same post-fetch
-// ownership check fetchRegistry() itself uses, rather than a separate code
-// path - so a superseded generation (the expected, normal outcome of this
-// test: the watchdog SHOULD have already won) is discarded exactly as any
-// other late registry callback already is. If ownership somehow was not lost
-// (the watchdog did not win in time for this particular run), this still
-// publishes and schedules finishScan normally - finishGeneration()'s own
-// single-claim CAS is the real protection either way, this hook only controls
-// timing, never bypasses it.
-void publishStagedRegistryResult(jobData = null) {
-    String lockToken = jobData?.lockToken as String
-    String traceAttempt = traceAttemptId()
-    Map staged = REGISTRY_TEST_STAGE.remove(genKey(lockToken))
-    if (staged == null) {
-        amTrace('registry.test-stage-missing', lockToken, traceAttempt)
-        return
-    }
-    if (!ownsLock(lockToken)) {
-        amTrace('registry.test-superseded', lockToken, traceAttempt)
-        if (diagOn()) log.info "${app.label}: watchdog-boundary test - staged registry result for a superseded generation, discarding without publishing"
-        return
-    }
-    Map meta = staged.meta as Map
-    List matches = staged.matches as List
-    REGISTRY_RESULTS.put(genKey(lockToken), [meta: meta, matches: matches, createdAt: now()])
-    amTrace('registry.test-published-late', lockToken, traceAttempt, [outcome: meta.error ? 'ERROR' : 'OK'])
-    if (!meta.error) state.registryMatches = matches
-    state.registryMeta = meta
-    log.warn "${app.label}: watchdog-boundary test - late-published a staged registry result (unexpected unless the watchdog itself did not win this run)"
-    runIn(1, 'finishScan', [data: [lockToken: lockToken, origin: 'registry-chain']])
+    runIn(1, 'finishScan', [data: [lockToken: lockToken]])
 }
 
 // data.lockToken travels from beginRegistryAndFinish() via fetchRegistry(),
@@ -2897,18 +2674,7 @@ void finishScan(data = null) {
     // land on the ORIGINAL generation's identity. See finishGeneration()'s
     // own comment.
     String logicalGen = (data?.logicalGen ?: lockToken) as String
-    // Parsed before the first trace line so F1 already carries both. 'origin'
-    // is TEMPORARY INSTRUMENTATION: it is only ever logged, never branched on.
-    String traceOrigin = (data?.origin ?: 'unknown') as String
-    String traceAttempt = traceAttemptId()
-    amTrace('F1.finish.enter', lockToken, traceAttempt, [src: traceOrigin])
-
-    amTrace('F2.finish.pre-claim', lockToken, traceAttempt, [src: traceOrigin])
     boolean finished = finishGeneration(lockToken, null, logicalGen) {
-        // F3b isolates the cost of the inventory + graph build inside the
-        // claimed closure, which was previously only inferable from log-gap
-        // arithmetic against the next line to be emitted.
-        amTrace('F3b.finish.closure-enter', lockToken, traceAttempt, [src: traceOrigin])
         // v2.0.14: authoritative Hub Variable inventory. A synchronous,
         // in-process call (getAllGlobalVars()) with no
         // async round trip of its own, so it is called and published here,
@@ -2931,8 +2697,6 @@ void finishScan(data = null) {
         // error.
         Map regResult = REGISTRY_RESULTS.get(genKey(lockToken)) as Map
         boolean registryTimedOut = (regResult == null)
-        amTrace('F4.finish.registry-decision', lockToken, traceAttempt,
-                [src: traceOrigin, resolved: !registryTimedOut])
         if (registryTimedOut) {
             state.registryMeta = [state: 'FAILED', fetched: null, entries: 0, matched: 0,
                                    error: 'the registry fetch did not complete', schemaVersion: null]
@@ -2989,10 +2753,6 @@ void finishScan(data = null) {
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
         if (diagOn()) log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
-        // Records that THIS attempt was the one that emitted the completion
-        // log. A second such line for one generation is the duplicate-
-        // emission defect, directly observed.
-        amTrace('T1.terminal.emitted', lockToken, traceAttempt, [src: traceOrigin, emitted: 'completion'])
 
         // durationSeconds reads the start time already embedded in lockToken
         // ("lock-<epochMillis>-<random>", see its own acquisition comment)
@@ -3003,16 +2763,12 @@ void finishScan(data = null) {
         // separate page-render execution.
         state.lastScanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
     }
-    amTrace('F3.finish.claim-result', lockToken, traceAttempt, [src: traceOrigin, won: finished])
     if (!finished) {
         // The claim is now checked before buildGraph() runs, so a
         // superseded generation never builds a graph at all any more - it
         // just loses the claim immediately and does nothing further.
         if (diagOn()) log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
     }
-    // After finishGeneration's own finally has released the lock, so 'lock='
-    // on this line shows the post-terminal state.
-    amTrace('F5.finish.post-cleanup', lockToken, traceAttempt, [src: traceOrigin, won: finished])
 }
 
 // Every device on the hub.
@@ -6667,21 +6423,6 @@ Map scanStatusMapping() {
     // (README Troubleshooting), so running the same recovery here means any
     // status poll can un-stick a scan, not only a settings-page reload.
     clearAbandonedScan()
-    // Part A Step 1's required first-poll trace, fired only for the request the
-    // client itself marked as a fresh page view's first poll (see amProgressPoll's
-    // own comment) - deliberately reads the raw signals directly rather than
-    // calling scanEffectivelyActive() again, which would fire display.lock-vs-state
-    // a second time for the same request. pv is the bounded, non-identifying
-    // page-view value the client generated; no device/app/hub/variable name is
-    // ever included.
-    if (traceOn() && params.fp == '1') {
-        boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
-        boolean durable = state.scanRunning == true
-        amTrace('display.first-poll', (params.pv ?: '-') as String, traceAttemptId(),
-                [running: (liveLock || durable), forceRunning: false, liveLock: liveLock,
-                 durableScanRunning: durable, graphPresent: (state.graph != null),
-                 phase: state.scanPhase, done: state.scanDone, total: state.scanTotal])
-    }
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
