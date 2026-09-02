@@ -1,77 +1,29 @@
-// Negative-path tests for strip-comments.groovy's comparison logic (Codex
-// review, queue 432): proves the ordered comparison-stream check actually
-// rejects a candidate that keeps the same non-NL tokens and the same total
-// newline COUNT but moves a newline to a different position relative to
-// the surrounding code - the exact class of defect a bare count comparison
-// (the earlier, weaker version of this check) would have missed. Concretely
-// mirrors Codex's own example: `return\nx` (a bare return, then a separate
-// statement `x`) versus a hand-corrupted `\nreturn x` (one statement,
-// returning x) - same two real tokens, same one newline, different meaning.
+// Negative-path tests for the comparison logic in comparison.groovy
+// (review, queue 432 and 434): proves the ordered comparison-stream check
+// actually rejects a candidate that keeps the same non-NL tokens and the
+// same total newline COUNT but moves a newline to a different position
+// relative to the surrounding code - the exact class of defect a bare count
+// comparison (an earlier, weaker version of this check) would have missed.
+// Concretely mirrors the review's own example: `return\nx` (a bare return, then
+// a separate statement `x`) versus a hand-corrupted `\nreturn x` (one
+// statement, returning x) - same two real tokens, same one newline,
+// different meaning.
 //
-// buildComparisonRecords()/compareComparisonStreams() below are a literal
-// copy of the same-named functions in strip-comments.groovy, not a load of
-// that file - dynamically loading a Script's own static methods via
-// GroovyShell.parse() + .&methodName did not resolve cleanly against
-// hand-built fake tokens (MissingMethodException even after relaxing the
-// real script's parameter types), and this project's own convention is to
-// prefer a working, inspectable duplicate over a fragile cross-file load.
-// KEEP THIS IN SYNC with strip-comments.groovy if that comparison logic
-// ever changes - both copies exist purely so this file can unit-test the
-// algorithm in isolation, with adversarial hand-built input the real
-// stripper would never actually produce itself.
+// Loads the SAME comparison.groovy class strip-comments.groovy actually
+// uses (factored out in phase 2 specifically so this file tests the real
+// function, not a copy that could drift - queue 434) and exercises it
+// against small hand-built fake tokens, adversarial input the real stripper
+// would never actually produce itself.
 //
 // Usage: groovy verify-comparison-tests.groovy
 import org.apache.groovy.parser.antlr4.GroovyLexer
-import java.util.regex.Pattern
 
 File thisScriptFile = new File(this.class.protectionDomain.codeSource.location.toURI())
 File guardFile = new File(thisScriptFile.parentFile, 'pinned-guard.groovy')
+File comparisonFile = new File(thisScriptFile.parentFile, 'comparison.groovy')
 def guard = new GroovyClassLoader(this.class.classLoader).parseClass(guardFile)
 guard.require()
-
-static Pattern lineEndingPattern() {
-    return Pattern.compile('\r\n|\r|\n')
-}
-
-static boolean isCommentText(String text) {
-    return text.startsWith('//') || text.startsWith('/*')
-}
-
-static boolean isCommentToken(def t) {
-    return t.type == GroovyLexer.NL && isCommentText(t.text)
-}
-
-static List buildComparisonRecords(List tokens) {
-    List records = []
-    tokens.each { t ->
-        if (t.type == groovyjarjarantlr4.v4.runtime.Token.EOF) return
-        if (t.type == GroovyLexer.NL) {
-            def m = lineEndingPattern().matcher(t.text)
-            while (m.find()) { records << ['NL', m.group()] }
-        } else {
-            records << ['TOK', t.type, t.text]
-        }
-    }
-    return records
-}
-
-static Map compareComparisonStreams(List originalTokens, List candidateTokens) {
-    List expected = buildComparisonRecords(originalTokens)
-    List actual = buildComparisonRecords(candidateTokens)
-    if (expected.size() != actual.size()) {
-        return [ok: false, reason: "record count differs: expected ${expected.size()}, got ${actual.size()}"]
-    }
-    for (int i = 0; i < expected.size(); i++) {
-        if (expected[i] != actual[i]) {
-            return [ok: false, reason: "record ${i} differs: expected ${expected[i]}, got ${actual[i]}"]
-        }
-    }
-    boolean candidateHasNoComments = candidateTokens.every { !isCommentToken(it) }
-    if (!candidateHasNoComments) {
-        return [ok: false, reason: 'candidate still contains a lexer-classified comment token']
-    }
-    return [ok: true, recordCount: actual.size()]
-}
+def Comparison = new GroovyClassLoader(this.class.classLoader).parseClass(comparisonFile)
 
 // Minimal fake Token: only .type/.text are read by the functions under test.
 class FakeToken {
@@ -113,7 +65,7 @@ List corrupted = [
     new FakeToken(EOF, '<EOF>'),
 ]
 
-Map badResult = compareComparisonStreams(original, corrupted)
+Map badResult = Comparison.compareComparisonStreams(original, corrupted)
 check('relocated newline (same tokens, same newline count) is rejected', !badResult.ok)
 if (!badResult.ok) {
     println "      reason: ${badResult.reason}"
@@ -121,11 +73,11 @@ if (!badResult.ok) {
 
 // Sanity: identical streams must still be accepted, so the check above is
 // proven meaningful rather than a comparator that just always fails.
-Map goodResult = compareComparisonStreams(original, original)
+Map goodResult = Comparison.compareComparisonStreams(original, original)
 check('identical streams are accepted', goodResult.ok)
 
 // LF vs CRLF at the same position, same count: also must be rejected -
-// Codex's other named concern ("does not itself prove that an LF was not
+// the review's other named concern ("does not itself prove that an LF was not
 // exchanged for a CRLF or bare CR").
 List crlfSwapped = [
     new FakeToken(IDENT, 'return'),
@@ -133,7 +85,7 @@ List crlfSwapped = [
     new FakeToken(IDENT, 'x'),
     new FakeToken(EOF, '<EOF>'),
 ]
-Map lineEndingKindResult = compareComparisonStreams(original, crlfSwapped)
+Map lineEndingKindResult = Comparison.compareComparisonStreams(original, crlfSwapped)
 check('LF silently exchanged for CRLF at the same position is rejected', !lineEndingKindResult.ok)
 
 println "${pass} passed, ${fail} failed"
