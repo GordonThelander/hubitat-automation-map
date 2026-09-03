@@ -15,14 +15,13 @@ history, not in this delivery list.
 
 ## Release gate
 
-**Closed.** Steve retested the original missing component-device scenario on his own hub: Hubitat
-reported 351 devices and Automation Map matched it at 351; he specifically checked Aqara, Bond,
-Harmony, and Shelly devices and confirmed all were present, and described the release as "spot on"
-with nothing else discovered on his end. That is the external confirmation this gate required. No
-further response from Steve is needed for this specific defect.
-
-This closure does not by itself authorize a production deployment, branch push, or release - see
-item 16 (production build) for what remains before any promotion.
+**Closed, and superseded by an actual release.** Steve retested the original missing
+component-device scenario on his own hub: Hubitat reported 351 devices and Automation Map matched
+it at 351; he specifically checked Aqara, Bond, Harmony, and Shelly devices and confirmed all were
+present, and described the release as "spot on" with nothing else discovered on his end. That
+defect, along with everything else accumulated on `dev` through 2026-09-02, shipped to production
+as v2.2.0 (2026-09-03) - see item 16 in Hold/closed for the release path. This section is now a
+historical record, not an open gate.
 
 ## Now
 
