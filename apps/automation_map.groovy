@@ -15,55 +15,12 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  *
- * Visualizes how installed Hubitat apps and devices relate to each other, and
- * in what ROLE - which app owns a device, which devices trigger an app, which
- * constrain it, and which it acts on - as an interactive force-directed graph,
- * in the same visual style as Dan Danache's Zigbee Map app.
+ * GENERATED FILE - do not edit directly. Produced by the production-profile
+ * builder from the annotated Dev source at commit bda3efd3e347d650168d2ef7ad1de943758414e4; developer
+ * comments and Dev-only build markers are not present in this file.
  *
- * There is no official Hubitat API for any of this. The data comes from the
- * hub's own internal endpoints (the ones the hub's own web UI calls), fetched
- * via a self-request to 127.0.0.1 - an established community technique, not a
- * public API:
- *
- *   /device/fullJson/<id>         device metadata and relationship evidence
- *   /hub2/appsList                the complete installed-app tree in one call,
- *                                 including apps that touch no device
- *   /installedapp/statusJson/<id> the real relationship data per app:
- *                                 childDevices, eventSubscriptions, and every
- *                                 setting that resolves to devices
- *
- * Role assignment, derived by probing apps whose source is known (Presence
- * Manager, LIFX Light Manager) plus real rules, and cross-checked against both
- * that source and the rules' own UI. Checked in this order:
- *
- *   in childDevices          -> owns       (LIFX: 12 child lights, no subs)
- *   setting named tDev*      -> trigger    (RM trigger devices)
- *   setting named rDev*      -> constraint (RM conditions + required expression)
- *   device is subscribed     -> trigger    (general: an app subscribes to what
- *                                           it listens to. Presence Manager's 5
- *                                           subs matched subscribeEvidence-
- *                                           Devices() exactly)
- *   capability has no commands -> monitor  (watched, not driven - Critical
- *                                           Device Monitor inspects contact and
- *                                           motion pickers it never commands)
- *   any other device setting -> action     (onOffSwitch.*, volume.*, note.*,
- *                                           siren.*, chime.*, speakDevice.*)
- *
- * Only the tDev/rDev rules are Rule Machine's private naming. childDevices,
- * eventSubscriptions and capability types are platform-level, so the graph
- * works for apps this was never written against - it handled all 17 app types
- * on the development hub, 12 of them integrations with no specific support.
- *
- * Rule FLOW decoding is different: it reads Rule Machine's internal layout and
- * is pinned to SUPPORTED_RULE_ENGINE. Rules on any other engine still appear in
- * the graph; they are counted and reported rather than silently empty.
- *
- * Known limitations:
- *  - Event subscriptions are a snapshot: Rule Machine drops trigger
- *    subscriptions while a Required Expression is false.
- *  - If Hub Login Security is enabled the internal endpoints may not return
- *    JSON at all; the scan probes for this and reports it rather than showing
- *    an empty map.
+ * Canonical annotated source:
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/bda3efd3e347d650168d2ef7ad1de943758414e4/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -72,79 +29,79 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_NAME = 'Automation Map (Dev)'
-// Every build of this app excludes all of its own variants from the map,
-// whatever each one calls itself. A dev copy installed beside the release would
-// otherwise show up as an app referencing every device on the hub, and the
-// release would do the same from the dev copy's point of view.
+@Field static final String APP_NAME = 'Automation Map'
+
+
+
+
 @Field static final String APP_FAMILY = 'Automation Map'
 @Field static final String APP_VERSION = '2.2.0'
-// Production-build profile (backlog item 16 / production_build_methodology.md
-// phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
-// production candidate; every intentional Dev/production behaviour
-// difference in this file must read this constant through isDevBuild(),
-// never APP_NAME directly - the app's own display name is cosmetic and must
-// not double as a build-channel signal the production builder has to parse.
-// DIAGNOSTIC_LEVEL: 0 is the production profile (no internal developer
-// trace or test facility). 1 is reserved, no behaviour assigned yet. 2 is
-// reserved for an explicitly reviewed Dev-only internal diagnostic or test
-// facility, gated on this level alongside its own dedicated flags - the
-// registry/finalization-race trace instrumentation and its forced-watchdog-
-// win test hook were the first such facility and used level 2 while the
-// investigation was open; both were removed once Steve's independent
-// 351/351-device retest closed it (backlog item 16 phase 2 cleanup), so no
-// level-2 facility is currently active. Governs internal developer tracing
-// and test hooks only - never the user-facing diagnostic-logging toggle
-// (diagOn()), which is a production feature in its own right.
-@Field static final String BUILD_CHANNEL = 'dev'
-@Field static final int DIAGNOSTIC_LEVEL = 2
 
-// Single source of truth for "is this a Dev build", replacing the old
-// app-name-substring check at every one of its five call sites (backlog
-// item 16 phase 2b). Fails closed: an unrecognised BUILD_CHANNEL value is
-// treated as NOT a Dev build - the safer default, since every Dev-only
-// behaviour this currently gates (a wider default scan window, the
-// self-hosted-asset branch URLs) is more permissive than production, never
-// less - validate.ps1 separately asserts BUILD_CHANNEL is exactly 'dev' or
-// 'production' so an unrecognised value never actually reaches this in
-// practice.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String BUILD_CHANNEL = 'production'
+@Field static final int DIAGNOSTIC_LEVEL = 0
+
+
+
+
+
+
+
+
+
+
 boolean isDevBuild() {
     return BUILD_CHANNEL == 'dev'
 }
 
-// Bumped ONLY when the shape of the scanned graph changes, so that a rendering
-// or scanning fix does not needlessly invalidate a good scan and force the user
-// to re-crawl every device and app.
-// Bumped for the stops->cancelTimedActions / pauses->pauseResume kind rename
-// and the addition of node.missing - a cached graph from schema 2 would
-// otherwise render with edge kinds that no longer match any colour/dash
-// lookup, degrading silently to the '#999' fallback instead of forcing the
-// rescan that already exists for exactly this situation.
-// Bumped 5->6 for public release: schema 5 predates Hub Variable nodes,
-// Connector edges, structured writeSource and current External Systems
-// identity data, none of which existed when a production v2.0.4 instance's
-// graph was last built. Forces graphIsStale() to catch that upgrade instead
-// of silently exposing an old-shaped graph to new rendering code.
-// Bumped 6->7 for Gate C (v2.1.4): graph.ruleVariables is a new first-class
-// property the page now consumes (focused rule panel), and the old
-// reference-derived Hub Variable node fallback is retired - an old-schema
-// cached graph has neither, so graphIsStale() must force a rebuild rather
-// than render it as if it had already been through classification.
-// Bumped 7->8 (v2.1.6): Local Variable nodes/edges and the unreferencedLocal
-// node property are new. Without this bump an upgraded instance could render
-// a cached schema-7 graph and silently omit the whole feature until the next
-// manual scan (review 311, correction 2).
-// Bumped 8->9 (v2.1.7): new hasComponent edge kind (device-owned component
-// relationships, e.g. a Shelly/Bond/Matter-bridge child or a Hub Variable
-// Connector nested under its parent) changes the persisted graph shape.
-// Bumped 9->10 (v2.1.7): device/app nodes gained disabled/paused fields
-// (item 18) - a cached schema-9 graph predates them, so the disabled-device
-// and paused/disabled-rule label suffixes and export status values would
-// silently be absent until the next manual scan without this bump.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final String GRAPH_SCHEMA = '10'
 
-// Gates the watermark's Dec 20-25 swap to the Christmas tree image
-// (see hubWatermark below) - the only thing showSanta() controls now.
+
+
 boolean showSanta() {
     Calendar cal = Calendar.getInstance(location.timeZone)
     cal.setTime(new Date())
@@ -152,21 +109,21 @@ boolean showSanta() {
     int day = cal.get(Calendar.DAY_OF_MONTH)
     return month == 12 && day >= 20 && day <= 25
 }
-// Rule flow decoding reads Rule Machine's private internals, so it is pinned to
-// the version it was verified against. Rules on any other engine still appear
-// in the graph with their device relationships; they are counted and reported
-// rather than silently producing an empty flow.
+
+
+
+
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
-// Named once here, not repeated as a literal in compatibilitySummary(),
-// so a future engine addition needs one edit rather than finding every
-// place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
+
+
+
 @Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0 (in Beta)'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
-// Origin only (scheme+host), for the browser to compare against its own
-// window.location.hostname at fetch time. Kept as its own pattern rather than
-// reworking URL_PATTERN's grouping - that one is proven correct in production
-// and touching its group indices to add a second capture risks breaking the
-// local-path case for every user to fix a case that only affects some.
+
+
+
+
+
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
 
 definition(
@@ -188,10 +145,10 @@ preferences {
 
 void installed() {
     if (diagOn()) log.info "${app.label} installed"
-    // Pressing Done is the first moment the instance exists and work can be
-    // scheduled for it, so the first scan starts here rather than asking the
-    // user to press Done and then come back in to start one - which reads as
-    // though the install did not take.
+    
+    
+    
+    
     if (diagOn()) log.info "${app.label}: starting first scan"
     startScan()
     scheduleAutoScan()
@@ -199,45 +156,45 @@ void installed() {
 
 void updated() {
     if (diagOn()) log.info "${app.label} updated"
-    // v2.1.8: telemetry is removed. An instance upgraded from a version
-    // that created the telemetry child device (v2.1.2-2.1.7) needs it
-    // cleaned up - see migrateRemoveTelemetryDevice().
+    
+    
+    
     migrateRemoveTelemetryDevice()
-    // Rescheduled on every updated() so any change to the enabled toggle or
-    // chosen time takes effect immediately.
+    
+    
     scheduleAutoScan()
     scheduleDiagnosticLoggingExpiry()
 }
 
-// v2.1.8: on-demand diagnostic logging for troubleshooting, off by default.
-// diagOn() is the single gate every routine/lifecycle log line in this file
-// checks - always wrapping the WHOLE log statement, not evaluating a
-// message first and passing it through a gated function, so a disabled
-// toggle costs nothing: an off diagOn() line never builds its string.
-// Failures and degraded outcomes (invariant violations, watchdog timeouts,
-// failed fetch/finalization/recovery) are never gated by this - they stay
-// logged unconditionally elsewhere in this file regardless of the toggle,
-// so a quiet install can never lose visibility into something actually
-// going wrong.
-// review 392: requires a durable deadline, not just the setting -
-// settings.diagnosticLoggingEnabled alone would let the toggle stay
-// reported "on" past its hour if the scheduled auto-disable job was ever
-// missed (a one-shot runIn() job does not fire late or catch up if the hub
-// was down at its due time - unlike a recurring schedule(), which Hubitat
-// does re-establish). state.diagnosticLoggingExpiresAt is the actual
-// authority; the scheduled job below is only a best-effort prompt to flip
-// the displayed setting at the right moment.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 boolean diagOn() {
     if (settings.diagnosticLoggingEnabled != true) return false
     Long expiresAt = (state.diagnosticLoggingExpiresAt ?: 0) as Long
     return expiresAt > 0 && now() < expiresAt
 }
 
-// Sets the durable deadline ONCE, on the off-to-on transition, and never
-// pushes it out again - review 392: pressing Done for an unrelated
-// setting while this stays on must not silently extend the window past
-// what the user actually turned on. A later updated() call while it is
-// already on (with an existing deadline and job) leaves both alone.
+
+
+
+
+
 void scheduleDiagnosticLoggingExpiry() {
     if (settings.diagnosticLoggingEnabled != true) {
         unschedule('disableDiagnosticLogging')
@@ -251,35 +208,35 @@ void scheduleDiagnosticLoggingExpiry() {
     }
 }
 
-// runIn handler - flips the setting back off once the durable deadline has
-// passed. Also reached via the settings-page reconciliation (main page
-// render) if the scheduled job itself was missed - either path converges
-// on the same state. updateSetting() (not settings.x = false, which does
-// not persist a dynamicPage input's value) is the documented API for an
-// app changing its own setting outside of page submission. Gated by
-// diagOn() being the CALLER's job, not this function's - this line always
-// logs, telling the user their diagnostic session just ended, including if
-// they were away from the settings page when it expired.
+
+
+
+
+
+
+
+
+
 void disableDiagnosticLogging() {
     app.updateSetting('diagnosticLoggingEnabled', [type: 'bool', value: false])
     state.remove('diagnosticLoggingExpiresAt')
     log.info "${app.label}: diagnostic logging auto-disabled after one hour"
 }
 
-// v2.1.8 migration only - telemetry itself is removed. Best-effort exact-DNI
-// deletion of the child device earlier versions created, matching how
-// ensureTelemetryDevice() used to create it: never allowed to block
-// installed()/updated(). Idempotent once it succeeds, or if the device was
-// never there in the first place - state.telemetryMigrationDone short-
-// circuits every later call so a completed migration is never retried or
-// logged again. A deletion failure (Hubitat can refuse it while the device
-// is still referenced elsewhere - a dashboard, another app) leaves the
-// device intact and does NOT set that flag, so the next updated() - the
-// next time settings are saved, not a hub reboot; this function is only
-// ever called from updated() - retries it in case the reference has since
-// been cleared; the failure is also recorded in state for the settings
-// page to surface as a visible, actionable warning rather than only a log
-// line.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void migrateRemoveTelemetryDevice() {
     if (state.telemetryMigrationDone) return
     String dni = "${app.id}-telemetry"
@@ -292,74 +249,74 @@ void migrateRemoveTelemetryDevice() {
         deleteChildDevice(dni)
         state.telemetryMigrationDone = true
         state.remove('telemetryRemovalFailed')
-        // One-time routine confirmation, gated like any other - review 392:
-        // this would otherwise make an upgrade noisy even with diagnostics
-        // off.
+        
+        
+        
         if (diagOn()) log.info "${app.label}: removed the former telemetry device - telemetry is discontinued as of this version."
     } catch (Exception ex) {
-        // review 392: state.telemetryRemovalFailed is a fixed flag,
-        // not the exception text - ex.message is internal diagnostic text,
-        // not HTML-escaped, and must never be interpolated directly into
-        // rendered settings-page HTML. The real detail stays in this log
-        // line only. Retries the next time settings are saved (updated()),
-        // not on hub restart - migrateRemoveTelemetryDevice() is only
-        // called from updated(), which does not run on reboot.
+        
+        
+        
+        
+        
+        
+        
         state.telemetryRemovalFailed = true
         log.warn "${app.label}: could not remove the former telemetry device automatically (${ex.message}) - it may still be referenced elsewhere (a dashboard, another app). Clear the reference and remove it manually from the Devices page; this app will retry the next time you save these settings."
     }
 }
 
-// Single source of truth for the default automatic-scan time - Dev and
-// production differ only so a Dev install running alongside production on
-// the same hub doesn't compete with it for the same loopback endpoints at
-// the same second. Used for the settings-page input's defaultValue, the
-// paragraph explaining it, and the scheduler's own blank-time fallback
-// below, so the displayed default, the explanation, and what actually runs
-// cannot drift out of sync with each other the way three separately
-// hardcoded strings could (v2.1.8; item 8).
+
+
+
+
+
+
+
+
 String defaultAutoScanTime() {
     return isDevBuild() ? '01:00' : '00:30'
 }
 
-// Cron expression (sec min hour day month weekday) for defaultAutoScanTime()
-// - derived from it, not a second hardcoded time, so the two can never say
-// different things. Only used when autoScanTime is blank; an explicitly
-// chosen time is always scheduled from the input's own stored value instead.
+
+
+
+
 String defaultAutoScanCron() {
     List parts = defaultAutoScanTime().tokenize(':')
     return "0 ${parts[1]} ${parts[0]} * * ?"
 }
 
-// The bool input's own defaultValue: true is a DISPLAY default only -
-// review 392: Hubitat does not necessarily populate settings with a
-// displayed default until the page is refreshed/saved, so a genuinely
-// fresh, never-saved install can have settings.autoScanEnabled read null
-// even while the toggle visually shows on. A bare truthy check on that
-// value would then read as "off" on first render - hiding the time input
-// the settings page is meant to show by default, and skipping the very
-// first scheduled scan this app is supposed to run automatically out of
-// the box. Treat only an explicit false as off; null/missing counts as on,
-// matching the toggle's own displayed default. Used everywhere this
-// setting is read, not just the scheduler, so the page and the schedule
-// can never disagree about what "on" means.
+
+
+
+
+
+
+
+
+
+
+
+
 boolean autoScanEffectivelyEnabled() {
     return settings.autoScanEnabled != false
 }
 
-// On by default (see defaultAutoScanTime()) when the time is left blank -
-// the app-wide scan-first-then-explore experience this app is built around
-// is better served by a map that keeps itself current than by one that goes
-// stale until someone remembers to press Scan. The toggle below is still
-// there to opt out entirely. Rescheduled (not just scheduled once) every
-// time this runs, so turning the toggle off actually cancels a
-// previously-running schedule rather than leaving it firing.
+
+
+
+
+
+
+
 void scheduleAutoScan() {
     unschedule('scheduledScanHandler')
     if (!autoScanEffectivelyEnabled()) return
     if (settings.autoScanTime) {
-        // schedule() accepts the exact string a Hubitat "time" input stores
-        // and reschedules it daily - standard, documented platform pattern,
-        // not yet confirmed live against this specific input on this hub.
+        
+        
+        
         schedule(settings.autoScanTime as String, 'scheduledScanHandler')
     } else {
         schedule(defaultAutoScanCron(), 'scheduledScanHandler')
@@ -368,19 +325,19 @@ void scheduleAutoScan() {
     if (diagOn()) log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
 }
 
-// Guarded against overlapping a scan already in progress - a manual press
-// via the Scan button, or a previous scheduled run that is still going on a
-// large hub - rather than racing it. Skipping silently here is correct: the
-// next scheduled run, or a manual press, covers it, and clearAbandonedScan()
-// already handles a scan that genuinely got stuck.
+
+
+
+
+
 void scheduledScanHandler() {
     if (state.scanRunning) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
         return
     }
     if (diagOn()) log.info "${app.label}: starting scheduled overnight scan"
-    // state.scanRunning above is a fast-path check only, harmless if stale -
-    // startScan()'s own atomic lock is what actually decides this correctly.
+    
+    
     Map result = startScan()
     if (!result.acquired) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
@@ -388,105 +345,105 @@ void scheduledScanHandler() {
 }
 
 Map main() {
-    // Until Done is pressed the instance does not exist yet, and Hubitat cannot
-    // schedule work for it: runIn() silently does nothing, so a scan started
-    // from this page would set itself running and then never execute a single
-    // batch. So the scan is not offered at all until installation completes.
+    
+    
+    
+    
     boolean ready = app.installationState == 'COMPLETE'
     String oauthError = null
     if (ready && !state.accessToken) {
         try {
             createAccessToken()
         } catch (Exception e) {
-            // OAuth is off for this app, so createAccessToken() throws. Without this
-            // catch the whole page threw here - the first screen a hand-installer sees
-            // if they skip the OAuth step, with no indication what went wrong.
+            
+            
+            
             oauthError = 'Automation Map needs OAuth enabled to create the map link. In the ' +
                 "hub's Apps Code editor, open Automation Map, click OAuth -> Enable OAuth " +
                 'in App -> Update, then reopen this page.'
         }
     }
     clearAbandonedScan()
-    // review 394: diagnosticLoggingEnabled uses submitOnChange, which saves
-    // the setting and re-renders this page WITHOUT calling updated() -
-    // Done/Save Preferences is what calls updated(), a separate, later
-    // event. scheduleDiagnosticLoggingExpiry() must run here too, not only
-    // from updated(), or the very first render after a user turns the
-    // toggle on would see settings.diagnosticLoggingEnabled == true with no
-    // deadline set yet, and the reconciliation immediately below would turn
-    // it straight back off before updated() ever gets a chance to run - the
-    // toggle would appear to do nothing. Calling it first (idempotent - see
-    // its own comment, it only sets a deadline once) means the off-to-on
-    // transition's deadline exists before the reconciliation check reads
-    // it, while later page renders while it's already on, or while it's
-    // off, behave exactly as before.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     scheduleDiagnosticLoggingExpiry()
-    // Reconciles a displayed-on toggle whose durable deadline has already
-    // passed but whose auto-disable job was missed (hub down at the due
-    // time) - the same self-healing principle as clearAbandonedScan()
-    // above, applied to this toggle instead of a stuck scan.
+    
+    
+    
+    
     if (settings.diagnosticLoggingEnabled == true && !diagOn()) {
         disableDiagnosticLogging()
     }
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
-    // Computed once here, after recovery has run, and threaded through every
-    // current-running UI decision below - see scanEffectivelyActive()'s own
-    // comment for why neither signal alone is sufficient.
+    
+    
+    
     boolean scanActive = scanEffectivelyActive()
 
-    // A full scan takes a couple of minutes. Without this the page looked frozen
-    // - the progress line only moved if you closed and reopened it, which reads
-    // as a hang rather than as work in progress.
-    // Live progress now comes from amProgressPoll() below (a lightweight
-    // fetch of /scan-status updating one span in place), not from Hubitat's
-    // own full-page refreshInterval - a scan now typically finishes in
-    // 15-25s, and a 4-second full-page reload against that window produced
-    // 2-3 jarring whole-page flashes rather than a smooth progress display.
-    // A long fallback interval is kept, not removed entirely, in case the
-    // JS poll itself ever fails to start or silently stalls - the same
-    // belt-and-suspenders reasoning as the async pipeline's own watchdogs.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
                        refreshInterval: (ready && scanActive) ? 60 : 0) {
-        // Scan status, the map link and the Scan button all sit ABOVE the device
-        // picker. The picker renders as a list of every device on the hub, so
-        // anything below it is off the bottom of the screen - which is where the
-        // progress line and the link to the map used to be on every visit after
-        // the first scan.
+        
+        
+        
+        
+        
         if (ready) {
             section {
                 if (oauthError) {
                     paragraph "<b style='color:#c0392b'>${oauthError}</b>"
                 }
-                // v2.1.8 migration: telemetry is removed, and this app tries
-                // to remove the old telemetry child device automatically on
-                // upgrade (migrateRemoveTelemetryDevice()). This only shows
-                // when that removal failed - most likely the device is still
-                // referenced elsewhere (a dashboard, another app) and
-                // Hubitat refused the deletion. Fixed wording only - review
-                // 392: the actual exception text is internal diagnostic
-                // detail, not HTML-escaped, and stays in the log
-                // only, never interpolated into this page. Retried the next
-                // time settings are saved, not on hub restart -
-                // migrateRemoveTelemetryDevice() only runs from updated().
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
                 if (state.telemetryRemovalFailed) {
                     paragraph "<b style='color:#c0392b'>Could not remove the former telemetry device automatically</b>. It may still be referenced elsewhere - a dashboard, another app. Clear the reference, then remove <b>Automation Map Telemetry</b> manually from the Devices page, or save these settings again once the reference is cleared to retry automatically."
                 }
-                // The scan is started by fetching the app's own /scan endpoint
-                // rather than from a Hubitat button. runIn() called out of
-                // appButtonHandler does not reliably schedule anything: on a
-                // clean install the queue was populated, scanRunning was true,
-                // no job was scheduled, and the async pipeline never advanced
-                // even once - its heartbeat was never written. Driving it through the endpoint
-                // runs the scan in an ordinary app execution, which works.
+                
+                
+                
+                
+                
+                
+                
                 paragraph scanButtonHtml(scanActive)
                 if (state.scanTotal) {
-                    // state.scanDone is only ever written once per phase now
-                    // (by the phase-starting execution and by its finalize) -
-                    // callbacks/reapers stay entirely state-free, so this
-                    // would read frozen at 0 for the whole active phase
-                    // without reading the live scan accumulator instead. Same
-                    // fix as scanStatusJson().
+                    
+                    
+                    
+                    
+                    
+                    
                     ConcurrentHashMap liveScan = null
                     if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
                     else if (state.scanPhase == 'apps') liveScan = liveAppScan()
@@ -494,14 +451,14 @@ Map main() {
                     Integer total = (state.scanTotal ?: 1) as Integer
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
                     boolean isDevicePhase = state.scanPhase != 'apps'
-                    // total/done during the device phase count driver-type
-                    // representatives (34 on this hub), not individual devices
-                    // (194) - dispatchDeviceOne fetches capabilities once per
-                    // representative and applies the result to its whole group,
-                    // so there is no finer-grained "device 47 of 194" progress
-                    // to report even in principle. Labelled and shown alongside
-                    // the real device count instead of mislabelling the
-                    // representative count as a device count.
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
                     String phase = isDevicePhase ? 'Reading device types' : 'Reading apps'
                     Integer realDeviceTotal = (state.deviceScanTotal ?: 0) as Integer
                     String deviceContext = (isDevicePhase && realDeviceTotal > 0) ? " (${realDeviceTotal} devices)" : ''
@@ -509,27 +466,27 @@ Map main() {
                     if (scanActive) {
                         progress += ' - updating live, no need to reload.'
                     } else {
-                        // scanHeartbeat is stamped at the start of finishScan(), so it lands a
-                        // few seconds ahead of this page reporting the scan as finished - close
-                        // enough for a "when did this last run" display. Same value already
-                        // backs the AI export's lastScanCompletedAt. Counts moved out of this
-                        // line entirely - see the "Map contains" paragraph below, which covers
-                        // apps/devices/nodes/relationships together in one place instead of
-                        // splitting apps in here and nodes/edges down there.
+                        
+                        
+                        
+                        
+                        
+                        
+                        
                         String when = state.scanHeartbeat ?
                             new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : 'unknown'
-                        // Absent on a scan completed before this field existed, or one that
-                        // ended through a failure path that never reaches finishScan's closure -
-                        // omitted rather than shown as "(null s)".
+                        
+                        
+                        
                         String durationSuffix = state.lastScanDurationSeconds != null ?
                             " (${state.lastScanDurationSeconds}s)" : ''
                         progress = "Last scan : <span style='color:#2e7d32'>${when}</span>${durationSuffix}"
                     }
-                    // Wrapped in an id'd span, not a bare paragraph - amProgressPoll()
-                    // below replaces this element's text in place once JS takes over,
-                    // rather than needing a full page reload to show new numbers. This
-                    // server-rendered text is still the correct first paint and the
-                    // no-JS fallback, not dead markup.
+                    
+                    
+                    
+                    
+                    
                     paragraph "<span id='amProgress'>${progress}</span>"
                 }
                 if (state.scanError) {
@@ -538,18 +495,18 @@ Map main() {
                 if (state.graph) {
                     Map g = state.graph as Map
                     if (scanActive) {
-                        // Nothing here while a scan is running. startScan clears
-                        // graphVersion but keeps the old graph, so graphIsStale()
-                        // is true for the whole scan - which used to show "run the
-                        // scan again to rebuild it" to someone watching that very
-                        // scan run. The else branch is no better mid-scan: it
-                        // reports the previous graph's counts and offers a map
-                        // link that refuses to render. The progress line above
-                        // already says what is happening.
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
                     } else if (graphIsStale()) {
-                        // A graph built by an older version can carry relationship
-                        // kinds this version no longer renders, which silently draws
-                        // as uncoloured edges rather than failing visibly.
+                        
+                        
+                        
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
                         paragraph "Map contains: ${(state.appInfo ?: [:]).size()} apps, ${(state.deviceLabels ?: [:]).size()} devices, " +
@@ -563,13 +520,13 @@ Map main() {
                        )
                     }
                 } else if (!scanActive && atomicState.graphVersion != null) {
-                    // Confirmed live 2026-08-30: state.graph can read null for one request
-                    // immediately after a scan completes - the same per-execution commit-
-                    // timing gap graphVersion's own move to atomicState (2026-08-29) closed
-                    // for shouldAutoScan(). state.graph itself stays as-is here (it is large;
-                    // moving it to atomicState too risks the memory failure the 2026-08-13
-                    // fix exists to avoid), so this says so honestly instead of silently
-                    // showing nothing - self-corrects on the next reload.
+                    
+                    
+                    
+                    
+                    
+                    
+                    
                     paragraph "<span style='color:#2e7d32'>Scan complete - finishing up, reload in a moment to see the map.</span>"
                 }
                 href(
@@ -583,10 +540,10 @@ Map main() {
                     url: 'https://gordonthelander.github.io/HPM_Manifest_Crawl/',
                     style: 'embedded', required: false,
                )
-                // Hubitat's external href style calls openWindow(), which
-                // creates a sized popup rather than the full browser tab the
-                // user requested. Keep the normal full-width href row, then
-                // make its real anchor an ordinary target=_blank link.
+                
+                
+                
+                
                 paragraph '''<script type="text/javascript">
 (function () {
   var link = document.querySelector('a[href="https://gordonthelander.github.io/HPM_Manifest_Crawl/"]');
@@ -599,19 +556,19 @@ Map main() {
                 paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for Community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
-                // Hubitat does not reliably render description: on bool/time
-                // inputs (confirmed live - item 8), so the explanation is a
-                // paragraph instead, which does render.
+                
+                
+                
                 paragraph "Runs automatically once a day, on by default at ${defaultAutoScanTime()} - turn off below if you would rather press Scan yourself."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
                     defaultValue: true, submitOnChange: true
                 if (autoScanEffectivelyEnabled()) {
-                    // review 392: "that display updates once you press
-                    // Done" was inaccurate - the field already shows the
-                    // default; Done persists whichever value (default or
-                    // your own) is showing when you save, it doesn't change
-                    // what's displayed.
+                    
+                    
+                    
+                    
+                    
                     paragraph "Shown pre-filled at the default (${defaultAutoScanTime()}) below - leave it as-is to keep the default, or set your own time. Press Done to save whichever is showing."
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
@@ -619,13 +576,13 @@ Map main() {
                 }
             }
             section {
-                // Placed after the scan-schedule section, not before it -
-                // Gordon's own live testing feedback (2026-09-02): this is a
-                // secondary, troubleshooting-only control, and the primary
-                // scan-schedule settings above it are what most visits to
-                // this page are actually about.
-                // description: does not render reliably on bool inputs
-                // (confirmed live - item 8), hence the paragraph instead.
+                
+                
+                
+                
+                
+                
+                
                 paragraph "Writes extra detail to your hub's Logs page for troubleshooting - nothing here is transmitted anywhere. Off by default, and turns itself back off automatically after one hour so it can't be left running by accident."
                 input name: 'diagnosticLoggingEnabled', type: 'bool',
                     title: 'Enable diagnostic logging',
@@ -654,11 +611,11 @@ Map baselineComparisonPage() {
                 description: 'Return to the Automation Map main page',
                 page: 'main', style: 'button', required: false,
            )
-            // A Hubitat dynamic subpage adds its own bottom-right Done/Cancel
-            // action even though this page has nothing to save. On the tall
-            // comparator page that control is both misleading and far away
-            // from the requested navigation. The explicit Back control above
-            // is the only page-exit action this page needs.
+            
+            
+            
+            
+            
             paragraph '''<style type="text/css">
 button.cancel, button.done, button[name="_action_done"] { display:none !important; }
 button[name^="_action_href_baselineComparisonBack|"] {
@@ -675,40 +632,40 @@ button[name^="_action_href_baselineComparisonBack|"] span { color:#fff !importan
     }
 }
 
-// Kept so an existing installation with the old button still works, but the
-// page no longer renders that button - see scanButtonHtml().
+
+
 void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
 }
 
-// One-time migration (added 2026-08-29, graphVersion moved to atomicState to
-// close the race below): backfills atomicState.graphVersion from the legacy
-// state.graphVersion an existing install already has on disk, so a graph
-// stored before this fix deployed is not mistaken for missing or stale.
-// Idempotent - a no-op once atomicState.graphVersion is set for real.
+
+
+
+
+
 void migrateGraphVersionIfNeeded() {
     if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
         atomicState.graphVersion = state.graphVersion
     }
 }
 
-// Self-heals a race confirmed live 2026-08-30: state.graph can be clobbered
-// back to null by an unrelated execution's own end-of-run state write-back
-// landing after the real finalizer already committed it - not merely stale
-// for one request, but stuck that way across repeated app opens, since
-// nothing else rewrites state.graph until the next scan does. Moving the
-// whole (large) graph to atomicState would avoid this too, but risks the
-// memory failure the 2026-08-13 fix exists to avoid - so instead, treat
-// atomicState.graphVersion (immune to this race - see shouldAutoScan()) as
-// proof a graph SHOULD exist, and if state.graph is missing anyway, rebuild
-// it locally from the scan's other results rather than requiring a full
-// rescan. Safe to do: buildGraph()'s other inputs (appInfo, device maps) are
-// all written earlier in the pipeline than state.graph itself, so they are
-// not lost by this same race - guarded on appInfo being present so this
-// never fabricates a graph from truly-missing data. hubVariableInventory is
-// refetched too (a cheap in-process call, no HTTP) since it is the one
-// buildGraph() input written in the same late closure as state.graph and so
-// could itself be one generation stale here.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void selfHealGraphIfNeeded() {
     if (state.graph != null) return
     if (atomicState.graphVersion == null) return
@@ -720,25 +677,25 @@ void selfHealGraphIfNeeded() {
     atomicState.graphVersion = GRAPH_SCHEMA
 }
 
-// True when the app is ready to work but has never produced a map. Opening it in
-// that state starts a scan on its own, so an install that somehow got past
-// installed() without scanning still recovers rather than sitting idle.
-//
-// Deliberately a strict conjunction of BOTH the live static lock and durable
-// state.scanRunning (added 2026-08-29), not a static-lock-only test: an app-code
-// reload clears SCAN_LOCKS but not durable state, so during reload recovery a
-// durable state.scanRunning==true with an empty static map can represent
-// interrupted work that must be recovered, not permission to start a second scan.
-// This function is called after clearAbandonedScan() has already had the chance
-// to clear a PROVEN resurrected flag - a durable true that survives that check is
-// either a live scan or genuinely interrupted work, either way not safe to
-// auto-start over.
+
+
+
+
+
+
+
+
+
+
+
+
+
 boolean shouldAutoScan() {
-    // atomicState.graphVersion, not state.graph: confirmed live 2026-08-29 - a
-    // page load landing right after a completed scan can still read a stale
-    // pre-commit state snapshot (state.graph null, left over from scan start),
-    // reads noGraph true, and genuinely auto-starts a second scan. atomicState
-    // commits on every write, so this signal cannot go stale that way.
+    
+    
+    
+    
+    
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
     boolean noGraph = (atomicState.graphVersion == null)
@@ -749,17 +706,17 @@ boolean shouldAutoScan() {
     return result
 }
 
-// Shared effective-active signal for every current-running UI decision (button
-// label/state, refresh interval, progress wording, map/link visibility, and the
-// live JSON status poll's own "running" field) - evaluated only after
-// clearAbandonedScan() has already run so a PROVEN resurrected flag has had the
-// chance to be cleared first. Neither signal alone is sufficient: the live static
-// lock is not sufficient after an app-code reload clears it while genuinely
-// interrupted work remains durably marked running; durable state.scanRunning
-// alone is not sufficient right after a terminal write is resurrected (which the
-// tombstone precheck in clearAbandonedScan() already handles before this is ever
-// called). Called once per request and threaded through, not recomputed per UI
-// element, so nothing within one render can show a mismatched value.
+
+
+
+
+
+
+
+
+
+
+
 boolean scanEffectivelyActive() {
     boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
     boolean durable = state.scanRunning == true
@@ -767,15 +724,15 @@ boolean scanEffectivelyActive() {
     return effective
 }
 
-// scanActive is the caller's already-computed scanEffectivelyActive() result
-// (main() calls it once per request, not per element - see that helper's own
-// comment for why neither SCAN_LOCKS nor durable state.scanRunning alone is
-// sufficient here).
+
+
+
+
 String scanButtonHtml(boolean scanActive) {
     String label = scanActive ? 'Scanning...' : (shouldAutoScan() ? 'Starting first scan...' : 'Scan relationships now')
     String disabled = scanActive ? ' disabled' : ''
-    // Hubitat's UI is PrimeVue, so a plain button or Bootstrap classes render
-    // unstyled. These are the classes and data attributes its own buttons carry.
+    
+    
     String cls = scanActive ? 'p-button p-component p-disabled mr-2 mb-2' : 'p-button p-component mr-2 mb-2'
     return """\
 <button type="button" id="amScanBtn" class="${cls}"${disabled} onclick="amStartScan()" aria-label="${label}" data-pc-name="button" data-pc-section="root" data-pd-ripple="true">${label}</button>
@@ -998,10 +955,10 @@ if (${scanActive ? 'true' : 'false'}) {
 </script>"""
 }
 
-// Fired from the browser rather than from the page render, for the same reason
-// the button is: a scan started inside Hubitat's UI transaction never gets
-// scheduled. Guarded by shouldAutoScan(), which stops being true the moment the
-// scan sets scanRunning, so a page refresh cannot start a second one.
+
+
+
+
 String autoScanScript() {
     if (!shouldAutoScan()) return ''
     return '''
@@ -1016,30 +973,30 @@ boolean graphIsStale() {
     return state.graph && atomicState.graphVersion != GRAPH_SCHEMA
 }
 
-// A scan that stops without finishing leaves scanRunning set, which disables the
-// button and shows a progress line that never moves - the app looks permanently
-// mid-scan with no way back. That happens if the hub restarts or the app is
-// updated mid-scan, and it happened to anyone who pressed Scan before the app
-// finished installing. state.scanHeartbeat is stamped once, when a phase
-// starts, not refreshed by callbacks/reapers any more - those stay entirely
-// state-free. Whether a scan is genuinely still active is answered below by
-// checking DEVICE_SCANS/APP_SCANS for a live entry, not by heartbeat
-// recency; the 90s check is only a cheap first filter before that lookup.
+
+
+
+
+
+
+
+
+
 void clearAbandonedScan() {
     if (!state.scanRunning) return
     Long beat = (state.scanHeartbeat ?: 0) as Long
 
-    // Corrected 2026-08-29 (registry-finalization-race remediation, Part A).
-    // This tombstone check used to run only after the heartbeat-freshness return
-    // below, which meant a stale execution's own frozen state.scanHeartbeat could
-    // look "recent" (< 90s old, from THIS execution's own outdated snapshot) and
-    // return early before the tombstone was ever consulted - leaving a genuinely
-    // completed, resurrected generation displayed as running for up to 90 seconds
-    // even though its completion was already provably terminal. currentLock == null
-    // can never be true for a genuinely still-running scan, so this check does not
-    // need to wait behind a heartbeat check that a stale snapshot could satisfy
-    // incorrectly - moving it first makes recovery immediate instead of conditional
-    // on staleness happening to already look old enough.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     String activeGen = (state.activeGenerationToken ?: null) as String
     String currentLock = SCAN_LOCKS.get("${app.id}") as String
     boolean tombstoned = activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))
@@ -1051,66 +1008,66 @@ void clearAbandonedScan() {
 
     if (beat > 0 && (now() - beat) < 90000) return
 
-    // The batch-reading work itself can finish - queue empty, every app
-    // already read into appInfo - while the scheduled finalization
-    // (fetchRegistry -> finishScan, or its 45-second watchdog) never runs at
-    // all. runIn() is already known to be unreliable on this platform - see
-    // the Scan button's own comment on why it does not use
-    // appButtonHandler - and this is the same failure class landing on a
-    // different scheduled call. Confirmed live: a 98-app scan reached
-    // scanDone == scanTotal with an empty scanQueue, sat past the 90-second
-    // heartbeat timeout, and state.graph was still empty - nothing left to
-    // read, nothing running, just never finished.
-    //
-    // finishScan() itself makes no HTTP calls - it is buildGraph() over data
-    // this app already collected, plus bookkeeping - so calling it directly
-    // here, synchronously, cannot fail the same way a scheduled job can.
-    // Previously this branch discarded a fully-read scan and told the user
-    // to start over from zero; now it finishes the one step that never got
-    // the chance to run.
-    //
-    // Callbacks and reapers never write state.scanHeartbeat any more (see
-    // deviceFetchCb/appFetchCb - it moved to a scan-local timestamp field,
-    // scanStatusJson reads it live). So the staleness check above no longer
-    // means "no progress in 90s" during an active async phase - it just
-    // means "90s since this scan STARTED", which fires on every long-running
-    // scan whether it is healthy or not. Deferring to whichever phase's own
-    // watchdog/reaper is live is therefore not a belt-and-suspenders
-    // addition any more, it is the only thing standing between a perfectly
-    // healthy in-progress scan and this function marking it abandoned.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     boolean asyncDeviceScanActive = state.scanPhase == 'devices' && liveDeviceScan() != null
     boolean asyncAppScanActive = state.scanPhase == 'apps' && liveAppScan() != null
     if (asyncDeviceScanActive || asyncAppScanActive) {
         return
     }
 
-    // A "finishing:<token>:<since>" value means finishGeneration() is
-    // already mid-publish for the current generation (see its own comment) -
-    // actively wrapping up, not stuck. Recovering it here on sight would
-    // race the in-flight publish, and finishGeneration()'s own finally is
-    // about to release it as its very next real step regardless - UNLESS
-    // the execution holding it was killed outright (platform timeout, hub
-    // reboot) rather than merely throwing, which no in-process finally can
-    // cover. FINISHING_RECOVERY_SEC bounds how long this function trusts
-    // "actively finishing" before treating it as stranded instead.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     if (currentLock != null && currentLock.startsWith('finishing:')) {
         List parts = currentLock.split(':') as List
         Long finishingSince = parts.size() >= 3 ? (parts[2] as Long) : 0L
         if ((now() - finishingSince) < (FINISHING_RECOVERY_SEC * 1000)) return
         log.warn "${app.label}: clearing a stranded finishing marker (${((now() - finishingSince) / 1000).intValue()}s old)"
-        // Not a direct remove-then-mutate - caught in review as the exact
-        // race the unified terminal protocol exists to remove, reintroduced
-        // in this one recovery-only path: after a plain conditional remove,
-        // a brand new scan C could acquire before the writes below ran, and
-        // recovery would then stomp C's just-started state. Atomically
-        // replaces the exact aged value with a distinct "recovering:"
-        // sentinel first - still occupying the slot, still blocking a new
-        // acquisition - writes the recovery state while that sentinel
-        // holds, then removes it last, in a finally. Not routed through
-        // finishGeneration()/markScanFinished(): this is recovering an
-        // already-stranded value, not a normal generation's own token
-        // handoff, and must not itself claim a fresh "finishing:" transition
-        // (which would nest and break this same parsing on a future pass).
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         String recoveryValue = "recovering:${currentLock}:${now()}"
         if (SCAN_LOCKS.replace("${app.id}", currentLock, recoveryValue)) {
             try {
@@ -1123,53 +1080,53 @@ void clearAbandonedScan() {
         return
     }
 
-    // Once the async app accumulator is gone, durable appResultsReady is the
-    // only proof that finalizeAppPhase committed the complete appInfo map.
-    // state.scanQueue is always empty in this async implementation, including
-    // before the first app result is published, so it must never be used as a
-    // completion invariant. Reproduced live in v2.0.8: updating the app code
-    // erased APP_SCANS/SCAN_LOCKS, recovery saw an empty queue, and published
-    // the still-empty state.appInfo as a successful zero-app graph.
+    
+    
+    
+    
+    
+    
+    
     if (state.scanPhase == 'apps') {
-        // Live SCAN_LOCKS snapshot, not a remembered token - same reasoning
-        // as this function's own genuinely-abandoned branch below: this is a
-        // recovery path, so it trusts the freshest ground truth for "what is
-        // the currently active generation" rather than a value written
-        // earlier that could have gone stale by the time recovery runs.
+        
+        
+        
+        
+        
         String currentToken = SCAN_LOCKS.get("${app.id}") as String
         if (currentToken == null) {
-            // Reproduced live 2026-08-24: an app code reload resets the
-            // static SCAN_LOCKS map to empty, but durable state.scanRunning
-            // survives the reload untouched, so this branch kept re-entering
-            // with a null token. finishScan()'s own claim always correctly
-            // rejected that null and discarded the graph it had just built -
-            // but with no token left to hand it, nothing ever recovered, and
-            // every status poll repeated the entire wasted rebuild forever.
-            // No original generation to reclaim ownership FROM here, so
-            // putIfAbsent claims the empty slot fresh instead of replace()
-            // transitioning an existing value - only one concurrent recovery
-            // attempt can win it.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String recoveryToken = "recovered-${now()}-${(int)(Math.random() * 999999)}"
             if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
             currentToken = recoveryToken
         }
         if (state.appResultsReady == true) {
-            // The duplicate-completion path from the incident. activeGen is the
-            // ORIGINAL generation this recovery believes it is acting on;
-            // currentToken is the freshly minted recovery token. If activeGen
-            // names a generation that already completed, the durable flags
-            // driving this branch were resurrected rather than genuine - the
-            // tombstone check above now catches that case before this branch
-            // is even reached, but activeGen is still passed through as
-            // logicalGen so this termination's own tombstone (should this
-            // really be the first time this generation finishes) lands on
-            // the right identity rather than the substitute recovery token.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
             finishScan([lockToken: currentToken, logicalGen: activeGen])
         } else {
-            // The async results lived only in the lost static accumulator and
-            // cannot be reconstructed safely. Terminate truthfully and require
-            // a new scan rather than publish a valid-looking empty/partial map.
+            
+            
+            
             log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
             markScanFinished(currentToken,
                 'The scan working data was lost before it could be published. Press Scan to run it again.',
@@ -1178,36 +1135,36 @@ void clearAbandonedScan() {
         return
     }
 
-    // Snapshot-then-conditional-remove, not a remembered token - this path
-    // exists specifically for "something is stuck, recover it", so it uses
-    // the freshest possible ground truth (whatever SCAN_LOCKS currently
-    // holds) rather than trusting a value written earlier that the very
-    // malfunction being recovered from might have left stale.
+    
+    
+    
+    
+    
     String abandonedToken = SCAN_LOCKS.get("${app.id}") as String
     if (abandonedToken == null) {
-        // Still claim the empty slot before touching durable state. A plain
-        // lock-free clear has a TOCTOU gap: a new scan can acquire after the
-        // null read but before these writes, and this stale recovery execution
-        // would then clear the new scan. putIfAbsent either gives recovery
-        // exclusive ownership or proves another execution got there first.
+        
+        
+        
+        
+        
         String recoveryToken = "recovered-abandon-${now()}-${(int)(Math.random() * 999999)}"
         if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
         abandonedToken = recoveryToken
     }
-    // activeGen as logicalGen for the same reason as the apps-phase branch
-    // above: abandonedToken can also be a substitute recovery token distinct
-    // from the original generation's identity, and every recovery-minted
-    // token must obey the same tombstone-identity rule.
+    
+    
+    
+    
     markScanFinished(abandonedToken,
         'The previous scan stopped before it finished. Press Scan to run it again.',
         activeGen)
     log.warn "${app.label}: clearing an abandoned scan"
 }
 
-// Reports what this hub actually supported, so a user whose hub differs sees a
-// reason rather than an unexplained gap. Rule flows are decoded from Rule
-// Machine 5.1's private layout; other rule engines still appear in the graph
-// but have no flow.
+
+
+
+
 String compatibilitySummary() {
     int decoded = (state.appsDecoded ?: 0) as Integer
     int unreadable = (state.appsUnreadable ?: 0) as Integer
@@ -1225,10 +1182,10 @@ String compatibilitySummary() {
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} flow(s)."
 
-    // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
-    // and said nothing about the difference, so the summary, the Focus app list
-    // and the map itself disagreed with each other. They are reconciled here
-    // rather than by quietly reporting the smaller number.
+    
+    
+    
+    
     int inert = (state.appsInert ?: 0) as Integer
     if (inert > 0) {
         s << " ${inert} touch no device and link to no rule; they are drawn apart from the network, each labelled with why."
@@ -1241,10 +1198,10 @@ String compatibilitySummary() {
         s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
     }
 
-    // v2.0.14: only shown when the authoritative inventory itself succeeded
-    // (complete or complete-with-gaps) - a failed/not-supported inventory has
-    // no real count to report, and showing 0 would misrepresent "could not
-    // ask the hub" as "the hub has none".
+    
+    
+    
+    
     Map hubVarInv = (state.hubVariableInventory ?: [:]) as Map
     String hubVarInvStatus = "${hubVarInv.status}"
     if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
@@ -1264,23 +1221,23 @@ String compatibilitySummary() {
     return s.toString()
 }
 
-// ===================================================================================================================
-// Scanning - phase 1 discovers app ids from devices, phase 2 pulls each app's real relationships
-// ===================================================================================================================
 
-// Every hub-facing fetch in this file (six loopback, one to REGISTRY_URL on
-// GitHub) used to carry its own inline try/catch, its own timeout literal,
-// and its own copy of this exact shape - the failure contract was defined
-// seven times and was not quite the same twice, which is why
-// fetchAllDeviceIds() needed an explicit "sets scanError itself and returns
-// on failure" comment at its own call site to be usable safely. This is the
-// one place that shape is written now.
-//
-// data comes back exactly as the response sent it, not coerced to Map here -
-// different endpoints return different top-level shapes (a bare List or a
-// Map), so that decision stays with whoever actually knows their own
-// endpoint's shape. extraOpts exists only for fetchRegistry's contentType;
-// every loopback caller passes none.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     Map out = [ok: false, data: null, error: null]
     try {
@@ -1294,80 +1251,80 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     return out
 }
 
-// The one thing every loopback caller shares - not shared with fetchRegistry,
-// which hits REGISTRY_URL on GitHub instead.
+
+
 @Field static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
 
-// Hardened async dispatch pipeline (v2.0.5) - reintroduces the
-// concurrent-fetch work from the reverted 2.0.5 attempt, this time with
-// the fixes verified against the live hub in the isolated dispatch-test
-// harness: try/catch rollback around every asynchttpGet call, per-item
-// claim/attempt-token tracking, a claim reaper for callbacks that never
-// arrive at all, atomic conditional-removal ownership so a callback and
-// the reaper can never both resolve the same attempt, exact completion
-// invariants, exactly-once finalization, and a fail-closed watchdog that
-// marks a stalled scan failed rather than publish a partial result
-// labeled complete. See BACKLOG.md and the Bucket/ collaboration record
-// for the full history of what was found and why each piece exists.
+
+
+
+
+
+
+
+
+
+
+
 @Field static final int DEVICE_ASYNC_MAX_INFLIGHT = 8
-@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   // Hubitat's documented concurrent-async-per-app cap
-// Bounded retry for a synchronous dispatch throw or an aged, unresolved
-// claim - not for an ordinary HTTP-level failure, which already resolves
-// in a single callback with no dangling claim and needs no retry.
+@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   
+
+
+
 @Field static final int ATTEMPT_CAP = 2
 @Field static final int CLAIM_REAP_INTERVAL_SEC = 10
-// Must exceed the longest real request timeout used by either phase
-// (device fetch: 10s, app fetch: 20s) plus scheduling margin - a
-// deadline shorter than a real request's own timeout makes premature
-// reaping possible by construction, not just by bad luck. Confirmed as
-// a real defect at 8000ms (below the test harness's own 10s "good"
-// timeout) during the isolated test's second review round; raised well
-// clear of this pipeline's real 20s maximum.
+
+
+
+
+
+
+
 @Field static final long CLAIM_REAP_DEADLINE_MS = 25000
-// Both phases share the same claim deadline/reap interval/attempt cap, so
-// the worst-case time to terminally resolve one item is the same for
-// either phase: ATTEMPT_CAP reap cycles, each up to (deadline + one poll
-// interval) before the next attempt even starts - here, 2 * (25s + 10s) =
-// 70s. A watchdog shorter than that envelope can fail a pipeline that is
-// behaving exactly as designed - confirmed as a real defect (60s device
-// watchdog against this same ~70s worst case) during the production-diff
-// review, not just a theoretical gap. 60s of real margin added on top of
-// the 70s envelope, not just clearing the minimum: 130s each.
-//
-// Written as plain literals, not computed from ATTEMPT_CAP/
-// CLAIM_REAP_DEADLINE_MS/CLAIM_REAP_INTERVAL_SEC above - the hub's own
-// loader rejects one @Field static final referencing another one's value
-// ("was found in a static scope but doesn't refer to a local variable,
-// static field or class"), even though local groovyc accepts it and even
-// though the referenced field is declared earlier in the file. Confirmed
-// against the hub directly, not assumed. If either the deadline, the
-// interval, or the attempt cap above ever changes, these two must be
-// recalculated by hand and this comment's math updated to match.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final int DEVICE_ASYNC_WATCHDOG_SEC = 130
 @Field static final int APP_ASYNC_WATCHDOG_SEC = 130
-// How long a "finishing" SCAN_LOCKS sentinel (see finishGeneration()) may
-// occupy the slot before clearAbandonedScan() treats it as stranded rather
-// than actively in progress. Generous relative to the actual work done under
-// that sentinel (in-memory state writes only, no HTTP calls) - this bound
-// exists for the case a language-level finally cannot cover at all: the
-// execution itself being killed outright (platform timeout, hub reboot)
-// mid-publish, not an ordinary thrown exception.
+
+
+
+
+
+
+
 @Field static final int FINISHING_RECOVERY_SEC = 60
-// Per-scan accumulator, keyed by scanId - never read from or written to
-// state directly by a callback. Callbacks only ever touch these static
-// maps; state is written exactly once per phase, by finalizeDevicePhase/
-// finalizeAppPhase, in a single execution. This is what avoids the
-// concurrent-write race this whole design exists to avoid: Hubitat's
-// last-write-wins state persistence means two callbacks racing to write
-// state directly could silently drop whichever wrote last.
+
+
+
+
+
+
+
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
 
-// A null id (state predating these fields, or a stale reference to a
-// since-cleared generation) must never reach a ConcurrentHashMap lookup -
-// get()/containsKey(null) throw outright, unlike a plain HashMap's null-key
-// tolerance. Every read of the live accumulators goes through here instead
-// of repeating the guard at each call site.
+
+
+
+
+
 ConcurrentHashMap liveDeviceScan() {
     String id = state.deviceScanId as String
     return id ? DEVICE_SCANS[id] : null
@@ -1376,61 +1333,61 @@ ConcurrentHashMap liveAppScan() {
     String id = state.appScanId as String
     return id ? APP_SCANS[id] : null
 }
-// Single-flight lock keyed by app instance id. state.scanRunning alone cannot
-// serve this role: two scanMapping()/scheduledScanHandler() executions can
-// each read it before either one's own state commit lands (state only
-// commits durably at the end of a whole execution), so both proceed into
-// startScan(). putIfAbsent() is checked against this live, shared map
-// instead - not subject to that per-execution commit delay - so only one
-// concurrent caller can ever win it.
-//
-// The value is a unique per-attempt token, not a plain boolean - caught in
-// review before this shipped: a boolean lock's release (SCAN_LOCKS.remove)
-// has no ownership identity, so a LATE execution belonging to an OLDER scan
-// generation (a delayed watchdog, a delayed finalizer) could unconditionally
-// remove a NEWER generation's still-legitimate lock if it fires after that
-// newer generation has already acquired the same app id. Every release must
-// go through markScanFinished(token, ...) using the token THAT execution's
-// own generation was given at acquire time - remove(key, exactToken) then
-// only succeeds if this generation is still the current owner, and safely
-// no-ops otherwise. Reading SCAN_LOCKS's current value fresh at release time
-// instead of using a remembered token would defeat this entirely - that is
-// exactly how a late execution could adopt a newer generation's identity.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final ConcurrentHashMap<String, String> SCAN_LOCKS = new ConcurrentHashMap<>()
 
-// Registry-finalization-race remediation. REGISTRY_RESULTS holds each
-// generation's registry outcome (meta + matches + createdAt), written once by
-// fetchRegistry() and consulted by finishScan() after its finishGeneration()
-// claim - not before it, which is what let a stale pre-claim state.registryMeta
-// snapshot publish a contradictory FAILED verdict against a concurrent success.
-// TERMINAL_TOMBSTONES records that a generation's terminal transition already
-// ran, keyed by its LOGICAL identity (see finishGeneration()'s logicalGen
-// parameter) rather than whichever CAS token happened to claim it, so
-// clearAbandonedScan() can tell a genuinely abandoned scan apart from one
-// whose durable scanRunning/appResultsReady flags were resurrected by a late
-// whole-execution state commit after the scan had already finished. Both are
-// static, not state: immune to that same resurrection, and correctly wiped by
-// an app code reload exactly like SCAN_LOCKS - clearAbandonedScan()'s existing
-// reload-recovery path is deliberately left as the fallback for that case,
-// not replaced by this.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
 @Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
 
-// Composite key matching SCAN_LOCKS's own app.id scoping - collision across
-// app instances is already astronomically unlikely given the token's own
-// embedded timestamp+random, this makes it impossible by construction instead.
+
+
+
 String genKey(String token) { return "${app.id}:${token}" }
 
-// Called once per scan acquisition (see startScan()) - real synchronization
-// bookkeeping, not diagnostic. Retention is generous relative to the 45s
-// watchdog and 30s registry timeout so neither
-// map can be swept out from under a still-plausible late callback, while
-// still bounding both maps against unbounded growth across many scans.
-// Snapshots each entrySet() into a plain list first, then removes
-// conditionally (remove(key, exactValue)) - safe against a concurrent writer
-// replacing an entry mid-sweep, and avoids depending on removeIf()'s
-// iterator-based removal support on Hubitat's Groovy runtime.
+
+
+
+
+
+
+
+
+
 void sweepGenerationRecords() {
     long cutoff = now() - GENERATION_RECORD_RETENTION_MS
     new ArrayList(TERMINAL_TOMBSTONES.entrySet()).each { entry ->
@@ -1443,11 +1400,11 @@ void sweepGenerationRecords() {
     }
 }
 
-// Everything this app knows comes from undocumented hub endpoints, so on a hub
-// unlike the one it was written against it must say WHY it found nothing rather
-// than presenting an empty map as if that were the answer. The most likely
-// environmental difference is hub login security, which makes the internal
-// endpoints answer with a login page instead of JSON.
+
+
+
+
+
 Map probeCompatibility() {
     Map out = [ok: false, detail: '']
     Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${app.id}", 10)
@@ -1462,57 +1419,57 @@ Map probeCompatibility() {
     return out
 }
 
-// The sole place any scan generation's ownership actually ends - every
-// failure/watchdog/bootstrap-exception path (no data to publish, via the
-// markScanFinished() wrapper below) and finishScan()'s own success path
-// (graph/counters to publish, via the publishWork closure) alike, so the
-// two can never drift into separately-safe terminal protocols. Caught in
-// review across several rounds before this went near a hub:
-//
-// - An early version removed the lock conditionally but mutated
-//   state.scanRunning/state.scanError unconditionally underneath that
-//   check - safe for the lock, not for state a late execution could still
-//   stomp on a legitimately-running newer generation.
-// - A later version fixed that ordering but still released the lock BEFORE
-//   a caller's own further publish writes (finishScan's graph/counters) -
-//   a brand new scan could acquire and start resetting state while the old
-//   one was still mid-publish.
-// - Fixed by claiming an atomic original->finishing transition FIRST -
-//   nothing here or in publishWork touches state until this token is
-//   confirmed to still be the current owner at that exact instant. The
-//   finishing sentinel then continues occupying the slot for the whole of
-//   publishWork, blocking any new acquisition, and the real release -
-//   state.scanRunning=false, then removing the sentinel - is the LAST
-//   thing that happens, inside a finally, so an exception inside
-//   publishWork still releases rather than stranding the slot.
-//
-// The finishing value carries a timestamp (see FINISHING_RECOVERY_SEC) -
-// finally cannot cover the execution being killed outright (platform
-// timeout, hub reboot) mid-publish, only an ordinary thrown exception, so
-// clearAbandonedScan() has a bounded, timestamp-gated path to recover a
-// truly stranded sentinel rather than trusting the string forever.
-//
-// token must be the exact value this caller's own generation was given at
-// acquire time (see SCAN_LOCKS's comment for why a fresh re-read is not
-// safe here) - clearAbandonedScan() is the one deliberate exception, since
-// its whole job is recovering whatever generation is CURRENTLY stuck, and it
-// snapshots SCAN_LOCKS's live value itself before calling this.
-//
-// Returns true if this call actually became the one to terminate the
-// generation, false if the token no longer owns the lock - a stale/
-// superseded caller, correctly discarded, not an error.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 boolean finishGeneration(String token, String error = null, String logicalGen = null, Closure publishWork = null) {
     if (token == null) return false
     String finishingValue = "finishing:${token}:${now()}"
     if (!SCAN_LOCKS.replace("${app.id}", token, finishingValue)) {
         return false
     }
-    // logicalGen defaults to the CAS token itself - correct for every normal
-    // termination, where the two are the same value. Only clearAbandonedScan()'s
-    // recovery paths pass a different logicalGen: a fresh CAS token substitutes
-    // for a lock that is no longer there to reclaim, but the tombstone must
-    // still land on the ORIGINAL generation's identity for a later resurrection
-    // check to find it.
+    
+    
+    
+    
+    
+    
     String tombstoneKey = genKey(logicalGen ?: token)
     try {
         if (publishWork != null) publishWork()
@@ -1528,75 +1485,75 @@ boolean finishGeneration(String token, String error = null, String logicalGen = 
     return true
 }
 
-// Thin wrapper for every terminal path with nothing to publish - kept as
-// the name the rest of the file already calls, so none of those nine call
-// sites needed to change again for this round.
+
+
+
 void markScanFinished(String token, String error = null, String logicalGen = null) {
     finishGeneration(token, error, logicalGen, null)
 }
 
-// Cheap "is my token still the current owner" check - caught in review as
-// the other half of the terminal-release fix above: token propagation only
-// prevents identity ADOPTION, it does nothing by itself to stop a late
-// execution belonging to an abandoned generation from mutating state on its
-// way TO a terminal call. Every separately-scheduled, late-capable handler
-// that publishes intermediate state (not just a terminal markScanFinished)
-// must check this before its first write, and again after any HTTP call in
-// between - abandonment and a fresh acquisition can interleave in that gap
-// exactly as easily as around the terminal release itself.
+
+
+
+
+
+
+
+
+
 boolean ownsLock(String token) {
     return token != null && SCAN_LOCKS.get("${app.id}") == token
 }
 
-// Returns [acquired: true] once this call has won the single-flight lock and
-// (successfully or not) run the scan to its next state, or [acquired: false]
-// if another execution already holds it - callers must not treat that as an
-// error, and must not assume state.scanRunning reflects it (state.scanRunning
-// is this LOSING execution's own stale snapshot, not the winner's).
+
+
+
+
+
 Map startScan() {
-    // Generated before the acquire attempt, not after - putIfAbsent needs
-    // the value ready to insert. Carried forward explicitly from here on -
-    // as a parameter into startAppPhase(), on the DEVICE_SCANS/APP_SCANS
-    // accumulator for the watchdog/finalizer paths, and through runIn()'s
-    // own data payload for the registry/finish tail - never stashed in
-    // state for a later execution to read back. A late execution reading
-    // "the current token" from state instead of carrying its OWN generation's
-    // token is exactly how it could adopt a newer generation's identity;
-    // see markScanFinished()'s comment for the full reasoning.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
     if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) return [acquired: false]
-    // Durable identity for this generation, read back by clearAbandonedScan()'s
-    // own tombstone precheck (activeGen -> TERMINAL_TOMBSTONES.containsKey
-    // (genKey(activeGen))): a resurrected durable state.scanRunning after this
-    // generation has already terminated is only
-    // distinguishable from a genuinely still-running scan by checking whether
-    // ITS OWN token is already tombstoned, which requires knowing that token.
-    // Recovery mints a fresh substitute token because the original SCAN_LOCKS
-    // entry is gone by then, so without this durable copy a recovery execution
-    // would have no way to know which generation it is really acting on.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     state.activeGenerationToken = lockToken
     sweepGenerationRecords()
-    // The one unambiguous "a scan genuinely began" line, at the single choke
-    // point every entry path (manual /scan, the scheduled overnight trigger,
-    // any future caller) already funnels through - distinct from "/scan
-    // endpoint reached", which only proves the HTTP request arrived and says
-    // nothing about whether it actually started one (it may have lost the
-    // race, or found one already running).
+    
+    
+    
+    
+    
+    
     if (diagOn()) log.info "${app.label}: scan started"
-    // Ownership-transfer flag, not an unconditional finally - success must
-    // keep holding the lock for the whole scan, not release it here. Flipped
-    // true only once responsibility has genuinely passed to markScanFinished
-    // (an early failure) or to the scheduled watchdog/reaper machinery (a
-    // real dispatch was handed off) - an exception before either point means
-    // this call is the only thing that will ever release the lock.
+    
+    
+    
+    
+    
+    
     boolean released = false
     try {
     Map compat = probeCompatibility()
     state.compatOk = compat.ok
     state.compatDetail = compat.detail
-    // Recorded but never checked - a hub that cannot return usable statusJson
-    // was still allowed into phases that depend on that exact endpoint,
-    // rather than failing here where the cause is still known.
+    
+    
+    
     if (!compat.ok) {
         markScanFinished(lockToken, "${compat.detail}")
         released = true
@@ -1609,10 +1566,10 @@ Map startScan() {
     state.ruleLinks = 0
     state.appsInert = 0
     state.otherEngines = []
-    // Cleared BEFORE fetchDeviceListBulk runs, not after. That call sets
-    // scanError itself on failure - clearing it afterward silently erased
-    // the one error a user most needed to see, the enumeration that made
-    // the whole scan pointless before a single app was even queued.
+    
+    
+    
+    
     state.scanError = null
     state.deviceIdsUnreadable = []
     Map bulk = fetchDeviceListBulk()
@@ -1621,84 +1578,84 @@ Map startScan() {
         released = true
         return [acquired: true]
     }
-    // Label/room/type are already known for every device from this one call -
-    // NOT batched, unlike capabilities below. Only capabilities need a
-    // per-driver-type follow-up fetch.
+    
+    
+    
     state.deviceLabels = bulk.labels as Map
     state.deviceRooms = bulk.rooms as Map
     state.deviceTypes = bulk.types as Map
-    // Child device id -> its immediate parent device id, from the bulk
-    // fetch's tree walk. Consumed by buildHasComponentEdges() to draw the
-    // parent/child relationship (component-device-discovery, part 2).
+    
+    
+    
     state.deviceParents = bulk.parents as Map
-    // Every device id the hub itself reports disabled. A List, not a Map -
-    // sparse and only ever tested for membership (item 18).
+    
+    
     state.deviceDisabled = bulk.disabledDevices as List
     state.deviceCapabilities = [:]
-    // Map of representative device id -> every device id sharing its driver
-    // (deviceTypeId), including the representative itself. dispatchDeviceOne
-    // fetches capabilities once per representative and applies the result to
-    // the whole group - see fetchDeviceListBulk's comment for why this is
-    // safe (capabilities are a driver property, verified identical within a
-    // driver on this hub).
+    
+    
+    
+    
+    
+    
     List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
     state.scanQueue = []
-    // state.scanTotal is the representative/driver-type count dispatchDeviceOne
-    // actually iterates over (34 on this hub, not 194) - correct for the
-    // dispatch/invariant machinery, but showing it labelled as a device count
-    // on the settings page reads as "only 34 devices found", which is wrong
-    // and confusing. deviceScanTotal is the real device count, kept
-    // separately purely for that display - see main()'s progress paragraph.
+    
+    
+    
+    
+    
+    
     state.deviceScanTotal = (bulk.labels as Map).size()
     state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
     state.scanRunning = true
-    // Stamped here as well as in the async callbacks, so a scan that never
-    // manages to land a single callback still has a timestamp for
-    // clearAbandonedScan to age out.
+    
+    
+    
     state.scanHeartbeat = now()
     state.appIds = []
     state.appInfo = [:]
-    // Durable proof that the async app accumulator has been published in
-    // full. state.scanQueue is deliberately always empty in the async design,
-    // so it cannot distinguish "all apps committed" from "the @Field static
-    // accumulator disappeared on a code reload". Recovery may build a graph
-    // only after this marker is committed true by finalizeAppPhase.
+    
+    
+    
+    
+    
     state.appResultsReady = false
     atomicState.graphVersion = null
-    // Dropped, not merely marked stale. Holding the previous graph while
-    // appInfo fills doubles peak state for the whole scan - this is Gordon's
-    // own hub, and on 2026-08-13, at 74 apps, that was enough to kill a scan
-    // two apps from the end: no error logged, no job scheduled, just a
-    // heartbeat that stopped (see commits 9ef2359/95a2a10). The old graph is
-    // unusable during a scan anyway, since graphVersion is cleared above.
-    //
-    // Deliberately not attempting double-buffering (holding the old graph
-    // live in state while a new one fills) as part of this hardening pass -
-    // that is exactly the pattern the 2026-08-13 fix removed, not an
-    // untested scale question. This hub is now at 105 apps, larger than the
-    // 74 that crashed it, and has run cleanly under the current drop-not-hold
-    // design repeatedly, including this hardening pass's own dev-soak test.
-    // Re-introducing double buffering would be a real, different design
-    // change, and would need its own peak-memory measurement before trusting
-    // it - not because this hub is too small to have exercised the old
-    // failure at all, but because nothing here has re-tested holding two
-    // copies since the fix that stopped doing that.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     state.graph = null
     unschedule('fetchRegistry')
     unschedule('finishScan')
 
     if (repIds.isEmpty()) {
-        // No devices at all - go straight to the app phase, same as an
-        // empty representative queue would after finishing normally.
-        // released is set AFTER startAppPhase() returns, not before - caught
-        // in review: startAppPhase() installs its own recovery machinery
-        // (an app accumulator/watchdog, or the registry/finish handoff)
-        // partway through its own body, not at its very first line. An
-        // exception thrown before that point must still be caught by THIS
-        // execution's own catch below, or the lock would be left permanently
-        // held with nothing left to ever release it.
+        
+        
+        
+        
+        
+        
+        
+        
+        
         startAppPhase(lockToken)
         released = true
         return [acquired: true]
@@ -1712,47 +1669,47 @@ Map startScan() {
     scan.pending = new ConcurrentLinkedQueue(repIds)
     scan.claims = new ConcurrentHashMap()
     scan.tokenSeq = new AtomicInteger(0)
-    // Two separate guards, deliberately not one - finalizeScheduleGuard only
-    // proves "a scheduling runIn() was issued", finalizeGuard only proves
-    // "the actual state publish happened". Conflating them would let a
-    // scheduled job that never runs permanently block the watchdog's own
-    // recovery path from ever publishing.
+    
+    
+    
+    
+    
     scan.finalizeScheduleGuard = new AtomicInteger(0)
     scan.finalizeGuard = new AtomicInteger(0)
     scan.capsByDev = new ConcurrentHashMap<String, List>()
-    // Seeded from the bulk response and completed by callbacks for devices
-    // whose bulk row omitted roomName. Those devices are deliberately queued
-    // as one-device groups by fetchDeviceListBulk(), so their fullJson response
-    // can recover a room the bulk endpoint omitted without guessing whether an
-    // actually blank room means "unassigned".
+    
+    
+    
+    
+    
     scan.roomsByDev = new ConcurrentHashMap<String, String>((bulk.rooms ?: [:]) as Map)
     scan.unreadableDevs = new ConcurrentHashMap<String, Boolean>()
-    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
-    // Copied in, not read from state by a callback - callbacks and reapers
-    // must never touch state at all, not even to read. typeGroups was
-    // written once, moments ago, in this same execution, so this copy is
-    // exactly as current as a read would have been, with none of the
-    // question of whether a concurrent execution can safely read state.
+    scan.lastProgressAt = now()   
+    
+    
+    
+    
+    
     scan.typeGroups = new ConcurrentHashMap((bulk.typeGroups ?: [:]) as Map)
-    // This generation's single-flight lock token, so deviceAsyncWatchdog and
-    // finalizeDevicePhase - both callback/reap-adjacent contexts that must
-    // never touch state - can release the correct lock without reading state.
+    
+    
+    
     scan.lockToken = lockToken
     DEVICE_SCANS[scanId] = scan
     state.deviceScanId = scanId
 
-    // Single-scan-at-a-time within this app instance: reapers/watchdogs are
-    // scheduled and unscheduled by handler name, and Hubitat's runIn()
-    // replaces rather than stacks a prior job under the same name. Automation
-    // Map already enforces one live scan via the UI/clearAbandonedScan, so
-    // this matches an existing constraint rather than introducing a new one.
+    
+    
+    
+    
+    
     runIn(DEVICE_ASYNC_WATCHDOG_SEC, 'deviceAsyncWatchdog', [data: [scanId: scanId]])
     runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
-    // Handed off here, before dispatch - the watchdog/reaper just scheduled
-    // above are what recover this scan from this point on, including if
-    // refillDevicePipeline() itself throws on its very first synchronous
-    // call. A stall they can't explain is exactly deviceAsyncWatchdog's own
-    // existing job, not a new failure mode this lock introduces.
+    
+    
+    
+    
+    
     released = true
     refillDevicePipeline(scanId)
     return [acquired: true]
@@ -1763,24 +1720,24 @@ Map startScan() {
 }
 
 void refillDevicePipeline(String scanId) {
-    // Iterative, not recursive: dispatchDeviceOne() returns true whenever it
-    // made progress (a successful dispatch, or a rollback+requeue/terminal-fail
-    // after a synchronous throw), so looping here bounds the work to the
-    // pending queue's size instead of growing the call stack on repeated
-    // synchronous failures. Verified against real repeated synchronous
-    // failures in the isolated dispatch-test harness before being relied on
-    // here.
-    while (dispatchDeviceOne(scanId)) { /* keep refilling */ }
+    
+    
+    
+    
+    
+    
+    
+    while (dispatchDeviceOne(scanId)) {  }
 }
 
-// CAS-bounded dispatch: reserves a slot in the in-flight pool (<=
-// DEVICE_ASYNC_MAX_INFLIGHT), pops the next pending representative device id
-// (or requeued retry, carrying its prior attempt count), records a claim
-// before ever calling asynchttpGet, and issues an async fullJson fetch for
-// that representative's capabilities. Every failure path below rolls back
-// the reservation and the claim via conditional removal - see the isolated
-// test's dispatch-throw/claim-reaper findings for why an unconditional
-// remove is not safe once callbacks and the reaper can genuinely overlap.
+
+
+
+
+
+
+
+
 boolean dispatchDeviceOne(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return false
@@ -1811,11 +1768,11 @@ boolean dispatchDeviceOne(String scanId) {
         return true
     } catch (Exception ex) {
         log.warn "${app.label}: device ${repId} dispatch threw: ${ex.message}"
-        // Ownership proven the same way the callback/reaper prove it below -
-        // only this execution could plausibly hold this exact claim object
-        // (nothing else has had a chance to touch it since it was created a
-        // few lines above), but the conditional remove costs nothing and
-        // keeps every retirement path in this pipeline consistent.
+        
+        
+        
+        
+        
         boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, myClaim)
         if (owned) inFlight.decrementAndGet()
         if (owned) {
@@ -1823,46 +1780,46 @@ boolean dispatchDeviceOne(String scanId) {
             if (attemptCount < ATTEMPT_CAP) {
                 (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
             } else {
-                // Every device sharing this representative's driver, not just
-                // the representative itself - a driver-group capability
-                // failure is a failure for the whole group, same as the real
-                // callback path below marks it.
+                
+                
+                
+                
                 deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
                 (scan.processed as AtomicInteger).incrementAndGet()
             }
         }
         maybeFinalizeDevicePhase(scanId)
-        return true   // made progress; refillDevicePipeline's loop tries again
+        return true   
     }
 }
 
-// Shared by dispatchDeviceOne's terminal-throw path, deviceFetchCb, and
-// reapDeviceClaim's terminal path - every device sharing repId's driver,
-// from the scan-local copy of typeGroups (never state - see the comment
-// where scan.typeGroups is populated in startScan).
+
+
+
+
 List deviceGroupFor(ConcurrentHashMap scan, String repId) {
     Map typeGroups = (scan.typeGroups ?: [:]) as Map
     return (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
 }
 
-// Async callback for /device/fullJson/{representative id}. Applies the
-// result to every device sharing that representative's driver, releases the
-// claim and the in-flight slot (only if this execution actually owns the
-// claim - see the ownership note in dispatchDeviceOne), then refills and
-// checks for completion.
+
+
+
+
+
 void deviceFetchCb(resp, data) {
     String scanId = data.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
-    if (scan == null) return  // callback from a prior, already-finalized scan
+    if (scan == null) return  
 
     String repId = data.repId as String
     String attemptToken = data.attemptToken as String
     Map claim = (scan.claims as ConcurrentHashMap)[repId] as Map
 
-    if (claim == null || claim.attemptToken != attemptToken) return   // stale or duplicate
+    if (claim == null || claim.attemptToken != attemptToken) return   
 
     boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, claim)
-    if (!owned) return   // lost the race - deviceClaimReaper already retired this exact attempt
+    if (!owned) return   
 
     List group = deviceGroupFor(scan, repId)
 
@@ -1875,12 +1832,12 @@ void deviceFetchCb(resp, data) {
                 caps = (dev.capabilities ?: []) as List
                 if (dev.roomName) {
                     String room = "${dev.roomName}".trim()
-                    // A room belongs to this device, not to its driver. Normal
-                    // capability groups contain many devices whose rooms differ,
-                    // so broadcasting the representative's room corrupts every
-                    // peer in that group. Missing-bulk-room devices are already
-                    // queued as singleton groups; writing only repId recovers
-                    // their fullJson room without touching any other device.
+                    
+                    
+                    
+                    
+                    
+                    
                     ConcurrentHashMap roomsByDev = scan.roomsByDev as ConcurrentHashMap
                     if (room && !roomsByDev.containsKey(repId)) roomsByDev[repId] = room
                 }
@@ -1898,23 +1855,23 @@ void deviceFetchCb(resp, data) {
 
     (scan.processed as AtomicInteger).incrementAndGet()
     (scan.inFlight as AtomicInteger).decrementAndGet()
-    // Scan-local progress marker, not state - see the top-of-pipeline
-    // comment on why callbacks/reapers never write state at all, not even a
-    // best-effort progress field. scanStatusJson() reads this live.
+    
+    
+    
     scan.lastProgressAt = now()
 
     refillDevicePipeline(scanId)
     maybeFinalizeDevicePhase(scanId)
 }
 
-// Active recovery for claims that were dispatched but never got any callback
-// at all - not a per-item HTTP failure (those already resolve in one
-// callback via caps==null above), but genuine platform-level silence.
-// Self-reschedules via runIn every CLAIM_REAP_INTERVAL_SEC until the phase
-// finalizes. Ownership is proven via conditional removal against a claim
-// value snapshotted at scan time, exactly as verified in the isolated
-// dispatch-test harness - see that harness's claimReaper()/reapOne() for the
-// full reasoning this mirrors.
+
+
+
+
+
+
+
+
 void deviceClaimReaper(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
@@ -1947,7 +1904,7 @@ void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
 
     Map claims = scan.claims as ConcurrentHashMap
     boolean owned = claims.remove(repId, candidateClaim)
-    if (!owned) return   // resolved or replaced since the scan - not this attempt's to reap
+    if (!owned) return   
 
     int attemptCount = candidateClaim.attemptCount as Integer
     log.warn "${app.label}: device ${repId} claim reaped after ${ageMs}ms with no callback (attempt ${attemptCount})"
@@ -1958,8 +1915,8 @@ void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
     if (attemptCount < ATTEMPT_CAP) {
         (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
     } else {
-        // Whole driver group, not just the representative - same reasoning
-        // as dispatchDeviceOne's terminal-throw path.
+        
+        
         deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
         (scan.processed as AtomicInteger).incrementAndGet()
     }
@@ -1968,15 +1925,15 @@ void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
     maybeFinalizeDevicePhase(scanId)
 }
 
-// Diagnostic-only safety net for a pipeline that has stalled well past what
-// any real callback or reap cycle should take. Deliberately does NOT
-// finalize with whatever was collected - see finalizeDevicePhase/
-// maybeFinalizeDevicePhase for why publishing a partial result labeled
-// complete is worse than failing visibly. Marks the scan failed instead.
+
+
+
+
+
 void deviceAsyncWatchdog(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
-    if (scan == null) return   // already finalized normally, nothing to do
+    if (scan == null) return   
 
     int pending = (scan.pending as ConcurrentLinkedQueue).size()
     int inFlight = (scan.inFlight as AtomicInteger).get()
@@ -1985,10 +1942,10 @@ void deviceAsyncWatchdog(data) {
     int total = scan.total as Integer
 
     if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total) {
-        // Invariants already satisfied - this is just the watchdog and the
-        // last legitimate resolution landing at nearly the same moment.
-        // finalizeDevicePhase is itself exactly-once via finalizeGuard, so
-        // calling it here is safe either way.
+        
+        
+        
+        
         finalizeDevicePhase(scanId)
         return
     }
@@ -1996,38 +1953,38 @@ void deviceAsyncWatchdog(data) {
         log.warn "${app.label}: device-phase scan ${scanId} invariant violation - processed=${processed} exceeds total=${total}"
     }
 
-    // CAS the same guard finalizeDevicePhase uses, BEFORE writing anything -
-    // a legitimate finalize from a callback/reap landing concurrently with
-    // this watchdog execution must win this race, not have its successful
-    // publication overwritten by this failure path landing after it. If the
-    // CAS fails, a real finalize already happened or is in progress and this
-    // execution has nothing left to do.
+    
+    
+    
+    
+    
+    
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
     log.warn "${app.label}: device-phase async scan ${scanId} did not finish within ${DEVICE_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
     DEVICE_SCANS.remove(scanId)
     unschedule('deviceClaimReaper')
-    // Honest, not "kept the previous map" - startScan already wiped
-    // state.graph/appInfo/deviceCapabilities before this scan's first
-    // dispatch even went out, so there is no previous map left to retain by
-    // this point, only that no NEW, possibly-incomplete one gets published
-    // in its place. Real retention (double buffering) is deliberately not
-    // attempted - see BACKLOG.md.
+    
+    
+    
+    
+    
+    
     markScanFinished(scan.lockToken as String, "Device scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
 }
 
-// Called once invariants are exactly satisfied, from whichever path notices
-// that first (a callback or a reap). Deliberately does NOT call
-// finalizeDevicePhase() inline - this function still runs as part of a
-// callback/reap execution, and per the production-diff review, even a
-// terminal callback with zero other callbacks outstanding is still an async
-// execution whose own state snapshot could be stale relative to some other
-// concurrent execution. Schedules a fresh, dedicated execution to do the
-// actual publish instead, the same discipline this app already uses for the
-// registry/graph-build handoff (see beginRegistryAndFinish). finalizeSchedule
-// Guard only proves "a scheduling runIn() was issued" - it is not the
-// publish-ownership proof, that is still finalizeGuard, checked again inside
-// the scheduled execution itself.
+
+
+
+
+
+
+
+
+
+
+
+
 void maybeFinalizeDevicePhase(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return
@@ -2047,16 +2004,16 @@ void maybeFinalizeDevicePhase(String scanId) {
     }
 }
 
-// The dedicated execution maybeFinalizeDevicePhase schedules - re-verifies
-// invariants (state may only have improved since scheduling, since claims
-// only ever get reaped/resolved, never added back once the pending queue is
-// drained, but re-checking costs nothing and matches step 2/5 of the
-// reviewed design) before handing off to finalizeDevicePhase's own
-// finalizeGuard CAS, which remains the actual exactly-once publish proof.
+
+
+
+
+
+
 void finalizeDevicePhaseScheduled(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
-    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    if (scan == null) return   
     int pending = (scan.pending as ConcurrentLinkedQueue).size()
     int inFlight = (scan.inFlight as AtomicInteger).get()
     int claimsOutstanding = (scan.claims as Map).size()
@@ -2069,30 +2026,30 @@ void finalizeDevicePhaseScheduled(data) {
     finalizeDevicePhase(scanId)
 }
 
-// Merges the scan's static-accumulated capability results into state in one
-// single execution via plain assignment - never putAll onto whatever state
-// already held. A merge can only ever add entries, never correct a bad
-// starting state; this specific mistake (putAll instead of =) was the second
-// confirmed bug behind the data-integrity finding that led to this whole
-// rewrite. Guarded exactly-once via finalizeGuard so the scheduled finalizer
-// and the watchdog's own already-satisfied recovery path can never both run
-// this - both are freshly scheduled executions, never called inline from a
-// callback/reap.
+
+
+
+
+
+
+
+
+
 void finalizeDevicePhase(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return
-    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   // already finalized
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   
 
-    // finalizeGuard only proves this is the one execution allowed to attempt
-    // publishing THIS scanId's results - it says nothing about whether this
-    // scanId's generation is still the CURRENT one for the app instance.
-    // clearAbandonedScan() can release this generation's lock without
-    // touching DEVICE_SCANS or unscheduling its watchdog/reaper, so a late
-    // finalize for an already-abandoned generation can still reach here
-    // after a newer one has started. Checked before the first state write,
-    // not just relied on at an eventual markScanFinished() call - this path
-    // hands off to startAppPhase() on success and never calls
-    // markScanFinished() at all in that case.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     if (!ownsLock(scan.lockToken as String)) {
         if (diagOn()) log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
         DEVICE_SCANS.remove(scanId)
@@ -2124,25 +2081,25 @@ void finalizeDevicePhase(String scanId) {
     startAppPhase(scan.lockToken as String)
 }
 
-// Apps are discovered entirely from /hub2/appsList - device-led discovery
-// (walking appsUsing on every device) was dropped from the device-phase
-// fetch, verified on this hub to contribute zero apps the listing didn't
-// already have. state.appIds is therefore always empty entering this
-// function.
-//
-// lockToken is passed explicitly by both callers, deliberately not read
-// back from a shared/state field here - caught in review: this function can
-// run from finalizeDevicePhase(), a separately scheduled execution that
-// could in principle fire late, after its own generation was abandoned and
-// a NEWER one has since started. Reading "the current token" from anywhere
-// shared at that point would let this late execution build an app-phase
-// accumulator labelled with the WRONG (newer) generation's token, which
-// could then legitimately release a scan it has nothing to do with.
-// Carrying the caller's own remembered token instead closes that.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
-    // Best-effort, not fatal - see fetchAppTypeNamespaces()'s own comment.
-    // Fetched once here rather than per-app, same reasoning as appsList.
+    
+    
     Map appTypeNamespaceResult = fetchAppTypeNamespaces()
     if (appTypeNamespaceResult.error) {
         log.warn "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
@@ -2153,14 +2110,14 @@ void startAppPhase(String lockToken) {
         markScanFinished(lockToken, "Could not list installed apps: ${appListing.error}")
         return
     }
-    // Own app.id included, not skipped: it fetches and processes through the
-    // same pipeline as any other app, and the out.type check below is what
-    // suppresses its relationship data.
+    
+    
+    
     appIds.addAll(appListing.ids as List)
-    // Re-checked here, not only trusted from the caller's own earlier check -
-    // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
-    // fresh acquisition can interleave during it exactly as easily as around
-    // any other gap in this pipeline.
+    
+    
+    
+    
     if (!ownsLock(lockToken)) {
         if (diagOn()) log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
         return
@@ -2173,8 +2130,8 @@ void startAppPhase(String lockToken) {
     state.scanQueue = []
 
     if (appIds.isEmpty()) {
-        // A genuinely app-less hub has a complete empty result. Commit the
-        // same invariant finalizeAppPhase sets for a non-empty app scan.
+        
+        
         state.appResultsReady = true
         beginRegistryAndFinish(lockToken)
         return
@@ -2188,24 +2145,24 @@ void startAppPhase(String lockToken) {
     scan.pending = new ConcurrentLinkedQueue(appIds)
     scan.claims = new ConcurrentHashMap()
     scan.tokenSeq = new AtomicInteger(0)
-    // Two separate guards - see the device-scan creation comment on why
-    // scheduling proof and publish proof must not share one CAS.
+    
+    
     scan.finalizeScheduleGuard = new AtomicInteger(0)
     scan.finalizeGuard = new AtomicInteger(0)
     scan.appInfo = new ConcurrentHashMap<String, Map>()
-    // Seeded from the device phase's complete bulk label inventory, not an
-    // empty map - the device phase already correctly found every device's
-    // label; app callbacks only ever ADD to or improve on that (a device
-    // referenced by an app setting, childDevice or subscription), they never
-    // need to be the sole source. Seeding from a fresh copy of what
-    // finalizeDevicePhase just published avoids the alternative bug: an
-    // empty starting map here meant finalizeAppPhase's plain-assignment
-    // replace of state.deviceLabels would DROP every device not referenced
-    // by any app, even though the bulk fetch had correctly found it. This
-    // is not the same "merge onto possibly-stale state" hazard the appInfo/
-    // capsByDev replace-not-merge fix guards against - this copy is taken
-    // from data this exact scan generation just finished publishing, not
-    // from whatever an unrelated earlier scan left behind.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
     scan.appTypeNamespaces = new ConcurrentHashMap<String, String>((appTypeNamespaceResult.namespaces ?: [:]) as Map)
     scan.decoded = new AtomicInteger(0)
@@ -2213,10 +2170,10 @@ void startAppPhase(String lockToken) {
     scan.rulesDecoded = new AtomicInteger(0)
     scan.rulesSkipped = new AtomicInteger(0)
     scan.otherEngines = new ConcurrentHashMap<String, Boolean>()
-    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
-    // The caller's own remembered token, carried forward - see this
-    // function's own comment for why it is deliberately never read back
-    // from anywhere shared/mutable instead.
+    scan.lastProgressAt = now()   
+    
+    
+    
     scan.lockToken = lockToken
     APP_SCANS[scanId] = scan
     state.appScanId = scanId
@@ -2227,12 +2184,12 @@ void startAppPhase(String lockToken) {
 }
 
 void refillAppPipeline(String scanId) {
-    while (dispatchAppOne(scanId)) { /* keep refilling */ }
+    while (dispatchAppOne(scanId)) {  }
 }
 
-// CAS-bounded dispatch, same shape and same rollback/claim discipline as
-// dispatchDeviceOne above - see that function's comment for the full
-// reasoning, not repeated per phase.
+
+
+
 boolean dispatchAppOne(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return false
@@ -2283,9 +2240,9 @@ boolean dispatchAppOne(String scanId) {
     }
 }
 
-// Async callback for /installedapp/statusJson/{id}. Runs the same
-// processAppRelationships() the old synchronous batch used, then releases
-// the claim and slot (only if this execution actually owns the claim).
+
+
+
 void appFetchCb(resp, data) {
     String scanId = data.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
@@ -2330,17 +2287,17 @@ void appFetchCb(resp, data) {
 
     (scan.processed as AtomicInteger).incrementAndGet()
     (scan.inFlight as AtomicInteger).decrementAndGet()
-    // Scan-local progress marker, not state - callbacks/reapers never write
-    // state at all. scanStatusJson() reads this live.
+    
+    
     scan.lastProgressAt = now()
 
     refillAppPipeline(scanId)
     maybeFinalizeAppPhase(scanId)
 }
 
-// Active recovery for app claims that never got any callback - mirrors
-// deviceClaimReaper/reapDeviceClaim exactly, see those for the full
-// reasoning.
+
+
+
 void appClaimReaper(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
@@ -2396,9 +2353,9 @@ void reapAppClaim(String scanId, String appId, Map candidateClaim) {
     maybeFinalizeAppPhase(scanId)
 }
 
-// Diagnostic-only safety net, same fail-closed shape as deviceAsyncWatchdog -
-// see that function's comment for the full reasoning behind not finalizing
-// with a partial result.
+
+
+
 void appAsyncWatchdog(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
@@ -2422,21 +2379,21 @@ void appAsyncWatchdog(data) {
         log.warn "${app.label}: app-phase scan ${scanId} invariant violation - processed=${processed} appInfo=${appInfoSize} total=${total}"
     }
 
-    // CAS the same guard finalizeAppPhase uses, BEFORE writing anything - see
-    // deviceAsyncWatchdog's comment for the full race this closes.
+    
+    
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
     log.warn "${app.label}: app-phase async scan ${scanId} did not finish within ${APP_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
     APP_SCANS.remove(scanId)
     unschedule('appClaimReaper')
-    // Honest, not "kept the previous map" - see deviceAsyncWatchdog's
-    // comment; the same applies here, state.appInfo was already wiped to
-    // [:] in startScan before this scan's first dispatch went out.
+    
+    
+    
     markScanFinished(scan.lockToken as String, "App scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
 }
 
-// Does NOT call finalizeAppPhase() inline - see maybeFinalizeDevicePhase's
-// comment for why, identical reasoning applies here.
+
+
 void maybeFinalizeAppPhase(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return
@@ -2460,12 +2417,12 @@ void maybeFinalizeAppPhase(String scanId) {
     }
 }
 
-// The dedicated execution maybeFinalizeAppPhase schedules - see
-// finalizeDevicePhaseScheduled's comment, identical reasoning and structure.
+
+
 void finalizeAppPhaseScheduled(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
-    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    if (scan == null) return   
     int pending = (scan.pending as ConcurrentLinkedQueue).size()
     int inFlight = (scan.inFlight as AtomicInteger).get()
     int claimsOutstanding = (scan.claims as Map).size()
@@ -2482,22 +2439,22 @@ void finalizeAppPhaseScheduled(data) {
     finalizeAppPhase(scanId)
 }
 
-// Merges the scan's static-accumulated results into state in one single
-// execution via plain assignment - never putAll. See finalizeDevicePhase's
-// comment; the same confirmed bug applied here, on state.appInfo, and is
-// fixed the same way. CAS-guarded exactly-once via finalizeGuard - the
-// scheduled finalizer and the watchdog's own already-satisfied recovery path
-// are both freshly scheduled executions, never called inline from a
-// callback/reap.
+
+
+
+
+
+
+
 void finalizeAppPhase(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
-    // See finalizeDevicePhase()'s identical comment - finalizeGuard proves
-    // only exactly-once for THIS scanId, not that this generation is still
-    // current, and this path hands off to beginRegistryAndFinish() on
-    // success without ever calling markScanFinished().
+    
+    
+    
+    
     if (!ownsLock(scan.lockToken as String)) {
         if (diagOn()) log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
         APP_SCANS.remove(scanId)
@@ -2514,13 +2471,13 @@ void finalizeAppPhase(String scanId) {
         state.appInfo = new LinkedHashMap(scan.appInfo as Map)
         state.deviceLabels = new LinkedHashMap(scan.labels as Map)
 
-        // Plain values, not accumulation - scan.decoded.get() etc. are
-        // already the COMPLETE count for this scan (every callback in the
-        // pipeline incremented the same counter), not a delta to add onto
-        // whatever state already held. += here was the first confirmed bug
-        // behind the data-integrity finding: caught live when two scan
-        // generations overlapped during testing and appsDecoded ended up
-        // reading higher than the total app count on the hub.
+        
+        
+        
+        
+        
+        
+        
         state.appsDecoded = (scan.decoded as AtomicInteger).get()
         state.appsUnreadable = (scan.unreadable as AtomicInteger).get()
         state.rulesDecoded = (scan.rulesDecoded as AtomicInteger).get()
@@ -2530,9 +2487,9 @@ void finalizeAppPhase(String scanId) {
         state.otherEngines = others
 
         state.scanDone = scan.total as Integer
-        // Last app-result write in this execution. Hubitat commits the whole
-        // state snapshot atomically when the execution returns, so recovery
-        // can never observe true with only a partial appInfo publication.
+        
+        
+        
         state.appResultsReady = true
         state.scanHeartbeat = now()
     } catch (Exception ex) {
@@ -2544,48 +2501,48 @@ void finalizeAppPhase(String scanId) {
     beginRegistryAndFinish(scan.lockToken as String)
 }
 
-// The registry-fetch-then-graph-build handoff, shared by the normal
-// end-of-app-phase path and the empty-app-list path in startAppPhase.
-//
-// lockToken travels through runIn()'s own data payload from here all the
-// way to fetchRegistry and finishScan, rather than either of them reading
-// a value back from state - both are separately scheduled executions that could
-// in principle fire late, after their own generation was abandoned and a
-// newer one has since overwritten state with its own token. Carrying the
-// value forward explicitly means a late execution still only ever knows
-// its OWN generation's token, never whatever happens to be current by the
-// time it runs - see startAppPhase()'s comment for the identical reasoning
-// one hop earlier in this same chain.
+
+
+
+
+
+
+
+
+
+
+
+
 void beginRegistryAndFinish(String lockToken) {
-    // The PENDING marker is written here, not inside fetchRegistry, because
-    // state is only committed at the END of an execution - an execution
-    // that dies mid-fetch discards everything it wrote, so fetchRegistry
-    // structurally cannot record that it started.
+    
+    
+    
+    
     state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
                           matched: 0, error: null, schemaVersion: null]
     runIn(1, 'fetchRegistry', [data: [lockToken: lockToken]])
-    // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
-    // dies takes the graph build down with it and the scan never completes
-    // at all. Scheduling finishScan again for the same handler replaces
-    // this job, so the normal path cancels the watchdog simply by
-    // rescheduling it one second out.
+    
+    
+    
+    
+    
     runIn(45, 'finishScan', [data: [lockToken: lockToken]])
 }
 
-// Runs as its own scheduled execution between the app phase and the graph
-// build. It fetches ~170KB over the internet and parses it, which is far too
-// much to bolt onto a batch that is already doing HTTP work - the lesson from
-// finishScan, which died when it was called inline.
-//
-// Failure here is not fatal. The registry is a convenience; the user's own
-// declarations are the authority, and an unclassified app type is an explicit,
-// visible state rather than a silent absence.
+
+
+
+
+
+
+
+
 void fetchRegistry(jobData = null) {
     String lockToken = jobData?.lockToken as String
-    // Checked before the very first write, including the heartbeat stamp -
-    // this is a separately scheduled execution that can in principle fire
-    // late, after its own generation was abandoned and a newer one has
-    // since started.
+    
+    
+    
+    
     if (!ownsLock(lockToken)) {
         if (diagOn()) log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
         return
@@ -2628,30 +2585,30 @@ void fetchRegistry(jobData = null) {
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
-    // Written unconditionally, keyed by this generation's own token, not
-    // gated on ownsLock() below - the finalizer consults this after its own
-    // claim instead of a pre-claim state snapshot, so a superseded write here
-    // cannot corrupt a different generation's entry, and nothing will ever
-    // look up a superseded token's entry once that generation has already
-    // terminated. See REGISTRY_RESULTS's own comment.
+    
+    
+    
+    
+    
+    
     REGISTRY_RESULTS.put(genKey(lockToken), [meta: meta, matches: matches, createdAt: now()])
 
-    // Re-checked here, not only trusted from the entry check above - the
-    // registry fetch is a real 30-second-timeout HTTP call, and abandonment
-    // plus a fresh acquisition can interleave during it exactly as easily as
-    // around any other gap in this pipeline.
+    
+    
+    
+    
     if (!ownsLock(lockToken)) {
         if (diagOn()) log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
         return
     }
 
-    // Only on success, so a failed fetch keeps the last good set rather than
-    // silently emptying the map of everything the registry contributed.
+    
+    
     if (!meta.error) state.registryMatches = matches
     state.registryMeta = meta
-    // Split by outcome (v2.1.8): registry unavailable is a degraded outcome
-    // (map still builds, just without registry-derived matches) and stays
-    // always logged; a normal match count is routine detail, gated.
+    
+    
+    
     if (meta.error) {
         log.warn "${app.label}: registry unavailable, continuing without it"
     } else if (diagOn()) {
@@ -2660,41 +2617,41 @@ void fetchRegistry(jobData = null) {
     runIn(1, 'finishScan', [data: [lockToken: lockToken]])
 }
 
-// data.lockToken travels from beginRegistryAndFinish() via fetchRegistry(),
-// or (when clearAbandonedScan() calls this directly, bypassing the
-// scheduler entirely) is a live SCAN_LOCKS snapshot taken at that call
-// site, the same recovery-path reasoning as clearAbandonedScan()'s other
-// branch - see markScanFinished()'s comment.
+
+
+
+
+
 void finishScan(data = null) {
     String lockToken = data?.lockToken as String
-    // The logical generation this termination belongs to - defaults to the
-    // CAS token itself (the normal case). clearAbandonedScan()'s recovery
-    // path passes a different value: a fresh CAS token substitutes for a lock
-    // that's no longer there to reclaim, but the tombstone below must still
-    // land on the ORIGINAL generation's identity. See finishGeneration()'s
-    // own comment.
+    
+    
+    
+    
+    
+    
     String logicalGen = (data?.logicalGen ?: lockToken) as String
     boolean finished = finishGeneration(lockToken, null, logicalGen) {
-        // v2.0.14: authoritative Hub Variable inventory. A synchronous,
-        // in-process call (getAllGlobalVars()) with no
-        // async round trip of its own, so it is called and published here,
-        // inside the same protected closure as buildGraph()/state.graph below
-        // - never outside it. A failed inventory
-        // still publishes (status: 'failed'), so buildGraph() always has a
-        // definite, current-generation answer to read rather than stale state
-        // from a previous scan.
+        
+        
+        
+        
+        
+        
+        
+        
         state.hubVariableInventory = fetchHubVariableInventory()
 
-        // Registry outcome resolved HERE, after the claim, from the
-        // generation-keyed REGISTRY_RESULTS store fetchRegistry() writes to -
-        // not from a state.registryMeta snapshot taken before this claim,
-        // which a concurrent registry completion could already have made
-        // stale. Absent means fetchRegistry() has not reached its own
-        // bookkeeping for this generation yet: this execution is the
-        // watchdog firing rather than the normal chain. Say so. The
-        // alternative is what shipped before: an app that had tried and
-        // failed reporting that it had never tried, which is worse than an
-        // error.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Map regResult = REGISTRY_RESULTS.get(genKey(lockToken)) as Map
         boolean registryTimedOut = (regResult == null)
         if (registryTimedOut) {
@@ -2703,11 +2660,11 @@ void finishScan(data = null) {
             log.warn "${app.label}: registry fetch did not complete, continuing without it"
         } else {
             Map regMeta = (regResult.meta as Map)
-            // Only on success, so a failed fetch keeps the last good set
-            // rather than silently emptying the map of everything the
-            // registry contributed - same rule fetchRegistry() itself
-            // applies to its own state.registryMatches write, enforced again
-            // here at the point of use.
+            
+            
+            
+            
+            
             if (!regMeta.error) state.registryMatches = (regResult.matches as List)
             state.registryMeta = regMeta
         }
@@ -2717,106 +2674,106 @@ void finishScan(data = null) {
         state.graph = graph
         atomicState.graphVersion = GRAPH_SCHEMA
 
-        // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
-        // 61KB of a 244KB state on this hub, a quarter of everything stored, held
-        // twice for no reason. buildGraph falls back to the existing graph.flows on
-        // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
+        
+        
+        
+        
         Map appInfo = (state.appInfo ?: [:]) as Map
         appInfo.each { String appId, info ->
             if (info instanceof Map) (info as Map).remove('flow')
         }
         state.appInfo = appInfo
-        // Counted from the finished graph rather than tallied during the scan.
-        // A rule that sets another rule's Private Boolean both true and false is
-        // two actions but one relationship, so a running tally reported 8 where
-        // the map drew 7.
+        
+        
+        
+        
         int links = 0
         ((graph.edges ?: []) as List).each { e ->
-            // Compared through a String-typed local: a GString never matches a
-            // String in contains(), because their hash codes differ.
+            
+            
             String kind = "${(e as Map).kind}"
             if (RULE_LINK_KIND_NAMES.contains(kind)) links++
         }
         state.ruleLinks = links
 
-        // Counted off the built graph rather than off appInfo, so the summary can
-        // only ever describe nodes that are really on the map.
+        
+        
         int inertCount = 0
         ((graph.nodes ?: []) as List).each { n ->
             if ((n as Map).inert == true) inertCount++
         }
         state.appsInert = inertCount
 
-        // v2.0.14: read by compatibilitySummary() for the "N with a Connector"
-        // count. Captured from the built graph the same way ruleLinks/appsInert
-        // above are, rather than recomputed at page-render time.
+        
+        
+        
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
         if (diagOn()) log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
 
-        // durationSeconds reads the start time already embedded in lockToken
-        // ("lock-<epochMillis>-<random>", see its own acquisition comment)
-        // rather than adding a new state field for it - the token already IS
-        // the scan's start timestamp, just formatted for lock identity.
+        
+        
+        
+        
         Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
-        // Durable, so main()'s "Last scan" line can show it on a later,
-        // separate page-render execution.
+        
+        
         state.lastScanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
     }
     if (!finished) {
-        // The claim is now checked before buildGraph() runs, so a
-        // superseded generation never builds a graph at all any more - it
-        // just loses the claim immediately and does nothing further.
+        
+        
+        
         if (diagOn()) log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
     }
 }
 
-// Every device on the hub.
-//
-// This used to be a device picker, and it was the biggest piece of friction in
-// the app: a new user had to select ~200 devices before anything worked. The
-// picker was never a permission gate here - this app reads /device/fullJson
-// directly, which does not consult app-device bindings - so the selection only
-// ever served as a list of ids, and the hub will hand over that list anyway.
-//
-// It also fixes a correctness problem. With a picker, an app whose devices the
-// user did not tick was simply invisible, so how complete the map was depended
-// on a user action rather than on the hub.
-//
-// The capability parameter is required. Without it the endpoint returns [].
-// Bulk device enumeration. Replaces the old fetchAllDeviceIds() + per-device
-// fetchDeviceApps() pair for everything except capabilities: this one call
-// carries label, room and driver name for every device at once - fields that
-// previously cost a /device/fullJson round trip each. Verified field mapping
-// against the per-device endpoint for the same device before relying on it:
-// data.name is the device's LABEL (not its type - a different bulk endpoint,
-// /device/list/data, calls the label "label" and puts the type in "name",
-// the opposite way round), data.type is the driver name, data.roomName is the
-// room.
-//
-// NOT flat. Corrected 2026-08-31 - every entry has the shape
-// {key, data, child, parent, children}: a device-owned component device
-// (isComponent: true, created by a parent device driver - Shelly, Bond, a
-// Matter bridge, this hub's own Hub Variable Connectors) can be represented
-// nested inside its parent's own children array rather than as a top-level
-// sibling. Confirmed live: this hub's "Variable Connectors" parent carries
-// all nine per-variable Connector devices this way. The walk below is
-// iterative and depth-agnostic - same reasoning as collectAppIds() - and
-// aggregates by device ID before building typeGroups, so a device exposed
-// both at the top level and beneath a parent (a partial record on either
-// side) is enriched from whichever record has each field, not double-
-// counted or overwritten by a blanker duplicate.
-//
-// Also groups devices by deviceTypeId (driver): capabilities are a property
-// of the driver, not the individual device, and every device sharing a
-// driver was confirmed (sampled) to report identical capabilities - see the
-// scan-speed item in BACKLOG.md. typeGroups remains scan-local: it holds one
-// representative device id per driver, mapped to every device id sharing
-// that driver; deviceFetchCb fetches capabilities for the representative
-// only and applies the result to the whole group. The exception is a device
-// whose bulk row omits roomName: it gets a one-device group so fullJson can
-// recover an endpoint-omitted room (or confirm it is genuinely unassigned)
-// without broadcasting one atypical response across its whole driver group.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map fetchDeviceListBulk() {
     Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
@@ -2829,26 +2786,26 @@ Map fetchDeviceListBulk() {
     return aggregateDeviceTree(data)
 }
 
-// Pure, sandbox-compatible, no hub calls - kept separate from
-// fetchDeviceListBulk() specifically so it can be copied verbatim into a
-// synthetic-JSON test (tests/device-tree-discovery.groovy) without any live
-// endpoint. See that test for the full case list this walk is proven
-// against: flat responses, nested siblings, depth beyond one level, a device
-// duplicated across the top level and a child position, missing/malformed
-// entries, and the existing room/type-grouping fallback.
-//
-// First pass: walk every entry, top-level and nested at any depth,
-// aggregating raw fields per device ID. A field already set from an earlier
-// encounter of the same ID is never overwritten, so a sparse record on one
-// side of the tree cannot blank out a richer one already found on the
-// other side. parentId is recorded from the enclosing entry's own id as
-// each child is queued, not read from the child's own data - the endpoint's
-// child/parent fields on an entry describe that entry's own role, not which
-// specific parent it belongs to.
-//
-// Second pass: typeGroups built once, from the fully aggregated set, so a
-// device seen more than once during the walk (top level and nested, or
-// nested under more than one path) is grouped exactly once.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map aggregateDeviceTree(Map data) {
     Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
     Map<String, Map> byId = [:]
@@ -2860,10 +2817,10 @@ Map aggregateDeviceTree(Map data) {
         def node = item.node
         if (!(node instanceof Map)) continue
         Map entry = node as Map
-        // instanceof, not a bare `as` cast - review 346, correction 1: a wrong-type data or
-        // children value must degrade to "absent" (skip this entry's own
-        // fields, still walk its valid children if any), not throw and lose
-        // every device still pending in the walk.
+        
+        
+        
+        
         Map d = (entry.data instanceof Map) ? (entry.data as Map) : null
         String entryId = (d && d.id != null) ? "${d.id}" : null
         List kids = (entry.children instanceof List) ? (entry.children as List) : null
@@ -2881,29 +2838,29 @@ Map aggregateDeviceTree(Map data) {
         if (!agg.type && d.type) agg.type = "${d.type}"
         if (agg.deviceTypeId == null && d.deviceTypeId != null) agg.deviceTypeId = "${d.deviceTypeId}"
         if (!agg.parentId && item.parentId) agg.parentId = item.parentId as String
-        // First record that actually reports the field wins - a truthy check
-        // would treat a legitimate `disabled: false` the same as "field
-        // absent", which for a boolean is wrong: false is real information,
-        // not emptiness.
+        
+        
+        
+        
         if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
     }
     Map typeGroups = [:]
     order.each { String devId ->
         Map agg = byId[devId] as Map
-        // review 346, correction 2: every valid ID is retained under the existing
-        // "Device <id>" fallback identity (see buildGraph()) even with no
-        // name in either record, rather than being silently absent from
-        // labels - and so from the graph and device count.
+        
+        
+        
+        
         out.labels[devId] = (agg.name ?: "Device ${devId}") as String
         if (agg.room) out.rooms[devId] = agg.room as String
         if (agg.type) out.types[devId] = agg.type as String
         if (agg.parentId) out.parents[devId] = agg.parentId as String
         if (agg.disabled == true) (out.disabledDevices as List) << devId
-        // review 346, correction 3: the shared-group key requires BOTH a room AND a real
-        // deviceTypeId. A roomed device with no deviceTypeId previously fell
-        // through to the literal string "null", silently sharing one
-        // fetched-capability representative across every unrelated device
-        // that also happened to be missing a deviceTypeId.
+        
+        
+        
+        
+        
         String typeKey = (agg.room && agg.deviceTypeId != null) ? "${agg.deviceTypeId}" : "room:${devId}"
         List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
         group << devId
@@ -2912,37 +2869,37 @@ Map aggregateDeviceTree(Map data) {
     return out
 }
 
-// Every installed app on the hub, in one request, whether or not it references
-// a device.
-//
-// Device-led discovery answers "which apps touch a device", which is a
-// different question from "which apps exist" and quietly misses every app that
-// touches none. On the test hub four sibling Button Rule-5.1 rules split two
-// and two on exactly that line: the two naming a device were found, the two
-// naming none were not. Rule Functions are the case that matters most, since
-// having no devices is normal for them rather than unusual.
-//
-// This does NOT replace the device walk. The listing says an app exists; it
-// never says which devices the app touches, so both are needed and the answer
-// is their union.
-//
-// Credit: the endpoint was found by reading Jean P. May Jr.'s (TheBearMay) Rule
-// References Rule Table, then verified here. This project's own notes had
-// recorded that no bulk app-list endpoint existed, which was wrong.
-//
-// Shape: { apps: [ { data: {id, appTypeId, name, type, disabled, ...},
-//                    children: [ ...same again... ] } ] }
-// Parents nest arbitrarily - Button Controllers holds a Button Controller,
-// which holds four Button Rules - so it has to be walked recursively rather
-// than read one level deep.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map fetchInstalledAppIds() {
     List ids = []
     Map out = [ids: ids, error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/appsList", 30)
     if (!result.ok) {
-        // The old comment claimed this could fall back to device-led app
-        // discovery. That path was removed by the async rewrite, so returning
-        // [] here silently publishes a zero-app map. Fail visibly instead.
+        
+        
+        
         out.error = result.error ?: 'the hub returned no error detail'
         return out
     }
@@ -2952,9 +2909,9 @@ Map fetchInstalledAppIds() {
     }
     collectAppIds((result.data as Map).apps, ids)
     ids = ids.unique()
-    // This app is necessarily installed and /hub2/appsList is the complete
-    // installed-app inventory. Its absence proves the response is empty or
-    // incomplete, even on a hub with no other user apps.
+    
+    
+    
     String selfId = "${app.id}"
     if (!ids.contains(selfId)) {
         out.error = "the installed-app listing omitted Automation Map (${selfId})"
@@ -2964,9 +2921,9 @@ Map fetchInstalledAppIds() {
     return out
 }
 
-// Iterative rather than recursive on purpose. A self-calling method inside a
-// Hubitat app is a sandbox risk not worth taking for a tree that is three deep,
-// and a stack of pending nodes does the same job with no such question.
+
+
+
 void collectAppIds(def nodes, List ids) {
     if (!(nodes instanceof List)) return
     List pending = []
@@ -2976,11 +2933,11 @@ void collectAppIds(def nodes, List ids) {
         if (!(node instanceof Map)) continue
         Map entry = node as Map
         Map data = entry.data as Map
-        // Through a String-typed local, never appended straight as a GString. A
-        // list of GStrings looks identical in a log and then fails contains()
-        // and unique() against real Strings. Section 9.5 of the storage-format
-        // notes covers it; this caught the first version of this walker, where
-        // ids.contains('2973') was false against a list that plainly held it.
+        
+        
+        
+        
+        
         if (data?.id != null) {
             String id = "${data.id}"
             ids << id
@@ -2989,13 +2946,13 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
-// installedApp itself carries no namespace (confirmed live 2026-08-26 against
-// this hub's /installedapp/statusJson/{id}). It does carry
-// appTypeId, which /hub2/userAppTypes - a separate, definition-level bulk
-// endpoint, one call regardless of app count - maps to the real namespace.
-// Failure here degrades to every app having a null namespace rather than
-// failing the scan; namespace is an enhancement for the Community Context
-// Card match, not something core scanning depends on.
+
+
+
+
+
+
+
 Map fetchAppTypeNamespaces() {
     Map out = [status: 'ok', error: null, namespaces: [:]]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/userAppTypes", 30)
@@ -3020,43 +2977,43 @@ Map fetchAppTypeNamespaces() {
     return out
 }
 
-// Pure processing, split out of fetchAppRelationships so the async scan
-// pipeline's callback can run it directly on data it already has, with no
-// second fetch. Mutates labels in place, same as before the split - the
-// async pipeline gives each concurrent callback its own per-scan labels map
-// to mutate safely, merged into state.deviceLabels only at finalization, not
-// state.deviceLabels itself (concurrent callbacks racing on state directly
-// is exactly the failure mode this whole rewrite exists to avoid).
+
+
+
+
+
+
+
 Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
     Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.label = stripTags(rawLabel)
-            // Kept alongside the full label rather than replacing it: the
-            // status is real information, it just does not belong painted
-            // across the canvas. See nodeEntry for which form goes where.
+            
+            
+            
             out.drawLabel = stripStatusMarkup(rawLabel)
             out.type = stripReplacementChar(installedApp?.name as String)
-            // definitionName's namespace, for the Community Context Card match
-            // only (spec section 4.1) - never added to the AI-friendly export.
+            
+            
             if (installedApp?.appTypeId != null) {
                 out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
             }
-            // Stored for EVERY app, not only the empty ones, because it is read
-            // in the opposite direction from the one it is written in. A
-            // container needs the names of its children, and a child is the only
-            // record that the relationship exists - childAppCount gives Rule
-            // Machine the number 46 and not one id. One short string per app is
-            // worth it; the four counts above are not, hence the split.
+            
+            
+            
+            
+            
+            
             if (installedApp?.parentAppId != null) out.parent = "${installedApp.parentAppId}"
 
-            // Skip every instance of this app, not just the one doing the
-            // scanning. Its device picker references the whole hub, so a second
-            // instance - including a half-created one left behind by an
-            // abandoned "Add User App", which stays visible to devices - would
-            // otherwise appear as an app with a couple of hundred meaningless
-            // edges. Excluding by app.id alone missed exactly that case.
+            
+            
+            
+            
+            
+            
             if ("${out.type}".startsWith(APP_FAMILY)) {
                 out.roles = [:]
                 out.flow = []
@@ -3067,19 +3024,19 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 return out
             }
 
-            // A paused rule still holds all its device references but is not
-            // running. Shown identically to an active one it would send you
-            // debugging an automation that cannot fire.
+            
+            
+            
             boolean paused = false
             (data.appState ?: []).each { e ->
                 if (e instanceof Map && e.name == 'paused' && e.value == true) paused = true
             }
-            // Kept as two distinct signals, not just one collapsed boolean
-            // (item 18): installedApp.disabled is a universal, hub-level flag
-            // for any app type; paused is Rule Machine's own appState and
-            // only ever true for a rule that actually has that concept. Both
-            // are already independently and reliably readable here - nothing
-            // about them is genuinely ambiguous once they are not merged.
+            
+            
+            
+            
+            
+            
             out.disabled = (installedApp?.disabled == true)
             out.paused = paused
             out.inactive = out.disabled || out.paused
@@ -3112,23 +3069,23 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                     if (devName && !labels[devId]) labels[devId] = stripTags(devName as String)
                     String role = roleForSetting(settingName, settingType, devId, subscribed)
                     addRole(roles, devId, role)
-                    // Remembered so conflict detection can ignore transient
-                    // commands like notifications.
+                    
+                    
                     if (role == 'action' && isStatefulCapability(settingType) && !stateful.contains(devId)) {
                         stateful << devId
                     }
                 }
             }
 
-            // A subscribed device with no setting of its own is still a trigger,
-            // unless this app owns it (a child device it also listens to).
-            //
-            // Note this signal is a snapshot: Rule Machine drops its trigger
-            // subscriptions while a Required Expression is false, and subscribes
-            // to the gate devices instead. Rule rules are unaffected because the
-            // tDev/rDev checks above already claimed those devices, but a
-            // non-rule app that subscribes conditionally can map differently
-            // depending on when the scan ran.
+            
+            
+            
+            
+            
+            
+            
+            
+            
             subscribed.each { String devId ->
                 List existing = (roles[devId] ?: []) as List
                 if (!existing) addRole(roles, devId, 'trigger')
@@ -3139,59 +3096,59 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             out.flow = buildRuleFlow(data)
             out.ruleLinks = extractRuleLinks(data, appId)
             out.endpoints = extractRuleEndpoints(data)
-            // Gated to Rule Machine, matching the existing engine check at
-            // line ~663 ("${info.type}".startsWith('Rule-')) rather than
-            // SUPPORTED_RULE_ENGINE's exact-version pin - the field names
-            // (xVarV, rCapab_/xVar_, tCapab/xVar) were reverse-engineered
-            // against Rule-5.1 specifically, but nothing about them looks
-            // version-pinned the way flow decoding's layout reconstruction
-            // is, so any Rule Machine engine is allowed rather than only
-            // 5.1. The structured fields would simply find nothing on an
-            // unrelated app type regardless, but the free-text scan is
-            // broader - any text/textarea setting on ANY app - and its
-            // hub-wide confirmation check only looks at the name, not which
-            // app it came from. An unrelated app whose own text happened to
-            // contain a confirmed Hub Variable's name would otherwise pick
-            // up a false read edge. Gating here closes that off entirely
-            // rather than trying to make the confirmation check smarter.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             if ("${out.type}".startsWith('Rule-')) {
                 out.hubVarWrites = extractHubVariableWrites(data)
                 out.hubVarReads = extractHubVariableReads(data)
-                // Raw, value-free Local Variable definitions (Gate C, v2.1.4) -
-                // classification against these plus the authoritative Hub
-                // inventory happens later, in buildGraph(), once that inventory
-                // is available (see classifyRuleVariableReferences() there).
-                // Extracted here regardless of hubVarWrites/Reads being empty,
-                // so a rule with only Local definitions and no Hub-shaped
-                // reference at all still gets its definitions published.
+                
+                
+                
+                
+                
+                
+                
                 out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
             }
 
-            // An app with no devices, no rule links and no endpoints used to be
-            // dropped silently, which was defensible while device-led discovery
-            // meant it was never found in the first place. Now that every
-            // installed app is enumerated, dropping it makes the app report a
-            // count it does not show, so it gets drawn instead - and a square
-            // with nothing attached needs to say why it is empty.
-            //
-            // Captured only for those apps. On this hub that is 13 of 88, so
-            // attaching it unconditionally would put four fields on 75 apps
-            // that will never read them, and state size has killed a scan here
-            // before.
-            //
-            // All four come from the response already in hand. No extra call.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             if (!roles && !out.ruleLinks && !out.endpoints) {
-                // scheduledJobList rather than a cast: scheduledJobs has been seen
-                // as both a list and a bare single-job map, and casting the wrong
-                // one throws inside the scan loop.
+                
+                
+                
                 List jobs = scheduledJobList(data.scheduledJobs)
                 out.inert = [
                     kids  : (data.childAppCount ?: 0) as Integer,
                     devs  : (data.childDeviceCount ?: 0) as Integer,
                     sched : jobs.size(),
-                    // next/cron only - handler is a Groovy method name meaningful
-                    // to nobody reading the map, and prevRunTime/status are the
-                    // hub's bookkeeping rather than anything a user configured.
+                    
+                    
+                    
                     schedJobs : jobs.collect { Map j -> [next: "${j.nextRunTime}", cron: "${j.schedule}"] },
                     subs  : countOf(data.eventSubscriptions),
                 ]
@@ -3203,61 +3160,61 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
     return out
 }
 
-// ===================================================================================================================
-// Rule Machine flow decoding
-//
-// A relationship graph cannot show order, so for Rule Machine rules the ordered
-// structure is decoded here into a plain list of steps that the map page draws
-// as a flowchart. Verified end to end against rule 2279 "Back Door Night",
-// whose own page shows exactly the trigger / required expression / four ordered
-// actions this produces.
-//
-//   actionList          ordered action numbers
-//   actions[n]          {method, indent, rule, delay}
-//   actSubType.<n>      same method name, as a setting
-//   capabstrue/false    human readable text per condition number
-//   predCapabs          condition numbers forming the required expression
-//   eval[b]             branch number -> condition expression, e.g. [3,"AND","16"]
-//   tDev<n>             trigger devices for condition n
-//   rDev_<n>            condition devices for condition n
-//   <prefix>.<n>        devices for action n (onOffSwitch, ct, volume, note, ...)
-//   onOff.<n>           whether a switch action is On or Off
-//
-// This is Rule Machine's private layout, not a documented API. Apps that are
-// not rules simply have no actionList and produce no flow.
-// ===================================================================================================================
 
-// ===================================================================================================================
-// Rule-to-rule links
-//
-// Requested on the community thread: show it when one rule runs another. Rule
-// Machine stores every "act on another rule" action the same way, and the
-// action object itself carries no target at all - only a method name. The
-// target is in the app's SETTINGS, keyed by the action number:
-//
-//   actType.<n>        'rulesActs' for this whole family of actions
-//   actSubType.<n>     which action it is, e.g. getRuleActions
-//   ruleAct.<n>        target installed app ids, as a list: ["1806"]
-//   runRuleType.<n>    engine of the target, e.g. Rule Machine
-//
-// Confirmed against a live hub for all three subtypes below.
-//
-// Two traps found while working this out. Every action object has a field
-// literally called 'rule', and it is NOT a rule reference - it is a condition
-// index used by getIfThen / getElseIf / getWaitRule. Keying on it produces
-// confident, entirely fictional links. And a target of ["*"] means the rule
-// itself, which is how Set Private Boolean is normally used, so it must not
-// become an edge either.
-// ===================================================================================================================
 
-// 'targets' is a list, not a single setting name, because Rule Machine has
-// been observed to store the same semantic action under more than one
-// setting prefix (ruleAct.<n> and ruleActMain.<n> for Run Actions; privateT.<n>
-// and privateF.<n> for Set Private Boolean). Both extractRuleLinks and
-// actionStep must check every alias - checking only the first one means a
-// rule using the less common storage form is silently dropped rather than
-// linked. buildGraph's from/to/kind dedup means checking every alias can
-// never produce a duplicate edge, only a missed one if an alias is skipped.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final Map RULE_LINK_ACTIONS = [
     getRuleActions      : [targets: ['ruleAct', 'ruleActMain'], engine: 'runRuleType',   kind: 'runs'],
     getStopActions      : [targets: ['stopAct'],                engine: 'stopRuleType',  kind: 'cancelTimedActions'],
@@ -3271,9 +3228,9 @@ List extractRuleLinks(Map data, String appId) {
     Map vals = [:]
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map) || s.name == null) return
-        // Assigned through String-typed locals on purpose. Keying a map with a
-        // GString and then looking it up with another GString of the same text
-        // misses, because their hash codes differ.
+        
+        
+        
         String n = "${s.name}"
         String v = "${s.value}"
         vals[n] = v
@@ -3287,21 +3244,21 @@ List extractRuleLinks(Map data, String appId) {
         if (!fam) return
         String engine = vals[fam.engine + '.' + num] ?: ''
 
-        // More than one setting can carry the same semantic target - see the
-        // comment on RULE_LINK_ACTIONS. Every alias is checked.
+        
+        
         (fam.targets as List<String>).each { String targetSetting ->
             String raw = vals[targetSetting + '.' + num] ?: ''
             if (!raw) return
 
-            // "*" means this rule, and it can appear ALONGSIDE other rules:
-            // ["*","1809"] is Rule Machine's way of storing "set the Private
-            // Boolean of this rule AND Perimeter Closed". Skipping the whole
-            // action whenever a "*" was present therefore dropped a real
-            // cross-rule link every time a rule also set its own boolean.
-            // Stripping non-digits discards the "*" and keeps the ids.
-            // Written with replaceAll rather than a regex literal - this file
-            // also builds the map page inside a GString, so slash-delimited
-            // patterns are avoided throughout for consistency.
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String cleaned = raw.replaceAll('[^0-9]', ' ').trim()
             if (!cleaned) return
             cleaned.split(' +').each { String targetId ->
@@ -3313,17 +3270,17 @@ List extractRuleLinks(Map data, String appId) {
     return out
 }
 
-// Hub Variable WRITE relationships for the graph, not the flow popup - see
-// actionLabel()'s getSetVariable case for the same underlying settings
-// (xVarV.<n> for the target, valStringOp.<n>/customDev.<n>/tCustomAttr.<n> for
-// a device-attribute source) read for the popup's text instead. Kept as a
-// separate pass over the same appSettings/appState data rather than shared
-// with buildRuleFlow, matching how this file already computes roles and flow
-// independently from one scan's data rather than threading one through the
-// other.
-//
-// READ relationships (a rule that consumes a Hub Variable without writing it)
-// are out of scope here - Phase 3 proves the WRITE side only. See handoff.md.
+
+
+
+
+
+
+
+
+
+
+
 List extractHubVariableWrites(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -3333,12 +3290,12 @@ List extractHubVariableWrites(Map data) {
 
     Map settingValues = [:]
     Map settingDevices = [:]
-    // Device-list KEYS (Hubitat device IDs), parallel to settingDevices'
-    // stripped-label values, same iteration order (LinkedHashMap). Added for
-    // v2.0.14's writeSource (confirmed against this
-    // exact code 2026-08-26): settingDevices alone only ever held the display
-    // label, so write.sourceDevice could never be joined authoritatively to
-    // devices[] - schema 4 forbids joining writeSource by display name.
+    
+    
+    
+    
+    
+    
     Map settingDeviceIds = [:]
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
@@ -3356,21 +3313,21 @@ List extractHubVariableWrites(Map data) {
         Map act = (actVal instanceof Map) ? (actVal as Map) : [:]
         String method = (act.method ?: settingValues["actSubType.${num}"] ?: '') as String
         if (method != 'getSetVariable') return
-        // Preserve the name exactly. A trailing period can be part of the
-        // actual Hub Variable name, as confirmed by the authoritative hub
-        // inventory, so stripping it disconnects valid reads and writes.
+        
+        
+        
         String varName = "${settingValues["xVarV.${num}"] ?: ''}"
         if (!varName) return
-        // actionNum/field added for Gate C (v2.1.4): joins a classified reference
-        // back to this exact flow step for actionLabel(), and is the raw
-        // reference's own evidence field for the classifier - see
-        // classifyVariableReference(). Purely additive; every existing reader of
-        // .variable/.sourceDevice/etc. is unaffected.
+        
+        
+        
+        
+        
         Map write = [variable: varName, actionNum: "${num}", field: "xVarV.${num}"]
-        // Only the device-attribute source has been observed. A fixed value or
-        // another variable as the source is unconfirmed, so this is left
-        // absent rather than guessed - the variable node and WRITE edge are
-        // still created either way, only the source detail is conditional.
+        
+        
+        
+        
         if (settingValues["valStringOp.${num}"] == 'Device attribute') {
             String attr = settingValues["tCustomAttr.${num}"]
             List srcDevices = settingDevices["customDev.${num}"] ?: []
@@ -3378,10 +3335,10 @@ List extractHubVariableWrites(Map data) {
             if (attr && srcDevices) {
                 write.sourceDevice = srcDevices[0]
                 write.sourceAttr = attr
-                // ID-based, for the structured writeSource edge field. May be
-                // absent even when sourceDevice/sourceAttr are present (an
-                // older cached scan, or a shape this has not seen) - the
-                // structured field is only ever emitted when this resolves.
+                
+                
+                
+                
                 if (srcDeviceIds) write.sourceDeviceId = srcDeviceIds[0]
             }
         }
@@ -3390,35 +3347,35 @@ List extractHubVariableWrites(Map data) {
     return out
 }
 
-// Hub Variable READ relationships - a rule referencing a variable in a
-// condition or Required Expression, without necessarily writing it. The
-// eval-expression counterpart to extractHubVariableWrites' action-based
-// detection, and the same relationship requiredDevices() finds for a device
-// condition (rDev_<n>) - a Variable-typed condition has no device at all, so
-// requiredDevices() correctly returns nothing for one, and this is the
-// function that covers the case it can't.
-//
-// Verified against rule 2984, "_Test Variables Extended" (a clone of the
-// canonical write fixture with an added IF): condition 3 reads as "Variable
-// TestHubUptime is not equal to '0'", stored as rCapab_3=Variable (the
-// condition-side counterpart to tCapab1 on triggers), xVar_3=TestHubUptime.
-// (same trailing-period artifact as xVarV on the write side).
-//
-// Scans every eval group unconditionally rather than only ones reached from
-// an IF/ELSEIF action, so a Required Expression (evalMap['0'], not tied to
-// any action) is covered by the same pass without a second code path.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 List extractHubVariableReads(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
         if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
     }
     Map evalMap = (st.eval ?: [:]) as Map
-    // buildRuleFlow() only trusts group '0' (Required Expression) when
-    // hasPredicate is true - the same guard applies here, so a rule where
-    // the toggle was switched off again can't have this read a stale
-    // leftover group '0' as if it were still active. Every other group is
-    // tied directly to an action's own presence in actionList, which has no
-    // equivalent toggle to go stale against.
+    
+    
+    
+    
+    
+    
     boolean hasPredicate = st.hasPredicate == true
 
     Map settingValues = [:]
@@ -3427,21 +3384,21 @@ List extractHubVariableReads(Map data) {
         if (s.value != null && "${s.value}") settingValues["${s.name}"] = "${s.value}"
     }
 
-    // confirmed=true: a structured field (rCapab_/xVar_ or tCapab/xVar)
-    // named this variable explicitly - there is no ambiguity about what it
-    // refers to. confirmed=false: only a %Name% text pattern matched - see
-    // the free-text block below for why that alone is not proof. A name
-    // seen both ways stays confirmed; structured evidence is never
-    // downgraded by an unconfirmed match on the same name.
-    //
-    // A List, deduplicated by name+usageRole+field (Gate C correction,
-    // review 287): keying by name+role alone collapsed two distinct condition fields
-    // referencing the same variable (e.g. xVar_3 and xVar_7, both role
-    // 'condition') into one record, losing exactly the per-reference field
-    // evidence the plan requires. Including the field in the dedup identity
-    // keeps every distinct structured occurrence as its own raw reference,
-    // while still guarding against the same (groupId, item) pair somehow
-    // being visited twice.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     List found = []
     Set<String> foundKeys = new LinkedHashSet<>()
     evalMap.each { groupId, expr ->
@@ -3461,13 +3418,13 @@ List extractHubVariableReads(Map data) {
         }
     }
 
-    // Trigger-by-variable: a rule that FIRES on a Hub Variable changing, not
-    // just referencing one in a condition. Same picker convention as a
-    // device trigger (tDev<n>/tCustomAttr<n>) but tCapab<n>=='Variable' and
-    // xVar<n> - no underscore, unlike the condition-side xVar_<n> - holds the
-    // name. Verified against rule 2988, "_Test Variables Trigger". This is
-    // READ + TRIGGER per the spec (Section 6.3) - not yet distinguished from
-    // a plain read at the edge-kind level, both land in the same 'read' set.
+    
+    
+    
+    
+    
+    
+    
     settingValues.keySet().findAll { it ==~ /^tCapab\d+$/ }.each { String capabKey ->
         if (settingValues[capabKey] != 'Variable') return
         String num = capabKey.replaceAll('^tCapab', '')
@@ -3481,24 +3438,24 @@ List extractHubVariableReads(Map data) {
         }
     }
 
-    // Free-text interpolation - lowest priority per the spec's own
-    // extraction order (Section 8.1: structured state first, visible text
-    // only as a bounded fallback), used here because no structured field
-    // captures a variable referenced inside typed text the way xVarV/xVar_
-    // capture a picker selection. %Name% is RM's own reserved substitution
-    // syntax, not something this app invented - verified against rule 2992,
-    // "_ Test Variables Text": valString.1 = '%TestHubUptime%'.
-    //
-    // NOT proof on its own, and marked confirmed=false accordingly: Rule
-    // Machine also reserves %device%/%time%/%date% (and others) as built-in
-    // notification tokens with no relation to Hub Variables at all. Trusting
-    // the pattern alone produced exactly this on Gordon's live hub -
-    // "device"/"time"/"date" reported as Hub Variables read by real
-    // production rules (Barking, Perimeter Closed, Mode Alarm Reminder),
-    // none of which have ever created a variable by those names. Gate C
-    // (v2.1.4) replaces the old hub-wide confirmedVarNames promotion with
-    // classifyVariableReference()'s same-rule-only establishedScopes - see
-    // that function and Gate C decision 2.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
         String settingType = "${s.type}"
@@ -3526,22 +3483,22 @@ List buildRuleFlow(Map data) {
 
     List actionList = (st.actionList ?: []) as List
     if (!actionList) {
-        // Visual Rule Builder 2.0 stores an explicit node/edge graph
-        // (graphDocument) rather than Rule Machine's numbered actionList - a
-        // different shape entirely, decoded by its own function.
+        
+        
+        
         if (st.graphDocument) return buildVisualRuleBuilderFlow(st)
-        // Built-in apps have no retrievable source - they are compiled classes,
-        // and /app/ajax/code returns an empty body for them. Their runtime state
-        // is still readable though, which is how Rule Machine was decoded too,
-        // so other engines can be supported the same empirical way.
+        
+        
+        
+        
         return buildNotifierFlow(data, st)
     }
 
     Map actions = (st.actions ?: [:]) as Map
     Map evalMap = (st.eval ?: [:]) as Map
 
-    // capabstrue / capabsfalse together describe every condition in plain text,
-    // split only by whether it currently evaluates true.
+    
+    
     Map capabs = [:]
     (st.capabstrue ?: [:]).each { k, v -> capabs["${k}"] = cleanCondition("${v}") }
     (st.capabsfalse ?: [:]).each { k, v -> capabs["${k}"] = cleanCondition("${v}") }
@@ -3558,13 +3515,13 @@ List buildRuleFlow(Map data) {
 
     List steps = []
 
-    // Triggers: any condition that has a tDev setting behind it.
+    
     settingDevices.keySet().findAll { it.startsWith('tDev') }.sort().each { String n ->
         String num = n.replaceAll('^tDev_?', '')
         steps << [kind: 'trigger', label: (capabs[num] ?: "Trigger ${num}"), devices: settingDevices[n]]
     }
 
-    // Required expression: branch 0 of eval, present only when the rule has one.
+    
     if (st.hasPredicate == true) {
         String text = expressionText((evalMap['0'] ?: []) as List, capabs)
         if (text) steps << [kind: 'required', label: text, devices: requiredDevices(evalMap['0'] as List, settingDevices)]
@@ -3576,23 +3533,23 @@ List buildRuleFlow(Map data) {
     return steps
 }
 
-// Visual Rule Builder 2.0 (appTypeId 1084) stores an explicit node/edge graph
-// in graphDocument - already a native Map/List once deserialized, not a
-// string to parse - rather than Rule Machine's numbered-settings scheme.
-// Decoded from one fixture (2026-08-16, "_Test Complex Visualisation Rule"):
-// two triggers merging into one path, a single decision with true/false
-// branches reconverging at one merge node, and turnOn/turnOff/wait/
-// sendNotification/runRule actions. Handles that shape. A node, edge, or
-// config field this has not seen degrades to a generic label or stops the
-// walk rather than guessing, per this project's own rule against
-// manufacturing meaning from an unconfirmed field (see the storage-format
-// doc's design principle).
-//
-// The single-decision assumption is not a gap - confirmed live 2026-08-16
-// that the builder itself rejects a prompt describing a nested decision
-// with "Rule must contain exactly one decision node". Multiple/nested
-// decisions are not a shape this format can currently produce at all, at
-// least via the AI-prompt path, so the walker does not need to handle them.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 List buildVisualRuleBuilderFlow(Map st) {
     Map graphDoc = (st.graphDocument instanceof Map) ? (st.graphDocument as Map) : [:]
     List nodes = (graphDoc.nodes ?: []) as List
@@ -3603,8 +3560,8 @@ List buildVisualRuleBuilderFlow(Map st) {
     Map nodesById = [:]
     nodes.each { n -> if (n instanceof Map) nodesById["${(n as Map).id}"] = n as Map }
 
-    // Keyed by from-id. Only a decision node has more than one outgoing
-    // edge (true/false); every other kind has exactly one, or none.
+    
+    
     Map outgoing = [:]
     edges.each { e ->
         if (!(e instanceof Map)) return
@@ -3615,9 +3572,9 @@ List buildVisualRuleBuilderFlow(Map st) {
         outgoing[from] = list
     }
 
-    // Device ids live under config keys following one naming pattern in
-    // every node examined so far: switches, or anything ending Sensors/
-    // Devices. A heuristic over that pattern, not a schema.
+    
+    
+    
     Closure resolveDevices = { Map config ->
         List names = []
         (config ?: [:]).each { k, v ->
@@ -3640,11 +3597,11 @@ List buildVisualRuleBuilderFlow(Map st) {
             case 'contact':
             case 'motion':
             case 'illuminanceCondition':
-                // Every trigger/condition config seen so far carries its own
-                // human-readable state text in a key ending Event or State -
-                // reused rather than reconstructed from raw thresholds,
-                // which would need its own case per condition type not yet
-                // observed.
+                
+                
+                
+                
+                
                 String stateText = null
                 config.each { k, v -> if ("${k}".endsWith('Event') || "${k}".endsWith('State')) stateText = "${v}" }
                 return stateText ?: prettyMethod(type)
@@ -3665,23 +3622,23 @@ List buildVisualRuleBuilderFlow(Map st) {
         }
     }
 
-    // A decision node's own type ("all"/"any") is the AND/OR toggle, not the
-    // condition itself - the real condition(s) sit nested in
-    // config.conditions, each its own object with its own type/config,
-    // exactly like a top-level node. This is what the earlier version of
-    // this function missed: it called labelForNode on the decision node
-    // directly, which only ever saw "all"/"any" and never the nested
-    // condition - confirmed live, a diamond reading bare "all" instead of
-    // "Illuminance is below 50 lux on Garage Motion Sensor".
-    // The device name is baked directly into the returned text, not left to
-    // a separate devices field - confirmed live that the diamond shape only
-    // ever displays s.cond, never s.devices (that field only renders for
-    // the plain box/trigger shapes elsewhere in the same function). Rule
-    // Machine's own condition text already has this problem solved by
-    // embedding the device name in the text itself (capabstrue/capabsfalse,
-    // e.g. "Illuminance of X is < 200") - VRB's illuminanceSensorState is a
-    // generic template ("Illuminance is below...") with the sensor stored
-    // separately, so it needs the same treatment done explicitly here.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     Closure decisionText = { Map decisionNode ->
         Map dConfig = (decisionNode.config instanceof Map) ? (decisionNode.config as Map) : [:]
         List conditions = (dConfig.conditions ?: []) as List
@@ -3707,26 +3664,26 @@ List buildVisualRuleBuilderFlow(Map st) {
 
     List steps = []
 
-    // One step per trigger-kind node, same convention as Rule Machine's
-    // one-row-per-tDev.
+    
+    
     List triggerNodes = nodes.findAll { it instanceof Map && "${(it as Map).kind}" == 'trigger' }
     triggerNodes.each { Map t ->
         steps << [kind: 'trigger', label: labelForNode(t), devices: resolveDevices(t.config as Map)]
     }
     if (!triggerNodes) return steps
 
-    // All triggers are expected to converge on one merge node before the
-    // first real step - true in the one fixture examined. If that is not
-    // the shape found, stop here rather than guess at a different one; the
-    // triggers above are still shown even if nothing past them is.
+    
+    
+    
+    
     Set nextIds = [] as Set
     triggerNodes.each { Map t -> (outgoing["${t.id}"] ?: []).each { nextIds << "${it.to}" } }
     if (nextIds.size() != 1) return steps
     String cursor = nextIds.iterator().next()
 
-    // Bounded so a graph shape this walker does not understand - a cycle,
-    // or branching outside the single-decision/single-join case handled
-    // below - cannot hang page generation.
+    
+    
+    
     int guard = 0
     while (cursor && guard++ < 200) {
         Map node = nodesById["${cursor}"]
@@ -3780,7 +3737,7 @@ List buildVisualRuleBuilderFlow(Map st) {
             continue
         }
 
-        // Plain action node.
+        
         List ruleTargets = (node.type == 'runRule' && node.config instanceof Map && (node.config as Map).appId != null) ?
             ["${(node.config as Map).appId}"] : []
         steps << [kind: 'action', label: labelForNode(node), devices: resolveDevices(node.config as Map), ruleTargets: ruleTargets]
@@ -3790,9 +3747,9 @@ List buildVisualRuleBuilderFlow(Map st) {
     return steps
 }
 
-// Hubitat's built-in Notifier. Worth decoding because it stores an already
-// rendered description of what it does in state.text, so the action step needs
-// no reconstruction at all - only the trigger and the time window do.
+
+
+
 List buildNotifierFlow(Map data, Map st) {
     Map text = st.text as Map
     if (!text) return []
@@ -3808,7 +3765,7 @@ List buildNotifierFlow(Map data, Map st) {
 
     List steps = []
 
-    // Anything picked that is not an output device is what the Notifier watches.
+    
     List triggerDevices = []
     settingDevices.each { String n, List d ->
         if (n in ['noteDev', 'speechDev', 'speakDevice']) return
@@ -3848,7 +3805,7 @@ String expressionText(List expr, Map capabs) {
             parts << (capabs[s] ?: "condition ${s}")
         }
     }
-    // The same condition can be listed more than once by Rule Machine's internals.
+    
     List deduped = []
     parts.each { if (!deduped || deduped[-1] != it) deduped << it }
     return deduped.join(' ')
@@ -3871,9 +3828,9 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         if (n.endsWith(".${num}")) d.each { if (!devices.contains(it)) devices << it }
     }
 
-    // Control-flow markers drive the branching layout. The rule's own `indent`
-    // field is deliberately NOT used: on rule 2816 it disagrees with the real
-    // nesting, so structure comes from these methods plus a stack instead.
+    
+    
+    
     String ctrl = null
     if (method == 'getIfThen') ctrl = 'if'
     else if (method == 'getElseIf') ctrl = 'elseif'
@@ -3888,29 +3845,29 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         }
     }
     if (method == 'getWaitRule') {
-        // A wait's devices come from the condition it waits on, not from an
-        // action setting numbered after it.
+        
+        
         (requiredDevices((evalMap["${act.rule}"] ?: []) as List, settingDevices)).each {
             if (!devices.contains(it)) devices << it
         }
     }
 
-    // An action that targets another rule names no device, so without this the
-    // step reads as a bare "Run Actions" with nothing to say which rule. The
-    // ids are carried through and turned into names in buildGraph, which is the
-    // first point where every app label is known.
+    
+    
+    
+    
     List ruleTargets = []
     boolean selfTarget = false
     Map linkFam = RULE_LINK_ACTIONS[method] as Map
     if (linkFam) {
-        // Same alias list as extractRuleLinks, and for the same reason: the
-        // graph and this focused flowchart must read the same setting or they
-        // can disagree about which rules an action targets.
+        
+        
+        
         (linkFam.targets as List<String>).each { String targetSetting ->
             String rawTargets = settingValues["${targetSetting}.${num}"] ?: ''
             if (!rawTargets) return
-            // A "*" entry is this rule itself, and can sit alongside real
-            // targets - ["*","1809"] is "this rule AND Perimeter Closed".
+            
+            
             if (rawTargets.contains('*')) selfTarget = true
             String cleaned = rawTargets.replaceAll('[^0-9]', ' ').trim()
             if (cleaned) cleaned.split(' +').each { String t -> if (t && !ruleTargets.contains(t)) ruleTargets << t }
@@ -3925,13 +3882,13 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         devices: devices,
         ruleTargets: ruleTargets,
         selfTarget: selfTarget,
-        // Gate C (v2.1.4): join key back to this exact getSetVariable action's
-        // classified reference - see extractHubVariableWrites()'s matching
-        // `field` and buildGraph()'s correctFlowVariableLabels(). Same
-        // "xVarV.<n>" form both places read/write, computed independently
-        // here rather than threaded through, since this function already has
-        // num and method and needs no other data extraction. null for every
-        // other action kind - nothing else is joined post-classification.
+        
+        
+        
+        
+        
+        
+        
         variableField: (method == 'getSetVariable') ? "xVarV.${num}" : null,
     ]
 }
@@ -3939,29 +3896,29 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
 String actionLabel(String method, String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
     switch (method) {
         case 'getSetVariable':
-            // xVarV.<n> holds the target variable name. Verified against
-            // one fixture (rule 2981, "_Test Variables") to carry a trailing
-            // period - "TestHubUptime." - not yet confirmed whether that is
-            // always present or an artifact of this specific picker state, so
-            // it is stripped rather than assumed absent on other rules.
-            //
-            // Deliberately scope-neutral ("Set Variable", not "Set Hub
-            // Variable") since Gate C (v2.1.4): this label is built during
-            // per-app discovery, before the authoritative Hub Variable
-            // inventory is fetched (that happens later, at finalization), so
-            // Local-versus-Hub classification is not yet possible at this
-            // point in the pipeline. buildGraph()'s correctFlowVariableLabels()
-            // rewrites this to "Set Local/Hub Variable ..." once classified -
-            // see that function's own comment for why the join happens there
-            // instead of here, and Supporting Docs/
-            // local_hub_variable_identity_proposal.md / WIP/
-            // local_hub_variable_gate_c_integration_plan.md for the design.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String varName = (settingValues["xVarV.${num}"] ?: '').replaceAll(/\.$/, '')
             if (!varName) return 'Set Variable [unresolved]'
-            // valStringOp.<n> discriminates what the value is being set FROM.
-            // Only the device-attribute source has been observed so far - a
-            // fixed value or another variable as the source is unconfirmed
-            // and falls through to the bare form below rather than guessing.
+            
+            
+            
+            
             if (settingValues["valStringOp.${num}"] == 'Device attribute') {
                 String attr = settingValues["tCustomAttr.${num}"]
                 List srcDevices = settingDevices["customDev.${num}"] ?: []
@@ -3988,22 +3945,22 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
             String msg = settingValues["msg.${num}"]
             return msg ? "Notify: ${msg}" : 'Notify'
         case 'getSetPrivateBoolean':
-            // pvTF.<n> holds the INVERSE of the value the rule page shows, and
-            // an empty value counts as false. Verified against four rule pages
-            // covering both stored forms: rule 1806 actions 31/33 (pvTF true
-            // then false) and rule 1999 actions 8/7 (pvTF true then empty), each
-            // displaying False then True in that order.
-            //
-            // The empty case is why this was shown as a bare 'Set Private
-            // Boolean' until now. Nine of the 23 such actions on the test hub
-            // store an empty string rather than 'false', which is how a Hubitat
-            // bool input persists when it has never been switched on, so
-            // defaulting to false here is what makes the negation total.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             return "Set Private Boolean ${settingValues["pvTF.${num}"] == 'true' ? 'False' : 'True'}"
         case 'getDefinedAction':
             return 'Run defined actions'
         case 'getSetVolume':
-            // volumeVal.<n> holds the level; volume.<n> is the device picker.
+            
             String vol = settingValues["volumeVal.${num}"] ?: settingValues["speakVolume.${num}"]
             return vol ? "Set volume ${vol}" : 'Set volume'
         case 'getChime':
@@ -4013,19 +3970,19 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
         case 'getRestore':
             return 'Restore device state'
         case 'getStopActions':
-            // Rule Machine's own wording for this action is "Cancel Timed
-            // Actions". prettyMethod would derive "Stop Actions" from the
-            // method name, which matches nothing the user sees on the rule.
+            
+            
+            
             return 'Cancel Timed Actions'
         case 'getRuleActions':
             return 'Run Actions'
         case 'getPauseResumeRules':
-            // One action type covers both directions, discriminated by pR.<n>.
-            // Verified on one rule holding both: pR=true against a page reading
-            // "Resume Rules: Back Door Night", pR empty against "Pause Rules:
-            // Kettle button". Unlike pvTF this reads the right way round, so it
-            // is used directly rather than negated. Empty is the default, which
-            // is why an untouched action means Pause.
+            
+            
+            
+            
+            
+            
             return settingValues["pR.${num}"] == 'true' ? 'Resume Rules' : 'Pause Rules'
         case 'getSetMode':
             return 'Set mode'
@@ -4052,9 +4009,9 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
     }
 }
 
-// Rule Machine embeds the CURRENT reading in its condition text, e.g.
-// "Illuminance of _ Average External Illuminance(9755) is < 200". That value is
-// runtime noise in a static diagram and is stale the moment it is drawn.
+
+
+
 String cleanCondition(String text) {
     String s = stripTags(text)
     s = s.replaceAll(/\([^)]*\)/, '')
@@ -4067,12 +4024,12 @@ String prettyMethod(String method) {
     return s ?: 'Action'
 }
 
-// Capabilities that expose no commands. A device selected through one of these
-// is being READ, never driven - so it must not be reported as something the app
-// acts on. Found via Critical Device Monitor, which subscribes only to its
-// water/smoke/CO pickers but also has contact, motion, lock and garage-door
-// pickers it merely inspects; without this check all of those were mislabelled
-// as devices the app commands.
+
+
+
+
+
+
 @Field static final List<String> SENSOR_CAPABILITIES = [
     'capability.contactSensor', 'capability.motionSensor', 'capability.waterSensor',
     'capability.smokeDetector', 'capability.carbonMonoxideDetector', 'capability.presenceSensor',
@@ -4086,41 +4043,41 @@ String prettyMethod(String method) {
     'capability.holdableButton', 'capability.doubleTapableButton', 'capability.releasableButton',
 ]
 
-// Device icon auto-detection, from a device's own RAW capability list (the
-// /device/fullJson shape - PascalCase, e.g. "WaterSensor" - a different
-// naming convention from the "capability.xxx" setting-type strings above, and
-// not to be confused with them).
-//
-// Ordered, first match wins. Built against a 24-category taxonomy Gordon
-// supplied (lighting, switches, dimmers, doors & windows, locks, motion,
-// climate, environmental, safety, water, security, cameras, shades, energy,
-// appliances, cleaning, media, buttons, presence, outdoor, vehicles,
-// infrastructure, virtual, generic sensor, unknown), mapped onto what
-// Hubitat's own capability model can actually tell them apart by - six of
-// those categories cannot be, and are deliberately left uncaptured rather
-// than faked; see the note below the table.
-//
-// Administrative/generic markers (Configuration, Refresh, Battery, the bare
-// Sensor/Actuator markers) never appear in this table at all, so they can
-// never win. Among what remains, a capability only a purpose-built device
-// would declare (WaterSensor, GarageDoorControl, Thermostat...) is checked
-// before a capability that commonly rides along on a device whose real
-// purpose is something else (TemperatureMeasurement, Switch...), so a device
-// with several capabilities resolves to the one that is actually its reason
-// for existing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List ICON_RULES = [
     [key: 'locks',     label: 'Locks & access',       caps: ['Lock', 'LockCodes']],
-    // Presence checked ahead of doors/motion on purpose - found live:
-    // "Presence Manager Main Status" declares MotionSensor, ContactSensor AND
-    // PresenceSensor together on one virtual status device. Its own name and
-    // driver type ("Presence Manager Output") say what it is actually for;
-    // PresenceSensor is never an incidental rider the way a contact/motion
-    // marker can be on a multi-purpose virtual device, so it wins here.
+    
+    
+    
+    
+    
+    
     [key: 'presence',  label: 'Location & presence',  caps: ['PresenceSensor']],
-    // Gordon's own taxonomy groups contact sensors, garage doors and gates
-    // as one "Doors & windows" category rather than splitting garage doors
-    // out - DoorControl is the generic (non-garage) door-actuator capability,
-    // included for completeness even though no device on this hub uses it.
+    
+    
+    
+    
     [key: 'doors',     label: 'Doors & windows',      caps: ['ContactSensor', 'GarageDoorControl', 'DoorControl']],
     [key: 'water',     label: 'Water',                caps: ['WaterSensor', 'Valve']],
     [key: 'motion',    label: 'Motion & occupancy',   caps: ['MotionSensor']],
@@ -4129,20 +4086,20 @@ String prettyMethod(String method) {
                                                               'DoubleTapableButton', 'ReleasableButton']],
     [key: 'cameras',   label: 'Cameras & doorbells',  caps: ['ImageCapture']],
     [key: 'shades',    label: 'Shades & coverings',   caps: ['WindowShade']],
-    // Found live: Gmail Broker (a notification-gateway integration device)
-    // declares Notification alongside the same generic Actuator/Refresh
-    // every device has - the only real signal it carries. Checked after
-    // presence on purpose: Mobile Proxy and the phone devices also declare
-    // Notification alongside PresenceSensor, and their actual purpose is
-    // presence tracking, not notification delivery, so presence must win
-    // for them.
+    
+    
+    
+    
+    
+    
+    
     [key: 'broker',    label: 'Notification gateway', caps: ['Notification']],
-    // Climate checked ahead of switch/lighting - found live: all three
-    // Sensibo Pods carry Switch alongside Thermostat (their own on/off
-    // baseline, same shape of problem as the Garage Dome Siren/security case
-    // below) and were resolving to plain switches before this was added.
-    // Fans are grouped into climate control per Gordon's own taxonomy
-    // ("Thermostats, HVAC, air conditioners, fans"), not split out alone.
+    
+    
+    
+    
+    
+    
     [key: 'climate',   label: 'Climate control',      caps: ['Thermostat', 'ThermostatMode', 'ThermostatSetpoint',
                                                               'ThermostatCoolingSetpoint', 'ThermostatHeatingSetpoint',
                                                               'ThermostatOperatingState', 'ThermostatFanMode',
@@ -4152,113 +4109,113 @@ String prettyMethod(String method) {
     [key: 'security',  label: 'Security & alarms',    caps: ['Alarm', 'Chime', 'Tone']],
     [key: 'media',     label: 'Media & audio',        caps: ['AudioVolume', 'SpeechSynthesis', 'MediaTransport',
                                                               'MusicPlayer']],
-    // Switch checked last among the "defining" tier, not alongside lighting -
-    // found live: Garage Dome Siren carries Switch alongside Alarm/Chime/Tone
-    // (its own on/off baseline) and was resolving to 'switch' before this was
-    // reordered. Switch is the single most common baseline capability on any
-    // actuator, so it must be the tier of last resort before the generic
-    // measurement-capability fallback, not a peer of the capabilities that
-    // are actually specific to a device's purpose.
+    
+    
+    
+    
+    
+    
+    
     [key: 'switches',  label: 'Switches & outlets',   caps: ['Switch', 'Outlet']],
-    // Checked AFTER switches on purpose: a smart plug used to power something
-    // (Towel Rail, Patio Camera Charger) also reports PowerMeter/EnergyMeter
-    // as a bonus, and should still read as what it is used for - a switch -
-    // not as an energy monitor. This tier only wins for a device that meters
-    // power with no on/off control of its own to be classified by first.
+    
+    
+    
+    
+    
     [key: 'energy',    label: 'Energy',               caps: ['PowerMeter', 'EnergyMeter', 'VoltageMeasurement']],
     [key: 'environmental', label: 'Environmental sensors', caps: ['TemperatureMeasurement', 'IlluminanceMeasurement',
                                                               'RelativeHumidityMeasurement', 'PressureMeasurement',
                                                               'CarbonDioxideMeasurement', 'UltravioletIndex']],
     [key: 'sensor',    label: 'Generic sensor',       caps: ['Sensor']],
-    // Override-only, on purpose: an empty caps list can never match in
-    // autoDetectIconKey (.any{} on an empty list is always false), so
-    // these two never win a scan. They exist so Gordon can manually tag a
-    // device as Hub or AI in the Device icons panel even though nothing on
-    // the hub currently justifies auto-detecting either - see the note
-    // below the table for why CoCoHue Bridge and a hypothetical AI-node
-    // device can't be told apart from an ordinary integration device by
-    // capability alone. Kept in this table, not a separate list, so they
-    // share the same label-building and ICON_KEYS-derivation code as every
-    // real rule.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     [key: 'hub',       label: 'Hub & infrastructure', caps: []],
     [key: 'ai',        label: 'AI node',              caps: []],
-    // These three also have an empty caps list - not override-only like
-    // hub/ai above, but driven entirely by ICON_NAME_HINTS below rather
-    // than capability. Appliance, Network and Display have no distinguishing
-    // Hubitat capability at all (see the note further down), but their name
-    // alone is usually unambiguous - Tuya Kettle, Internet Down, and the
-    // Google Nest Hub "display" devices are all bare Virtual Switches or
-    // Chromecast integration devices with nothing capability-wise to tell
-    // them apart from any other switch or speaker.
+    
+    
+    
+    
+    
+    
+    
+    
     [key: 'appliance', label: 'Appliance',            caps: []],
     [key: 'network',   label: 'Internet/network',     caps: []],
     [key: 'display',   label: 'Display',              caps: []],
-    // Empty caps like the four above, but detected off deviceType (the
-    // driver name) rather than name - see autoDetectIconKeyForDevice(). A
-    // Scene device (CoCoHue Scene, Hubitat's own Groups and Scenes) declares
-    // PushableButton same as a real button/remote, so capability alone
-    // resolves it to 'buttons', and its own name ("Dining - Relax") carries
-    // no hint either.
+    
+    
+    
+    
+    
+    
     [key: 'scene',     label: 'Scene',                caps: []],
-    // Empty caps, detected off deviceType like 'scene' above - v2.0.14's
-    // synthesized Connector device nodes (buildGraph(), for a Hub Variable
-    // Connector Hubitat's own /hub2/devicesList does not list - see
-    // Supporting Docs/hub_variable_v2014_implementation_spec.md) hardcode this
-    // key directly, since the caller already knows it is a connector. A real,
-    // independently-discovered Connector device would also match here via its
-    // driver name containing "Connector" (Hubitat's own Variable Connector
-    // driver family), the same deviceType-substring pattern 'scene' uses.
+    
+    
+    
+    
+    
+    
+    
+    
     [key: 'connector', label: 'Hub Variable connector', caps: []],
 ]
 
-// Name-based hints, checked BEFORE capability - added at Gordon's explicit
-// request after real misclassifications capability alone cannot fix:
-// Festoon Lights, Tuya Kettle, Internet Down and the Google Nest Hub
-// "display" devices are all either bare Virtual Switches or share a
-// capability set with an unrelated device type, so nothing in ICON_RULES
-// can tell them apart from a generic switch or speaker - but the device's
-// own name already says exactly what it is.
-//
-// Ordered like ICON_RULES: more specific/unambiguous words checked first,
-// so "Kitchen Downlight Button" matches "button" before this ever reaches
-// the substring "light" inside "Downlight". Matched as whole words only
-// (the name is split on anything that is not a letter or digit), not
-// substrings - "highlight" and "flashlight" do not become lighting.
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List ICON_NAME_HINTS = [
     [key: 'buttons',   words: ['button', 'remote']],
     [key: 'appliance', words: ['kettle', 'oven', 'fridge', 'refrigerator', 'dishwasher',
                                 'washer', 'dryer', 'microwave', 'toaster']],
     [key: 'network',   words: ['internet', 'wifi', 'router', 'modem']],
-    // 'bridge' specifically, not the broader "Hub & infrastructure" grouping
-    // the class comment above rules out by capability - CoCoHue Bridge and
-    // similar devices consistently carry "Bridge" in their own name even
-    // though nothing in their capability list says so.
+    
+    
+    
+    
     [key: 'hub',       words: ['bridge']],
-    // 'nest' rather than 'hub' for the Google Nest Hub devices - 'hub' alone
-    // is too generic a word to risk matching against unrelated devices.
+    
+    
     [key: 'display',   words: ['display', 'monitor', 'tablet', 'nest']],
-    // Both spellings kept - Gordon's own "Dehumidifyer" device is spelled
-    // without the second i, and word-matching is exact, not fuzzy.
+    
+    
     [key: 'climate',   words: ['heater', 'dehumidifier', 'dehumidifyer', 'humidifier', 'aircon']],
     [key: 'lighting',  words: ['light', 'lights', 'lamp', 'bulb']],
 ]
 
-// Splits a device name into lowercase whole words for ICON_NAME_HINTS -
-// deliberately not a capability, this reads the label the user gave the
-// device, which this project otherwise avoids doing anywhere else. Kept to
-// a small, curated word list rather than fuzzy/partial matching so a false
-// positive stays rare and easy to reason about.
+
+
+
+
+
 List nameWords(String name) {
     return (name ?: '').toLowerCase().split('[^a-z0-9]+') as List
 }
 
-// deviceType is the driver name (e.g. "CoCoHue Scene"), checked before both
-// the name hints and capability - it is the one signal here that is not the
-// user's own naming choice, so a substring match on it carries far less
-// false-positive risk than the same match would against a device's name.
-// Needed specifically for Scene devices: they declare PushableButton same as
-// a real button/remote, and their names ("Dining - Relax") say nothing about
-// being a scene at all, so neither of the other two signals can find them.
+
+
+
+
+
+
+
 String autoDetectIconKeyForDevice(String name, List capabilities, String deviceType = null) {
     if (deviceType && deviceType.toLowerCase().contains('scene')) return 'scene'
     if (deviceType && deviceType.toLowerCase().contains('connector')) return 'connector'
@@ -4269,54 +4226,54 @@ String autoDetectIconKeyForDevice(String name, List capabilities, String deviceT
     }
     return autoDetectIconKey(capabilities)
 }
-//
-// Six of Gordon's 24 categories are deliberately not in the table above,
-// checked directly against real devices before giving up on them rather
-// than assumed:
-// - Dimmers: not separable from Lighting. A dimmer module and a dimmable
-//   bulb both declare plain SwitchLevel; nothing distinguishes "this is a
-//   dimmer for an unknown fixture" from "this is a dimmable light."
-// - Appliances (washers, ovens, fridges) and Cleaning (robot vacuums):
-//   Hubitat has no base capability for either. Community drivers for both
-//   typically expose nothing beyond Switch/Outlet, identical to any other
-//   smart plug.
-// - Outdoor (weather stations, pools/spas) and Vehicles (EV chargers,
-//   vehicle presence): not a distinct capability grouping - a weather
-//   station reads as Environmental sensors, an EV charger as Switch or
-//   Energy, vehicle presence as Location & presence. Correct by capability,
-//   just not separately labelled "outdoor" or "vehicle".
-// - Hub & infrastructure (bridges, repeaters, network monitors) has no
-//   capability signal: NetworkDevice, the one that looks relevant, is also
-//   carried by ordinary media devices (the Chromecast speakers all declare
-//   it), so using it here would misclassify them. Checked directly against
-//   CoCoHue Bridge and Hub Information Driver when Gordon first asked for a
-//   "Hub" category: CoCoHue Bridge reports only [Actuator, Refresh,
-//   Initialize] - no capability distinguishes a bridge/hub device from any
-//   other integration-managed actuator. Bridges specifically are handled by
-//   name instead (ICON_NAME_HINTS' 'bridge' -> hub entry below) - repeaters
-//   and network monitors still have no signal, capability or name, and
-//   remain unclassified.
-// - Voice assistants (Google Home Mini, Google Nest Hub): also checked
-//   directly when Gordon asked for an "Assistant" category. These report
-//   the exact same capabilities as a plain Chromecast speaker (AudioVolume,
-//   MediaTransport, SpeechSynthesis, NetworkDevice) - nothing marks a
-//   device as an assistant rather than a speaker.
-// - Virtual & coordination: device.virtual is a real, separate field, but
-//   deliberately not used to override the table above - a virtual light
-//   switch is still functionally a light switch on this map, and losing
-//   that in favour of a generic "virtual" icon would make the map less
-//   useful, not more. Also Heater/dehumidifier and Display-vs-speaker,
-//   found while testing the table against real devices, not part of
-//   Gordon's list but the same shape of gap: Gordon's Gas Heater and
-//   Dehumidifyer report only [Switch, Refresh], and a Chromecast "display"
-//   reports the exact same capabilities as a Chromecast speaker - identical
-//   in both cases, nothing to key off without reading the device name.
 
-// The keys a manual override may pick from - ICON_RULES' own keys plus
-// 'unknown' and 'auto', the two states outside the table itself (nothing
-// matched, and no override set). Written literally rather than derived from
-// ICON_RULES to avoid relying on static-initializer ordering between two
-// @Field constants.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List<String> ICON_KEYS = [
     'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
     'cameras', 'shades', 'broker', 'climate', 'lighting', 'security', 'media',
@@ -4324,9 +4281,9 @@ String autoDetectIconKeyForDevice(String name, List capabilities, String deviceT
     'network', 'display', 'scene', 'connector', 'unknown',
 ]
 
-// Nothing in ICON_RULES matched - not a guess, an honest "this app does not
-// know what kind of device this is", drawn as a "?" rather than defaulting to
-// some other icon that would claim more than is true.
+
+
+
 String autoDetectIconKey(List capabilities) {
     List caps = (capabilities ?: []) as List
     for (rule in ICON_RULES) {
@@ -4336,10 +4293,10 @@ String autoDetectIconKey(List capabilities) {
     return 'unknown'
 }
 
-// Commands that leave the device in a lasting state, so two apps driving the
-// same device really can fight. Sending two notifications or two chimes is not
-// a conflict, which is why Mobile Proxy topping a "contested" list by 20 apps
-// would be noise rather than a finding.
+
+
+
+
 @Field static final List<String> STATEFUL_CAPABILITIES = [
     'capability.switch', 'capability.switchLevel', 'capability.colorControl',
     'capability.colorTemperature', 'capability.lock', 'capability.garageDoorControl',
@@ -4353,21 +4310,21 @@ boolean isStatefulCapability(String settingType) {
 }
 
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
-    // Rule Machine's private naming: tDev<n> = trigger device, rDev_<n> =
-    // condition device (both plain IF conditions and the required expression).
+    
+    
     if (settingName.startsWith('tDev')) return 'trigger'
     if (settingName.startsWith('rDev')) return 'constraint'
-    // The wildcard picker means the app took devices of ANY type, which is what
-    // integrations that publish devices to an external system do - Maker API and
-    // Google Home both use it. They neither react to nor drive these devices on
-    // their own, so calling them triggers or actions misrepresents them (Maker
-    // API Export alone contributed 192 bogus "commands this device" edges).
-    // Checked before the subscription test because such apps do subscribe, to
-    // push state outwards.
+    
+    
+    
+    
+    
+    
+    
     if (settingType == 'capability.*') return 'exposed'
-    // General signal: an app subscribes to what it listens to.
+    
     if (subscribed.contains(devId)) return 'trigger'
-    // Read-only by capability: watched, not driven.
+    
     if (SENSOR_CAPABILITIES.contains(settingType)) return 'monitor'
     return 'action'
 }
@@ -4382,99 +4339,99 @@ String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
-// Found live: a built-in app's own name ("Hubitat(R) Dashboards") came back
-// from /installedapp/statusJson with its registered-trademark symbol replaced
-// by the Unicode replacement character - always evidence of a decode mismatch
-// somewhere in the fetch, never a character any real name would intentionally
-// contain. Root cause not chased down (cosmetic, low priority - see
-// BACKLOG.md); this just keeps the artifact from propagating any further than
-// it already has. Written as a numeric codepoint rather than a unicode escape
-// literal in this file's source, since an escape literal here is Groovy's own
-// string syntax and would be consumed at parse time rather than reach this
-// method - the same trap check_template.sh below exists to catch.
+
+
+
+
+
+
+
+
+
+
 String stripReplacementChar(String s) {
     return s ? s.replace(new String(Character.toChars(0xFFFD)), '') : s
 }
 
-// Size of a hub collection whose shape is not guaranteed. Anything else,
-// including null and a bare value, counts as zero rather than throwing.
+
+
 int countOf(def v) {
     if (v instanceof List) return (v as List).size()
     if (v instanceof Map) return (v as Map).size()
     return 0
 }
 
-// scheduledJobs from statusJson is a List when an app has more than one job,
-// but a single job comes back as a bare Map - one job's own fields (handler,
-// nextRunTime, schedule, status, prevRunTime), not a collection of jobs at
-// all. countOf's Map branch counts THOSE FIELDS, so a one-job app with five
-// fields on its job record was reported as "5 scheduled jobs". Normalising
-// to a list first, always of job maps and never of a job's own keys, is what
-// makes both the count and the per-job detail below correct at once.
+
+
+
+
+
+
+
 List scheduledJobList(def raw) {
     if (raw instanceof List) return raw as List
     if (raw instanceof Map && raw) return [raw as Map]
     return []
 }
 
-// Removes hub-injected status from an app label, CONTENT AND ALL, where
-// stripTags removes only the markup and keeps the words.
-//
-// Hubitat wraps the status it appends in a span - "Christmas Cheer <span
-// style='color:red'>(Required Expression false)</span>" - so the span is what
-// identifies it, not the English inside it. Keying on the markup rather than on
-// the text is the whole point: it holds for whatever status a future firmware
-// injects, in whatever language, and it can never eat a name the USER wrote.
-// A pattern matching a trailing parenthetical would turn "Front Walkway
-// Announce (Day)" and "(Night)" into the same node.
+
+
+
+
+
+
+
+
+
+
 String stripStatusMarkup(String s) {
     if (!s) return s
-    // Non-greedy, so two spans in one label do not collapse into one match
-    // taking everything between them. Removing a span from the middle of a
-    // label leaves a double space behind, hence the squeeze.
+    
+    
+    
     return stripTags(s.replaceAll('<span[^>]*>.*?</span>', '')).replaceAll(' +', ' ')
 }
 
-// ===================================================================================================================
-// Graph building
-// ===================================================================================================================
 
-// Name (and deleted status) of a rule referenced by another rule. The app
-// phase creates an appInfo entry for every id returned by the complete
-// /hub2/appsList inventory, including an explicit fallback entry when an
-// app's relationship endpoint is unreadable. Therefore a target absent from
-// appInfo was not installed at scan time and is a dangling/deleted reference.
-// Resolving that fact from the completed inventory keeps buildGraph entirely
-// in-memory: graph finalization and abandoned-scan recovery can never stall on
-// a sequence of synchronous 10-second loopback lookups. Cached because a rule
-// can be both a flowchart target and a graph edge target.
-//
-// Returns [label, missing] rather than a bare label. The label alone used to
-// be the only record of a deleted target - "Rule 2328 - deleted" - which meant
-// the only way to find deleted references again was to string-match that
-// suffix. missing is now a fact a caller (Insights) can filter on directly,
-// separate from unscanned: unscanned means a real app the scan never reached,
-// missing means the id no longer resolves to anything at all.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map linkedRuleName(String targetId, Map appInfo, Map cache) {
     if (cache.containsKey(targetId)) return cache[targetId] as Map
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
     String draw = target?.drawLabel as String
     boolean missing = !appInfo.containsKey(targetId)
-    // Named so the user can act on it. "Rule 2328" invites a hunt for a
-    // rule that is not there; saying so turns it into a finding.
+    
+    
     if (!label && missing) label = "Rule ${targetId} - deleted"
     if (!label) label = "Rule ${targetId}"
-    // Falls back to the full label, which is what a scan from before drawLabel
-    // existed will have stored, and what a bare "Rule 2328" needs anyway.
+    
+    
     Map result = [label: label, draw: draw ?: label, missing: missing]
     cache[targetId] = result
     return result
 }
 
-// Action steps carry the ids of any rule they act on. Turned into names here,
-// added to the step's device list so the flowchart renders them under the
-// action exactly as it renders device names.
+
+
+
 List resolveFlowTargets(List flow, Map appInfo, Map cache) {
     (flow ?: []).each { step ->
         if (!(step instanceof Map)) return
@@ -4482,9 +4439,9 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
         List targets = (s.ruleTargets ?: []) as List
         if (!targets) return
         List devices = (s.devices ?: []) as List
-        // Named the way the rule page names it: "This Rule, Perimeter Closed".
-        // Only worth saying when the action reaches beyond this rule - a rule
-        // setting only its own boolean needs no list at all.
+        
+        
+        
         if (s.selfTarget && !devices.contains('This Rule')) devices << 'This Rule'
         targets.each { t ->
             String nm = (linkedRuleName("${t}", appInfo, cache).label) as String
@@ -4495,57 +4452,57 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
     return flow
 }
 
-// Four label forms now, not three, and each is drawn (or read) somewhere
-// different:
-//
-//   label   short, drawn on the canvas with nothing focused
-//   draw    full identity, drawn on the canvas with an app focused
-//   title   everything including hub status, shown only on hover
-//   name    stable identity, no live status of any kind baked in - what the
-//           AI export's nameOf() reads (item 18 correction)
-//
-// draw exists because Hubitat injects live status into an app's label, and on
-// a focused map that status was the widest thing on screen and identical on
-// every node, so long names overwrote each other while carrying no information
-// that told them apart. The status is still one hover away.
-//
-// drawLabel defaults to fullLabel, so a caller with nothing to strip - every
-// device, and any app the hub has not annotated - passes one argument as before
-// and gets identical output.
-//
-// statusSuffix (item 18) is Paused/Disabled/null - a second, later kind of
-// status from this app's own scan of hub state, distinct from whatever
-// Hubitat itself already injected into fullLabel. Deliberately NOT merged
-// with subtitle or stripped from anything: this codebase already rejected
-// pattern-matching hub-injected text once (see stripStatusMarkup, keyed on
-// markup not wording, specifically to avoid eating a legitimate name like
-// "Front Walkway Announce (Day)"), so statusSuffix is only ever appended,
-// never used to decide what to remove. Applied to label (AFTER truncation,
-// so a long name cannot cut it off - review 372: the previous version
-// baked it into `clean` before truncation, silently losing it on exactly
-// the names this feature most needs to flag) and draw - and deliberately
-// NEVER to name, which must stay exactly what it already was: the export's
-// stable, undecorated identity.
-//
-// statusInTitle controls whether statusSuffix ALSO gets appended to title.
-// Confirmed live (review 374): Hubitat's own paused-app label
-// injection already reads literally "(Paused)" - identical wording to this
-// function's own suffix - so appending ours too produced a genuine visible
-// duplicate in the title specifically ("... (Paused) (Rule-5.1) (Paused)"),
-// not a hypothetical one. label/draw are unaffected (built from the already
-// -stripped drawLabel, never carry the hub's own wording at all), only
-// title is at risk, because title alone is built from the unstripped
-// fullLabel. Devices never receive Hubitat's app-status markup in their
-// label at all, so there is no duplication risk there and the caller
-// leaves this at its default (true).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null,
               String statusSuffix = null, boolean statusInTitle = true) {
     String label = fullLabel ?: id
     String clean = drawLabel ?: label
-    // Truncation runs on the cleaned text, so a name that is short in its own
-    // right survives whole. "Christmas Cheer" was reaching this as "Christmas
-    // Cheer (Required Expression false)" and being cut to "Christmas Cheer
-    // (Requi…", which is longer, uglier and no more informative.
+    
+    
+    
+    
     String shortLabel = clean
     if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
     if (statusSuffix) shortLabel = "${shortLabel} (${statusSuffix})"
@@ -4563,13 +4520,13 @@ Map nodeEntry(String id, String fullLabel, String group, String subtitle = null,
     ]
 }
 
-// Why an app with no device, no rule link and no endpoint is on the map anyway.
-//
-// Ordered by how completely each fact explains the emptiness. A container is
-// fully explained by its children and nothing else needs saying. A schedule
-// explains an app that acts on the hub rather than on devices, which is exactly
-// what Rebooter does. Falling all the way through is itself the answer, and the
-// only one of these worth a second look.
+
+
+
+
+
+
+
 String inertReason(Map inert, Map appInfo, String parentId = null) {
     if (!inert) return 'no relationships found'
 
@@ -4585,9 +4542,9 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     int subs = (inert.subs ?: 0) as Integer
     if (subs > 0) return "listens to ${subs} event${subs == 1 ? '' : 's'}"
 
-    // Last, because being someone's child explains where an app came from but
-    // not what it does. A button rule under a Button Controller is still an
-    // app that references nothing this map can see.
+    
+    
+    
     String parent = parentId
     if (parent) {
         Map p = appInfo[parent] as Map
@@ -4598,12 +4555,12 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     return 'references nothing'
 }
 
-// Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API,
-// NOT an HTTP endpoint - confirmed live 2026-08-26 after a dedicated search for
-// a loopback endpoint came back seven 404s. Called only
-// from finishScan()'s finishGeneration() closure, synchronously, so a failed or
-// stale inventory is published or discarded atomically with the rest of that
-// scan generation - never mixed into a different generation's graph.
+
+
+
+
+
+
 Map fetchHubVariableInventory() {
     try {
         Map allVars = getAllGlobalVars()
@@ -4620,18 +4577,18 @@ Map fetchHubVariableInventory() {
     }
 }
 
-// Map a platform Hub Variable type spelling to the canonical schema-4 value,
-// case-insensitively. Confirmed live 2026-08-26 against real test variables of
-// all five types (a v2.0.14 export of TestNumber/
-// TestDecimal/TestBoolean/TestDateTime for the rest): getAllGlobalVars()
-// returns Groovy runtime type names, not the UI's declared-type labels -
-// "integer" for Number, "bigdecimal" for Decimal, "boolean" and "datetime"
-// matching directly. The first live export (schema 4) showed variableType:
-// null for TestNumber/TestDecimal because this mapping only recognized
-// "number"/"decimal" at the time - the safe fallback worked exactly as
-// designed (no crash, no wrong guess), and this is
-// the confirmed correction, not a guess. Unrecognized input still returns
-// null.
+
+
+
+
+
+
+
+
+
+
+
+
 String normalizeHubVariableType(String rawType) {
     switch ("${rawType}".toLowerCase()) {
         case 'integer': return 'Number'
@@ -4643,8 +4600,8 @@ String normalizeHubVariableType(String rawType) {
     }
 }
 
-// Resolve stored references against the authoritative inventory. Exact identity
-// wins; the trailing-period fallback applies only to one unambiguous match.
+
+
 String canonicalHubVariableName(String rawName, Map inventoryVars) {
     String raw = rawName ?: ''
     if (!raw || !inventoryVars) return raw
@@ -4659,32 +4616,32 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     return matches.size() == 1 ? "${matches[0]}" : raw
 }
 
-// ===================================================================================================================
-// Local, Hub, and Connector Variable identity (Gate C, v2.1.4)
-//
-// Ports the Gate B classifier (tests/support/VariableReferenceClassifier.groovy)
-// into the app itself - Hubitat apps are single-file scripts with no runtime
-// access to external class files, so the pure, value-free classification logic
-// is reproduced here as plain functions rather than referenced. Keep the two in
-// sync by hand; tests/variable-reference-classifier.groovy plus
-// tests/fixtures/local-hub-variable-gate-a.json remain the source of truth for
-// behaviour - this is the deployed copy, unit-testable independently.
-//
-// See Supporting Docs/local_hub_variable_identity_proposal.md and
-// WIP/local_hub_variable_gate_a_evidence.md for the design and the empirical
-// findings this implements: allLocalVars is a value-free Local definition
-// inventory only (Gate A 2.1), a structured xVarV/xVar_/xVar reference alone
-// does not prove Hub scope (Gate A 2.3-2.4), a same-name Local/Hub collision
-// stays ambiguous even though runtime shadowing was observed on firmware
-// 2.5.1.174 (Gate A 2.4 - observed behaviour is not license to invent author
-// intent), and Connector association is device-ID only, never name-based
-// (Gate A 2.5).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final Set<String> AM_VAR_BUILT_IN_TOKENS = ['device', 'time', 'date', 'value', 'text'] as Set<String>
 
-// Reads appState.allLocalVars for one Rule Machine rule and returns definition
-// metadata only - Gate A 2.1 confirmed this inventory holds declaration values,
-// not current runtime values (those live in separate lv_<name> state entries
-// this app does not read), and Automation Map never needs or exports values.
+
+
+
+
 List extractLocalVariableDefinitions(Map data, String ownerAppId) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -4705,12 +4662,12 @@ List extractLocalVariableDefinitions(Map data, String ownerAppId) {
     return out
 }
 
-// Classifies one raw variable reference against this rule's Local definitions
-// and the authoritative Hub definitions. Pure and value-free: no Hubitat
-// access, no graph writes, no logging. context: ownerAppId, localDefinitions,
-// hubDefinitions, optional builtInTokens, optional establishedScopes (name ->
-// 'local'/'hub', built only from this SAME rule's own resolved structured
-// references - Gate C decision 2, never hub-wide).
+
+
+
+
+
+
 Map classifyVariableReference(Map reference, Map context) {
     String rawName = amVarText(reference.name)
     if (!rawName) throw new IllegalArgumentException('reference.name is required')
@@ -4733,9 +4690,9 @@ Map classifyVariableReference(Map reference, Map context) {
         throw new IllegalArgumentException('A proven scope requires scopeSource evidence')
     }
 
-    // Free-text substitution proves only that text contains %Name%. It does
-    // not independently prove Name is a variable or which scope owns it. A
-    // separately established scope (same rule only) may promote it.
+    
+    
+    
     if (evidenceKind == 'text-token' && !provenScope) {
         provenScope = amVarIndependentlyEstablishedScope(rawName, context.establishedScopes)
         if (provenScope) scopeSource = 'independently-established-reference'
@@ -4862,10 +4819,10 @@ private Map amVarBaseResult(Map reference, String rawName, String ownerAppId,
     ]
 }
 
-// One-trailing-period fallback only, matching canonicalHubVariableName()'s own
-// bound - a comparable form shared with Hub name resolution elsewhere in this
-// file, but kept independent here since this operates on a caller-supplied
-// definition map, not the authoritative hub inventory.
+
+
+
+
 private Map amVarMatchWithinScope(String rawName, Map<String, Map> definitions) {
     if (definitions.containsKey(rawName)) {
         return [status: 'matched', canonicalName: rawName, matchKind: 'exact', candidates: [rawName]]
@@ -4914,11 +4871,11 @@ private String amVarText(Object value) {
     return value == null ? '' : "${value}".trim()
 }
 
-// Classifies one rule's variable references, combining raw writes/reads into
-// the classifier's per-reference input, then splitting results into resolved
-// (local/hub) and non-resolved (ambiguous/unresolved) buckets. 'ignored' weak-
-// text results are intentionally dropped - Gate C keeps them an internal
-// diagnostic outcome, not exported or graphed (integration plan section 3.4).
+
+
+
+
+
 Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List localDefinitions,
         Map hubDefinitions, String ownerAppId) {
     List raw = []
@@ -4932,17 +4889,17 @@ Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List loc
                  evidenceKind: r.evidenceKind, field: r.field]
     }
 
-    // Same-rule-only weak-text promotion (Gate C decision 2): a structured
-    // reference resolved earlier in this SAME rule may establish scope for a
-    // %Name% token processed afterward. Never seeded from another rule - this
-    // map exists fresh per rule, per call.
+    
+    
+    
+    
     Map establishedScopes = [:]
     Map context = [ownerAppId: ownerAppId, localDefinitions: localDefinitions,
                    hubDefinitions: hubDefinitions, establishedScopes: establishedScopes]
 
-    // Structured references classified first, so their resolved scope is
-    // available to promote a weak text-token reference processed afterward -
-    // matches the integration plan section 3.3 ordering.
+    
+    
+    
     List structured = raw.findAll { it.evidenceKind != 'text-token' }
     List weakText = raw.findAll { it.evidenceKind == 'text-token' }
 
@@ -4951,14 +4908,14 @@ Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List loc
     (structured + weakText).each { Map reference ->
         Map result = classifyVariableReference(reference, context)
         if (result.status == 'resolved') {
-            // Seeded under both the raw stored spelling and the resolved
-            // canonical name (Gate C correction, review 287): a structured
-            // "Example." that normalizes to "Example" must still promote a
-            // same-rule %Example% text token, which naturally uses the
-            // canonical spelling, not the trailing-period one. No further
-            // normalization happens here - the lookup side still requires an
-            // exact match against one of these two seeded spellings, so this
-            // stays bounded rather than introducing fuzzy matching.
+            
+            
+            
+            
+            
+            
+            
+            
             String canonical = result.canonicalName as String
             if (canonical && !establishedScopes.containsKey(canonical)) establishedScopes[canonical] = result.scope
             String rawResultName = result.name as String
@@ -4971,16 +4928,16 @@ Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List loc
     return [variableReferences: resolved, nonResolvedVariableReferences: nonResolved]
 }
 
-// Post-classification join (Gate C, v2.1.4): actionLabel() cannot classify at
-// flow-build time - Hub Variable inventory is not available during per-app
-// discovery, only later at finalization (see actionLabel()'s own comment) -
-// so it emits a neutral "Set Variable X" label there. This walks the already-
-// built flow steps once classification has actually run and corrects each
-// getSetVariable step's label using the SAME normalized records published in
-// ruleVariables, joined by the variableField/evidence.field this file adds
-// for exactly this purpose. Satisfies the integration plan's requirement
-// (section 5) that the flow label and the rule-detail section read the same
-// classification records rather than being able to disagree.
+
+
+
+
+
+
+
+
+
+
 void correctFlowVariableLabels(Map flows, Map ruleVariables) {
     flows.each { String appNodeId, Object stepsObj ->
         if (!(stepsObj instanceof List)) return
@@ -5014,15 +4971,15 @@ void correctFlowVariableLabels(Map flows, Map ruleVariables) {
     }
 }
 
-// Pure, sandbox-compatible, no hub calls - same copy-verbatim-into-a-test
-// convention as aggregateDeviceTree() (tests/has-component-edges.groovy).
-// For each state.deviceParents entry, emits one edge {from: parentNodeId,
-// to: childNodeId, kind: 'hasComponent'} only when both the parent and
-// child already exist as graph nodes - silently skips otherwise (recovers
-// on a later scan, never fails the graph). A separate kind from 'owns':
-// owns already means "an app created this device" in every existing
-// consumer of that field; this is device-to-device with no app involved,
-// and conflating the two would make owns ambiguous everywhere it's read.
+
+
+
+
+
+
+
+
+
 List buildHasComponentEdges(Set nodeIds, Map deviceParents) {
     List result = []
     deviceParents.each { childId, parentId ->
@@ -5045,8 +5002,8 @@ Map buildGraph() {
 
     Map<String, Map> nodes = [:]
     List<Map> edges = []
-    // Set, not List: dedup key membership is checked once per candidate edge,
-    // and a linear contains() over a growing List made the whole build quadratic.
+    
+    
     Set<String> seen = new LinkedHashSet<>()
     Map flows = [:]
     Map nameCache = [:]
@@ -5055,27 +5012,27 @@ Map buildGraph() {
     Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
     Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
 
-    // Classified per rule (Gate C, v2.1.4), replacing the old hub-wide
-    // confirmedVarNames promotion described above in earlier versions - only
-    // a same-rule structured reference may now promote a weak %Name% text
-    // token (Gate C decision 2; see classifyRuleVariableReferences()). Local
-    // Variable definitions and references never enter hub-wide promotion at
-    // all - published separately below as graph.ruleVariables, owner-scoped.
-    // Only resolved, hub-scoped records from this pass ever reach a node or
-    // edge - see the write/read loop further down.
+    
+    
+    
+    
+    
+    
+    
+    
     Map ruleVariables = [:]
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        // Gated to Rule Machine (review 290 correction), matching
-        // extractHubVariableWrites/Reads()'s own gate exactly -
-        // processAppRelationships() initializes hubVarWrites/hubVarReads to
-        // an empty list for EVERY app unconditionally (see its own `out =
-        // [...]` literal), so a containsKey() check here always passed and
-        // admitted every installed app, integrations included, into
-        // classification. localVariables is genuinely Rule-Machine-only
-        // (only ever set inside that same gate), but checked the same way
-        // for consistency and clarity.
+        
+        
+        
+        
+        
+        
+        
+        
+        
         if (!"${appMap.type}".startsWith('Rule-')) return
         String classifyAppNodeId = "a${appId}"
         Map classified = classifyRuleVariableReferences(
@@ -5092,34 +5049,34 @@ Map buildGraph() {
         ]
     }
 
-    // Authoritative Hub Variable inventory (v2.0.14), published by finishScan()
-    // into state.hubVariableInventory inside its finishGeneration() closure -
-    // read here as already-durable, generation-consistent state, the same way
-    // appInfo/deviceLabels above are. Seeded into `nodes` BEFORE the per-app
-    // write/read loop below, so that loop's existing `if (!nodes[varNodeId])`
-    // guards naturally treat an inventory-sourced node as already present
-    // (parent spec 6.3 reconciliation) instead of overwriting it.
-    //
-    // Findings: a proven-Hub-scoped structured reference absent from
-    // authoritative inventory (not promoted to a node - parent spec 6.3).
-    // Gate C (v2.1.4) semantic migration (review 290): this is now filtered
-    // from classified evidence, not populated by the old raw-name loop. Gate
-    // A found no persisted scope discriminator, so nothing in this pipeline
-    // ever sets provenScope on a raw reference - a classified 'unresolved'
-    // record's candidateScopes is therefore always [] today (no-definition-
-    // in-either-scope), never ['hub'] specifically. The filter below is the
-    // honest, forward-compatible boundary for a future discriminator, not
-    // something expected to populate right now - deliberately narrower than
-    // "any non-resolved record": cross-scope ambiguity, unknown-scope
-    // unresolved, and Local references must never appear in this Hub-only
-    // legacy finding. The complete set, correctly labelled either way, is in
-    // ruleVariables[appId].nonResolvedVariableReferences for Increment 2.
-    //
-    // There is no equivalent "Connector missing" finding: a reported
-    // Connector deviceId is trusted unconditionally below (confirmed against
-    // live hub data), so no code path can ever fail to resolve one - see the
-    // synthesized-node comment just below for why, and the orphan/stale-ID
-    // limitation this trade-off leaves.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     List unresolvedHubVarReferences = []
     ruleVariables.each { String ruleAppNodeId, Map rv ->
         ((rv.nonResolvedVariableReferences ?: []) as List).each { Map r ->
@@ -5138,25 +5095,25 @@ Map buildGraph() {
         nodes[varNodeId].identitySource = 'hub-inventory'
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
-            // Corrected 2026-08-31: a Connector device is not guaranteed absent
-            // from /hub2/devicesList - it can be nested inside a parent's
-            // children (fetchDeviceListBulk() now walks that tree), so bulk
-            // discovery finding it is the normal case going forward, not the
-            // exception this comment used to describe. getGlobalVar()'s
-            // deviceId is still trusted directly regardless - an ID-based
-            // reference, not the display-name join spec 7.2 warns against -
-            // since a bulk-list gap of some other kind must never be able to
-            // hide a variable's own reported Connector link. When bulk
-            // discovery does find the device its real label is used;
-            // otherwise a minimal node is synthesized. Never write to
-            // `labels`: it may share state.deviceLabels' backing object.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String devNodeId = "d${connDevId}"
             boolean discovered = labels.containsKey(connDevId)
             if (!discovered && !nodes[devNodeId]) {
                 nodes[devNodeId] = nodeEntry(devNodeId, "${varName} Connector" as String, 'device')
-                // Hardcoded, not autoDetectIconKeyForDevice() - this call site
-                // already knows it is a connector (that is why the node was
-                // synthesized at all), so there is nothing to detect.
+                
+                
+                
                 nodes[devNodeId].icon = 'connector'
             }
             nodes[varNodeId].connectorDeviceId = connDevId
@@ -5174,68 +5131,68 @@ Map buildGraph() {
         if (!(info instanceof Map)) return
         Map appMap = info as Map
         Map roles = (appMap.roles ?: [:]) as Map
-        // A rule whose only relationship is to another rule has no device roles
-        // at all, and used to be dropped here before it could be drawn.
-        //
-        // An app with nothing at all is no longer dropped either. It used to be,
-        // back when device-led discovery meant such an app was never found - but
-        // once the scan enumerates every installed app, silently dropping 13 of
-        // them makes the summary claim a count the map does not show, and leaves
-        // the Focus app list disagreeing with both. Drawn with a reason instead.
-        // A fetch that threw never populated roles/ruleLinks/endpoints, so an
-        // unreadable app looked identical to one that genuinely references
-        // nothing - the exact same empty collections, for a completely
-        // different reason. "Could not be read" and "references nothing" are
-        // different findings and must not render the same way, so unreadable
-        // is checked and excluded from inert rather than folded into it.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         boolean unreadable = appMap.error != null
-        // A rule whose only relationship is to a Hub Variable (e.g. "_Test
-        // Variables Trigger", which touches no device at all) is not inert,
-        // and was being marked so before this - dimmed amber, labelled "no
-        // device or rule relationship", despite drawing a real edge on the
-        // map underneath that label. Checked against what will actually be
-        // drawn (Gate C, v2.1.4: a classified, resolved, hub-scoped
-        // reference), not just whether hubVarReads is non-empty - Local,
-        // ambiguous, and unresolved evidence draws nothing on the whole-map
-        // graph (plan section 4.1) and must not count as a relationship
-        // either, or a rule with only Local or unresolved evidence would be
-        // wrongly called non-inert too.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         boolean hasVarRelationship = ((ruleVariables["a${appId}"]?.variableReferences ?: []) as List)
             .any { Map r -> r.scope == 'hub' }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         String appNodeId = "a${appId}"
-        // An inert app's subtitle carries why it is empty instead of its engine.
-        // The engine is the less useful of the two here: "Rule Machine" on a
-        // square with no edges raises the question, "holds 46 apps" answers it.
-        // This app's own instances are a fixed exception: they read the whole
-        // hub rather than driving anything, which is a fact about what they
-        // are, not an absence to explain the way an empty container is.
+        
+        
+        
+        
+        
+        
         boolean isSelfFamily = "${appMap.type}".startsWith(APP_FAMILY)
         String subtitle = unreadable ? 'could not be read' :
             (inert ? (isSelfFamily ? 'reads the whole hub, drives nothing' : inertReason(appMap.inert as Map, appInfo, appMap.parent as String)) : (appMap.type as String))
-        // Disabled (a universal, hub-level flag) takes precedence over
-        // paused (Rule Machine-specific) when both happen to be true - an
-        // app that is both disabled and separately left paused is still,
-        // at the level a person cares about here, simply disabled.
+        
+        
+        
+        
         String statusWord = appMap.disabled ? 'Disabled' : (appMap.paused ? 'Paused' : null)
-        // statusInTitle false: confirmed live (review 374) that
-        // Hubitat's own paused-app label injection already reads literally
-        // "(Paused)" - appending our own suffix to the title too produced a
-        // genuine visible duplicate there. label/draw are unaffected, built
-        // from the already-stripped drawLabel.
+        
+        
+        
+        
+        
         nodes[appNodeId] = nodeEntry(appNodeId, appMap.label as String, 'app', subtitle,
                                       appMap.drawLabel as String, statusWord, false)
-        // The raw underlying type, unconditionally - subtitle above is
-        // overwritten with the inert/unreadable reason for those nodes, so it
-        // cannot be used to tell a rule apart from any other app once a node
-        // is in either of those states. Needed so a pivot table can filter to
-        // actual rules rather than "everything typed as an app", which was a
-        // rule reached only as another rule's target counted the same as
-        // LIFX Light Manager.
+        
+        
+        
+        
+        
+        
+        
         nodes[appNodeId].appType = "${appMap.type}"
-        // Browser-local Community Context Card matching only (spec section
-        // 4.1) - deliberately absent from buildExportPayload()'s apps[]
-        // mapping, so it never reaches the AI-friendly export.
+        
+        
+        
         if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (appMap.disabled) nodes[appNodeId].disabled = true
@@ -5247,19 +5204,19 @@ Map buildGraph() {
         }
         if (inert) {
             nodes[appNodeId].inert = true
-            // Carried as its own field rather than left for the page to pick
-            // back out of the title. Parsing it out would mean a regex literal
-            // inside the GString that builds the page, which is the single
-            // mistake this file has been killed by three times.
+            
+            
+            
+            
             nodes[appNodeId].reason = subtitle
-            // What the click opens. Without these, focusing one of these nodes
-            // blanks the map to a lone square and opens no panel, because it has
-            // no edges to draw and no rule flow to render - it looked like a
-            // dead click rather than like an app with nothing attached.
-            //
-            // Child IDS, not names. Every child is already a node on this map
-            // carrying its own label, so sending names too would ship 46
-            // duplicate strings for Rule Machine alone.
+            
+            
+            
+            
+            
+            
+            
+            
             List kidIds = []
             appInfo.each { String otherId, other ->
                 if (!(other instanceof Map)) return
@@ -5267,38 +5224,38 @@ Map buildGraph() {
             }
             if (kidIds) nodes[appNodeId].kids = kidIds
             Map inertFacts = (appMap.inert ?: [:]) as Map
-            // The COUNT, sent alongside the ids. It is what lets the panel tell
-            // "holds nothing" apart from "holds something this scan did not
-            // record the ids for", which is every graph built before parent ids
-            // were captured.
+            
+            
+            
+            
             if ((inertFacts.kids ?: 0) as Integer) nodes[appNodeId].holds = inertFacts.kids
             if ((inertFacts.sched ?: 0) as Integer) {
                 nodes[appNodeId].sched = inertFacts.sched
-                // Absent rather than empty on a graph built before this was
-                // captured, so the panel can tell "no detail recorded" apart
-                // from "recorded, and there is genuinely nothing to add".
+                
+                
+                
                 if (inertFacts.schedJobs) nodes[appNodeId].schedJobs = inertFacts.schedJobs
             }
             if ((inertFacts.subs ?: 0) as Integer) nodes[appNodeId].subs = inertFacts.subs
             if ((inertFacts.devs ?: 0) as Integer) nodes[appNodeId].devs = inertFacts.devs
         }
-        // Deliberately outside the if (inert) block above, unlike kids/sched/
-        // subs/devs which exist specifically to give an EMPTY container node
-        // something to show when focused. parent is a plain structural fact
-        // true of the app whether or not it happens to be inert - a real
-        // Button Rule child with its own actions is not inert, but still has
-        // a parent Button Controller. Gating this the same way the inert-only
-        // fields are gated left every non-inert child's own node with no
-        // parent at all, an asymmetry an external export caught: 64 apps
-        // appeared in a container's kids list but had parent: null
-        // themselves, because kids is computed by scanning ALL of appInfo
-        // for children regardless of the child's own inert status, while
-        // parent was only ever set on a node already being built for the
-        // inert-focus-panel reason.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         if (appMap.parent) nodes[appNodeId].parent = "a${appMap.parent}"
-        // Flows come from appInfo during a scan, and from the previously built
-        // graph on a rebuild - see finishScan, which strips them from appInfo
-        // once they are here, so the same 60KB is not held twice.
+        
+        
+        
         if (appMap.flow) flows[appNodeId] = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
         else if (priorFlows[appNodeId]) flows[appNodeId] = priorFlows[appNodeId]
 
@@ -5309,15 +5266,15 @@ Map buildGraph() {
                 boolean devDisabled = disabledDevices.contains(devId)
                 nodes[devNodeId] = nodeEntry(devNodeId, devLabel, 'device', null, null, devDisabled ? 'Disabled' : null)
                 if (devDisabled) nodes[devNodeId].disabled = true
-                // The user's own correction wins outright when one exists;
-                // only otherwise is it worth asking the name/capability
-                // fallback what this device is.
+                
+                
+                
                 nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
                     autoDetectIconKeyForDevice((labels[devId] ?: '') as String, deviceCaps[devId] as List,
                                                deviceTypes[devId] as String)
-                // A freeform note on an unrecognised device surfaces in the
-                // tooltip, not just the icon panel - otherwise the only place
-                // that context exists is a table the user has to go find.
+                
+                
+                
                 String note = (iconNotes[devId] as String)?.trim()
                 if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
             }
@@ -5332,26 +5289,26 @@ Map buildGraph() {
             }
         }
 
-        // Hub Variables: shared, hub-scoped state, not owned by any one app -
-        // so unlike a device the node is identified by name, not by an id the
-        // scan discovered it under.
-        //
-        // Gate C (v2.1.4): only classified, resolved, hub-scoped records reach
-        // here now. A resolved 'hub' record's canonicalName is guaranteed
-        // present in hubVarInventoryVars - that is what "resolved hub" means
-        // from classifyVariableReference(), whose hubDefinitions input IS this
-        // same hubVarInventoryVars map - so the old reference-derived node
-        // fallback and its hubVarInventoryComplete gate are retired (Gate C
-        // decision 3). A structured reference this app cannot confirm against
-        // the authoritative inventory - whether the inventory was incomplete
-        // or the name genuinely does not exist, Gate A found no way to tell
-        // those apart from stored fields alone - is now classified unresolved
-        // and simply does not reach graph topology, rather than manufacturing
-        // a weaker-guarantee node from an unproven name. unresolvedHubVarReferences
-        // is populated further up, from this same classified data (filtered to
-        // status=='unresolved' && candidateScopes==['hub'] only) - see that
-        // block's own comment for why it is empty on every input this
-        // pipeline can currently produce.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Map writesByField = [:]
         (appMap.hubVarWrites ?: []).each { Map w -> if (w.field) writesByField["${w.field}"] = w }
         List classifiedHubRefs = ((ruleVariables[appNodeId]?.variableReferences ?: []) as List)
@@ -5362,11 +5319,11 @@ Map buildGraph() {
             if (!varName) return
             String varNodeId = "v${varName}"
             if (!nodes[varNodeId]) {
-                // Defensive, not a live fallback: reaching here with no
-                // existing node would mean the inventory-seeding pass above
-                // and this classified 'hub' result disagree about
-                // hubVarInventoryVars, which should not be possible since both
-                // read the same map in the same buildGraph() execution.
+                
+                
+                
+                
+                
                 nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
                 nodes[varNodeId].identitySource = 'hub-inventory'
             }
@@ -5378,33 +5335,33 @@ Map buildGraph() {
             if (original.sourceDevice && original.sourceAttr) {
                 edge.detail = "from ${original.sourceDevice}.${original.sourceAttr}"
             }
-            // Structured, ID-based writeSource - only emitted when the
-            // source device ID resolves in the discovered device set,
-            // never joined by display label alone (parent spec 7.2).
+            
+            
+            
             if (original.sourceDeviceId && original.sourceAttr && labels.containsKey("${original.sourceDeviceId}")) {
                 edge.writeSource = [kind: 'deviceAttribute', deviceId: "${original.sourceDeviceId}", attribute: "${original.sourceAttr}"]
             }
             edges << edge
         }
 
-        // Stored from-app-to-variable the same as a write, NOT reversed, even
-        // though a read conceptually flows variable-to-rule - every edge on
-        // this map has an app in `from` (see the comment on pivotKindOptions
-        // in the page template). The visual arrow is corrected instead, the
-        // same way a device trigger already is.
-        //
-        // Grouped by variable BEFORE any edge is created (review 290
-        // correction): graph-edge dedup still permits only one app|variable
-        // |read edge, but per-reference extraction can legitimately produce
-        // several classified read occurrences for the same pair (e.g. the
-        // same Hub Variable read in both a condition and a trigger).
-        // Assigning the first-encountered occurrence's role to that one edge
-        // would be iteration-order-dependent and could hide the others. The
-        // scalar usageRole field is only trusted when every occurrence for
-        // this pair shares one identical non-null role; otherwise it falls
-        // back to 'unknown-read', same as always producing that value did
-        // before this file tracked roles at all. The complete per-reference
-        // roles remain available in ruleVariables regardless.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Map readsByVarNode = [:]
         classifiedHubRefs.findAll { it.operation != 'write' }.each { Map r ->
             String varName = r.canonicalName as String
@@ -5419,36 +5376,36 @@ Map buildGraph() {
             String key = "${appNodeId}|${varNodeId}|read"
             if (seen.contains(key)) return
             seen << key
-            // review 292 correction: filtering out null BEFORE the uniqueness
-            // check let [condition, null] collapse to the single-element set
-            // {condition}, wrongly asserting condition-only on a pair where
-            // one occurrence actually had no role at all. Null must survive
-            // into the set - a mix that includes null is exactly as untrusted
-            // as a mix of two different real roles, both correctly land on
-            // 'unknown-read' this way, and only a set that is BOTH size-one
-            // AND non-null passes.
-            // Named distinctUsageRoles, not roles - this nested closure sits
-            // inside the same outer per-app closure that already declares
-            // Map roles for device-role processing. Hubitat's own compiler
-            // (not local groovyc) rejected the name collision at deploy time:
-            // "the current scope already contains a variable of the name
-            // roles" - a real gap in local-only validation worth remembering.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             Set<String> distinctUsageRoles = refs.collect { (it as Map).usageRole as String } as Set<String>
             String usageRole = (distinctUsageRoles.size() == 1 && distinctUsageRoles.first() != null) ? distinctUsageRoles.first() : 'unknown-read'
             edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: usageRole]
         }
 
-        // Local Variables (v2.1.6, queue 308/310/311): seeded from this rule's
-        // own declarations (ruleVariables[appNodeId].localVariables), not from
-        // references, so a declared-but-unused Local Variable still gets a
-        // node - the same completeness principle Hub Variable nodes already
-        // get from the authoritative inventory. Node ID is the owner-scoped
-        // identity string itself (e.g. "a3079:AMShow_LocalCount"), never the
-        // bare name - Gate A proved two different rules can each have their
-        // own same-named Local Variable, and merging those into one node
-        // would misrepresent them as shared. ownerAppId is stored explicitly
-        // (review 311, correction 1) rather than parsed back out of identity,
-        // so the owning rule can be resolved without a name-based join.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         List localDefs = (ruleVariables[appNodeId]?.localVariables ?: []) as List
         localDefs.each { Map d ->
             String identity = d.identity as String
@@ -5461,13 +5418,13 @@ Map buildGraph() {
             }
         }
 
-        // Edges mirror the Hub write/read blocks directly above, filtered on
-        // scope === 'local' instead of 'hub'. Safe by construction, not by an
-        // added check: variableReferences only ever holds status: 'resolved'
-        // records - ambiguous and unresolved live exclusively in
-        // nonResolvedVariableReferences (confirmed against live 3076 data in
-        // the 307 verification) - so this loop can never create an edge from
-        // an unproven reference.
+        
+        
+        
+        
+        
+        
+        
         List classifiedLocalRefs = ((ruleVariables[appNodeId]?.variableReferences ?: []) as List)
             .findAll { Map r -> r.scope == 'local' }
 
@@ -5496,12 +5453,12 @@ Map buildGraph() {
         }
     }
 
-    // review 311, correction 6: computed only after ALL Local read/write edges
-    // across every rule have been built and deduplicated - "unreferenced"
-    // means zero proven decoded Local edges exist anywhere on the graph, not
-    // merely that one rule's own extraction pass happened to find none.
-    // state.appsInert, inert-app Insights and every other .inert consumer
-    // stay keyed on .inert alone - this is a distinct field on purpose.
+    
+    
+    
+    
+    
+    
     Set<String> referencedLocalIds = [] as Set
     edges.each { Map e ->
         String toId = e.to as String
@@ -5513,12 +5470,12 @@ Map buildGraph() {
         }
     }
 
-    // Device discovery is hub-wide, while the role pass above only encounters
-    // devices referenced by an app. Preserve every existing referenced device
-    // node exactly as built above, then append only discovered devices that had
-    // no relationship. This keeps existing node order, icons and edges stable
-    // while making the graph, Focus device list and AI export agree with the
-    // scan's device count.
+    
+    
+    
+    
+    
+    
     labels.each { String devId, label ->
         String devNodeId = "d${devId}"
         if (nodes[devNodeId]) return
@@ -5534,12 +5491,12 @@ Map buildGraph() {
         if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
     }
 
-    // Device-owned component relationships (a Shelly/Bond/Matter-bridge
-    // child, a Hub Variable Connector nested under its parent) - run after
-    // every discovered device already has a node above, so a parent or
-    // child known only through bulk inventory (never referenced by any app)
-    // still has somewhere to attach. Deduped through the same `seen` set
-    // every other edge source uses.
+    
+    
+    
+    
+    
+    
     buildHasComponentEdges(nodes.keySet(), (state.deviceParents ?: [:]) as Map).each { Map hc ->
         String key = "${hc.from}|${hc.to}|${hc.kind}"
         if (seen.contains(key)) return
@@ -5547,9 +5504,9 @@ Map buildGraph() {
         edges << hc
     }
 
-    // App-to-app edges are emitted in a second pass, so a link is still drawn
-    // when it points at a rule that came later in the scan than the rule
-    // pointing at it.
+    
+    
+    
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         List links = ((info as Map).ruleLinks ?: []) as List
@@ -5564,28 +5521,28 @@ Map buildGraph() {
             String toId = "a${targetId}"
 
             if (!nodes[toId]) {
-                // The target was never reached by the scan. Apps are discovered
-                // through the devices you selected, so a rule that touches no
-                // selected device is invisible to phase one - which is normal
-                // for a Rule Function. Drawn anyway, labelled for what it is,
-                // rather than dropping the relationship on the floor.
+                
+                
+                
+                
+                
                 Map target = appInfo[targetId] as Map
-                // Worth the lookup when the scan missed it: the alternative is
-                // a node reading "Rule 1845", which tells the user nothing.
+                
+                
                 Map named = linkedRuleName(targetId, appInfo, nameCache)
-                // A deleted target gets no subtitle. Every other node uses it
-                // for the engine, which a deleted rule no longer reports, and
-                // "not scanned" is both redundant and self-contradictory next
-                // to a label that already says deleted. That label is the only
-                // name this node will ever have, so it carries the fact alone.
+                
+                
+                
+                
+                
                 String subtitle = named.missing ? null : (target?.type ?: 'not scanned') as String
                 nodes[toId] = nodeEntry(toId, named.label as String, 'app', subtitle, named.draw as String)
                 if (!target) nodes[toId].unscanned = true
-                // Distinct from unscanned: unscanned is a real app the scan
-                // never reached, missing is an id that no longer resolves to
-                // anything. A deleted target is both (it was never reached
-                // AND does not exist), but Insights needs to tell them apart
-                // to report "broken reference" rather than "just not scanned".
+                
+                
+                
+                
+                
                 if (named.missing) nodes[toId].missing = true
             }
 
@@ -5596,17 +5553,17 @@ Map buildGraph() {
         }
     }
 
-    // External systems, declared by the user rather than discovered. Emitted
-    // last so every app node exists.
-    //
-    // Nodes are keyed on the system NAME, so two apps naming the same bridge
-    // share one node. That sharing is the whole point: it is what turns a list
-    // of dependencies into "everything that stops working if this fails".
-    // User declarations override the shared registry rather than adding to it.
-    // A user who has said anything at all about an app type has looked at it,
-    // and their answer beats a curated guess - Kasa and Tapo can each be local
-    // or cloud depending on how they were set up, so the shipped answer is
-    // right for roughly half of installs.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     List externals = []
     List userRows = userRegistry()
     List userTypes = classifiedTypes()
@@ -5642,12 +5599,12 @@ Map buildGraph() {
             List appNodeIds = (typeToApps[extType] ?: []) as List
             if (!appNodeIds) return
 
-            // Hex hash of the ORIGINAL name appended, not just its stripped
-            // form - "OpenWeatherMap" and "Open Weather Map" reduce to the
-            // identical stripped string and would otherwise collapse onto one
-            // node, silently merging two different systems' dependencies. The
-            // stripped prefix stays for a readable id in the raw page source;
-            // the hash is what actually guarantees no collision.
+            
+            
+            
+            
+            
+            
             String extNodeId = "x${name.toLowerCase().replaceAll('[^a-z0-9]', '')}${Integer.toHexString(name.hashCode())}"
             if (!nodes[extNodeId]) {
                 String kindLabel = (EXTERNAL_KINDS["${e.kind}"] ?: 'External system') as String
@@ -5664,10 +5621,10 @@ Map buildGraph() {
         }
     }
 
-    // Endpoints a rule calls directly, read from its own settings rather than
-    // declared. These belong to ONE rule, not to its type, which is why they
-    // cannot come through the registry: every rule on a hub shares the type
-    // Rule-5.1, so a registry entry would attach the endpoint to all of them.
+    
+    
+    
+    
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         List eps = ((info as Map).endpoints ?: []) as List
@@ -5682,15 +5639,15 @@ Map buildGraph() {
             if (!host || host == 'null') return
             boolean loop = (e.loopback == true)
 
-            // Same collision-resistant shape as the declared-external-systems
-            // id above, and for the same reason: two different hosts (an IP
-            // with punctuation stripped differently, say) could otherwise
-            // reduce to the same stripped string.
+            
+            
+            
+            
             String nodeId = "x${host.toLowerCase().replaceAll('[^a-z0-9]', '')}${Integer.toHexString(host.hashCode())}"
             if (!nodes[nodeId]) {
-                // A rule POSTing to the hub itself is worth showing, since one
-                // of them reboots it, but it is not an external system and is
-                // labelled for what it actually is.
+                
+                
+                
                 nodes[nodeId] = nodeEntry(nodeId, loop ? 'This hub' : host, 'external',
                                           loop ? 'the hub itself' : 'endpoint a rule calls')
                 nodes[nodeId].kindKey = loop ? 'infra' : 'internet'
@@ -5704,48 +5661,48 @@ Map buildGraph() {
         }
     }
 
-    // Both flows and ruleVariables are fully populated by every app at this
-    // point - safe to run the label join now, once, rather than per-app
-    // mid-loop where a later app's classification could not yet be trusted.
+    
+    
+    
     correctFlowVariableLabels(flows, ruleVariables)
 
     return [nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
             hubVariableConnectorCount: hubVarConnectorCount,
-            // Gate C (v2.1.4): owner-scoped Local Variable definitions and
-            // classified references, keyed by the same app node ID as flows -
-            // consumed by the focused rule panel and, once Increment 2 wires
-            // it through, the AI export. Not merged into flows itself so
-            // existing flow rendering is untouched (integration plan 3.4/9.1).
+            
+            
+            
+            
+            
             ruleVariables: ruleVariables]
 }
 
-// Scheduled rather than called inline from a save handler so the web request
-// is limited to persisting the user's change. Scheduling it 1 second out, the
-// same pattern beginRegistryAndFinish already uses for fetchRegistry, answers
-// the POST immediately and lets the rebuild happen independently.
-// Runs by handler name, so two saves close together simply reschedule the
-// same job rather than queuing two rebuilds.
+
+
+
+
+
+
 void rebuildStoredGraph() {
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
 }
 
-// ===================================================================================================================
-// External systems
-//
-// What an app depends on OUTSIDE the hub: a Hue bridge, a vendor cloud, an MQTT
-// broker. None of it is discoverable - a Hubitat app's dependency on the LIFX
-// cloud is a fact about the integration, not something the hub records - so it
-// is declared rather than detected.
-//
-// Declarations are keyed on the app TYPE, not on the installed app id, so one
-// entry covers every instance and survives rules being added and removed. A hub
-// with 61 installed apps has only 19 distinct types.
-//
-// Stored as a flat list rather than nested under each type, because the UI adds
-// and removes single rows and a flat list leaves no orphans behind.
-// ===================================================================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 @Field static final Map EXTERNAL_KINDS = [
     local_bridge : 'Bridge or hub on my network',
@@ -5762,17 +5719,17 @@ void rebuildStoredGraph() {
     DISCOVERY_ONLY: 'Needed only to find devices',
 ]
 
-// Marks an app type the user has looked at and decided needs nothing external.
-// Distinct from never having been classified, which is the point: the map must
-// be able to say "nothing needed" separately from "nobody has said".
+
+
+
 @Field static final String EXTERNAL_NONE = '__none__'
 
-// First-party assessments for Hubitat's own automation apps, kept as their
-// own provenance tier rather than presented as reviewed community evidence.
-//
-// An explicit allow-list, NOT a namespace rule: Google Home, Chromecast, Hub
-// Mesh and Maker API are built-ins with real external relationships. Anything
-// not named here stays unassessed. A user declaration always wins.
+
+
+
+
+
+
 @Field static final Map BUILTIN_INTERNAL_ONLY = [
     'Rule Machine'             : 'Hub-local rule engine.',
     'Basic Rules'              : 'Hub-local rule engine.',
@@ -5784,8 +5741,8 @@ void rebuildStoredGraph() {
     'Export/Import/Clone'      : 'Hub-local app management.',
 ]
 
-// Reviewed community and deployment-specific hub-only assessments. Explicit
-// user declarations remain higher priority than these defaults.
+
+
 @Field static final Map REVIEWED_INTERNAL_ONLY = [
     'MCP Rule Server'                    : 'Runs on this hub.',
     'Presence Manager'                   : 'Uses participating devices already represented on this hub.',
@@ -5803,8 +5760,8 @@ void rebuildStoredGraph() {
     'mDNS Device Discovery'              : 'Runs on this hub.',
 ]
 
-// Reviewed dependency defaults remain separate from saved user declarations,
-// which stay portable and higher priority.
+
+
 @Field static final List REVIEWED_EXTERNAL_DEFAULTS = [
     [type: 'CoCoHue - Hue Bridge Integration', name: 'Hue Bridge',        kind: 'local_bridge', crit: 'RUNTIME'],
     [type: 'LIFX Light Manager',               name: 'LIFX Cloud',        kind: 'internet',     crit: 'MANAGEMENT'],
@@ -5817,33 +5774,33 @@ void rebuildStoredGraph() {
     [type: 'Meross MSG100 Garage Door Setup',  name: 'Meross Cloud',      kind: 'internet',     crit: 'SETUP_ONLY'],
 ]
 
-// ===================================================================================================================
-// Shared registry
-//
-// A curated list of what known integrations depend on, maintained separately
-// and validated against every package published to Hubitat Package Manager.
-// Fetched rather than embedded, so a new integration is one edit to a JSON
-// file instead of a release of this app.
-//
-// Only the MATCHES are kept. The registry is ~170KB and this app's state is
-// already large; storing it whole would roughly double state for data that is
-// 95% irrelevant to any one hub. A hub with 20 app types keeps a handful of
-// rows and discards the rest.
-// ===================================================================================================================
 
-// The SLIM registry, deliberately not the canonical one. The canonical file
-// carries provenance, status and documentation evidence for human review, and
-// had reached 165KB - enough to kill the execution that fetched it, silently.
-// See fetchRegistry for why that failure was invisible.
-//
-// The slim file holds only the fields evaluated below. It is generated from the
-// canonical registry by build_slim_registry.py, which fails the build if it ever
-// grows past 64KB, so this cannot quietly regress.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final String REGISTRY_URL =
     'https://raw.githubusercontent.com/GordonThelander/HPM_Manifest_Crawl/main/hubitat_automation_map_app_integration_registry_slim.json'
 
-// The registry's own vocabulary, mapped onto the four plain-English kinds the
-// classification page offers.
+
+
 @Field static final Map REGISTRY_CLASS_TO_KIND = [
     LOCAL_BRIDGE      : 'local_bridge',
     LOCAL_DEVICE      : 'local_device',
@@ -5854,48 +5811,48 @@ void rebuildStoredGraph() {
     UNKNOWN_EXTERNAL  : 'internet',
 ]
 
-// Fields this app can evaluate. It knows an app's TYPE and nothing else about
-// its identity, so a rule on a driver name or a user mapping is not false, it
-// is unanswerable - which is a different thing and must be treated as such.
-//
-// parentAppName is deliberately NOT here despite matching registryRuleMatches'
-// signature. Matching runs once per app TYPE across the whole hub, not per
-// installed instance, and a parent is inherently a per-instance relationship
-// - two instances of the same type can have different parents or none. No
-// single value could be threaded in here that would be correct for both.
-// Previously listed as evaluable while every rule was actually matched
-// against appType regardless of its field, so a parentAppName rule was
-// silently evaluated against the wrong datum rather than being marked
-// unanswerable. Add it back only alongside a genuine per-instance matcher.
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List<String> REGISTRY_EVALUABLE_FIELDS = ['appName']
 
-// ===================================================================================================================
-// Endpoints a rule calls directly
-//
-// A rule with an HTTP action names its endpoint in its own settings, under
-// httper.<n>. That makes it the one external dependency on the whole map that
-// is detected rather than declared, and safely so:
-//
-//   the endpoint is CONFIGURED, not a string found in source, so there is no
-//   iconUrl-versus-real-endpoint problem;
-//   an HTTP action unambiguously calls it, so no judgement is needed about
-//   whether it is a dependency;
-//   it is an action the rule performs, so it is RUNTIME for that rule by
-//   definition.
-//
-// It also fills a gap the shared registry structurally cannot. Registry entries
-// key on app TYPE, and every rule on a hub shares the type Rule-5.1, so an
-// entry there would attach the same endpoint to all 45 of them. A rule's
-// endpoint belongs to that one rule.
-// ===================================================================================================================
 
-// The hub calling itself, as in a rule that POSTs to /hub/reboot. Worth showing,
-// since a rule that reboots the hub is exactly what a dependency map should
-// surface, but it is not an EXTERNAL system and must not be drawn as one.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List<String> LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', '::1']
 
-// Written without regex literals, like everything else on the page-building
-// path, because this file builds its HTML inside a GString.
+
+
 String hostFromUrl(String url) {
     if (!url) return null
     String s = url.trim()
@@ -5911,8 +5868,8 @@ String hostFromUrl(String url) {
     s = s.substring(0, cut)
     int bracket = s.lastIndexOf(']')
     if (bracket >= 0) {
-        // Bracketed IPv6 literal, e.g. [::1]:8080 - a port colon only ever
-        // appears after the closing bracket, never inside the literal itself.
+        
+        
         int portColon = s.indexOf(':', bracket)
         if (portColon > bracket) s = s.substring(0, portColon)
     } else {
@@ -5923,7 +5880,7 @@ String hostFromUrl(String url) {
     return s ?: null
 }
 
-// Endpoints named by one rule's actions. Returns [[host: ..., url: ..., loopback: bool]].
+
 List extractRuleEndpoints(Map data) {
     Map vals = [:]
     (data.appSettings ?: []).each { s ->
@@ -5964,9 +5921,9 @@ List registryMatches() {
     return (state.registryMatches ?: []) as List
 }
 
-// Case-insensitive and whitespace-trimmed, matching the validator that checks
-// this registry against live package data. Published names really are
-// inconsistent: BOND against Bond, Ecowitt against EcoWitt.
+
+
+
 boolean registryRuleMatches(String op, String value, String appType) {
     String n = value?.trim()?.toLowerCase()
     String h = appType?.trim()?.toLowerCase()
@@ -5976,14 +5933,14 @@ boolean registryRuleMatches(String op, String value, String appType) {
     return false
 }
 
-// Three states, not two.
-//
-// A rule this app cannot evaluate is NOT a failed rule. Treating it as one
-// would let an ALL entry match on its remaining rules alone, which is exactly
-// what the registry uses matchMode ALL to prevent: "Home Assistant via Maker
-// API" is gated behind a user mapping precisely so it does NOT fire on every
-// Maker API install. Ignoring that rule would attach Home Assistant to anyone
-// running Maker API.
+
+
+
+
+
+
+
+
 String registryEntryState(Map entry, String appType) {
     boolean anyMatch = false
     boolean anyFail = false
@@ -6009,30 +5966,30 @@ String registryEntryState(Map entry, String appType) {
     return 'NO_MATCH'
 }
 
-// Every app type the scan found, which is what the classification page offers.
-// Types rather than installed apps, and sorted so the page does not reshuffle
-// between visits.
+
+
+
 List discoveredAppTypes() {
     List types = []
     ((state.appInfo ?: [:]) as Map).each { String appId, info ->
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
         if (!t || t == 'null') return
-        // This app and its dev twin have no external dependency to declare -
-        // offering them here would ask the user to classify what Automation
-        // Map depends on, which is nothing.
+        
+        
+        
         if (t.startsWith(APP_FAMILY)) return
         if (!types.contains(t)) types << t
     }
     return types.sort()
 }
 
-// Identity and hierarchy per app type, so External Systems classifies the
-// ROOT integration rather than every definition independently.
-// discoveredAppTypes() reduces everything to a type name and discards both
-// namespace and parent, which is what fills the panel with child rule types.
-//
-// Returns type -> [type, namespace, count, rootType, isRoot, identities].
+
+
+
+
+
+
 Map appTypeIdentities() {
     Map info = (state.appInfo ?: [:]) as Map
     Map byIdentity = [:]
@@ -6043,11 +6000,11 @@ Map appTypeIdentities() {
         if (!t || t == 'null') return
         if (t.startsWith(APP_FAMILY)) return
 
-        // Walk to the root. Bounded and cycle-guarded on purpose: this is
-        // persisted state that outlives the apps it points at, so a stale
-        // parentAppId referring to a deleted app is possible even though none
-        // exists on this hub today. Either way the walk stops and the app is
-        // treated as its own root rather than looping.
+        
+        
+        
+        
+        
         Map cur = m
         Set seen = ["${appId}" as String]
         int hops = 0
@@ -6063,10 +6020,10 @@ Map appTypeIdentities() {
         String rootType = "${cur?.type}"
         if (!rootType || rootType == 'null') rootType = t
 
-        // Accumulate per {type, namespace}, NOT per type (a design review
-        // point 1). Two definitions sharing a type name across namespaces are
-        // different things: merging them pools their counts and lets one
-        // namespace's child status erase another namespace's root.
+        
+        
+        
+        
         String ns = m.namespace ? "${m.namespace}" : ''
         String key = "${t}||${ns}"
         Map e = byIdentity[key] as Map
@@ -6081,11 +6038,11 @@ Map appTypeIdentities() {
         }
     }
 
-    // Collapsed to type keys for the panel, because user declarations are
-    // type-keyed and must keep working - but the
-    // per-identity records travel with it so nothing is lost, and an old
-    // type-only declaration is understood to apply to every identity sharing
-    // that name.
+    
+    
+    
+    
+    
     Map out = [:]
     byIdentity.each { String key, Object v ->
         Map e = v as Map
@@ -6097,9 +6054,9 @@ Map appTypeIdentities() {
         agg.count = ((agg.count ?: 0) as Integer) + ((e.count ?: 0) as Integer)
         (agg.identities as List) << e
         if (!agg.namespace && e.namespace) agg.namespace = e.namespace
-        // A root under ANY namespace makes the type a root. The previous rule
-        // was the inverse - one child instance demoted the whole type - which
-        // is what could hide a genuine root definition.
+        
+        
+        
         if (e.isRoot) {
             agg.isRoot = true
             agg.rootType = e.type
@@ -6110,12 +6067,12 @@ Map appTypeIdentities() {
     return out
 }
 
-// The declarations for one app type. Returns [] for an unclassified type and
-// for one explicitly marked as needing nothing, which the caller separates by
-// asking classifiedTypes().
-// Every comparison below goes through a String-typed local on purpose. A GString
-// never equals a String and never matches one as a map key, because their hash
-// codes differ, and it fails silently rather than throwing.
+
+
+
+
+
+
 List externalsForType(String appType) {
     List out = []
     userRegistry().each { entry ->
@@ -6143,13 +6100,13 @@ String getLocalURL(String fileName) {
     return (fullURL =~ URL_PATTERN).findAll()[0][1]
 }
 
-// The Remote Admin fix. getLocalURL() above returns a path with no scheme or
-// host, which only resolves correctly when the browser is already on the hub's
-// own origin. A page loaded through remoteaccess.aws.hubitat.com has a
-// different origin, so that relative path 404s against the remote portal
-// instead of ever reaching the hub - this is JimB's scan-start failure.
-// These two give the browser both an absolute fallback and the origin to
-// decide with; see amPickURL() in the two templates that call them.
+
+
+
+
+
+
+
 String getLocalOrigin() {
     return (fullLocalApiServerUrl =~ ORIGIN_PATTERN).findAll()[0][1]
 }
@@ -6158,9 +6115,9 @@ String getCloudURL(String fileName) {
     return "${fullApiServerUrl}/${fileName}?access_token=${state.accessToken}"
 }
 
-// ===================================================================================================================
-// Map page
-// ===================================================================================================================
+
+
+
 
 mappings {
     path('/automation-map.html') { action: [ GET: 'renderMapMapping' ] }
@@ -6170,10 +6127,10 @@ mappings {
     path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
 }
 
-// The map page was read-only until this. It now accepts one write: the user's
-// own declarations about what their apps depend on. Nothing here commands a
-// device or alters another app, and the access token that already guards the
-// map guards this too.
+
+
+
+
 Map externalsGetMapping() {
     return render(status: 200, contentType: 'application/json', data: externalsJson())
 }
@@ -6192,8 +6149,8 @@ Map externalsSaveMapping() {
             String kind = "${r.kind}"
             String crit = "${r.crit}"
             Map entry = [type: type, name: name]
-            // A "nothing needed" marker carries no kind or criticality; storing
-            // them would imply a dependency that does not exist.
+            
+            
             if (name != EXTERNAL_NONE) {
                 entry.kind = EXTERNAL_KINDS.containsKey(kind) ? kind : 'internet'
                 entry.crit = EXTERNAL_CRITICALITY.containsKey(crit) ? crit : 'RUNTIME'
@@ -6207,11 +6164,11 @@ Map externalsSaveMapping() {
     }
 
     state.userRegistry = incoming
-    // Rebuilt from stored scan data rather than rescanning - the declarations
-    // changed, the hub did not - and rebuilt off the request entirely (see
-    // rebuildStoredGraph()) rather than inline. externalsJson() below does not
-    // read state.graph, so the response is unaffected by the rebuild being
-    // deferred.
+    
+    
+    
+    
+    
     runIn(1, 'rebuildStoredGraph')
     if (diagOn()) log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
     return render(status: 200, contentType: 'application/json', data: externalsJson())
@@ -6233,14 +6190,14 @@ String externalsJson() {
         criticality: EXTERNAL_CRITICALITY,
         noneMarker: EXTERNAL_NONE,
         appTypes: types,
-        // Identity and hierarchy alongside the flat type list, not instead of
-        // it: user declarations are keyed by type string and must keep
-        // working unchanged.
+        
+        
+        
         appTypeInfo: appTypeIdentities(),
         builtinInternal: internalOnly,
         reviewed: reviewed,
-        // Unclassified means nobody has said, by user OR registry. An app type
-        // the registry covers is not a gap the user needs to fill.
+        
+        
         unclassified: types.findAll {
             !classified.contains(it) && !reviewedTypes.contains(it) &&
                 !regTypes.contains(it) && !internalOnly.containsKey(it)
@@ -6252,10 +6209,10 @@ String externalsJson() {
     return groovy.json.JsonOutput.toJson(out)
 }
 
-// Device icons. Same exception as /externals above: read-only everywhere
-// else, one write accepted here, guarded by the same access token as the map
-// itself, and touching nothing but this app's own state - no device, no
-// other app.
+
+
+
+
 Map iconOverridesGetMapping() {
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
@@ -6270,17 +6227,17 @@ Map iconOverridesSaveMapping() {
         (overrides ?: [:]).each { k, v ->
             String devId = "${k}"
             String iconKey = "${v}"
-            // 'auto' means the user cleared their override, not that they chose
-            // an icon key called "auto" - dropping it here is what lets
-            // autoDetectIconKey take over again on the next graph build.
+            
+            
+            
             if (ICON_KEYS.contains(iconKey)) incoming[devId] = iconKey
         }
         Map notes = payload.notes as Map
         (notes ?: [:]).each { k, v ->
             String devId = "${k}"
-            // Capped rather than rejected outright - a pasted paragraph is
-            // still worth keeping the first bit of, and this is a tooltip
-            // annotation, not a document.
+            
+            
+            
             String note = "${v}".trim()
             if (note.length() > 200) note = note.substring(0, 200)
             if (note) incomingNotes[devId] = note
@@ -6293,9 +6250,9 @@ Map iconOverridesSaveMapping() {
 
     state.deviceIconOverrides = incoming
     state.deviceIconNotes = incomingNotes
-    // Same reasoning as externalsSaveMapping: rebuilt off the request via
-    // rebuildStoredGraph(), not inline - the overrides changed, the hub did
-    // not, and iconOverridesJson() below does not read state.graph.
+    
+    
+    
     runIn(1, 'rebuildStoredGraph')
     if (diagOn()) log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
@@ -6335,50 +6292,50 @@ String iconOverridesJson() {
     return groovy.json.JsonOutput.toJson(out)
 }
 
-// Starting a scan from a URL rather than only from the page button, so a stalled
-// scan can be restarted (and diagnosed) without sitting in the app UI.
-//
-// startScan() ran unguarded here. Hubitat's own OAuth mapping layer renders an
-// UNCAUGHT exception as an HTML error page - sometimes with a 200 status, which
-// is what let this slip past the client-side r.ok check added for the same bug:
-// the browser correctly parsed the response as "successful", then choked trying
-// to read HTML as JSON, and the resulting SyntaxError was indistinguishable from
-// the original report. Whatever throws inside startScan() on a given hub, this
-// mapping must always answer with real JSON so the client has something to show
-// instead of a raw parser error.
+
+
+
+
+
+
+
+
+
+
+
 Map scanMapping() {
-    // Unconditional, and FIRST. This is what makes the log test binary: if this
-    // line does not appear when the user presses Scan, Hubitat never dispatched
-    // the request into this app at all, and no handler here can be at fault.
-    // Logging only from the catch below could not prove that - a throw in the
-    // success path (scanStatusJson/render) would also leave the log silent while
-    // Hubitat returned its HTML error page.
+    
+    
+    
+    
+    
+    
     if (diagOn()) log.info "${app.label}: /scan endpoint reached"
     try {
-        // Guarded the same way scheduledScanHandler() already is - a repeat
-        // GET while a scan is running must not restart it. Restarting orphans
-        // the previous scan's own fetchRegistry/finishScan jobs, which is
-        // exactly the stale-watchdog failure startScan()'s own unschedule()
-        // calls now guard against; skipping here closes the other half of
-        // that same gap. Answering with the current status instead of an
-        // error keeps the page's poll loop working unchanged either way.
-        //
-        // state.scanRunning here is a fast-path check only, harmless if
-        // stale - startScan()'s own atomic lock is the real guard. A second
-        // execution can read this as false before the winner's own commit
-        // lands (state only commits durably at the end of a whole
-        // execution), call startScan(), and lose that lock instead - not a
-        // failure, just this execution finding out it isn't the owner, and
-        // worth its own distinct log line rather than folding into the
-        // fast-path message below.
-        //
-        // casLost is tracked separately from "did this request skip
-        // starting a scan" - caught in review: an ordinary request arriving
-        // while a scan is already fully running (the state.scanRunning==true
-        // branch) is NOT the same situation as losing the CAS race, and must
-        // not be forced into the same "alreadyStarting" response. Only the
-        // genuine race case needs the override; the ordinary case already
-        // has an accurate live state.scanRunning to report as-is.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         boolean casLost = false
         if (state.scanRunning) {
             if (diagOn()) log.info "${app.label}: /scan reached while a scan is already running, not restarting"
@@ -6389,71 +6346,71 @@ Map scanMapping() {
                 if (diagOn()) log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
             }
         }
-        // Inside the try, not after it. Left outside, an exception in
-        // scanStatusJson() or render() escaped this handler entirely and
-        // produced the same unexplained HTML page the handler exists to stop.
-        //
-        // forceRunning (the casLost case) exists because this execution's
-        // own state.scanRunning can still read false here even though a
-        // scan genuinely is starting - it is the LOSING execution's stale
-        // snapshot, not the winner's, and scanStatusJson() would otherwise
-        // report a truthfully-wrong "running:false".
+        
+        
+        
+        
+        
+        
+        
+        
+        
         return render(status: 200, contentType: 'application/json', data: scanStatusJson(casLost))
     } catch (Exception ex) {
         log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
-        // Serialised to a String, not passed as a Map. Every other render() in
-        // this file passes a String, and this was the only one that did not -
-        // if render() does not coerce a Map, this handler throws inside its own
-        // catch, Hubitat renders its HTML error page, and the caller sees the
-        // exact parser error this handler exists to prevent. Which would make
-        // the 1.8.7 fix invisible rather than wrong. Caught by external review.
+        
+        
+        
+        
+        
+        
         return render(status: 200, contentType: 'application/json',
             data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))
     }
 }
 
 Map scanStatusMapping() {
-    // Same self-heal main() already runs on every settings-page load. That path
-    // only fires while the settings page specifically is open, in the
-    // foreground, with its refreshInterval auto-refresh not throttled by a
-    // backgrounded tab - confirmed live to leave a scan looking stuck for
-    // several minutes when a user is instead watching the map page, or has
-    // switched away, even though the scan itself finished reading every app.
-    // This endpoint is already the documented "scan appears stuck" check
-    // (README Troubleshooting), so running the same recovery here means any
-    // status poll can un-stick a scan, not only a settings-page reload.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     clearAbandonedScan()
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
-// forceRunning exists for exactly one caller: scanMapping() when this
-// execution lost the startScan() single-flight lock to a concurrent one.
-// This execution's own state.scanRunning is that losing execution's stale
-// pre-commit snapshot, not the winner's - reporting it as false would be a
-// truthfully-wrong "nothing is happening" while a scan genuinely starts.
+
+
+
+
+
 String scanStatusJson(boolean forceRunning = false) {
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
-    // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
-    // the phase-starting execution itself - never by a callback or reaper,
-    // which must stay entirely state-free. During an active phase the true
-    // live counters are DEVICE_SCANS/APP_SCANS[scanId]'s own accumulator;
-    // read directly from there rather than report a frozen, misleadingly-
-    // early snapshot for the whole phase.
+    
+    
+    
+    
+    
+    
     ConcurrentHashMap liveScan = null
     if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
     else if (state.scanPhase == 'apps') liveScan = liveAppScan()
     int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
-    // liveScan null while state.scanRunning is still true, for this SAME
-    // phase, means finalizeXPhase() already removed the accumulator - which
-    // only happens after that phase's own completion invariant was already
-    // verified true. state.scanDone itself may not be durably visible yet
-    // to this concurrent execution (state commits only when finalizeXPhase's
-    // own execution returns), so falling back to it here can read the
-    // pre-finalization value the phase started with - reproduced live
-    // 2026-08-28 as a false "0 of 112 (0%)" flash right before "scan
-    // complete". The phase is provably done by the time liveScan is null
-    // for state's own current phase, so total is the correct fallback.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: state.scanTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
@@ -6480,20 +6437,20 @@ String scanStatusJson(boolean forceRunning = false) {
 }
 
 Map renderMapMapping() {
-    // The settings-page link is already hidden during a scan, but an existing
-    // tab, bookmark or copied URL can still request this endpoint directly.
-    // startScan deliberately retains the previous graph while the replacement
-    // is assembled, and its supporting state maps are being replaced phase by
-    // phase, so rendering during that window produces an internally mixed map.
-    // Refuse the endpoint until publication finishes rather than presenting
-    // stale and current data as one coherent result.
-    //
-    // Added 2026-08-29, found during Part A implementation, not in the original
-    // enumerated list: this endpoint can be reached directly (bookmark, existing
-    // tab, copied URL) without the settings page having just run recovery, so it
-    // has its own independent exposure to a resurrected-but-not-yet-recovered
-    // state.scanRunning - same hazard class as every other display path this fix
-    // covers, just not one anyone had listed yet.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     clearAbandonedScan()
     if (scanEffectivelyActive()) {
         return render(
@@ -6524,16 +6481,16 @@ Relationship types have changed since then, so the graph would render without ro
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
 
-// A device or app name is free text the hub owner controls, and it ends up
-// inside a JSON blob embedded straight into a <script> block. Pattern-matching
-// closing-tag spellings ('</script>', case-insensitively) is fragile: HTML
-// also tolerates whitespace before the '>' ('</script >'), which slips past a
-// pattern for the exact string, and there is no guarantee that is the last
-// variant a browser accepts. Escaping every '<' as \u003c sidesteps
-// enumerating tag spellings entirely - '<' never appears outside a JSON
-// string value in the first place, so this changes nothing about how the
-// JSON parses, and with no literal '<' left anywhere in the output there is
-// nothing left for the browser's tag scanner to match, spelled any way at all.
+
+
+
+
+
+
+
+
+
+
 String jsonForScriptEmbed(Object obj) {
     return JsonOutput.toJson(obj).replace('<', '\\u003c')
 }
@@ -6543,44 +6500,44 @@ String buildMapHtml() {
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
     String jsonStr = jsonForScriptEmbed(graph)
-    // For the AI friendly export feature - scan provenance the client-side GRAPH
-    // blob above does not carry on its own. Built the same safe way GRAPH
-    // is (JsonOutput, not manual string splicing) so an exception message
-    // in scanError can never break out of the embedding script tag.
-    // v2.0.14: schema 4 - hubVariables changes meaning from an inferred
-    // referenced subset to an authoritative inventory when available, plus
-    // Connector topology and completeness metadata (parent spec 11.1). Not a
-    // dual-export mode - schema 3 files remain readable by their own
-    // consumers, but this app now generates schema 4 only (a design review
-    // point 4).
-    // v2.1.4: schema 5 - Gate C. The unproven reference-derived Hub Variable
-    // fallback is retired: a structured reference this app cannot confirm
-    // against authoritative inventory no longer creates a weaker-guarantee
-    // node at all, only ever a fully confirmed hub-inventory one. That is a
-    // semantic correction to existing hubVariables[] topology, not just an
-    // additive field, so the version bump is required rather than optional -
-    // see Supporting Docs/local_hub_variable_identity_proposal.md and WIP/
-    // local_hub_variable_gate_c_integration_plan.md section 6.1. Also adds
-    // owner-scoped localVariables[]/variableReferences[]/
-    // nonResolvedVariableReferences[] to each ruleFlows[] entry.
-    // v2.1.6: schema 6 - Local Variables become first-class graph nodes, so
-    // edges[] can now target one. A write/read edge's target may therefore be
-    // either a Hub Variable (present in top-level hubVariables[]) or a Local
-    // Variable (present only nested, in ruleFlows[].localVariables[], keyed
-    // by identity) - flatten that nested collection once when resolving an
-    // edge target, rather than assuming hubVariables[] alone is complete.
-    // Deliberately not a duplicate top-level array (review 311, correction 7):
-    // ruleFlows[].localVariables[] is already the authoritative, owner-scoped
-    // source, used to seed the graph nodes themselves.
-    // v2.1.7: schema 7 - edges[].kind can now be hasComponent (device-owned
-    // component of a parent device), a device-to-device relationship with no
-    // app endpoint at all - the first edge kind this export has ever had
-    // that isn't app-centric.
-    // v2.1.7: schema 8 - devices[] gains a disabled boolean (item 18).
-    // apps[].status's collapsed 'paused-or-disabled' value is retired in
-    // favour of distinct 'disabled'/'paused' values - the hub already
-    // reports these as two separate signals, not one, so this export no
-    // longer merges them; disabled wins when both are true.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
         exportSchemaVersion: 8,
@@ -6589,9 +6546,9 @@ String buildMapHtml() {
         scanError: state.scanError,
         appsUnreadable: state.appsUnreadable ?: 0,
         devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
-        // Inventory completeness kept separate from relationship-decoder
-        // completeness (parent spec 6.1) - a consumer must not assume one
-        // implies the other.
+        
+        
+        
         hubVariableInventoryStatus: hubVarInventoryMeta.status ?: 'not-supported',
         hubVariableInventoryError: hubVarInventoryMeta.error,
         hubVariableInventoryCount: hubVarInventoryMeta.count ?: 0,
@@ -11553,9 +11510,9 @@ document.getElementById('exitMapBtn').addEventListener('click', function () {
 }
 
 String comparatorFrameHtml() {
-    // Hubitat inserts paragraph HTML after the host page has loaded. Browsers do
-    // not execute script elements added that way, so render the comparator as a
-    // standalone iframe document whose script is parsed and executed normally.
+    
+    
+    
     String document = """<!doctype html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
