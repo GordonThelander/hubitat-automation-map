@@ -15,55 +15,12 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  *
- * Visualizes how installed Hubitat apps and devices relate to each other, and
- * in what ROLE - which app owns a device, which devices trigger an app, which
- * constrain it, and which it acts on - as an interactive force-directed graph,
- * in the same visual style as Dan Danache's Zigbee Map app.
+ * GENERATED FILE - do not edit directly. Produced by the production-profile
+ * builder from the annotated Dev source at commit bda3efd3e347d650168d2ef7ad1de943758414e4; developer
+ * comments and Dev-only build markers are not present in this file.
  *
- * There is no official Hubitat API for any of this. The data comes from the
- * hub's own internal endpoints (the ones the hub's own web UI calls), fetched
- * via a self-request to 127.0.0.1 - an established community technique, not a
- * public API:
- *
- *   /device/fullJson/<id>         device metadata and relationship evidence
- *   /hub2/appsList                the complete installed-app tree in one call,
- *                                 including apps that touch no device
- *   /installedapp/statusJson/<id> the real relationship data per app:
- *                                 childDevices, eventSubscriptions, and every
- *                                 setting that resolves to devices
- *
- * Role assignment, derived by probing apps whose source is known (Presence
- * Manager, LIFX Light Manager) plus real rules, and cross-checked against both
- * that source and the rules' own UI. Checked in this order:
- *
- *   in childDevices          -> owns       (LIFX: 12 child lights, no subs)
- *   setting named tDev*      -> trigger    (RM trigger devices)
- *   setting named rDev*      -> constraint (RM conditions + required expression)
- *   device is subscribed     -> trigger    (general: an app subscribes to what
- *                                           it listens to. Presence Manager's 5
- *                                           subs matched subscribeEvidence-
- *                                           Devices() exactly)
- *   capability has no commands -> monitor  (watched, not driven - Critical
- *                                           Device Monitor inspects contact and
- *                                           motion pickers it never commands)
- *   any other device setting -> action     (onOffSwitch.*, volume.*, note.*,
- *                                           siren.*, chime.*, speakDevice.*)
- *
- * Only the tDev/rDev rules are Rule Machine's private naming. childDevices,
- * eventSubscriptions and capability types are platform-level, so the graph
- * works for apps this was never written against - it handled all 17 app types
- * on the development hub, 12 of them integrations with no specific support.
- *
- * Rule FLOW decoding is different: it reads Rule Machine's internal layout and
- * is pinned to SUPPORTED_RULE_ENGINE. Rules on any other engine still appear in
- * the graph; they are counted and reported rather than silently empty.
- *
- * Known limitations:
- *  - Event subscriptions are a snapshot: Rule Machine drops trigger
- *    subscriptions while a Required Expression is false.
- *  - If Hub Login Security is enabled the internal endpoints may not return
- *    JSON at all; the scan probes for this and reports it rather than showing
- *    an empty map.
+ * Canonical annotated source:
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/bda3efd3e347d650168d2ef7ad1de943758414e4/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -73,29 +30,78 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
 @Field static final String APP_NAME = 'Automation Map'
-// Every build of this app excludes all of its own variants from the map,
-// whatever each one calls itself. A dev copy installed beside the release would
-// otherwise show up as an app referencing every device on the hub, and the
-// release would do the same from the dev copy's point of view.
-@Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.1.1'
-// Bumped ONLY when the shape of the scanned graph changes, so that a rendering
-// or scanning fix does not needlessly invalidate a good scan and force the user
-// to re-crawl every device and app.
-// Bumped for the stops->cancelTimedActions / pauses->pauseResume kind rename
-// and the addition of node.missing - a cached graph from schema 2 would
-// otherwise render with edge kinds that no longer match any colour/dash
-// lookup, degrading silently to the '#999' fallback instead of forcing the
-// rescan that already exists for exactly this situation.
-// Bumped 5->6 for public release: schema 5 predates Hub Variable nodes,
-// Connector edges, structured writeSource and current External Systems
-// identity data, none of which existed when a production v2.0.4 instance's
-// graph was last built. Forces graphIsStale() to catch that upgrade instead
-// of silently exposing an old-shaped graph to new rendering code.
-@Field static final String GRAPH_SCHEMA = '6'
 
-// Gates the watermark's Dec 20-25 swap to the Christmas tree image
-// (see hubWatermark below) - the only thing showSanta() controls now.
+
+
+
+@Field static final String APP_FAMILY = 'Automation Map'
+@Field static final String APP_VERSION = '2.2.0'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String BUILD_CHANNEL = 'production'
+@Field static final int DIAGNOSTIC_LEVEL = 0
+
+
+
+
+
+
+
+
+
+
+boolean isDevBuild() {
+    return BUILD_CHANNEL == 'dev'
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String GRAPH_SCHEMA = '10'
+
+
+
 boolean showSanta() {
     Calendar cal = Calendar.getInstance(location.timeZone)
     cal.setTime(new Date())
@@ -103,21 +109,21 @@ boolean showSanta() {
     int day = cal.get(Calendar.DAY_OF_MONTH)
     return month == 12 && day >= 20 && day <= 25
 }
-// Rule flow decoding reads Rule Machine's private internals, so it is pinned to
-// the version it was verified against. Rules on any other engine still appear
-// in the graph with their device relationships; they are counted and reported
-// rather than silently producing an empty flow.
+
+
+
+
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
-// Named once here, not repeated as a literal in compatibilitySummary(),
-// so a future engine addition needs one edit rather than finding every
-// place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
+
+
+
 @Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0 (in Beta)'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
-// Origin only (scheme+host), for the browser to compare against its own
-// window.location.hostname at fetch time. Kept as its own pattern rather than
-// reworking URL_PATTERN's grouping - that one is proven correct in production
-// and touching its group indices to add a second capture risks breaking the
-// local-path case for every user to fix a case that only affects some.
+
+
+
+
+
 @Field static final Pattern ORIGIN_PATTERN = ~/^(https?:\/\/[^\/]+)/
 
 definition(
@@ -138,139 +144,306 @@ preferences {
 }
 
 void installed() {
-    log.info "${app.label} installed"
-    // Pressing Done is the first moment the instance exists and work can be
-    // scheduled for it, so the first scan starts here rather than asking the
-    // user to press Done and then come back in to start one - which reads as
-    // though the install did not take.
-    log.info "${app.label}: starting first scan"
+    if (diagOn()) log.info "${app.label} installed"
+    
+    
+    
+    
+    if (diagOn()) log.info "${app.label}: starting first scan"
     startScan()
     scheduleAutoScan()
 }
 
 void updated() {
-    log.info "${app.label} updated"
-    // Rescheduled on every updated(), which is also how this survives a hub
-    // reboot - Hubitat re-runs updated() for every installed app on boot, so
-    // the schedule() call here re-establishes the cron rather than relying
-    // on it having persisted through the restart. Not directly confirmed on
-    // this hub; standard platform behaviour, worth a real reboot test if
-    // this schedule is ever reported as silently not firing.
+    if (diagOn()) log.info "${app.label} updated"
+    
+    
+    
+    migrateRemoveTelemetryDevice()
+    
+    
     scheduleAutoScan()
+    scheduleDiagnosticLoggingExpiry()
 }
 
-// On by default (00:30 production, 01:00 Dev when the time is left blank) -
-// the app-wide scan-first-then-explore experience this app is built around
-// is better served by a map that keeps itself current than by one that goes
-// stale until someone remembers to press Scan. The two defaults differ only
-// so a Dev install running alongside production on the same hub doesn't
-// compete with it for the same loopback endpoints at the same second - an
-// explicitly chosen time on either instance is never overridden. The toggle
-// below is still there to opt out entirely. Rescheduled (not just scheduled
-// once) every time this runs, so turning the toggle off actually cancels a
-// previously-running schedule rather than leaving it firing.
-void scheduleAutoScan() {
-    unschedule('scheduledScanHandler')
-    if (!settings.autoScanEnabled) return
-    if (settings.autoScanTime) {
-        // schedule() accepts the exact string a Hubitat "time" input stores
-        // and reschedules it daily - standard, documented platform pattern,
-        // not yet confirmed live against this specific input on this hub.
-        schedule(settings.autoScanTime as String, 'scheduledScanHandler')
-    } else if (APP_NAME.contains('(Dev)')) {
-        // A Dev install sitting on its own explicit "01:00 (default)" text
-        // (see the settings page) - kept off production's 00:30 so the two
-        // don't compete for the same hub CPU/loopback endpoints at the same
-        // second when both are installed side by side, as they are on
-        // Gordon's own hub. Only the blank-time fallback differs; an
-        // explicitly chosen time on either instance is untouched above.
-        schedule('0 0 1 * * ?', 'scheduledScanHandler')
-    } else {
-        // Cron default: 00:30:00 every day (sec min hour day month weekday).
-        schedule('0 30 0 * * ?', 'scheduledScanHandler')
-    }
-    String defaultLabel = APP_NAME.contains('(Dev)') ? '01:00 (default)' : '00:30 (default)'
-    log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+boolean diagOn() {
+    if (settings.diagnosticLoggingEnabled != true) return false
+    Long expiresAt = (state.diagnosticLoggingExpiresAt ?: 0) as Long
+    return expiresAt > 0 && now() < expiresAt
 }
 
-// Guarded against overlapping a scan already in progress - a manual press
-// via the Scan button, or a previous scheduled run that is still going on a
-// large hub - rather than racing it. Skipping silently here is correct: the
-// next scheduled run, or a manual press, covers it, and clearAbandonedScan()
-// already handles a scan that genuinely got stuck.
-void scheduledScanHandler() {
-    if (state.scanRunning) {
-        log.info "${app.label}: scheduled scan skipped, one is already running"
+
+
+
+
+
+void scheduleDiagnosticLoggingExpiry() {
+    if (settings.diagnosticLoggingEnabled != true) {
+        unschedule('disableDiagnosticLogging')
+        state.remove('diagnosticLoggingExpiresAt')
         return
     }
-    log.info "${app.label}: starting scheduled overnight scan"
-    // state.scanRunning above is a fast-path check only, harmless if stale -
-    // startScan()'s own atomic lock is what actually decides this correctly.
+    if (!state.diagnosticLoggingExpiresAt) {
+        state.diagnosticLoggingExpiresAt = now() + 3600000L
+        unschedule('disableDiagnosticLogging')
+        runIn(3600, 'disableDiagnosticLogging')
+    }
+}
+
+
+
+
+
+
+
+
+
+
+void disableDiagnosticLogging() {
+    app.updateSetting('diagnosticLoggingEnabled', [type: 'bool', value: false])
+    state.remove('diagnosticLoggingExpiresAt')
+    log.info "${app.label}: diagnostic logging auto-disabled after one hour"
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void migrateRemoveTelemetryDevice() {
+    if (state.telemetryMigrationDone) return
+    String dni = "${app.id}-telemetry"
+    if (!getChildDevice(dni)) {
+        state.telemetryMigrationDone = true
+        state.remove('telemetryRemovalFailed')
+        return
+    }
+    try {
+        deleteChildDevice(dni)
+        state.telemetryMigrationDone = true
+        state.remove('telemetryRemovalFailed')
+        
+        
+        
+        if (diagOn()) log.info "${app.label}: removed the former telemetry device - telemetry is discontinued as of this version."
+    } catch (Exception ex) {
+        
+        
+        
+        
+        
+        
+        
+        state.telemetryRemovalFailed = true
+        log.warn "${app.label}: could not remove the former telemetry device automatically (${ex.message}) - it may still be referenced elsewhere (a dashboard, another app). Clear the reference and remove it manually from the Devices page; this app will retry the next time you save these settings."
+    }
+}
+
+
+
+
+
+
+
+
+
+String defaultAutoScanTime() {
+    return isDevBuild() ? '01:00' : '00:30'
+}
+
+
+
+
+
+String defaultAutoScanCron() {
+    List parts = defaultAutoScanTime().tokenize(':')
+    return "0 ${parts[1]} ${parts[0]} * * ?"
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+boolean autoScanEffectivelyEnabled() {
+    return settings.autoScanEnabled != false
+}
+
+
+
+
+
+
+
+
+void scheduleAutoScan() {
+    unschedule('scheduledScanHandler')
+    if (!autoScanEffectivelyEnabled()) return
+    if (settings.autoScanTime) {
+        
+        
+        
+        schedule(settings.autoScanTime as String, 'scheduledScanHandler')
+    } else {
+        schedule(defaultAutoScanCron(), 'scheduledScanHandler')
+    }
+    String defaultLabel = "${defaultAutoScanTime()} (default)"
+    if (diagOn()) log.info "${app.label}: automatic scan scheduled for ${settings.autoScanTime ?: defaultLabel}"
+}
+
+
+
+
+
+
+void scheduledScanHandler() {
+    if (state.scanRunning) {
+        if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
+        return
+    }
+    if (diagOn()) log.info "${app.label}: starting scheduled overnight scan"
+    
+    
     Map result = startScan()
     if (!result.acquired) {
-        log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
+        if (diagOn()) log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
     }
 }
 
 Map main() {
-    // Until Done is pressed the instance does not exist yet, and Hubitat cannot
-    // schedule work for it: runIn() silently does nothing, so a scan started
-    // from this page would set itself running and then never execute a single
-    // batch. So the scan is not offered at all until installation completes.
+    
+    
+    
+    
     boolean ready = app.installationState == 'COMPLETE'
     String oauthError = null
     if (ready && !state.accessToken) {
         try {
             createAccessToken()
         } catch (Exception e) {
-            // OAuth is off for this app, so createAccessToken() throws. Without this
-            // catch the whole page threw here - the first screen a hand-installer sees
-            // if they skip the OAuth step, with no indication what went wrong.
+            
+            
+            
             oauthError = 'Automation Map needs OAuth enabled to create the map link. In the ' +
                 "hub's Apps Code editor, open Automation Map, click OAuth -> Enable OAuth " +
                 'in App -> Update, then reopen this page.'
         }
     }
     clearAbandonedScan()
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    scheduleDiagnosticLoggingExpiry()
+    
+    
+    
+    
+    if (settings.diagnosticLoggingEnabled == true && !diagOn()) {
+        disableDiagnosticLogging()
+    }
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
+    
+    
+    
+    boolean scanActive = scanEffectivelyActive()
 
-    // A full scan takes a couple of minutes. Without this the page looked frozen
-    // - the progress line only moved if you closed and reopened it, which reads
-    // as a hang rather than as work in progress.
-    // Live progress now comes from amProgressPoll() below (a lightweight
-    // fetch of /scan-status updating one span in place), not from Hubitat's
-    // own full-page refreshInterval - a scan now typically finishes in
-    // 15-25s, and a 4-second full-page reload against that window produced
-    // 2-3 jarring whole-page flashes rather than a smooth progress display.
-    // A long fallback interval is kept, not removed entirely, in case the
-    // JS poll itself ever fails to start or silently stalls - the same
-    // belt-and-suspenders reasoning as the async pipeline's own watchdogs.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && state.scanRunning) ? 60 : 0) {
-        // Scan status, the map link and the Scan button all sit ABOVE the device
-        // picker. The picker renders as a list of every device on the hub, so
-        // anything below it is off the bottom of the screen - which is where the
-        // progress line and the link to the map used to be on every visit after
-        // the first scan.
+                       refreshInterval: (ready && scanActive) ? 60 : 0) {
+        
+        
+        
+        
+        
         if (ready) {
             section {
                 if (oauthError) {
                     paragraph "<b style='color:#c0392b'>${oauthError}</b>"
                 }
-                // The scan is started by fetching the app's own /scan endpoint
-                // rather than from a Hubitat button. runIn() called out of
-                // appButtonHandler does not reliably schedule anything: on a
-                // clean install the queue was populated, scanRunning was true,
-                // no job was scheduled, and the async pipeline never advanced
-                // even once - its heartbeat was never written. Driving it through the endpoint
-                // runs the scan in an ordinary app execution, which works.
-                paragraph scanButtonHtml()
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                if (state.telemetryRemovalFailed) {
+                    paragraph "<b style='color:#c0392b'>Could not remove the former telemetry device automatically</b>. It may still be referenced elsewhere - a dashboard, another app. Clear the reference, then remove <b>Automation Map Telemetry</b> manually from the Devices page, or save these settings again once the reference is cleared to retry automatically."
+                }
+                
+                
+                
+                
+                
+                
+                
+                paragraph scanButtonHtml(scanActive)
                 if (state.scanTotal) {
-                    // state.scanDone is only ever written once per phase now
-                    // (by the phase-starting execution and by its finalize) -
-                    // callbacks/reapers stay entirely state-free, so this
-                    // would read frozen at 0 for the whole active phase
-                    // without reading the live scan accumulator instead. Same
-                    // fix as scanStatusJson().
+                    
+                    
+                    
+                    
+                    
+                    
                     ConcurrentHashMap liveScan = null
                     if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
                     else if (state.scanPhase == 'apps') liveScan = liveAppScan()
@@ -278,37 +451,42 @@ Map main() {
                     Integer total = (state.scanTotal ?: 1) as Integer
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
                     boolean isDevicePhase = state.scanPhase != 'apps'
-                    // total/done during the device phase count driver-type
-                    // representatives (34 on this hub), not individual devices
-                    // (194) - dispatchDeviceOne fetches capabilities once per
-                    // representative and applies the result to its whole group,
-                    // so there is no finer-grained "device 47 of 194" progress
-                    // to report even in principle. Labelled and shown alongside
-                    // the real device count instead of mislabelling the
-                    // representative count as a device count.
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
                     String phase = isDevicePhase ? 'Reading device types' : 'Reading apps'
                     Integer realDeviceTotal = (state.deviceScanTotal ?: 0) as Integer
                     String deviceContext = (isDevicePhase && realDeviceTotal > 0) ? " (${realDeviceTotal} devices)" : ''
                     String progress = "${phase}: ${done} of ${total}${deviceContext} (${pct}%)"
-                    if (state.scanRunning) {
+                    if (scanActive) {
                         progress += ' - updating live, no need to reload.'
                     } else {
-                        // scanHeartbeat is stamped at the start of finishScan(), so it lands a
-                        // few seconds ahead of this page reporting the scan as finished - close
-                        // enough for a "when did this last run" display. Same value already
-                        // backs the AI export's lastScanCompletedAt. Counts moved out of this
-                        // line entirely - see the "Map contains" paragraph below, which covers
-                        // apps/devices/nodes/relationships together in one place instead of
-                        // splitting apps in here and nodes/edges down there.
+                        
+                        
+                        
+                        
+                        
+                        
+                        
                         String when = state.scanHeartbeat ?
                             new Date(state.scanHeartbeat as Long).format('yyyy-MM-dd HH:mm', location.timeZone) : 'unknown'
-                        progress = "Last scan : <span style='color:#2e7d32'>${when}</span>"
+                        
+                        
+                        
+                        String durationSuffix = state.lastScanDurationSeconds != null ?
+                            " (${state.lastScanDurationSeconds}s)" : ''
+                        progress = "Last scan : <span style='color:#2e7d32'>${when}</span>${durationSuffix}"
                     }
-                    // Wrapped in an id'd span, not a bare paragraph - amProgressPoll()
-                    // below replaces this element's text in place once JS takes over,
-                    // rather than needing a full page reload to show new numbers. This
-                    // server-rendered text is still the correct first paint and the
-                    // no-JS fallback, not dead markup.
+                    
+                    
+                    
+                    
+                    
                     paragraph "<span id='amProgress'>${progress}</span>"
                 }
                 if (state.scanError) {
@@ -316,19 +494,19 @@ Map main() {
                 }
                 if (state.graph) {
                     Map g = state.graph as Map
-                    if (state.scanRunning) {
-                        // Nothing here while a scan is running. startScan clears
-                        // graphVersion but keeps the old graph, so graphIsStale()
-                        // is true for the whole scan - which used to show "run the
-                        // scan again to rebuild it" to someone watching that very
-                        // scan run. The else branch is no better mid-scan: it
-                        // reports the previous graph's counts and offers a map
-                        // link that refuses to render. The progress line above
-                        // already says what is happening.
+                    if (scanActive) {
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
                     } else if (graphIsStale()) {
-                        // A graph built by an older version can carry relationship
-                        // kinds this version no longer renders, which silently draws
-                        // as uncoloured edges rather than failing visibly.
+                        
+                        
+                        
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
                         paragraph "Map contains: ${(state.appInfo ?: [:]).size()} apps, ${(state.deviceLabels ?: [:]).size()} devices, " +
@@ -341,6 +519,15 @@ Map main() {
                             style: 'embedded', state: 'complete', required: false,
                        )
                     }
+                } else if (!scanActive && atomicState.graphVersion != null) {
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    paragraph "<span style='color:#2e7d32'>Scan complete - finishing up, reload in a moment to see the map.</span>"
                 }
                 href(
                     name: 'baselineComparisonLink', title: "<span style='color:#1976d2'>Baseline Comparison</span>",
@@ -353,10 +540,10 @@ Map main() {
                     url: 'https://gordonthelander.github.io/HPM_Manifest_Crawl/',
                     style: 'embedded', required: false,
                )
-                // Hubitat's external href style calls openWindow(), which
-                // creates a sized popup rather than the full browser tab the
-                // user requested. Keep the normal full-width href row, then
-                // make its real anchor an ordinary target=_blank link.
+                
+                
+                
+                
                 paragraph '''<script type="text/javascript">
 (function () {
   var link = document.querySelector('a[href="https://gordonthelander.github.io/HPM_Manifest_Crawl/"]');
@@ -369,14 +556,39 @@ Map main() {
                 paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for Community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
+                
+                
+                
+                paragraph "Runs automatically once a day, on by default at ${defaultAutoScanTime()} - turn off below if you would rather press Scan yourself."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    description: "On by default at ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}. Turn off if you would rather press Scan yourself.",
                     defaultValue: true, submitOnChange: true
-                if (settings.autoScanEnabled) {
+                if (autoScanEffectivelyEnabled()) {
+                    
+                    
+                    
+                    
+                    
+                    paragraph "Shown pre-filled at the default (${defaultAutoScanTime()}) below - leave it as-is to keep the default, or set your own time. Press Done to save whichever is showing."
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
-                        description: "Leave blank for ${APP_NAME.contains('(Dev)') ? '01:00' : '00:30'}.", required: false
+                        defaultValue: defaultAutoScanTime(), required: false
+                }
+            }
+            section {
+                
+                
+                
+                
+                
+                
+                
+                paragraph "Writes extra detail to your hub's Logs page for troubleshooting - nothing here is transmitted anywhere. Off by default, and turns itself back off automatically after one hour so it can't be left running by accident."
+                input name: 'diagnosticLoggingEnabled', type: 'bool',
+                    title: 'Enable diagnostic logging',
+                    defaultValue: false, submitOnChange: true
+                if (settings.diagnosticLoggingEnabled) {
+                    paragraph "Diagnostic logging is currently <b>on</b> and will turn itself off within an hour. Turn it off here sooner if you are done before then."
                 }
             }
         }
@@ -399,11 +611,11 @@ Map baselineComparisonPage() {
                 description: 'Return to the Automation Map main page',
                 page: 'main', style: 'button', required: false,
            )
-            // A Hubitat dynamic subpage adds its own bottom-right Done/Cancel
-            // action even though this page has nothing to save. On the tall
-            // comparator page that control is both misleading and far away
-            // from the requested navigation. The explicit Back control above
-            // is the only page-exit action this page needs.
+            
+            
+            
+            
+            
             paragraph '''<style type="text/css">
 button.cancel, button.done, button[name="_action_done"] { display:none !important; }
 button[name^="_action_href_baselineComparisonBack|"] {
@@ -420,28 +632,108 @@ button[name^="_action_href_baselineComparisonBack|"] span { color:#fff !importan
     }
 }
 
-// Kept so an existing installation with the old button still works, but the
-// page no longer renders that button - see scanButtonHtml().
+
+
 void appButtonHandler(String btn) {
     if (btn == 'runScan') startScan()
 }
 
-// True when the app is ready to work but has never produced a map. Opening it in
-// that state starts a scan on its own, so an install that somehow got past
-// installed() without scanning still recovers rather than sitting idle.
-boolean shouldAutoScan() {
-    return app.installationState == 'COMPLETE' &&
-           !state.graph &&
-           !state.scanRunning &&
-           !state.scanError
+
+
+
+
+
+void migrateGraphVersionIfNeeded() {
+    if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
+        atomicState.graphVersion = state.graphVersion
+    }
 }
 
-String scanButtonHtml() {
-    String label = state.scanRunning ? 'Scanning...' : (shouldAutoScan() ? 'Starting first scan...' : 'Scan relationships now')
-    String disabled = state.scanRunning ? ' disabled' : ''
-    // Hubitat's UI is PrimeVue, so a plain button or Bootstrap classes render
-    // unstyled. These are the classes and data attributes its own buttons carry.
-    String cls = state.scanRunning ? 'p-button p-component p-disabled mr-2 mb-2' : 'p-button p-component mr-2 mb-2'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void selfHealGraphIfNeeded() {
+    if (state.graph != null) return
+    if (atomicState.graphVersion == null) return
+    if (scanEffectivelyActive()) return
+    if (!(state.appInfo)) return
+    log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
+    state.hubVariableInventory = fetchHubVariableInventory()
+    state.graph = buildGraph()
+    atomicState.graphVersion = GRAPH_SCHEMA
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+boolean shouldAutoScan() {
+    
+    
+    
+    
+    
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
+    boolean noGraph = (atomicState.graphVersion == null)
+    boolean noLiveLock = SCAN_LOCKS.get("${app.id}") == null
+    boolean noDurableRunning = !state.scanRunning
+    boolean noScanError = !state.scanError
+    boolean result = app.installationState == 'COMPLETE' && noGraph && noLiveLock && noDurableRunning && noScanError
+    return result
+}
+
+
+
+
+
+
+
+
+
+
+
+
+boolean scanEffectivelyActive() {
+    boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
+    boolean durable = state.scanRunning == true
+    boolean effective = liveLock || durable
+    return effective
+}
+
+
+
+
+
+String scanButtonHtml(boolean scanActive) {
+    String label = scanActive ? 'Scanning...' : (shouldAutoScan() ? 'Starting first scan...' : 'Scan relationships now')
+    String disabled = scanActive ? ' disabled' : ''
+    
+    
+    String cls = scanActive ? 'p-button p-component p-disabled mr-2 mb-2' : 'p-button p-component mr-2 mb-2'
     return """\
 <button type="button" id="amScanBtn" class="${cls}"${disabled} onclick="amStartScan()" aria-label="${label}" data-pc-name="button" data-pc-section="root" data-pd-ripple="true">${label}</button>
 <span id="amScanMsg" style="margin-left:10px"></span>
@@ -623,7 +915,7 @@ function amProgressPoll() {
     });
 }
 ${autoScanScript()}
-if (${state.scanRunning ? 'true' : 'false'}) {
+if (${scanActive ? 'true' : 'false'}) {
   // A scan was already running when this page was rendered (reopened mid-
   // scan, or the 60s fallback refreshInterval fired) - resume live polling
   // immediately rather than wait for the user to notice and reload again.
@@ -663,10 +955,10 @@ if (${state.scanRunning ? 'true' : 'false'}) {
 </script>"""
 }
 
-// Fired from the browser rather than from the page render, for the same reason
-// the button is: a scan started inside Hubitat's UI transaction never gets
-// scheduled. Guarded by shouldAutoScan(), which stops being true the moment the
-// scan sets scanRunning, so a page refresh cannot start a second one.
+
+
+
+
 String autoScanScript() {
     if (!shouldAutoScan()) return ''
     return '''
@@ -676,82 +968,106 @@ if (document.readyState !== 'loading') { amStartScan(); }
 }
 
 boolean graphIsStale() {
-    return state.graph && state.graphVersion != GRAPH_SCHEMA
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
+    return state.graph && atomicState.graphVersion != GRAPH_SCHEMA
 }
 
-// A scan that stops without finishing leaves scanRunning set, which disables the
-// button and shows a progress line that never moves - the app looks permanently
-// mid-scan with no way back. That happens if the hub restarts or the app is
-// updated mid-scan, and it happened to anyone who pressed Scan before the app
-// finished installing. state.scanHeartbeat is stamped once, when a phase
-// starts, not refreshed by callbacks/reapers any more - those stay entirely
-// state-free. Whether a scan is genuinely still active is answered below by
-// checking DEVICE_SCANS/APP_SCANS for a live entry, not by heartbeat
-// recency; the 90s check is only a cheap first filter before that lookup.
+
+
+
+
+
+
+
+
+
 void clearAbandonedScan() {
     if (!state.scanRunning) return
     Long beat = (state.scanHeartbeat ?: 0) as Long
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    String activeGen = (state.activeGenerationToken ?: null) as String
+    String currentLock = SCAN_LOCKS.get("${app.id}") as String
+    boolean tombstoned = activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))
+    if (tombstoned) {
+        log.warn "${app.label}: clearing resurrected scan flags for an already-completed generation"
+        state.scanRunning = false
+        return
+    }
+
     if (beat > 0 && (now() - beat) < 90000) return
 
-    // The batch-reading work itself can finish - queue empty, every app
-    // already read into appInfo - while the scheduled finalization
-    // (fetchRegistry -> finishScan, or its 45-second watchdog) never runs at
-    // all. runIn() is already known to be unreliable on this platform - see
-    // the Scan button's own comment on why it does not use
-    // appButtonHandler - and this is the same failure class landing on a
-    // different scheduled call. Confirmed live: a 98-app scan reached
-    // scanDone == scanTotal with an empty scanQueue, sat past the 90-second
-    // heartbeat timeout, and state.graph was still empty - nothing left to
-    // read, nothing running, just never finished.
-    //
-    // finishScan() itself makes no HTTP calls - it is buildGraph() over data
-    // this app already collected, plus bookkeeping - so calling it directly
-    // here, synchronously, cannot fail the same way a scheduled job can.
-    // Previously this branch discarded a fully-read scan and told the user
-    // to start over from zero; now it finishes the one step that never got
-    // the chance to run.
-    //
-    // Callbacks and reapers never write state.scanHeartbeat any more (see
-    // deviceFetchCb/appFetchCb - it moved to a scan-local timestamp field,
-    // scanStatusJson reads it live). So the staleness check above no longer
-    // means "no progress in 90s" during an active async phase - it just
-    // means "90s since this scan STARTED", which fires on every long-running
-    // scan whether it is healthy or not. Deferring to whichever phase's own
-    // watchdog/reaper is live is therefore not a belt-and-suspenders
-    // addition any more, it is the only thing standing between a perfectly
-    // healthy in-progress scan and this function marking it abandoned.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     boolean asyncDeviceScanActive = state.scanPhase == 'devices' && liveDeviceScan() != null
     boolean asyncAppScanActive = state.scanPhase == 'apps' && liveAppScan() != null
-    if (asyncDeviceScanActive || asyncAppScanActive) return
+    if (asyncDeviceScanActive || asyncAppScanActive) {
+        return
+    }
 
-    // A "finishing:<token>:<since>" value means finishGeneration() is
-    // already mid-publish for the current generation (see its own comment) -
-    // actively wrapping up, not stuck. Recovering it here on sight would
-    // race the in-flight publish, and finishGeneration()'s own finally is
-    // about to release it as its very next real step regardless - UNLESS
-    // the execution holding it was killed outright (platform timeout, hub
-    // reboot) rather than merely throwing, which no in-process finally can
-    // cover. FINISHING_RECOVERY_SEC bounds how long this function trusts
-    // "actively finishing" before treating it as stranded instead.
-    String currentLock = SCAN_LOCKS.get("${app.id}") as String
+    
+    
+    
+    
+    
+    
+    
+    
+    
     if (currentLock != null && currentLock.startsWith('finishing:')) {
         List parts = currentLock.split(':') as List
         Long finishingSince = parts.size() >= 3 ? (parts[2] as Long) : 0L
         if ((now() - finishingSince) < (FINISHING_RECOVERY_SEC * 1000)) return
         log.warn "${app.label}: clearing a stranded finishing marker (${((now() - finishingSince) / 1000).intValue()}s old)"
-        // Not a direct remove-then-mutate - caught in review as the exact
-        // race the unified terminal protocol exists to remove, reintroduced
-        // in this one recovery-only path: after a plain conditional remove,
-        // a brand new scan C could acquire before the writes below ran, and
-        // recovery would then stomp C's just-started state. Atomically
-        // replaces the exact aged value with a distinct "recovering:"
-        // sentinel first - still occupying the slot, still blocking a new
-        // acquisition - writes the recovery state while that sentinel
-        // holds, then removes it last, in a finally. Not routed through
-        // finishGeneration()/markScanFinished(): this is recovering an
-        // already-stranded value, not a normal generation's own token
-        // handoff, and must not itself claim a fresh "finishing:" transition
-        // (which would nest and break this same parsing on a future pass).
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         String recoveryValue = "recovering:${currentLock}:${now()}"
         if (SCAN_LOCKS.replace("${app.id}", currentLock, recoveryValue)) {
             try {
@@ -764,75 +1080,91 @@ void clearAbandonedScan() {
         return
     }
 
-    // Once the async app accumulator is gone, durable appResultsReady is the
-    // only proof that finalizeAppPhase committed the complete appInfo map.
-    // state.scanQueue is always empty in this async implementation, including
-    // before the first app result is published, so it must never be used as a
-    // completion invariant. Reproduced live in v2.0.8: updating the app code
-    // erased APP_SCANS/SCAN_LOCKS, recovery saw an empty queue, and published
-    // the still-empty state.appInfo as a successful zero-app graph.
+    
+    
+    
+    
+    
+    
+    
     if (state.scanPhase == 'apps') {
-        // Live SCAN_LOCKS snapshot, not a remembered token - same reasoning
-        // as this function's own genuinely-abandoned branch below: this is a
-        // recovery path, so it trusts the freshest ground truth for "what is
-        // the currently active generation" rather than a value written
-        // earlier that could have gone stale by the time recovery runs.
+        
+        
+        
+        
+        
         String currentToken = SCAN_LOCKS.get("${app.id}") as String
         if (currentToken == null) {
-            // Reproduced live 2026-08-24: an app code reload resets the
-            // static SCAN_LOCKS map to empty, but durable state.scanRunning
-            // survives the reload untouched, so this branch kept re-entering
-            // with a null token. finishScan()'s own claim always correctly
-            // rejected that null and discarded the graph it had just built -
-            // but with no token left to hand it, nothing ever recovered, and
-            // every status poll repeated the entire wasted rebuild forever.
-            // No original generation to reclaim ownership FROM here, so
-            // putIfAbsent claims the empty slot fresh instead of replace()
-            // transitioning an existing value - only one concurrent recovery
-            // attempt can win it.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String recoveryToken = "recovered-${now()}-${(int)(Math.random() * 999999)}"
             if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
             currentToken = recoveryToken
         }
         if (state.appResultsReady == true) {
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
-            finishScan([lockToken: currentToken])
+            finishScan([lockToken: currentToken, logicalGen: activeGen])
         } else {
-            // The async results lived only in the lost static accumulator and
-            // cannot be reconstructed safely. Terminate truthfully and require
-            // a new scan rather than publish a valid-looking empty/partial map.
+            
+            
+            
             log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
             markScanFinished(currentToken,
-                'The scan working data was lost before it could be published. Press Scan to run it again.')
+                'The scan working data was lost before it could be published. Press Scan to run it again.',
+                activeGen)
         }
         return
     }
 
-    // Snapshot-then-conditional-remove, not a remembered token - this path
-    // exists specifically for "something is stuck, recover it", so it uses
-    // the freshest possible ground truth (whatever SCAN_LOCKS currently
-    // holds) rather than trusting a value written earlier that the very
-    // malfunction being recovered from might have left stale.
+    
+    
+    
+    
+    
     String abandonedToken = SCAN_LOCKS.get("${app.id}") as String
     if (abandonedToken == null) {
-        // Still claim the empty slot before touching durable state. A plain
-        // lock-free clear has a TOCTOU gap: a new scan can acquire after the
-        // null read but before these writes, and this stale recovery execution
-        // would then clear the new scan. putIfAbsent either gives recovery
-        // exclusive ownership or proves another execution got there first.
+        
+        
+        
+        
+        
         String recoveryToken = "recovered-abandon-${now()}-${(int)(Math.random() * 999999)}"
         if (SCAN_LOCKS.putIfAbsent("${app.id}", recoveryToken) != null) return
         abandonedToken = recoveryToken
     }
+    
+    
+    
+    
     markScanFinished(abandonedToken,
-        'The previous scan stopped before it finished. Press Scan to run it again.')
+        'The previous scan stopped before it finished. Press Scan to run it again.',
+        activeGen)
     log.warn "${app.label}: clearing an abandoned scan"
 }
 
-// Reports what this hub actually supported, so a user whose hub differs sees a
-// reason rather than an unexplained gap. Rule flows are decoded from Rule
-// Machine 5.1's private layout; other rule engines still appear in the graph
-// but have no flow.
+
+
+
+
 String compatibilitySummary() {
     int decoded = (state.appsDecoded ?: 0) as Integer
     int unreadable = (state.appsUnreadable ?: 0) as Integer
@@ -850,10 +1182,10 @@ String compatibilitySummary() {
     if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
     s << ". Decoded ${rules} flow(s)."
 
-    // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
-    // and said nothing about the difference, so the summary, the Focus app list
-    // and the map itself disagreed with each other. They are reconciled here
-    // rather than by quietly reporting the smaller number.
+    
+    
+    
+    
     int inert = (state.appsInert ?: 0) as Integer
     if (inert > 0) {
         s << " ${inert} touch no device and link to no rule; they are drawn apart from the network, each labelled with why."
@@ -866,10 +1198,10 @@ String compatibilitySummary() {
         s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
     }
 
-    // v2.0.14: only shown when the authoritative inventory itself succeeded
-    // (complete or complete-with-gaps) - a failed/not-supported inventory has
-    // no real count to report, and showing 0 would misrepresent "could not
-    // ask the hub" as "the hub has none".
+    
+    
+    
+    
     Map hubVarInv = (state.hubVariableInventory ?: [:]) as Map
     String hubVarInvStatus = "${hubVarInv.status}"
     if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
@@ -889,23 +1221,23 @@ String compatibilitySummary() {
     return s.toString()
 }
 
-// ===================================================================================================================
-// Scanning - phase 1 discovers app ids from devices, phase 2 pulls each app's real relationships
-// ===================================================================================================================
 
-// Every hub-facing fetch in this file (six loopback, one to REGISTRY_URL on
-// GitHub) used to carry its own inline try/catch, its own timeout literal,
-// and its own copy of this exact shape - the failure contract was defined
-// seven times and was not quite the same twice, which is why
-// fetchAllDeviceIds() needed an explicit "sets scanError itself and returns
-// on failure" comment at its own call site to be usable safely. This is the
-// one place that shape is written now.
-//
-// data comes back exactly as the response sent it, not coerced to Map here -
-// different endpoints return different top-level shapes (a bare List or a
-// Map), so that decision stays with whoever actually knows their own
-// endpoint's shape. extraOpts exists only for fetchRegistry's contentType;
-// every loopback caller passes none.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     Map out = [ok: false, data: null, error: null]
     try {
@@ -919,80 +1251,80 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
     return out
 }
 
-// The one thing every loopback caller shares - not shared with fetchRegistry,
-// which hits REGISTRY_URL on GitHub instead.
+
+
 @Field static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
 
-// Hardened async dispatch pipeline (v2.0.5) - reintroduces the
-// concurrent-fetch work from the reverted 2.0.5 attempt, this time with
-// the fixes verified against the live hub in the isolated dispatch-test
-// harness: try/catch rollback around every asynchttpGet call, per-item
-// claim/attempt-token tracking, a claim reaper for callbacks that never
-// arrive at all, atomic conditional-removal ownership so a callback and
-// the reaper can never both resolve the same attempt, exact completion
-// invariants, exactly-once finalization, and a fail-closed watchdog that
-// marks a stalled scan failed rather than publish a partial result
-// labeled complete. See BACKLOG.md and the Bucket/ collaboration record
-// for the full history of what was found and why each piece exists.
+
+
+
+
+
+
+
+
+
+
+
 @Field static final int DEVICE_ASYNC_MAX_INFLIGHT = 8
-@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   // Hubitat's documented concurrent-async-per-app cap
-// Bounded retry for a synchronous dispatch throw or an aged, unresolved
-// claim - not for an ordinary HTTP-level failure, which already resolves
-// in a single callback with no dangling claim and needs no retry.
+@Field static final int APP_ASYNC_MAX_INFLIGHT = 8   
+
+
+
 @Field static final int ATTEMPT_CAP = 2
 @Field static final int CLAIM_REAP_INTERVAL_SEC = 10
-// Must exceed the longest real request timeout used by either phase
-// (device fetch: 10s, app fetch: 20s) plus scheduling margin - a
-// deadline shorter than a real request's own timeout makes premature
-// reaping possible by construction, not just by bad luck. Confirmed as
-// a real defect at 8000ms (below the test harness's own 10s "good"
-// timeout) during the isolated test's second review round; raised well
-// clear of this pipeline's real 20s maximum.
+
+
+
+
+
+
+
 @Field static final long CLAIM_REAP_DEADLINE_MS = 25000
-// Both phases share the same claim deadline/reap interval/attempt cap, so
-// the worst-case time to terminally resolve one item is the same for
-// either phase: ATTEMPT_CAP reap cycles, each up to (deadline + one poll
-// interval) before the next attempt even starts - here, 2 * (25s + 10s) =
-// 70s. A watchdog shorter than that envelope can fail a pipeline that is
-// behaving exactly as designed - confirmed as a real defect (60s device
-// watchdog against this same ~70s worst case) during the production-diff
-// review, not just a theoretical gap. 60s of real margin added on top of
-// the 70s envelope, not just clearing the minimum: 130s each.
-//
-// Written as plain literals, not computed from ATTEMPT_CAP/
-// CLAIM_REAP_DEADLINE_MS/CLAIM_REAP_INTERVAL_SEC above - the hub's own
-// loader rejects one @Field static final referencing another one's value
-// ("was found in a static scope but doesn't refer to a local variable,
-// static field or class"), even though local groovyc accepts it and even
-// though the referenced field is declared earlier in the file. Confirmed
-// against the hub directly, not assumed. If either the deadline, the
-// interval, or the attempt cap above ever changes, these two must be
-// recalculated by hand and this comment's math updated to match.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final int DEVICE_ASYNC_WATCHDOG_SEC = 130
 @Field static final int APP_ASYNC_WATCHDOG_SEC = 130
-// How long a "finishing" SCAN_LOCKS sentinel (see finishGeneration()) may
-// occupy the slot before clearAbandonedScan() treats it as stranded rather
-// than actively in progress. Generous relative to the actual work done under
-// that sentinel (in-memory state writes only, no HTTP calls) - this bound
-// exists for the case a language-level finally cannot cover at all: the
-// execution itself being killed outright (platform timeout, hub reboot)
-// mid-publish, not an ordinary thrown exception.
+
+
+
+
+
+
+
 @Field static final int FINISHING_RECOVERY_SEC = 60
-// Per-scan accumulator, keyed by scanId - never read from or written to
-// state directly by a callback. Callbacks only ever touch these static
-// maps; state is written exactly once per phase, by finalizeDevicePhase/
-// finalizeAppPhase, in a single execution. This is what avoids the
-// concurrent-write race this whole design exists to avoid: Hubitat's
-// last-write-wins state persistence means two callbacks racing to write
-// state directly could silently drop whichever wrote last.
+
+
+
+
+
+
+
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> DEVICE_SCANS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> APP_SCANS = new ConcurrentHashMap<>()
 
-// A null id (state predating these fields, or a stale reference to a
-// since-cleared generation) must never reach a ConcurrentHashMap lookup -
-// get()/containsKey(null) throw outright, unlike a plain HashMap's null-key
-// tolerance. Every read of the live accumulators goes through here instead
-// of repeating the guard at each call site.
+
+
+
+
+
 ConcurrentHashMap liveDeviceScan() {
     String id = state.deviceScanId as String
     return id ? DEVICE_SCANS[id] : null
@@ -1001,33 +1333,78 @@ ConcurrentHashMap liveAppScan() {
     String id = state.appScanId as String
     return id ? APP_SCANS[id] : null
 }
-// Single-flight lock keyed by app instance id. state.scanRunning alone cannot
-// serve this role: two scanMapping()/scheduledScanHandler() executions can
-// each read it before either one's own state commit lands (state only
-// commits durably at the end of a whole execution), so both proceed into
-// startScan(). putIfAbsent() is checked against this live, shared map
-// instead - not subject to that per-execution commit delay - so only one
-// concurrent caller can ever win it.
-//
-// The value is a unique per-attempt token, not a plain boolean - caught in
-// review before this shipped: a boolean lock's release (SCAN_LOCKS.remove)
-// has no ownership identity, so a LATE execution belonging to an OLDER scan
-// generation (a delayed watchdog, a delayed finalizer) could unconditionally
-// remove a NEWER generation's still-legitimate lock if it fires after that
-// newer generation has already acquired the same app id. Every release must
-// go through markScanFinished(token, ...) using the token THAT execution's
-// own generation was given at acquire time - remove(key, exactToken) then
-// only succeeds if this generation is still the current owner, and safely
-// no-ops otherwise. Reading SCAN_LOCKS's current value fresh at release time
-// instead of using a remembered token would defeat this entirely - that is
-// exactly how a late execution could adopt a newer generation's identity.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final ConcurrentHashMap<String, String> SCAN_LOCKS = new ConcurrentHashMap<>()
 
-// Everything this app knows comes from undocumented hub endpoints, so on a hub
-// unlike the one it was written against it must say WHY it found nothing rather
-// than presenting an empty map as if that were the answer. The most likely
-// environmental difference is hub login security, which makes the internal
-// endpoints answer with a login page instead of JSON.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
+@Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
+
+
+
+
+String genKey(String token) { return "${app.id}:${token}" }
+
+
+
+
+
+
+
+
+
+
+void sweepGenerationRecords() {
+    long cutoff = now() - GENERATION_RECORD_RETENTION_MS
+    new ArrayList(TERMINAL_TOMBSTONES.entrySet()).each { entry ->
+        if ((entry.value as Long) < cutoff) TERMINAL_TOMBSTONES.remove(entry.key, entry.value)
+    }
+    new ArrayList(REGISTRY_RESULTS.entrySet()).each { entry ->
+        Map v = entry.value as Map
+        Long createdAt = (v?.createdAt ?: 0L) as Long
+        if (createdAt < cutoff) REGISTRY_RESULTS.remove(entry.key, entry.value)
+    }
+}
+
+
+
+
+
+
 Map probeCompatibility() {
     Map out = [ok: false, detail: '']
     Map result = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${app.id}", 10)
@@ -1042,49 +1419,58 @@ Map probeCompatibility() {
     return out
 }
 
-// The sole place any scan generation's ownership actually ends - every
-// failure/watchdog/bootstrap-exception path (no data to publish, via the
-// markScanFinished() wrapper below) and finishScan()'s own success path
-// (graph/counters to publish, via the publishWork closure) alike, so the
-// two can never drift into separately-safe terminal protocols. Caught in
-// review across several rounds before this went near a hub:
-//
-// - An early version removed the lock conditionally but mutated
-//   state.scanRunning/state.scanError unconditionally underneath that
-//   check - safe for the lock, not for state a late execution could still
-//   stomp on a legitimately-running newer generation.
-// - A later version fixed that ordering but still released the lock BEFORE
-//   a caller's own further publish writes (finishScan's graph/counters) -
-//   a brand new scan could acquire and start resetting state while the old
-//   one was still mid-publish.
-// - Fixed by claiming an atomic original->finishing transition FIRST -
-//   nothing here or in publishWork touches state until this token is
-//   confirmed to still be the current owner at that exact instant. The
-//   finishing sentinel then continues occupying the slot for the whole of
-//   publishWork, blocking any new acquisition, and the real release -
-//   state.scanRunning=false, then removing the sentinel - is the LAST
-//   thing that happens, inside a finally, so an exception inside
-//   publishWork still releases rather than stranding the slot.
-//
-// The finishing value carries a timestamp (see FINISHING_RECOVERY_SEC) -
-// finally cannot cover the execution being killed outright (platform
-// timeout, hub reboot) mid-publish, only an ordinary thrown exception, so
-// clearAbandonedScan() has a bounded, timestamp-gated path to recover a
-// truly stranded sentinel rather than trusting the string forever.
-//
-// token must be the exact value this caller's own generation was given at
-// acquire time (see SCAN_LOCKS's comment for why a fresh re-read is not
-// safe here) - clearAbandonedScan() is the one deliberate exception, since
-// its whole job is recovering whatever generation is CURRENTLY stuck, and it
-// snapshots SCAN_LOCKS's live value itself before calling this.
-//
-// Returns true if this call actually became the one to terminate the
-// generation, false if the token no longer owns the lock - a stale/
-// superseded caller, correctly discarded, not an error.
-boolean finishGeneration(String token, String error = null, Closure publishWork = null) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+boolean finishGeneration(String token, String error = null, String logicalGen = null, Closure publishWork = null) {
     if (token == null) return false
     String finishingValue = "finishing:${token}:${now()}"
-    if (!SCAN_LOCKS.replace("${app.id}", token, finishingValue)) return false
+    if (!SCAN_LOCKS.replace("${app.id}", token, finishingValue)) {
+        return false
+    }
+    
+    
+    
+    
+    
+    
+    String tombstoneKey = genKey(logicalGen ?: token)
     try {
         if (publishWork != null) publishWork()
         if (error != null) state.scanError = error
@@ -1092,70 +1478,82 @@ boolean finishGeneration(String token, String error = null, Closure publishWork 
         log.warn "${app.label}: scan termination failed: ${ex.message}"
         state.scanError = "${ex.message}"
     } finally {
+        TERMINAL_TOMBSTONES.put(tombstoneKey, now())
         state.scanRunning = false
         SCAN_LOCKS.remove("${app.id}", finishingValue)
     }
     return true
 }
 
-// Thin wrapper for every terminal path with nothing to publish - kept as
-// the name the rest of the file already calls, so none of those nine call
-// sites needed to change again for this round.
-void markScanFinished(String token, String error = null) {
-    finishGeneration(token, error, null)
+
+
+
+void markScanFinished(String token, String error = null, String logicalGen = null) {
+    finishGeneration(token, error, logicalGen, null)
 }
 
-// Cheap "is my token still the current owner" check - caught in review as
-// the other half of the terminal-release fix above: token propagation only
-// prevents identity ADOPTION, it does nothing by itself to stop a late
-// execution belonging to an abandoned generation from mutating state on its
-// way TO a terminal call. Every separately-scheduled, late-capable handler
-// that publishes intermediate state (not just a terminal markScanFinished)
-// must check this before its first write, and again after any HTTP call in
-// between - abandonment and a fresh acquisition can interleave in that gap
-// exactly as easily as around the terminal release itself.
+
+
+
+
+
+
+
+
+
 boolean ownsLock(String token) {
     return token != null && SCAN_LOCKS.get("${app.id}") == token
 }
 
-// Returns [acquired: true] once this call has won the single-flight lock and
-// (successfully or not) run the scan to its next state, or [acquired: false]
-// if another execution already holds it - callers must not treat that as an
-// error, and must not assume state.scanRunning reflects it (state.scanRunning
-// is this LOSING execution's own stale snapshot, not the winner's).
+
+
+
+
+
 Map startScan() {
-    // Generated before the acquire attempt, not after - putIfAbsent needs
-    // the value ready to insert. Carried forward explicitly from here on -
-    // as a parameter into startAppPhase(), on the DEVICE_SCANS/APP_SCANS
-    // accumulator for the watchdog/finalizer paths, and through runIn()'s
-    // own data payload for the registry/finish tail - never stashed in
-    // state for a later execution to read back. A late execution reading
-    // "the current token" from state instead of carrying its OWN generation's
-    // token is exactly how it could adopt a newer generation's identity;
-    // see markScanFinished()'s comment for the full reasoning.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
     if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) return [acquired: false]
-    // The one unambiguous "a scan genuinely began" line, at the single choke
-    // point every entry path (manual /scan, the scheduled overnight trigger,
-    // any future caller) already funnels through - distinct from "/scan
-    // endpoint reached", which only proves the HTTP request arrived and says
-    // nothing about whether it actually started one (it may have lost the
-    // race, or found one already running).
-    log.info "${app.label}: scan started"
-    // Ownership-transfer flag, not an unconditional finally - success must
-    // keep holding the lock for the whole scan, not release it here. Flipped
-    // true only once responsibility has genuinely passed to markScanFinished
-    // (an early failure) or to the scheduled watchdog/reaper machinery (a
-    // real dispatch was handed off) - an exception before either point means
-    // this call is the only thing that will ever release the lock.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    state.activeGenerationToken = lockToken
+    sweepGenerationRecords()
+    
+    
+    
+    
+    
+    
+    if (diagOn()) log.info "${app.label}: scan started"
+    
+    
+    
+    
+    
+    
     boolean released = false
     try {
     Map compat = probeCompatibility()
     state.compatOk = compat.ok
     state.compatDetail = compat.detail
-    // Recorded but never checked - a hub that cannot return usable statusJson
-    // was still allowed into phases that depend on that exact endpoint,
-    // rather than failing here where the cause is still known.
+    
+    
+    
     if (!compat.ok) {
         markScanFinished(lockToken, "${compat.detail}")
         released = true
@@ -1168,10 +1566,10 @@ Map startScan() {
     state.ruleLinks = 0
     state.appsInert = 0
     state.otherEngines = []
-    // Cleared BEFORE fetchDeviceListBulk runs, not after. That call sets
-    // scanError itself on failure - clearing it afterward silently erased
-    // the one error a user most needed to see, the enumeration that made
-    // the whole scan pointless before a single app was even queued.
+    
+    
+    
+    
     state.scanError = null
     state.deviceIdsUnreadable = []
     Map bulk = fetchDeviceListBulk()
@@ -1180,77 +1578,84 @@ Map startScan() {
         released = true
         return [acquired: true]
     }
-    // Label/room/type are already known for every device from this one call -
-    // NOT batched, unlike capabilities below. Only capabilities need a
-    // per-driver-type follow-up fetch.
+    
+    
+    
     state.deviceLabels = bulk.labels as Map
     state.deviceRooms = bulk.rooms as Map
     state.deviceTypes = bulk.types as Map
+    
+    
+    
+    state.deviceParents = bulk.parents as Map
+    
+    
+    state.deviceDisabled = bulk.disabledDevices as List
     state.deviceCapabilities = [:]
-    // Map of representative device id -> every device id sharing its driver
-    // (deviceTypeId), including the representative itself. dispatchDeviceOne
-    // fetches capabilities once per representative and applies the result to
-    // the whole group - see fetchDeviceListBulk's comment for why this is
-    // safe (capabilities are a driver property, verified identical within a
-    // driver on this hub).
+    
+    
+    
+    
+    
+    
     List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
     state.scanQueue = []
-    // state.scanTotal is the representative/driver-type count dispatchDeviceOne
-    // actually iterates over (34 on this hub, not 194) - correct for the
-    // dispatch/invariant machinery, but showing it labelled as a device count
-    // on the settings page reads as "only 34 devices found", which is wrong
-    // and confusing. deviceScanTotal is the real device count, kept
-    // separately purely for that display - see main()'s progress paragraph.
+    
+    
+    
+    
+    
+    
     state.deviceScanTotal = (bulk.labels as Map).size()
     state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
     state.scanRunning = true
-    // Stamped here as well as in the async callbacks, so a scan that never
-    // manages to land a single callback still has a timestamp for
-    // clearAbandonedScan to age out.
+    
+    
+    
     state.scanHeartbeat = now()
     state.appIds = []
     state.appInfo = [:]
-    // Durable proof that the async app accumulator has been published in
-    // full. state.scanQueue is deliberately always empty in the async design,
-    // so it cannot distinguish "all apps committed" from "the @Field static
-    // accumulator disappeared on a code reload". Recovery may build a graph
-    // only after this marker is committed true by finalizeAppPhase.
+    
+    
+    
+    
+    
     state.appResultsReady = false
-    state.graphVersion = null
-    // Dropped, not merely marked stale. Holding the previous graph while
-    // appInfo fills doubles peak state for the whole scan - this is Gordon's
-    // own hub, and on 2026-08-13, at 74 apps, that was enough to kill a scan
-    // two apps from the end: no error logged, no job scheduled, just a
-    // heartbeat that stopped (see commits 9ef2359/95a2a10). The old graph is
-    // unusable during a scan anyway, since graphVersion is cleared above.
-    //
-    // Deliberately not attempting double-buffering (holding the old graph
-    // live in state while a new one fills) as part of this hardening pass -
-    // that is exactly the pattern the 2026-08-13 fix removed, not an
-    // untested scale question. This hub is now at 105 apps, larger than the
-    // 74 that crashed it, and has run cleanly under the current drop-not-hold
-    // design repeatedly, including this hardening pass's own dev-soak test.
-    // Re-introducing double buffering would be a real, different design
-    // change, and would need its own peak-memory measurement before trusting
-    // it - not because this hub is too small to have exercised the old
-    // failure at all, but because nothing here has re-tested holding two
-    // copies since the fix that stopped doing that.
+    atomicState.graphVersion = null
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     state.graph = null
     unschedule('fetchRegistry')
     unschedule('finishScan')
 
     if (repIds.isEmpty()) {
-        // No devices at all - go straight to the app phase, same as an
-        // empty representative queue would after finishing normally.
-        // released is set AFTER startAppPhase() returns, not before - caught
-        // in review: startAppPhase() installs its own recovery machinery
-        // (an app accumulator/watchdog, or the registry/finish handoff)
-        // partway through its own body, not at its very first line. An
-        // exception thrown before that point must still be caught by THIS
-        // execution's own catch below, or the lock would be left permanently
-        // held with nothing left to ever release it.
+        
+        
+        
+        
+        
+        
+        
+        
+        
         startAppPhase(lockToken)
         released = true
         return [acquired: true]
@@ -1264,47 +1669,47 @@ Map startScan() {
     scan.pending = new ConcurrentLinkedQueue(repIds)
     scan.claims = new ConcurrentHashMap()
     scan.tokenSeq = new AtomicInteger(0)
-    // Two separate guards, deliberately not one - finalizeScheduleGuard only
-    // proves "a scheduling runIn() was issued", finalizeGuard only proves
-    // "the actual state publish happened". Conflating them would let a
-    // scheduled job that never runs permanently block the watchdog's own
-    // recovery path from ever publishing.
+    
+    
+    
+    
+    
     scan.finalizeScheduleGuard = new AtomicInteger(0)
     scan.finalizeGuard = new AtomicInteger(0)
     scan.capsByDev = new ConcurrentHashMap<String, List>()
-    // Seeded from the bulk response and completed by callbacks for devices
-    // whose bulk row omitted roomName. Those devices are deliberately queued
-    // as one-device groups by fetchDeviceListBulk(), so their fullJson response
-    // can recover a room the bulk endpoint omitted without guessing whether an
-    // actually blank room means "unassigned".
+    
+    
+    
+    
+    
     scan.roomsByDev = new ConcurrentHashMap<String, String>((bulk.rooms ?: [:]) as Map)
     scan.unreadableDevs = new ConcurrentHashMap<String, Boolean>()
-    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
-    // Copied in, not read from state by a callback - callbacks and reapers
-    // must never touch state at all, not even to read. typeGroups was
-    // written once, moments ago, in this same execution, so this copy is
-    // exactly as current as a read would have been, with none of the
-    // question of whether a concurrent execution can safely read state.
+    scan.lastProgressAt = now()   
+    
+    
+    
+    
+    
     scan.typeGroups = new ConcurrentHashMap((bulk.typeGroups ?: [:]) as Map)
-    // This generation's single-flight lock token, so deviceAsyncWatchdog and
-    // finalizeDevicePhase - both callback/reap-adjacent contexts that must
-    // never touch state - can release the correct lock without reading state.
+    
+    
+    
     scan.lockToken = lockToken
     DEVICE_SCANS[scanId] = scan
     state.deviceScanId = scanId
 
-    // Single-scan-at-a-time within this app instance: reapers/watchdogs are
-    // scheduled and unscheduled by handler name, and Hubitat's runIn()
-    // replaces rather than stacks a prior job under the same name. Automation
-    // Map already enforces one live scan via the UI/clearAbandonedScan, so
-    // this matches an existing constraint rather than introducing a new one.
+    
+    
+    
+    
+    
     runIn(DEVICE_ASYNC_WATCHDOG_SEC, 'deviceAsyncWatchdog', [data: [scanId: scanId]])
     runIn(CLAIM_REAP_INTERVAL_SEC, 'deviceClaimReaper', [data: [scanId: scanId]])
-    // Handed off here, before dispatch - the watchdog/reaper just scheduled
-    // above are what recover this scan from this point on, including if
-    // refillDevicePipeline() itself throws on its very first synchronous
-    // call. A stall they can't explain is exactly deviceAsyncWatchdog's own
-    // existing job, not a new failure mode this lock introduces.
+    
+    
+    
+    
+    
     released = true
     refillDevicePipeline(scanId)
     return [acquired: true]
@@ -1315,24 +1720,24 @@ Map startScan() {
 }
 
 void refillDevicePipeline(String scanId) {
-    // Iterative, not recursive: dispatchDeviceOne() returns true whenever it
-    // made progress (a successful dispatch, or a rollback+requeue/terminal-fail
-    // after a synchronous throw), so looping here bounds the work to the
-    // pending queue's size instead of growing the call stack on repeated
-    // synchronous failures. Verified against real repeated synchronous
-    // failures in the isolated dispatch-test harness before being relied on
-    // here.
-    while (dispatchDeviceOne(scanId)) { /* keep refilling */ }
+    
+    
+    
+    
+    
+    
+    
+    while (dispatchDeviceOne(scanId)) {  }
 }
 
-// CAS-bounded dispatch: reserves a slot in the in-flight pool (<=
-// DEVICE_ASYNC_MAX_INFLIGHT), pops the next pending representative device id
-// (or requeued retry, carrying its prior attempt count), records a claim
-// before ever calling asynchttpGet, and issues an async fullJson fetch for
-// that representative's capabilities. Every failure path below rolls back
-// the reservation and the claim via conditional removal - see the isolated
-// test's dispatch-throw/claim-reaper findings for why an unconditional
-// remove is not safe once callbacks and the reaper can genuinely overlap.
+
+
+
+
+
+
+
+
 boolean dispatchDeviceOne(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return false
@@ -1363,11 +1768,11 @@ boolean dispatchDeviceOne(String scanId) {
         return true
     } catch (Exception ex) {
         log.warn "${app.label}: device ${repId} dispatch threw: ${ex.message}"
-        // Ownership proven the same way the callback/reaper prove it below -
-        // only this execution could plausibly hold this exact claim object
-        // (nothing else has had a chance to touch it since it was created a
-        // few lines above), but the conditional remove costs nothing and
-        // keeps every retirement path in this pipeline consistent.
+        
+        
+        
+        
+        
         boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, myClaim)
         if (owned) inFlight.decrementAndGet()
         if (owned) {
@@ -1375,46 +1780,46 @@ boolean dispatchDeviceOne(String scanId) {
             if (attemptCount < ATTEMPT_CAP) {
                 (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
             } else {
-                // Every device sharing this representative's driver, not just
-                // the representative itself - a driver-group capability
-                // failure is a failure for the whole group, same as the real
-                // callback path below marks it.
+                
+                
+                
+                
                 deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
                 (scan.processed as AtomicInteger).incrementAndGet()
             }
         }
         maybeFinalizeDevicePhase(scanId)
-        return true   // made progress; refillDevicePipeline's loop tries again
+        return true   
     }
 }
 
-// Shared by dispatchDeviceOne's terminal-throw path, deviceFetchCb, and
-// reapDeviceClaim's terminal path - every device sharing repId's driver,
-// from the scan-local copy of typeGroups (never state - see the comment
-// where scan.typeGroups is populated in startScan).
+
+
+
+
 List deviceGroupFor(ConcurrentHashMap scan, String repId) {
     Map typeGroups = (scan.typeGroups ?: [:]) as Map
     return (typeGroups.values().find { (it as List).contains(repId) } ?: [repId]) as List
 }
 
-// Async callback for /device/fullJson/{representative id}. Applies the
-// result to every device sharing that representative's driver, releases the
-// claim and the in-flight slot (only if this execution actually owns the
-// claim - see the ownership note in dispatchDeviceOne), then refills and
-// checks for completion.
+
+
+
+
+
 void deviceFetchCb(resp, data) {
     String scanId = data.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
-    if (scan == null) return  // callback from a prior, already-finalized scan
+    if (scan == null) return  
 
     String repId = data.repId as String
     String attemptToken = data.attemptToken as String
     Map claim = (scan.claims as ConcurrentHashMap)[repId] as Map
 
-    if (claim == null || claim.attemptToken != attemptToken) return   // stale or duplicate
+    if (claim == null || claim.attemptToken != attemptToken) return   
 
     boolean owned = (scan.claims as ConcurrentHashMap).remove(repId, claim)
-    if (!owned) return   // lost the race - deviceClaimReaper already retired this exact attempt
+    if (!owned) return   
 
     List group = deviceGroupFor(scan, repId)
 
@@ -1427,12 +1832,12 @@ void deviceFetchCb(resp, data) {
                 caps = (dev.capabilities ?: []) as List
                 if (dev.roomName) {
                     String room = "${dev.roomName}".trim()
-                    // A room belongs to this device, not to its driver. Normal
-                    // capability groups contain many devices whose rooms differ,
-                    // so broadcasting the representative's room corrupts every
-                    // peer in that group. Missing-bulk-room devices are already
-                    // queued as singleton groups; writing only repId recovers
-                    // their fullJson room without touching any other device.
+                    
+                    
+                    
+                    
+                    
+                    
                     ConcurrentHashMap roomsByDev = scan.roomsByDev as ConcurrentHashMap
                     if (room && !roomsByDev.containsKey(repId)) roomsByDev[repId] = room
                 }
@@ -1450,23 +1855,23 @@ void deviceFetchCb(resp, data) {
 
     (scan.processed as AtomicInteger).incrementAndGet()
     (scan.inFlight as AtomicInteger).decrementAndGet()
-    // Scan-local progress marker, not state - see the top-of-pipeline
-    // comment on why callbacks/reapers never write state at all, not even a
-    // best-effort progress field. scanStatusJson() reads this live.
+    
+    
+    
     scan.lastProgressAt = now()
 
     refillDevicePipeline(scanId)
     maybeFinalizeDevicePhase(scanId)
 }
 
-// Active recovery for claims that were dispatched but never got any callback
-// at all - not a per-item HTTP failure (those already resolve in one
-// callback via caps==null above), but genuine platform-level silence.
-// Self-reschedules via runIn every CLAIM_REAP_INTERVAL_SEC until the phase
-// finalizes. Ownership is proven via conditional removal against a claim
-// value snapshotted at scan time, exactly as verified in the isolated
-// dispatch-test harness - see that harness's claimReaper()/reapOne() for the
-// full reasoning this mirrors.
+
+
+
+
+
+
+
+
 void deviceClaimReaper(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
@@ -1499,7 +1904,7 @@ void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
 
     Map claims = scan.claims as ConcurrentHashMap
     boolean owned = claims.remove(repId, candidateClaim)
-    if (!owned) return   // resolved or replaced since the scan - not this attempt's to reap
+    if (!owned) return   
 
     int attemptCount = candidateClaim.attemptCount as Integer
     log.warn "${app.label}: device ${repId} claim reaped after ${ageMs}ms with no callback (attempt ${attemptCount})"
@@ -1510,8 +1915,8 @@ void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
     if (attemptCount < ATTEMPT_CAP) {
         (scan.pending as ConcurrentLinkedQueue) << [id: repId, attemptCount: attemptCount]
     } else {
-        // Whole driver group, not just the representative - same reasoning
-        // as dispatchDeviceOne's terminal-throw path.
+        
+        
         deviceGroupFor(scan, repId).each { String devId -> (scan.unreadableDevs as ConcurrentHashMap)[devId] = true }
         (scan.processed as AtomicInteger).incrementAndGet()
     }
@@ -1520,15 +1925,15 @@ void reapDeviceClaim(String scanId, String repId, Map candidateClaim) {
     maybeFinalizeDevicePhase(scanId)
 }
 
-// Diagnostic-only safety net for a pipeline that has stalled well past what
-// any real callback or reap cycle should take. Deliberately does NOT
-// finalize with whatever was collected - see finalizeDevicePhase/
-// maybeFinalizeDevicePhase for why publishing a partial result labeled
-// complete is worse than failing visibly. Marks the scan failed instead.
+
+
+
+
+
 void deviceAsyncWatchdog(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
-    if (scan == null) return   // already finalized normally, nothing to do
+    if (scan == null) return   
 
     int pending = (scan.pending as ConcurrentLinkedQueue).size()
     int inFlight = (scan.inFlight as AtomicInteger).get()
@@ -1537,10 +1942,10 @@ void deviceAsyncWatchdog(data) {
     int total = scan.total as Integer
 
     if (pending == 0 && inFlight == 0 && claimsOutstanding == 0 && processed == total) {
-        // Invariants already satisfied - this is just the watchdog and the
-        // last legitimate resolution landing at nearly the same moment.
-        // finalizeDevicePhase is itself exactly-once via finalizeGuard, so
-        // calling it here is safe either way.
+        
+        
+        
+        
         finalizeDevicePhase(scanId)
         return
     }
@@ -1548,38 +1953,38 @@ void deviceAsyncWatchdog(data) {
         log.warn "${app.label}: device-phase scan ${scanId} invariant violation - processed=${processed} exceeds total=${total}"
     }
 
-    // CAS the same guard finalizeDevicePhase uses, BEFORE writing anything -
-    // a legitimate finalize from a callback/reap landing concurrently with
-    // this watchdog execution must win this race, not have its successful
-    // publication overwritten by this failure path landing after it. If the
-    // CAS fails, a real finalize already happened or is in progress and this
-    // execution has nothing left to do.
+    
+    
+    
+    
+    
+    
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
     log.warn "${app.label}: device-phase async scan ${scanId} did not finish within ${DEVICE_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
     DEVICE_SCANS.remove(scanId)
     unschedule('deviceClaimReaper')
-    // Honest, not "kept the previous map" - startScan already wiped
-    // state.graph/appInfo/deviceCapabilities before this scan's first
-    // dispatch even went out, so there is no previous map left to retain by
-    // this point, only that no NEW, possibly-incomplete one gets published
-    // in its place. Real retention (double buffering) is deliberately not
-    // attempted - see BACKLOG.md.
+    
+    
+    
+    
+    
+    
     markScanFinished(scan.lockToken as String, "Device scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
 }
 
-// Called once invariants are exactly satisfied, from whichever path notices
-// that first (a callback or a reap). Deliberately does NOT call
-// finalizeDevicePhase() inline - this function still runs as part of a
-// callback/reap execution, and per the production-diff review, even a
-// terminal callback with zero other callbacks outstanding is still an async
-// execution whose own state snapshot could be stale relative to some other
-// concurrent execution. Schedules a fresh, dedicated execution to do the
-// actual publish instead, the same discipline this app already uses for the
-// registry/graph-build handoff (see beginRegistryAndFinish). finalizeSchedule
-// Guard only proves "a scheduling runIn() was issued" - it is not the
-// publish-ownership proof, that is still finalizeGuard, checked again inside
-// the scheduled execution itself.
+
+
+
+
+
+
+
+
+
+
+
+
 void maybeFinalizeDevicePhase(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return
@@ -1599,16 +2004,16 @@ void maybeFinalizeDevicePhase(String scanId) {
     }
 }
 
-// The dedicated execution maybeFinalizeDevicePhase schedules - re-verifies
-// invariants (state may only have improved since scheduling, since claims
-// only ever get reaped/resolved, never added back once the pending queue is
-// drained, but re-checking costs nothing and matches step 2/5 of the
-// reviewed design) before handing off to finalizeDevicePhase's own
-// finalizeGuard CAS, which remains the actual exactly-once publish proof.
+
+
+
+
+
+
 void finalizeDevicePhaseScheduled(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
-    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    if (scan == null) return   
     int pending = (scan.pending as ConcurrentLinkedQueue).size()
     int inFlight = (scan.inFlight as AtomicInteger).get()
     int claimsOutstanding = (scan.claims as Map).size()
@@ -1621,32 +2026,32 @@ void finalizeDevicePhaseScheduled(data) {
     finalizeDevicePhase(scanId)
 }
 
-// Merges the scan's static-accumulated capability results into state in one
-// single execution via plain assignment - never putAll onto whatever state
-// already held. A merge can only ever add entries, never correct a bad
-// starting state; this specific mistake (putAll instead of =) was the second
-// confirmed bug behind the data-integrity finding that led to this whole
-// rewrite. Guarded exactly-once via finalizeGuard so the scheduled finalizer
-// and the watchdog's own already-satisfied recovery path can never both run
-// this - both are freshly scheduled executions, never called inline from a
-// callback/reap.
+
+
+
+
+
+
+
+
+
 void finalizeDevicePhase(String scanId) {
     ConcurrentHashMap scan = DEVICE_SCANS[scanId]
     if (scan == null) return
-    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   // already finalized
+    if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return   
 
-    // finalizeGuard only proves this is the one execution allowed to attempt
-    // publishing THIS scanId's results - it says nothing about whether this
-    // scanId's generation is still the CURRENT one for the app instance.
-    // clearAbandonedScan() can release this generation's lock without
-    // touching DEVICE_SCANS or unscheduling its watchdog/reaper, so a late
-    // finalize for an already-abandoned generation can still reach here
-    // after a newer one has started. Checked before the first state write,
-    // not just relied on at an eventual markScanFinished() call - this path
-    // hands off to startAppPhase() on success and never calls
-    // markScanFinished() at all in that case.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     if (!ownsLock(scan.lockToken as String)) {
-        log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: device-phase finalize for a superseded scan generation, discarding without publishing"
         DEVICE_SCANS.remove(scanId)
         unschedule('deviceAsyncWatchdog')
         unschedule('deviceClaimReaper')
@@ -1676,28 +2081,28 @@ void finalizeDevicePhase(String scanId) {
     startAppPhase(scan.lockToken as String)
 }
 
-// Apps are discovered entirely from /hub2/appsList - device-led discovery
-// (walking appsUsing on every device) was dropped from the device-phase
-// fetch, verified on this hub to contribute zero apps the listing didn't
-// already have. state.appIds is therefore always empty entering this
-// function.
-//
-// lockToken is passed explicitly by both callers, deliberately not read
-// back from a shared/state field here - caught in review: this function can
-// run from finalizeDevicePhase(), a separately scheduled execution that
-// could in principle fire late, after its own generation was abandoned and
-// a NEWER one has since started. Reading "the current token" from anywhere
-// shared at that point would let this late execution build an app-phase
-// accumulator labelled with the WRONG (newer) generation's token, which
-// could then legitimately release a scan it has nothing to do with.
-// Carrying the caller's own remembered token instead closes that.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void startAppPhase(String lockToken) {
     Set appIds = new LinkedHashSet(state.appIds as List)
-    // Best-effort, not fatal - see fetchAppTypeNamespaces()'s own comment.
-    // Fetched once here rather than per-app, same reasoning as appsList.
+    
+    
     Map appTypeNamespaceResult = fetchAppTypeNamespaces()
     if (appTypeNamespaceResult.error) {
-        log.info "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
+        log.warn "${app.label}: namespace lookup unavailable this scan - ${appTypeNamespaceResult.error}"
     }
     Map appListing = fetchInstalledAppIds()
     if (appListing.error) {
@@ -1705,16 +2110,16 @@ void startAppPhase(String lockToken) {
         markScanFinished(lockToken, "Could not list installed apps: ${appListing.error}")
         return
     }
-    // Own app.id included, not skipped: it fetches and processes through the
-    // same pipeline as any other app, and the out.type check below is what
-    // suppresses its relationship data.
+    
+    
+    
     appIds.addAll(appListing.ids as List)
-    // Re-checked here, not only trusted from the caller's own earlier check -
-    // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
-    // fresh acquisition can interleave during it exactly as easily as around
-    // any other gap in this pipeline.
+    
+    
+    
+    
     if (!ownsLock(lockToken)) {
-        log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: app-phase start for a superseded scan generation, discarding without publishing"
         return
     }
     state.appIds = appIds as List
@@ -1725,8 +2130,8 @@ void startAppPhase(String lockToken) {
     state.scanQueue = []
 
     if (appIds.isEmpty()) {
-        // A genuinely app-less hub has a complete empty result. Commit the
-        // same invariant finalizeAppPhase sets for a non-empty app scan.
+        
+        
         state.appResultsReady = true
         beginRegistryAndFinish(lockToken)
         return
@@ -1740,24 +2145,24 @@ void startAppPhase(String lockToken) {
     scan.pending = new ConcurrentLinkedQueue(appIds)
     scan.claims = new ConcurrentHashMap()
     scan.tokenSeq = new AtomicInteger(0)
-    // Two separate guards - see the device-scan creation comment on why
-    // scheduling proof and publish proof must not share one CAS.
+    
+    
     scan.finalizeScheduleGuard = new AtomicInteger(0)
     scan.finalizeGuard = new AtomicInteger(0)
     scan.appInfo = new ConcurrentHashMap<String, Map>()
-    // Seeded from the device phase's complete bulk label inventory, not an
-    // empty map - the device phase already correctly found every device's
-    // label; app callbacks only ever ADD to or improve on that (a device
-    // referenced by an app setting, childDevice or subscription), they never
-    // need to be the sole source. Seeding from a fresh copy of what
-    // finalizeDevicePhase just published avoids the alternative bug: an
-    // empty starting map here meant finalizeAppPhase's plain-assignment
-    // replace of state.deviceLabels would DROP every device not referenced
-    // by any app, even though the bulk fetch had correctly found it. This
-    // is not the same "merge onto possibly-stale state" hazard the appInfo/
-    // capsByDev replace-not-merge fix guards against - this copy is taken
-    // from data this exact scan generation just finished publishing, not
-    // from whatever an unrelated earlier scan left behind.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
     scan.appTypeNamespaces = new ConcurrentHashMap<String, String>((appTypeNamespaceResult.namespaces ?: [:]) as Map)
     scan.decoded = new AtomicInteger(0)
@@ -1765,10 +2170,10 @@ void startAppPhase(String lockToken) {
     scan.rulesDecoded = new AtomicInteger(0)
     scan.rulesSkipped = new AtomicInteger(0)
     scan.otherEngines = new ConcurrentHashMap<String, Boolean>()
-    scan.lastProgressAt = now()   // plain Long, not AtomicLong - Hubitat's sandbox blocks that import; a per-key ConcurrentHashMap write is already atomic enough for a pure overwrite-with-latest-timestamp
-    // The caller's own remembered token, carried forward - see this
-    // function's own comment for why it is deliberately never read back
-    // from anywhere shared/mutable instead.
+    scan.lastProgressAt = now()   
+    
+    
+    
     scan.lockToken = lockToken
     APP_SCANS[scanId] = scan
     state.appScanId = scanId
@@ -1779,12 +2184,12 @@ void startAppPhase(String lockToken) {
 }
 
 void refillAppPipeline(String scanId) {
-    while (dispatchAppOne(scanId)) { /* keep refilling */ }
+    while (dispatchAppOne(scanId)) {  }
 }
 
-// CAS-bounded dispatch, same shape and same rollback/claim discipline as
-// dispatchDeviceOne above - see that function's comment for the full
-// reasoning, not repeated per phase.
+
+
+
 boolean dispatchAppOne(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return false
@@ -1835,9 +2240,9 @@ boolean dispatchAppOne(String scanId) {
     }
 }
 
-// Async callback for /installedapp/statusJson/{id}. Runs the same
-// processAppRelationships() the old synchronous batch used, then releases
-// the claim and slot (only if this execution actually owns the claim).
+
+
+
 void appFetchCb(resp, data) {
     String scanId = data.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
@@ -1882,17 +2287,17 @@ void appFetchCb(resp, data) {
 
     (scan.processed as AtomicInteger).incrementAndGet()
     (scan.inFlight as AtomicInteger).decrementAndGet()
-    // Scan-local progress marker, not state - callbacks/reapers never write
-    // state at all. scanStatusJson() reads this live.
+    
+    
     scan.lastProgressAt = now()
 
     refillAppPipeline(scanId)
     maybeFinalizeAppPhase(scanId)
 }
 
-// Active recovery for app claims that never got any callback - mirrors
-// deviceClaimReaper/reapDeviceClaim exactly, see those for the full
-// reasoning.
+
+
+
 void appClaimReaper(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
@@ -1948,9 +2353,9 @@ void reapAppClaim(String scanId, String appId, Map candidateClaim) {
     maybeFinalizeAppPhase(scanId)
 }
 
-// Diagnostic-only safety net, same fail-closed shape as deviceAsyncWatchdog -
-// see that function's comment for the full reasoning behind not finalizing
-// with a partial result.
+
+
+
 void appAsyncWatchdog(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
@@ -1974,21 +2379,21 @@ void appAsyncWatchdog(data) {
         log.warn "${app.label}: app-phase scan ${scanId} invariant violation - processed=${processed} appInfo=${appInfoSize} total=${total}"
     }
 
-    // CAS the same guard finalizeAppPhase uses, BEFORE writing anything - see
-    // deviceAsyncWatchdog's comment for the full race this closes.
+    
+    
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
     log.warn "${app.label}: app-phase async scan ${scanId} did not finish within ${APP_ASYNC_WATCHDOG_SEC}s (${processed} of ${total} landed, pending=${pending} inFlight=${inFlight} claims=${claimsOutstanding}) - failing closed, no map published for this scan"
     APP_SCANS.remove(scanId)
     unschedule('appClaimReaper')
-    // Honest, not "kept the previous map" - see deviceAsyncWatchdog's
-    // comment; the same applies here, state.appInfo was already wiped to
-    // [:] in startScan before this scan's first dispatch went out.
+    
+    
+    
     markScanFinished(scan.lockToken as String, "App scan stalled (${processed}/${total} landed) - failed rather than publish an incomplete map")
 }
 
-// Does NOT call finalizeAppPhase() inline - see maybeFinalizeDevicePhase's
-// comment for why, identical reasoning applies here.
+
+
 void maybeFinalizeAppPhase(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return
@@ -2012,12 +2417,12 @@ void maybeFinalizeAppPhase(String scanId) {
     }
 }
 
-// The dedicated execution maybeFinalizeAppPhase schedules - see
-// finalizeDevicePhaseScheduled's comment, identical reasoning and structure.
+
+
 void finalizeAppPhaseScheduled(data) {
     String scanId = data?.scanId as String
     ConcurrentHashMap scan = APP_SCANS[scanId]
-    if (scan == null) return   // already finalized - the watchdog's own recovery path got there first
+    if (scan == null) return   
     int pending = (scan.pending as ConcurrentLinkedQueue).size()
     int inFlight = (scan.inFlight as AtomicInteger).get()
     int claimsOutstanding = (scan.claims as Map).size()
@@ -2034,24 +2439,24 @@ void finalizeAppPhaseScheduled(data) {
     finalizeAppPhase(scanId)
 }
 
-// Merges the scan's static-accumulated results into state in one single
-// execution via plain assignment - never putAll. See finalizeDevicePhase's
-// comment; the same confirmed bug applied here, on state.appInfo, and is
-// fixed the same way. CAS-guarded exactly-once via finalizeGuard - the
-// scheduled finalizer and the watchdog's own already-satisfied recovery path
-// are both freshly scheduled executions, never called inline from a
-// callback/reap.
+
+
+
+
+
+
+
 void finalizeAppPhase(String scanId) {
     ConcurrentHashMap scan = APP_SCANS[scanId]
     if (scan == null) return
     if (!(scan.finalizeGuard as AtomicInteger).compareAndSet(0, 1)) return
 
-    // See finalizeDevicePhase()'s identical comment - finalizeGuard proves
-    // only exactly-once for THIS scanId, not that this generation is still
-    // current, and this path hands off to beginRegistryAndFinish() on
-    // success without ever calling markScanFinished().
+    
+    
+    
+    
     if (!ownsLock(scan.lockToken as String)) {
-        log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: app-phase finalize for a superseded scan generation, discarding without publishing"
         APP_SCANS.remove(scanId)
         unschedule('appAsyncWatchdog')
         unschedule('appClaimReaper')
@@ -2066,13 +2471,13 @@ void finalizeAppPhase(String scanId) {
         state.appInfo = new LinkedHashMap(scan.appInfo as Map)
         state.deviceLabels = new LinkedHashMap(scan.labels as Map)
 
-        // Plain values, not accumulation - scan.decoded.get() etc. are
-        // already the COMPLETE count for this scan (every callback in the
-        // pipeline incremented the same counter), not a delta to add onto
-        // whatever state already held. += here was the first confirmed bug
-        // behind the data-integrity finding: caught live when two scan
-        // generations overlapped during testing and appsDecoded ended up
-        // reading higher than the total app count on the hub.
+        
+        
+        
+        
+        
+        
+        
         state.appsDecoded = (scan.decoded as AtomicInteger).get()
         state.appsUnreadable = (scan.unreadable as AtomicInteger).get()
         state.rulesDecoded = (scan.rulesDecoded as AtomicInteger).get()
@@ -2082,9 +2487,9 @@ void finalizeAppPhase(String scanId) {
         state.otherEngines = others
 
         state.scanDone = scan.total as Integer
-        // Last app-result write in this execution. Hubitat commits the whole
-        // state snapshot atomically when the execution returns, so recovery
-        // can never observe true with only a partial appInfo publication.
+        
+        
+        
         state.appResultsReady = true
         state.scanHeartbeat = now()
     } catch (Exception ex) {
@@ -2096,50 +2501,50 @@ void finalizeAppPhase(String scanId) {
     beginRegistryAndFinish(scan.lockToken as String)
 }
 
-// The registry-fetch-then-graph-build handoff, shared by the normal
-// end-of-app-phase path and the empty-app-list path in startAppPhase.
-//
-// lockToken travels through runIn()'s own data payload from here all the
-// way to fetchRegistry and finishScan, rather than either of them reading
-// a value back from state - both are separately scheduled executions that could
-// in principle fire late, after their own generation was abandoned and a
-// newer one has since overwritten state with its own token. Carrying the
-// value forward explicitly means a late execution still only ever knows
-// its OWN generation's token, never whatever happens to be current by the
-// time it runs - see startAppPhase()'s comment for the identical reasoning
-// one hop earlier in this same chain.
+
+
+
+
+
+
+
+
+
+
+
+
 void beginRegistryAndFinish(String lockToken) {
-    // The PENDING marker is written here, not inside fetchRegistry, because
-    // state is only committed at the END of an execution - an execution
-    // that dies mid-fetch discards everything it wrote, so fetchRegistry
-    // structurally cannot record that it started.
+    
+    
+    
+    
     state.registryMeta = [state: 'PENDING', fetched: null, entries: 0,
                           matched: 0, error: null, schemaVersion: null]
     runIn(1, 'fetchRegistry', [data: [lockToken: lockToken]])
-    // Watchdog. finishScan is chained off fetchRegistry, so a fetch that
-    // dies takes the graph build down with it and the scan never completes
-    // at all. Scheduling finishScan again for the same handler replaces
-    // this job, so the normal path cancels the watchdog simply by
-    // rescheduling it one second out.
+    
+    
+    
+    
+    
     runIn(45, 'finishScan', [data: [lockToken: lockToken]])
 }
 
-// Runs as its own scheduled execution between the app phase and the graph
-// build. It fetches ~170KB over the internet and parses it, which is far too
-// much to bolt onto a batch that is already doing HTTP work - the lesson from
-// finishScan, which died when it was called inline.
-//
-// Failure here is not fatal. The registry is a convenience; the user's own
-// declarations are the authority, and an unclassified app type is an explicit,
-// visible state rather than a silent absence.
+
+
+
+
+
+
+
+
 void fetchRegistry(jobData = null) {
     String lockToken = jobData?.lockToken as String
-    // Checked before the very first write, including the heartbeat stamp -
-    // this is a separately scheduled execution that can in principle fire
-    // late, after its own generation was abandoned and a newer one has
-    // since started.
+    
+    
+    
+    
     if (!ownsLock(lockToken)) {
-        log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: registry fetch for a superseded scan generation, discarding without publishing"
         return
     }
     state.scanHeartbeat = now()
@@ -2180,172 +2585,197 @@ void fetchRegistry(jobData = null) {
         log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
-    // Re-checked here, not only trusted from the entry check above - the
-    // registry fetch is a real 30-second-timeout HTTP call, and abandonment
-    // plus a fresh acquisition can interleave during it exactly as easily as
-    // around any other gap in this pipeline.
+    
+    
+    
+    
+    
+    
+    REGISTRY_RESULTS.put(genKey(lockToken), [meta: meta, matches: matches, createdAt: now()])
+
+    
+    
+    
+    
     if (!ownsLock(lockToken)) {
-        log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
+        if (diagOn()) log.info "${app.label}: registry fetch completed for a superseded scan generation, discarding without publishing"
         return
     }
 
-    // Only on success, so a failed fetch keeps the last good set rather than
-    // silently emptying the map of everything the registry contributed.
+    
+    
     if (!meta.error) state.registryMatches = matches
     state.registryMeta = meta
-    log.info "${app.label}: registry ${meta.error ? 'unavailable' : "gave ${meta.matched} dependency match(es) from ${meta.entries} entries"}"
+    
+    
+    
+    if (meta.error) {
+        log.warn "${app.label}: registry unavailable, continuing without it"
+    } else if (diagOn()) {
+        log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
+    }
     runIn(1, 'finishScan', [data: [lockToken: lockToken]])
 }
 
-// data.lockToken travels from beginRegistryAndFinish() via fetchRegistry(),
-// or (when clearAbandonedScan() calls this directly, bypassing the
-// scheduler entirely) is a live SCAN_LOCKS snapshot taken at that call
-// site, the same recovery-path reasoning as clearAbandonedScan()'s other
-// branch - see markScanFinished()'s comment.
+
+
+
+
+
 void finishScan(data = null) {
     String lockToken = data?.lockToken as String
-    // Nothing is written to state above this point, deliberately - caught
-    // in review: an earlier version stamped state.scanHeartbeat and
-    // conditionally rewrote state.registryMeta before ever checking
-    // ownership, so a stale/superseded execution could still corrupt a
-    // newer generation's registry status even though it would correctly
-    // fail the finishing claim moments later and publish nothing else.
-    // Read-and-compute-locally is fine before the claim (nothing is
-    // committed by it), only writing state is not.
-
-    // Still PENDING means fetchRegistry never reached its own bookkeeping, so
-    // this execution is the watchdog firing rather than the normal chain. Say
-    // so. The alternative is what shipped before: an app that had tried and
-    // failed reporting that it had never tried, which is worse than an error.
-    // Computed here, written only inside the protected publish below - a real
-    // defensive copy, not just a local variable NAME. Caught in review:
-    // `state.registryMeta` returns the SAME live Map object state already
-    // holds, not a snapshot, so mutating it in place (even before ever
-    // reassigning state.registryMeta = regMeta) risks the same "mutate a
-    // state-held collection directly" hazard this file already treats as a
-    // confirmed bug class elsewhere (see the appInfo/capsByDev
-    // replace-not-merge comments) - a stale execution could alter a NEWER
-    // generation's registry status through this shared reference before its
-    // own finishGeneration() claim ever gets checked, let alone fails.
-    Map regMeta = new LinkedHashMap((state.registryMeta ?: [:]) as Map)
-    boolean registryStalled = "${regMeta.state}" == 'PENDING'
-    if (registryStalled) {
-        regMeta.state = 'FAILED'
-        regMeta.error = 'the registry fetch did not complete'
-    }
-
-    // buildGraph() moved INSIDE the protected closure below, not run before
-    // the claim - caught in review (reproduced live 2026-08-24): ownership
-    // was previously claimed only once building finished, so nothing
-    // stopped every 1.5s status poll's own recovery attempt from building
-    // the same graph redundantly in parallel, all racing for one claim that
-    // at most one of them could ever win. Worse, when the static lock had
-    // been reset entirely (an app code reload wipes @Field state but not
-    // durable state.scanRunning) every single attempt lost the claim, so
-    // the graph was rebuilt and discarded forever with no path to recovery.
-    // Claiming first means at most one execution ever runs buildGraph() at
-    // all for a given generation; every other concurrent caller's claim
-    // fails immediately and does no work.
-    boolean finished = finishGeneration(lockToken, null) {
-        // v2.0.14: authoritative Hub Variable inventory. A synchronous,
-        // in-process call (getAllGlobalVars()) with no
-        // async round trip of its own, so it is called and published here,
-        // inside the same protected closure as buildGraph()/state.graph below
-        // - never outside it. A failed inventory
-        // still publishes (status: 'failed'), so buildGraph() always has a
-        // definite, current-generation answer to read rather than stale state
-        // from a previous scan.
+    
+    
+    
+    
+    
+    
+    String logicalGen = (data?.logicalGen ?: lockToken) as String
+    boolean finished = finishGeneration(lockToken, null, logicalGen) {
+        
+        
+        
+        
+        
+        
+        
+        
         state.hubVariableInventory = fetchHubVariableInventory()
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Map regResult = REGISTRY_RESULTS.get(genKey(lockToken)) as Map
+        boolean registryTimedOut = (regResult == null)
+        if (registryTimedOut) {
+            state.registryMeta = [state: 'FAILED', fetched: null, entries: 0, matched: 0,
+                                   error: 'the registry fetch did not complete', schemaVersion: null]
+            log.warn "${app.label}: registry fetch did not complete, continuing without it"
+        } else {
+            Map regMeta = (regResult.meta as Map)
+            
+            
+            
+            
+            
+            if (!regMeta.error) state.registryMatches = (regResult.matches as List)
+            state.registryMeta = regMeta
+        }
+
         Map graph = buildGraph()
         state.scanHeartbeat = now()
-        if (registryStalled) {
-            state.registryMeta = regMeta
-            log.warn "${app.label}: registry fetch did not complete, continuing without it"
-        }
         state.graph = graph
-        state.graphVersion = GRAPH_SCHEMA
+        atomicState.graphVersion = GRAPH_SCHEMA
 
-        // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
-        // 61KB of a 244KB state on this hub, a quarter of everything stored, held
-        // twice for no reason. buildGraph falls back to the existing graph.flows on
-        // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
+        
+        
+        
+        
         Map appInfo = (state.appInfo ?: [:]) as Map
         appInfo.each { String appId, info ->
             if (info instanceof Map) (info as Map).remove('flow')
         }
         state.appInfo = appInfo
-        // Counted from the finished graph rather than tallied during the scan.
-        // A rule that sets another rule's Private Boolean both true and false is
-        // two actions but one relationship, so a running tally reported 8 where
-        // the map drew 7.
+        
+        
+        
+        
         int links = 0
         ((graph.edges ?: []) as List).each { e ->
-            // Compared through a String-typed local: a GString never matches a
-            // String in contains(), because their hash codes differ.
+            
+            
             String kind = "${(e as Map).kind}"
             if (RULE_LINK_KIND_NAMES.contains(kind)) links++
         }
         state.ruleLinks = links
 
-        // Counted off the built graph rather than off appInfo, so the summary can
-        // only ever describe nodes that are really on the map.
+        
+        
         int inertCount = 0
         ((graph.nodes ?: []) as List).each { n ->
             if ((n as Map).inert == true) inertCount++
         }
         state.appsInert = inertCount
 
-        // v2.0.14: read by compatibilitySummary() for the "N with a Connector"
-        // count. Captured from the built graph the same way ruleLinks/appsInert
-        // above are, rather than recomputed at page-render time.
+        
+        
+        
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
-        log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+        if (diagOn()) log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+
+        
+        
+        
+        
+        Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
+        
+        
+        state.lastScanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
     }
     if (!finished) {
-        // The claim is now checked before buildGraph() runs, so a
-        // superseded generation never builds a graph at all any more - it
-        // just loses the claim immediately and does nothing further.
-        log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
+        
+        
+        
+        if (diagOn()) log.info "${app.label}: finishScan for a superseded scan generation, not building or publishing"
     }
 }
 
-// Every device on the hub.
-//
-// This used to be a device picker, and it was the biggest piece of friction in
-// the app: a new user had to select ~200 devices before anything worked. The
-// picker was never a permission gate here - this app reads /device/fullJson
-// directly, which does not consult app-device bindings - so the selection only
-// ever served as a list of ids, and the hub will hand over that list anyway.
-//
-// It also fixes a correctness problem. With a picker, an app whose devices the
-// user did not tick was simply invisible, so how complete the map was depended
-// on a user action rather than on the hub.
-//
-// The capability parameter is required. Without it the endpoint returns [].
-// Bulk device enumeration. Replaces the old fetchAllDeviceIds() + per-device
-// fetchDeviceApps() pair for everything except capabilities: this one call
-// carries label, room and driver name for every device at once - fields that
-// previously cost a /device/fullJson round trip each. Verified field mapping
-// against the per-device endpoint for the same device before relying on it:
-// data.name is the device's LABEL (not its type - a different bulk endpoint,
-// /device/list/data, calls the label "label" and puts the type in "name",
-// the opposite way round), data.type is the driver name, data.roomName is the
-// room. Confirmed flat - no nested children - and enumerates the identical
-// device set as the old /device/listJson?capability=capability.* call.
-//
-// Also groups devices by deviceTypeId (driver): capabilities are a property
-// of the driver, not the individual device, and every device sharing a
-// driver was confirmed (sampled) to report identical capabilities - see the
-// scan-speed item in BACKLOG.md. typeGroups remains scan-local: it holds one
-// representative device id per driver, mapped to every device id sharing
-// that driver; deviceFetchCb fetches capabilities for the representative
-// only and applies the result to the whole group. The exception is a device
-// whose bulk row omits roomName: it gets a one-device group so fullJson can
-// recover an endpoint-omitted room (or confirm it is genuinely unassigned)
-// without broadcasting one atypical response across its whole driver group.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map fetchDeviceListBulk() {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
@@ -2353,16 +2783,85 @@ Map fetchDeviceListBulk() {
         return out
     }
     Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-    Map typeGroups = [:]
-    (data.devices ?: []).each { entry ->
-        Map d = (entry instanceof Map) ? (entry.data as Map) : null
-        if (!d || d.id == null) return
-        String devId = "${d.id}"
-        if (d.name) out.labels[devId] = "${d.name}"
+    return aggregateDeviceTree(data)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map aggregateDeviceTree(Map data) {
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
+    Map<String, Map> byId = [:]
+    List order = []
+    List pending = []
+    (data.devices ?: []).each { pending << [node: it, parentId: null] }
+    while (pending) {
+        Map item = pending.remove(0) as Map
+        def node = item.node
+        if (!(node instanceof Map)) continue
+        Map entry = node as Map
+        
+        
+        
+        
+        Map d = (entry.data instanceof Map) ? (entry.data as Map) : null
+        String entryId = (d && d.id != null) ? "${d.id}" : null
+        List kids = (entry.children instanceof List) ? (entry.children as List) : null
+        if (kids) kids.each { pending << [node: it, parentId: entryId] }
+        if (entryId == null || d == null) continue
+        Map agg = byId[entryId]
+        if (agg == null) {
+            agg = [:]
+            byId[entryId] = agg
+            order << entryId
+        }
+        if (!agg.name && d.name) agg.name = "${d.name}"
         String room = d.roomName == null ? '' : "${d.roomName}".trim()
-        if (room) out.rooms[devId] = room
-        if (d.type) out.types[devId] = "${d.type}"
-        String typeKey = room ? "${d.deviceTypeId}" : "room:${devId}"
+        if (!agg.room && room) agg.room = room
+        if (!agg.type && d.type) agg.type = "${d.type}"
+        if (agg.deviceTypeId == null && d.deviceTypeId != null) agg.deviceTypeId = "${d.deviceTypeId}"
+        if (!agg.parentId && item.parentId) agg.parentId = item.parentId as String
+        
+        
+        
+        
+        if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
+    }
+    Map typeGroups = [:]
+    order.each { String devId ->
+        Map agg = byId[devId] as Map
+        
+        
+        
+        
+        out.labels[devId] = (agg.name ?: "Device ${devId}") as String
+        if (agg.room) out.rooms[devId] = agg.room as String
+        if (agg.type) out.types[devId] = agg.type as String
+        if (agg.parentId) out.parents[devId] = agg.parentId as String
+        if (agg.disabled == true) (out.disabledDevices as List) << devId
+        
+        
+        
+        
+        
+        String typeKey = (agg.room && agg.deviceTypeId != null) ? "${agg.deviceTypeId}" : "room:${devId}"
         List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
         group << devId
     }
@@ -2370,37 +2869,37 @@ Map fetchDeviceListBulk() {
     return out
 }
 
-// Every installed app on the hub, in one request, whether or not it references
-// a device.
-//
-// Device-led discovery answers "which apps touch a device", which is a
-// different question from "which apps exist" and quietly misses every app that
-// touches none. On the test hub four sibling Button Rule-5.1 rules split two
-// and two on exactly that line: the two naming a device were found, the two
-// naming none were not. Rule Functions are the case that matters most, since
-// having no devices is normal for them rather than unusual.
-//
-// This does NOT replace the device walk. The listing says an app exists; it
-// never says which devices the app touches, so both are needed and the answer
-// is their union.
-//
-// Credit: the endpoint was found by reading Jean P. May Jr.'s (TheBearMay) Rule
-// References Rule Table, then verified here. This project's own notes had
-// recorded that no bulk app-list endpoint existed, which was wrong.
-//
-// Shape: { apps: [ { data: {id, appTypeId, name, type, disabled, ...},
-//                    children: [ ...same again... ] } ] }
-// Parents nest arbitrarily - Button Controllers holds a Button Controller,
-// which holds four Button Rules - so it has to be walked recursively rather
-// than read one level deep.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map fetchInstalledAppIds() {
     List ids = []
     Map out = [ids: ids, error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/appsList", 30)
     if (!result.ok) {
-        // The old comment claimed this could fall back to device-led app
-        // discovery. That path was removed by the async rewrite, so returning
-        // [] here silently publishes a zero-app map. Fail visibly instead.
+        
+        
+        
         out.error = result.error ?: 'the hub returned no error detail'
         return out
     }
@@ -2410,9 +2909,9 @@ Map fetchInstalledAppIds() {
     }
     collectAppIds((result.data as Map).apps, ids)
     ids = ids.unique()
-    // This app is necessarily installed and /hub2/appsList is the complete
-    // installed-app inventory. Its absence proves the response is empty or
-    // incomplete, even on a hub with no other user apps.
+    
+    
+    
     String selfId = "${app.id}"
     if (!ids.contains(selfId)) {
         out.error = "the installed-app listing omitted Automation Map (${selfId})"
@@ -2422,9 +2921,9 @@ Map fetchInstalledAppIds() {
     return out
 }
 
-// Iterative rather than recursive on purpose. A self-calling method inside a
-// Hubitat app is a sandbox risk not worth taking for a tree that is three deep,
-// and a stack of pending nodes does the same job with no such question.
+
+
+
 void collectAppIds(def nodes, List ids) {
     if (!(nodes instanceof List)) return
     List pending = []
@@ -2434,11 +2933,11 @@ void collectAppIds(def nodes, List ids) {
         if (!(node instanceof Map)) continue
         Map entry = node as Map
         Map data = entry.data as Map
-        // Through a String-typed local, never appended straight as a GString. A
-        // list of GStrings looks identical in a log and then fails contains()
-        // and unique() against real Strings. Section 9.5 of the storage-format
-        // notes covers it; this caught the first version of this walker, where
-        // ids.contains('2973') was false against a list that plainly held it.
+        
+        
+        
+        
+        
         if (data?.id != null) {
             String id = "${data.id}"
             ids << id
@@ -2447,13 +2946,13 @@ void collectAppIds(def nodes, List ids) {
     }
 }
 
-// installedApp itself carries no namespace (confirmed live 2026-08-26 against
-// this hub's /installedapp/statusJson/{id}). It does carry
-// appTypeId, which /hub2/userAppTypes - a separate, definition-level bulk
-// endpoint, one call regardless of app count - maps to the real namespace.
-// Failure here degrades to every app having a null namespace rather than
-// failing the scan; namespace is an enhancement for the Community Context
-// Card match, not something core scanning depends on.
+
+
+
+
+
+
+
 Map fetchAppTypeNamespaces() {
     Map out = [status: 'ok', error: null, namespaces: [:]]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/userAppTypes", 30)
@@ -2478,43 +2977,43 @@ Map fetchAppTypeNamespaces() {
     return out
 }
 
-// Pure processing, split out of fetchAppRelationships so the async scan
-// pipeline's callback can run it directly on data it already has, with no
-// second fetch. Mutates labels in place, same as before the split - the
-// async pipeline gives each concurrent callback its own per-scan labels map
-// to mutate safely, merged into state.deviceLabels only at finalization, not
-// state.deviceLabels itself (concurrent callbacks racing on state directly
-// is exactly the failure mode this whole rewrite exists to avoid).
+
+
+
+
+
+
+
 Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
     Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
             Map installedApp = data.installedApp as Map
             String rawLabel = stripReplacementChar((installedApp?.label ?: installedApp?.trueLabel ?: installedApp?.name ?: "App ${appId}") as String)
             out.label = stripTags(rawLabel)
-            // Kept alongside the full label rather than replacing it: the
-            // status is real information, it just does not belong painted
-            // across the canvas. See nodeEntry for which form goes where.
+            
+            
+            
             out.drawLabel = stripStatusMarkup(rawLabel)
             out.type = stripReplacementChar(installedApp?.name as String)
-            // definitionName's namespace, for the Community Context Card match
-            // only (spec section 4.1) - never added to the AI-friendly export.
+            
+            
             if (installedApp?.appTypeId != null) {
                 out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
             }
-            // Stored for EVERY app, not only the empty ones, because it is read
-            // in the opposite direction from the one it is written in. A
-            // container needs the names of its children, and a child is the only
-            // record that the relationship exists - childAppCount gives Rule
-            // Machine the number 46 and not one id. One short string per app is
-            // worth it; the four counts above are not, hence the split.
+            
+            
+            
+            
+            
+            
             if (installedApp?.parentAppId != null) out.parent = "${installedApp.parentAppId}"
 
-            // Skip every instance of this app, not just the one doing the
-            // scanning. Its device picker references the whole hub, so a second
-            // instance - including a half-created one left behind by an
-            // abandoned "Add User App", which stays visible to devices - would
-            // otherwise appear as an app with a couple of hundred meaningless
-            // edges. Excluding by app.id alone missed exactly that case.
+            
+            
+            
+            
+            
+            
             if ("${out.type}".startsWith(APP_FAMILY)) {
                 out.roles = [:]
                 out.flow = []
@@ -2525,14 +3024,22 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 return out
             }
 
-            // A paused rule still holds all its device references but is not
-            // running. Shown identically to an active one it would send you
-            // debugging an automation that cannot fire.
+            
+            
+            
             boolean paused = false
             (data.appState ?: []).each { e ->
                 if (e instanceof Map && e.name == 'paused' && e.value == true) paused = true
             }
-            out.inactive = (installedApp?.disabled == true) || paused
+            
+            
+            
+            
+            
+            
+            out.disabled = (installedApp?.disabled == true)
+            out.paused = paused
+            out.inactive = out.disabled || out.paused
 
             Map roles = [:]
             List stateful = []
@@ -2562,23 +3069,23 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                     if (devName && !labels[devId]) labels[devId] = stripTags(devName as String)
                     String role = roleForSetting(settingName, settingType, devId, subscribed)
                     addRole(roles, devId, role)
-                    // Remembered so conflict detection can ignore transient
-                    // commands like notifications.
+                    
+                    
                     if (role == 'action' && isStatefulCapability(settingType) && !stateful.contains(devId)) {
                         stateful << devId
                     }
                 }
             }
 
-            // A subscribed device with no setting of its own is still a trigger,
-            // unless this app owns it (a child device it also listens to).
-            //
-            // Note this signal is a snapshot: Rule Machine drops its trigger
-            // subscriptions while a Required Expression is false, and subscribes
-            // to the gate devices instead. Rule rules are unaffected because the
-            // tDev/rDev checks above already claimed those devices, but a
-            // non-rule app that subscribes conditionally can map differently
-            // depending on when the scan ran.
+            
+            
+            
+            
+            
+            
+            
+            
+            
             subscribed.each { String devId ->
                 List existing = (roles[devId] ?: []) as List
                 if (!existing) addRole(roles, devId, 'trigger')
@@ -2589,51 +3096,59 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             out.flow = buildRuleFlow(data)
             out.ruleLinks = extractRuleLinks(data, appId)
             out.endpoints = extractRuleEndpoints(data)
-            // Gated to Rule Machine, matching the existing engine check at
-            // line ~663 ("${info.type}".startsWith('Rule-')) rather than
-            // SUPPORTED_RULE_ENGINE's exact-version pin - the field names
-            // (xVarV, rCapab_/xVar_, tCapab/xVar) were reverse-engineered
-            // against Rule-5.1 specifically, but nothing about them looks
-            // version-pinned the way flow decoding's layout reconstruction
-            // is, so any Rule Machine engine is allowed rather than only
-            // 5.1. The structured fields would simply find nothing on an
-            // unrelated app type regardless, but the free-text scan is
-            // broader - any text/textarea setting on ANY app - and its
-            // hub-wide confirmation check only looks at the name, not which
-            // app it came from. An unrelated app whose own text happened to
-            // contain a confirmed Hub Variable's name would otherwise pick
-            // up a false read edge. Gating here closes that off entirely
-            // rather than trying to make the confirmation check smarter.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             if ("${out.type}".startsWith('Rule-')) {
                 out.hubVarWrites = extractHubVariableWrites(data)
                 out.hubVarReads = extractHubVariableReads(data)
+                
+                
+                
+                
+                
+                
+                
+                out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
             }
 
-            // An app with no devices, no rule links and no endpoints used to be
-            // dropped silently, which was defensible while device-led discovery
-            // meant it was never found in the first place. Now that every
-            // installed app is enumerated, dropping it makes the app report a
-            // count it does not show, so it gets drawn instead - and a square
-            // with nothing attached needs to say why it is empty.
-            //
-            // Captured only for those apps. On this hub that is 13 of 88, so
-            // attaching it unconditionally would put four fields on 75 apps
-            // that will never read them, and state size has killed a scan here
-            // before.
-            //
-            // All four come from the response already in hand. No extra call.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             if (!roles && !out.ruleLinks && !out.endpoints) {
-                // scheduledJobList rather than a cast: scheduledJobs has been seen
-                // as both a list and a bare single-job map, and casting the wrong
-                // one throws inside the scan loop.
+                
+                
+                
                 List jobs = scheduledJobList(data.scheduledJobs)
                 out.inert = [
                     kids  : (data.childAppCount ?: 0) as Integer,
                     devs  : (data.childDeviceCount ?: 0) as Integer,
                     sched : jobs.size(),
-                    // next/cron only - handler is a Groovy method name meaningful
-                    // to nobody reading the map, and prevRunTime/status are the
-                    // hub's bookkeeping rather than anything a user configured.
+                    
+                    
+                    
                     schedJobs : jobs.collect { Map j -> [next: "${j.nextRunTime}", cron: "${j.schedule}"] },
                     subs  : countOf(data.eventSubscriptions),
                 ]
@@ -2645,61 +3160,61 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
     return out
 }
 
-// ===================================================================================================================
-// Rule Machine flow decoding
-//
-// A relationship graph cannot show order, so for Rule Machine rules the ordered
-// structure is decoded here into a plain list of steps that the map page draws
-// as a flowchart. Verified end to end against rule 2279 "Back Door Night",
-// whose own page shows exactly the trigger / required expression / four ordered
-// actions this produces.
-//
-//   actionList          ordered action numbers
-//   actions[n]          {method, indent, rule, delay}
-//   actSubType.<n>      same method name, as a setting
-//   capabstrue/false    human readable text per condition number
-//   predCapabs          condition numbers forming the required expression
-//   eval[b]             branch number -> condition expression, e.g. [3,"AND","16"]
-//   tDev<n>             trigger devices for condition n
-//   rDev_<n>            condition devices for condition n
-//   <prefix>.<n>        devices for action n (onOffSwitch, ct, volume, note, ...)
-//   onOff.<n>           whether a switch action is On or Off
-//
-// This is Rule Machine's private layout, not a documented API. Apps that are
-// not rules simply have no actionList and produce no flow.
-// ===================================================================================================================
 
-// ===================================================================================================================
-// Rule-to-rule links
-//
-// Requested on the community thread: show it when one rule runs another. Rule
-// Machine stores every "act on another rule" action the same way, and the
-// action object itself carries no target at all - only a method name. The
-// target is in the app's SETTINGS, keyed by the action number:
-//
-//   actType.<n>        'rulesActs' for this whole family of actions
-//   actSubType.<n>     which action it is, e.g. getRuleActions
-//   ruleAct.<n>        target installed app ids, as a list: ["1806"]
-//   runRuleType.<n>    engine of the target, e.g. Rule Machine
-//
-// Confirmed against a live hub for all three subtypes below.
-//
-// Two traps found while working this out. Every action object has a field
-// literally called 'rule', and it is NOT a rule reference - it is a condition
-// index used by getIfThen / getElseIf / getWaitRule. Keying on it produces
-// confident, entirely fictional links. And a target of ["*"] means the rule
-// itself, which is how Set Private Boolean is normally used, so it must not
-// become an edge either.
-// ===================================================================================================================
 
-// 'targets' is a list, not a single setting name, because Rule Machine has
-// been observed to store the same semantic action under more than one
-// setting prefix (ruleAct.<n> and ruleActMain.<n> for Run Actions; privateT.<n>
-// and privateF.<n> for Set Private Boolean). Both extractRuleLinks and
-// actionStep must check every alias - checking only the first one means a
-// rule using the less common storage form is silently dropped rather than
-// linked. buildGraph's from/to/kind dedup means checking every alias can
-// never produce a duplicate edge, only a missed one if an alias is skipped.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final Map RULE_LINK_ACTIONS = [
     getRuleActions      : [targets: ['ruleAct', 'ruleActMain'], engine: 'runRuleType',   kind: 'runs'],
     getStopActions      : [targets: ['stopAct'],                engine: 'stopRuleType',  kind: 'cancelTimedActions'],
@@ -2713,9 +3228,9 @@ List extractRuleLinks(Map data, String appId) {
     Map vals = [:]
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map) || s.name == null) return
-        // Assigned through String-typed locals on purpose. Keying a map with a
-        // GString and then looking it up with another GString of the same text
-        // misses, because their hash codes differ.
+        
+        
+        
         String n = "${s.name}"
         String v = "${s.value}"
         vals[n] = v
@@ -2729,21 +3244,21 @@ List extractRuleLinks(Map data, String appId) {
         if (!fam) return
         String engine = vals[fam.engine + '.' + num] ?: ''
 
-        // More than one setting can carry the same semantic target - see the
-        // comment on RULE_LINK_ACTIONS. Every alias is checked.
+        
+        
         (fam.targets as List<String>).each { String targetSetting ->
             String raw = vals[targetSetting + '.' + num] ?: ''
             if (!raw) return
 
-            // "*" means this rule, and it can appear ALONGSIDE other rules:
-            // ["*","1809"] is Rule Machine's way of storing "set the Private
-            // Boolean of this rule AND Perimeter Closed". Skipping the whole
-            // action whenever a "*" was present therefore dropped a real
-            // cross-rule link every time a rule also set its own boolean.
-            // Stripping non-digits discards the "*" and keeps the ids.
-            // Written with replaceAll rather than a regex literal - this file
-            // also builds the map page inside a GString, so slash-delimited
-            // patterns are avoided throughout for consistency.
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String cleaned = raw.replaceAll('[^0-9]', ' ').trim()
             if (!cleaned) return
             cleaned.split(' +').each { String targetId ->
@@ -2755,17 +3270,17 @@ List extractRuleLinks(Map data, String appId) {
     return out
 }
 
-// Hub Variable WRITE relationships for the graph, not the flow popup - see
-// actionLabel()'s getSetVariable case for the same underlying settings
-// (xVarV.<n> for the target, valStringOp.<n>/customDev.<n>/tCustomAttr.<n> for
-// a device-attribute source) read for the popup's text instead. Kept as a
-// separate pass over the same appSettings/appState data rather than shared
-// with buildRuleFlow, matching how this file already computes roles and flow
-// independently from one scan's data rather than threading one through the
-// other.
-//
-// READ relationships (a rule that consumes a Hub Variable without writing it)
-// are out of scope here - Phase 3 proves the WRITE side only. See handoff.md.
+
+
+
+
+
+
+
+
+
+
+
 List extractHubVariableWrites(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -2775,12 +3290,12 @@ List extractHubVariableWrites(Map data) {
 
     Map settingValues = [:]
     Map settingDevices = [:]
-    // Device-list KEYS (Hubitat device IDs), parallel to settingDevices'
-    // stripped-label values, same iteration order (LinkedHashMap). Added for
-    // v2.0.14's writeSource (confirmed against this
-    // exact code 2026-08-26): settingDevices alone only ever held the display
-    // label, so write.sourceDevice could never be joined authoritatively to
-    // devices[] - schema 4 forbids joining writeSource by display name.
+    
+    
+    
+    
+    
+    
     Map settingDeviceIds = [:]
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
@@ -2798,16 +3313,21 @@ List extractHubVariableWrites(Map data) {
         Map act = (actVal instanceof Map) ? (actVal as Map) : [:]
         String method = (act.method ?: settingValues["actSubType.${num}"] ?: '') as String
         if (method != 'getSetVariable') return
-        // Preserve the name exactly. A trailing period can be part of the
-        // actual Hub Variable name, as confirmed by the authoritative hub
-        // inventory, so stripping it disconnects valid reads and writes.
+        
+        
+        
         String varName = "${settingValues["xVarV.${num}"] ?: ''}"
         if (!varName) return
-        Map write = [variable: varName]
-        // Only the device-attribute source has been observed. A fixed value or
-        // another variable as the source is unconfirmed, so this is left
-        // absent rather than guessed - the variable node and WRITE edge are
-        // still created either way, only the source detail is conditional.
+        
+        
+        
+        
+        
+        Map write = [variable: varName, actionNum: "${num}", field: "xVarV.${num}"]
+        
+        
+        
+        
         if (settingValues["valStringOp.${num}"] == 'Device attribute') {
             String attr = settingValues["tCustomAttr.${num}"]
             List srcDevices = settingDevices["customDev.${num}"] ?: []
@@ -2815,10 +3335,10 @@ List extractHubVariableWrites(Map data) {
             if (attr && srcDevices) {
                 write.sourceDevice = srcDevices[0]
                 write.sourceAttr = attr
-                // ID-based, for the structured writeSource edge field. May be
-                // absent even when sourceDevice/sourceAttr are present (an
-                // older cached scan, or a shape this has not seen) - the
-                // structured field is only ever emitted when this resolves.
+                
+                
+                
+                
                 if (srcDeviceIds) write.sourceDeviceId = srcDeviceIds[0]
             }
         }
@@ -2827,35 +3347,35 @@ List extractHubVariableWrites(Map data) {
     return out
 }
 
-// Hub Variable READ relationships - a rule referencing a variable in a
-// condition or Required Expression, without necessarily writing it. The
-// eval-expression counterpart to extractHubVariableWrites' action-based
-// detection, and the same relationship requiredDevices() finds for a device
-// condition (rDev_<n>) - a Variable-typed condition has no device at all, so
-// requiredDevices() correctly returns nothing for one, and this is the
-// function that covers the case it can't.
-//
-// Verified against rule 2984, "_Test Variables Extended" (a clone of the
-// canonical write fixture with an added IF): condition 3 reads as "Variable
-// TestHubUptime is not equal to '0'", stored as rCapab_3=Variable (the
-// condition-side counterpart to tCapab1 on triggers), xVar_3=TestHubUptime.
-// (same trailing-period artifact as xVarV on the write side).
-//
-// Scans every eval group unconditionally rather than only ones reached from
-// an IF/ELSEIF action, so a Required Expression (evalMap['0'], not tied to
-// any action) is covered by the same pass without a second code path.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 List extractHubVariableReads(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
         if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
     }
     Map evalMap = (st.eval ?: [:]) as Map
-    // buildRuleFlow() only trusts group '0' (Required Expression) when
-    // hasPredicate is true - the same guard applies here, so a rule where
-    // the toggle was switched off again can't have this read a stale
-    // leftover group '0' as if it were still active. Every other group is
-    // tied directly to an action's own presence in actionList, which has no
-    // equivalent toggle to go stale against.
+    
+    
+    
+    
+    
+    
     boolean hasPredicate = st.hasPredicate == true
 
     Map settingValues = [:]
@@ -2864,55 +3384,78 @@ List extractHubVariableReads(Map data) {
         if (s.value != null && "${s.value}") settingValues["${s.name}"] = "${s.value}"
     }
 
-    // confirmed=true: a structured field (rCapab_/xVar_ or tCapab/xVar)
-    // named this variable explicitly - there is no ambiguity about what it
-    // refers to. confirmed=false: only a %Name% text pattern matched - see
-    // the free-text block below for why that alone is not proof. A name
-    // seen both ways stays confirmed; structured evidence is never
-    // downgraded by an unconfirmed match on the same name.
-    Map found = [:]
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    List found = []
+    Set<String> foundKeys = new LinkedHashSet<>()
     evalMap.each { groupId, expr ->
-        if ("${groupId}" == '0' && !hasPredicate) return
+        String role = ("${groupId}" == '0') ? 'required-expression' : 'condition'
+        if (role == 'required-expression' && !hasPredicate) return
         (expr instanceof List ? expr as List : []).each { item ->
             String s = "${item}"
             if (settingValues["rCapab_${s}"] != 'Variable') return
             String varName = "${settingValues["xVar_${s}"] ?: ''}"
-            if (varName) found[varName] = true
+            if (!varName) return
+            String field = "xVar_${s}"
+            String key = "${varName}|${role}|${field}"
+            if (foundKeys.add(key)) {
+                found << [variable: varName, confirmed: true, usageRole: role,
+                          evidenceKind: 'structured-setting', field: field]
+            }
         }
     }
 
-    // Trigger-by-variable: a rule that FIRES on a Hub Variable changing, not
-    // just referencing one in a condition. Same picker convention as a
-    // device trigger (tDev<n>/tCustomAttr<n>) but tCapab<n>=='Variable' and
-    // xVar<n> - no underscore, unlike the condition-side xVar_<n> - holds the
-    // name. Verified against rule 2988, "_Test Variables Trigger". This is
-    // READ + TRIGGER per the spec (Section 6.3) - not yet distinguished from
-    // a plain read at the edge-kind level, both land in the same 'read' set.
+    
+    
+    
+    
+    
+    
+    
     settingValues.keySet().findAll { it ==~ /^tCapab\d+$/ }.each { String capabKey ->
         if (settingValues[capabKey] != 'Variable') return
         String num = capabKey.replaceAll('^tCapab', '')
         String varName = "${settingValues["xVar${num}"] ?: ''}"
-        if (varName) found[varName] = true
+        if (!varName) return
+        String field = "xVar${num}"
+        String key = "${varName}|trigger|${field}"
+        if (foundKeys.add(key)) {
+            found << [variable: varName, confirmed: true, usageRole: 'trigger',
+                      evidenceKind: 'structured-setting', field: field]
+        }
     }
 
-    // Free-text interpolation - lowest priority per the spec's own
-    // extraction order (Section 8.1: structured state first, visible text
-    // only as a bounded fallback), used here because no structured field
-    // captures a variable referenced inside typed text the way xVarV/xVar_
-    // capture a picker selection. %Name% is RM's own reserved substitution
-    // syntax, not something this app invented - verified against rule 2992,
-    // "_ Test Variables Text": valString.1 = '%TestHubUptime%'.
-    //
-    // NOT proof on its own, and marked confirmed=false accordingly: Rule
-    // Machine also reserves %device%/%time%/%date% (and others) as built-in
-    // notification tokens with no relation to Hub Variables at all. Trusting
-    // the pattern alone produced exactly this on Gordon's live hub -
-    // "device"/"time"/"date" reported as Hub Variables read by real
-    // production rules (Barking, Perimeter Closed, Mode Alarm Reminder),
-    // none of which have ever created a variable by those names. buildGraph()
-    // only keeps a candidate if the same name is independently confirmed
-    // somewhere else on the hub via a structured reference - see the
-    // confirmedVarNames pre-pass there.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     (data.appSettings ?: []).each { s ->
         if (!(s instanceof Map)) return
         String settingType = "${s.type}"
@@ -2920,11 +3463,16 @@ List extractHubVariableReads(Map data) {
         String val = "${s.value ?: ''}"
         (val =~ /%([A-Za-z_][A-Za-z0-9_]*)%/).findAll().each { m ->
             String varName = "${m[1]}"
-            if (varName && !found.containsKey(varName)) found[varName] = false
+            String field = "${s.name}"
+            String key = "${varName}|text-token|${field}"
+            if (foundKeys.add(key)) {
+                found << [variable: varName, confirmed: false, usageRole: null,
+                          evidenceKind: 'text-token', field: field]
+            }
         }
     }
 
-    return found.collect { name, confirmed -> [variable: name, confirmed: confirmed] }
+    return found
 }
 
 List buildRuleFlow(Map data) {
@@ -2935,22 +3483,22 @@ List buildRuleFlow(Map data) {
 
     List actionList = (st.actionList ?: []) as List
     if (!actionList) {
-        // Visual Rule Builder 2.0 stores an explicit node/edge graph
-        // (graphDocument) rather than Rule Machine's numbered actionList - a
-        // different shape entirely, decoded by its own function.
+        
+        
+        
         if (st.graphDocument) return buildVisualRuleBuilderFlow(st)
-        // Built-in apps have no retrievable source - they are compiled classes,
-        // and /app/ajax/code returns an empty body for them. Their runtime state
-        // is still readable though, which is how Rule Machine was decoded too,
-        // so other engines can be supported the same empirical way.
+        
+        
+        
+        
         return buildNotifierFlow(data, st)
     }
 
     Map actions = (st.actions ?: [:]) as Map
     Map evalMap = (st.eval ?: [:]) as Map
 
-    // capabstrue / capabsfalse together describe every condition in plain text,
-    // split only by whether it currently evaluates true.
+    
+    
     Map capabs = [:]
     (st.capabstrue ?: [:]).each { k, v -> capabs["${k}"] = cleanCondition("${v}") }
     (st.capabsfalse ?: [:]).each { k, v -> capabs["${k}"] = cleanCondition("${v}") }
@@ -2967,13 +3515,13 @@ List buildRuleFlow(Map data) {
 
     List steps = []
 
-    // Triggers: any condition that has a tDev setting behind it.
+    
     settingDevices.keySet().findAll { it.startsWith('tDev') }.sort().each { String n ->
         String num = n.replaceAll('^tDev_?', '')
         steps << [kind: 'trigger', label: (capabs[num] ?: "Trigger ${num}"), devices: settingDevices[n]]
     }
 
-    // Required expression: branch 0 of eval, present only when the rule has one.
+    
     if (st.hasPredicate == true) {
         String text = expressionText((evalMap['0'] ?: []) as List, capabs)
         if (text) steps << [kind: 'required', label: text, devices: requiredDevices(evalMap['0'] as List, settingDevices)]
@@ -2985,23 +3533,23 @@ List buildRuleFlow(Map data) {
     return steps
 }
 
-// Visual Rule Builder 2.0 (appTypeId 1084) stores an explicit node/edge graph
-// in graphDocument - already a native Map/List once deserialized, not a
-// string to parse - rather than Rule Machine's numbered-settings scheme.
-// Decoded from one fixture (2026-08-16, "_Test Complex Visualisation Rule"):
-// two triggers merging into one path, a single decision with true/false
-// branches reconverging at one merge node, and turnOn/turnOff/wait/
-// sendNotification/runRule actions. Handles that shape. A node, edge, or
-// config field this has not seen degrades to a generic label or stops the
-// walk rather than guessing, per this project's own rule against
-// manufacturing meaning from an unconfirmed field (see the storage-format
-// doc's design principle).
-//
-// The single-decision assumption is not a gap - confirmed live 2026-08-16
-// that the builder itself rejects a prompt describing a nested decision
-// with "Rule must contain exactly one decision node". Multiple/nested
-// decisions are not a shape this format can currently produce at all, at
-// least via the AI-prompt path, so the walker does not need to handle them.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 List buildVisualRuleBuilderFlow(Map st) {
     Map graphDoc = (st.graphDocument instanceof Map) ? (st.graphDocument as Map) : [:]
     List nodes = (graphDoc.nodes ?: []) as List
@@ -3012,8 +3560,8 @@ List buildVisualRuleBuilderFlow(Map st) {
     Map nodesById = [:]
     nodes.each { n -> if (n instanceof Map) nodesById["${(n as Map).id}"] = n as Map }
 
-    // Keyed by from-id. Only a decision node has more than one outgoing
-    // edge (true/false); every other kind has exactly one, or none.
+    
+    
     Map outgoing = [:]
     edges.each { e ->
         if (!(e instanceof Map)) return
@@ -3024,9 +3572,9 @@ List buildVisualRuleBuilderFlow(Map st) {
         outgoing[from] = list
     }
 
-    // Device ids live under config keys following one naming pattern in
-    // every node examined so far: switches, or anything ending Sensors/
-    // Devices. A heuristic over that pattern, not a schema.
+    
+    
+    
     Closure resolveDevices = { Map config ->
         List names = []
         (config ?: [:]).each { k, v ->
@@ -3049,11 +3597,11 @@ List buildVisualRuleBuilderFlow(Map st) {
             case 'contact':
             case 'motion':
             case 'illuminanceCondition':
-                // Every trigger/condition config seen so far carries its own
-                // human-readable state text in a key ending Event or State -
-                // reused rather than reconstructed from raw thresholds,
-                // which would need its own case per condition type not yet
-                // observed.
+                
+                
+                
+                
+                
                 String stateText = null
                 config.each { k, v -> if ("${k}".endsWith('Event') || "${k}".endsWith('State')) stateText = "${v}" }
                 return stateText ?: prettyMethod(type)
@@ -3074,23 +3622,23 @@ List buildVisualRuleBuilderFlow(Map st) {
         }
     }
 
-    // A decision node's own type ("all"/"any") is the AND/OR toggle, not the
-    // condition itself - the real condition(s) sit nested in
-    // config.conditions, each its own object with its own type/config,
-    // exactly like a top-level node. This is what the earlier version of
-    // this function missed: it called labelForNode on the decision node
-    // directly, which only ever saw "all"/"any" and never the nested
-    // condition - confirmed live, a diamond reading bare "all" instead of
-    // "Illuminance is below 50 lux on Garage Motion Sensor".
-    // The device name is baked directly into the returned text, not left to
-    // a separate devices field - confirmed live that the diamond shape only
-    // ever displays s.cond, never s.devices (that field only renders for
-    // the plain box/trigger shapes elsewhere in the same function). Rule
-    // Machine's own condition text already has this problem solved by
-    // embedding the device name in the text itself (capabstrue/capabsfalse,
-    // e.g. "Illuminance of X is < 200") - VRB's illuminanceSensorState is a
-    // generic template ("Illuminance is below...") with the sensor stored
-    // separately, so it needs the same treatment done explicitly here.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     Closure decisionText = { Map decisionNode ->
         Map dConfig = (decisionNode.config instanceof Map) ? (decisionNode.config as Map) : [:]
         List conditions = (dConfig.conditions ?: []) as List
@@ -3116,26 +3664,26 @@ List buildVisualRuleBuilderFlow(Map st) {
 
     List steps = []
 
-    // One step per trigger-kind node, same convention as Rule Machine's
-    // one-row-per-tDev.
+    
+    
     List triggerNodes = nodes.findAll { it instanceof Map && "${(it as Map).kind}" == 'trigger' }
     triggerNodes.each { Map t ->
         steps << [kind: 'trigger', label: labelForNode(t), devices: resolveDevices(t.config as Map)]
     }
     if (!triggerNodes) return steps
 
-    // All triggers are expected to converge on one merge node before the
-    // first real step - true in the one fixture examined. If that is not
-    // the shape found, stop here rather than guess at a different one; the
-    // triggers above are still shown even if nothing past them is.
+    
+    
+    
+    
     Set nextIds = [] as Set
     triggerNodes.each { Map t -> (outgoing["${t.id}"] ?: []).each { nextIds << "${it.to}" } }
     if (nextIds.size() != 1) return steps
     String cursor = nextIds.iterator().next()
 
-    // Bounded so a graph shape this walker does not understand - a cycle,
-    // or branching outside the single-decision/single-join case handled
-    // below - cannot hang page generation.
+    
+    
+    
     int guard = 0
     while (cursor && guard++ < 200) {
         Map node = nodesById["${cursor}"]
@@ -3189,7 +3737,7 @@ List buildVisualRuleBuilderFlow(Map st) {
             continue
         }
 
-        // Plain action node.
+        
         List ruleTargets = (node.type == 'runRule' && node.config instanceof Map && (node.config as Map).appId != null) ?
             ["${(node.config as Map).appId}"] : []
         steps << [kind: 'action', label: labelForNode(node), devices: resolveDevices(node.config as Map), ruleTargets: ruleTargets]
@@ -3199,9 +3747,9 @@ List buildVisualRuleBuilderFlow(Map st) {
     return steps
 }
 
-// Hubitat's built-in Notifier. Worth decoding because it stores an already
-// rendered description of what it does in state.text, so the action step needs
-// no reconstruction at all - only the trigger and the time window do.
+
+
+
 List buildNotifierFlow(Map data, Map st) {
     Map text = st.text as Map
     if (!text) return []
@@ -3217,7 +3765,7 @@ List buildNotifierFlow(Map data, Map st) {
 
     List steps = []
 
-    // Anything picked that is not an output device is what the Notifier watches.
+    
     List triggerDevices = []
     settingDevices.each { String n, List d ->
         if (n in ['noteDev', 'speechDev', 'speakDevice']) return
@@ -3257,7 +3805,7 @@ String expressionText(List expr, Map capabs) {
             parts << (capabs[s] ?: "condition ${s}")
         }
     }
-    // The same condition can be listed more than once by Rule Machine's internals.
+    
     List deduped = []
     parts.each { if (!deduped || deduped[-1] != it) deduped << it }
     return deduped.join(' ')
@@ -3280,9 +3828,9 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         if (n.endsWith(".${num}")) d.each { if (!devices.contains(it)) devices << it }
     }
 
-    // Control-flow markers drive the branching layout. The rule's own `indent`
-    // field is deliberately NOT used: on rule 2816 it disagrees with the real
-    // nesting, so structure comes from these methods plus a stack instead.
+    
+    
+    
     String ctrl = null
     if (method == 'getIfThen') ctrl = 'if'
     else if (method == 'getElseIf') ctrl = 'elseif'
@@ -3297,29 +3845,29 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         }
     }
     if (method == 'getWaitRule') {
-        // A wait's devices come from the condition it waits on, not from an
-        // action setting numbered after it.
+        
+        
         (requiredDevices((evalMap["${act.rule}"] ?: []) as List, settingDevices)).each {
             if (!devices.contains(it)) devices << it
         }
     }
 
-    // An action that targets another rule names no device, so without this the
-    // step reads as a bare "Run Actions" with nothing to say which rule. The
-    // ids are carried through and turned into names in buildGraph, which is the
-    // first point where every app label is known.
+    
+    
+    
+    
     List ruleTargets = []
     boolean selfTarget = false
     Map linkFam = RULE_LINK_ACTIONS[method] as Map
     if (linkFam) {
-        // Same alias list as extractRuleLinks, and for the same reason: the
-        // graph and this focused flowchart must read the same setting or they
-        // can disagree about which rules an action targets.
+        
+        
+        
         (linkFam.targets as List<String>).each { String targetSetting ->
             String rawTargets = settingValues["${targetSetting}.${num}"] ?: ''
             if (!rawTargets) return
-            // A "*" entry is this rule itself, and can sit alongside real
-            // targets - ["*","1809"] is "this rule AND Perimeter Closed".
+            
+            
             if (rawTargets.contains('*')) selfTarget = true
             String cleaned = rawTargets.replaceAll('[^0-9]', ' ').trim()
             if (cleaned) cleaned.split(' +').each { String t -> if (t && !ruleTargets.contains(t)) ruleTargets << t }
@@ -3334,29 +3882,49 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         devices: devices,
         ruleTargets: ruleTargets,
         selfTarget: selfTarget,
+        
+        
+        
+        
+        
+        
+        
+        variableField: (method == 'getSetVariable') ? "xVarV.${num}" : null,
     ]
 }
 
 String actionLabel(String method, String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
     switch (method) {
         case 'getSetVariable':
-            // xVarV.<n> holds the target Hub Variable name. Verified against
-            // one fixture (rule 2981, "_Test Variables") to carry a trailing
-            // period - "TestHubUptime." - not yet confirmed whether that is
-            // always present or an artifact of this specific picker state, so
-            // it is stripped rather than assumed absent on other rules.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String varName = (settingValues["xVarV.${num}"] ?: '').replaceAll(/\.$/, '')
-            if (!varName) return 'Set Hub Variable [unresolved]'
-            // valStringOp.<n> discriminates what the value is being set FROM.
-            // Only the device-attribute source has been observed so far - a
-            // fixed value or another variable as the source is unconfirmed
-            // and falls through to the bare form below rather than guessing.
+            if (!varName) return 'Set Variable [unresolved]'
+            
+            
+            
+            
             if (settingValues["valStringOp.${num}"] == 'Device attribute') {
                 String attr = settingValues["tCustomAttr.${num}"]
                 List srcDevices = settingDevices["customDev.${num}"] ?: []
-                if (attr && srcDevices) return "Set Hub Variable ${varName} from ${srcDevices[0]}.${attr}"
+                if (attr && srcDevices) return "Set Variable ${varName} from ${srcDevices[0]}.${attr}"
             }
-            return "Set Hub Variable ${varName}"
+            return "Set Variable ${varName}"
         case 'getOnOffSwitch':
             return settingValues["onOff.${num}"] == 'true' ? 'On' : 'Off'
         case 'getSetColorTemp':
@@ -3377,22 +3945,22 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
             String msg = settingValues["msg.${num}"]
             return msg ? "Notify: ${msg}" : 'Notify'
         case 'getSetPrivateBoolean':
-            // pvTF.<n> holds the INVERSE of the value the rule page shows, and
-            // an empty value counts as false. Verified against four rule pages
-            // covering both stored forms: rule 1806 actions 31/33 (pvTF true
-            // then false) and rule 1999 actions 8/7 (pvTF true then empty), each
-            // displaying False then True in that order.
-            //
-            // The empty case is why this was shown as a bare 'Set Private
-            // Boolean' until now. Nine of the 23 such actions on the test hub
-            // store an empty string rather than 'false', which is how a Hubitat
-            // bool input persists when it has never been switched on, so
-            // defaulting to false here is what makes the negation total.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             return "Set Private Boolean ${settingValues["pvTF.${num}"] == 'true' ? 'False' : 'True'}"
         case 'getDefinedAction':
             return 'Run defined actions'
         case 'getSetVolume':
-            // volumeVal.<n> holds the level; volume.<n> is the device picker.
+            
             String vol = settingValues["volumeVal.${num}"] ?: settingValues["speakVolume.${num}"]
             return vol ? "Set volume ${vol}" : 'Set volume'
         case 'getChime':
@@ -3402,19 +3970,19 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
         case 'getRestore':
             return 'Restore device state'
         case 'getStopActions':
-            // Rule Machine's own wording for this action is "Cancel Timed
-            // Actions". prettyMethod would derive "Stop Actions" from the
-            // method name, which matches nothing the user sees on the rule.
+            
+            
+            
             return 'Cancel Timed Actions'
         case 'getRuleActions':
             return 'Run Actions'
         case 'getPauseResumeRules':
-            // One action type covers both directions, discriminated by pR.<n>.
-            // Verified on one rule holding both: pR=true against a page reading
-            // "Resume Rules: Back Door Night", pR empty against "Pause Rules:
-            // Kettle button". Unlike pvTF this reads the right way round, so it
-            // is used directly rather than negated. Empty is the default, which
-            // is why an untouched action means Pause.
+            
+            
+            
+            
+            
+            
             return settingValues["pR.${num}"] == 'true' ? 'Resume Rules' : 'Pause Rules'
         case 'getSetMode':
             return 'Set mode'
@@ -3441,9 +4009,9 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
     }
 }
 
-// Rule Machine embeds the CURRENT reading in its condition text, e.g.
-// "Illuminance of _ Average External Illuminance(9755) is < 200". That value is
-// runtime noise in a static diagram and is stale the moment it is drawn.
+
+
+
 String cleanCondition(String text) {
     String s = stripTags(text)
     s = s.replaceAll(/\([^)]*\)/, '')
@@ -3456,12 +4024,12 @@ String prettyMethod(String method) {
     return s ?: 'Action'
 }
 
-// Capabilities that expose no commands. A device selected through one of these
-// is being READ, never driven - so it must not be reported as something the app
-// acts on. Found via Critical Device Monitor, which subscribes only to its
-// water/smoke/CO pickers but also has contact, motion, lock and garage-door
-// pickers it merely inspects; without this check all of those were mislabelled
-// as devices the app commands.
+
+
+
+
+
+
 @Field static final List<String> SENSOR_CAPABILITIES = [
     'capability.contactSensor', 'capability.motionSensor', 'capability.waterSensor',
     'capability.smokeDetector', 'capability.carbonMonoxideDetector', 'capability.presenceSensor',
@@ -3475,41 +4043,41 @@ String prettyMethod(String method) {
     'capability.holdableButton', 'capability.doubleTapableButton', 'capability.releasableButton',
 ]
 
-// Device icon auto-detection, from a device's own RAW capability list (the
-// /device/fullJson shape - PascalCase, e.g. "WaterSensor" - a different
-// naming convention from the "capability.xxx" setting-type strings above, and
-// not to be confused with them).
-//
-// Ordered, first match wins. Built against a 24-category taxonomy Gordon
-// supplied (lighting, switches, dimmers, doors & windows, locks, motion,
-// climate, environmental, safety, water, security, cameras, shades, energy,
-// appliances, cleaning, media, buttons, presence, outdoor, vehicles,
-// infrastructure, virtual, generic sensor, unknown), mapped onto what
-// Hubitat's own capability model can actually tell them apart by - six of
-// those categories cannot be, and are deliberately left uncaptured rather
-// than faked; see the note below the table.
-//
-// Administrative/generic markers (Configuration, Refresh, Battery, the bare
-// Sensor/Actuator markers) never appear in this table at all, so they can
-// never win. Among what remains, a capability only a purpose-built device
-// would declare (WaterSensor, GarageDoorControl, Thermostat...) is checked
-// before a capability that commonly rides along on a device whose real
-// purpose is something else (TemperatureMeasurement, Switch...), so a device
-// with several capabilities resolves to the one that is actually its reason
-// for existing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List ICON_RULES = [
     [key: 'locks',     label: 'Locks & access',       caps: ['Lock', 'LockCodes']],
-    // Presence checked ahead of doors/motion on purpose - found live:
-    // "Presence Manager Main Status" declares MotionSensor, ContactSensor AND
-    // PresenceSensor together on one virtual status device. Its own name and
-    // driver type ("Presence Manager Output") say what it is actually for;
-    // PresenceSensor is never an incidental rider the way a contact/motion
-    // marker can be on a multi-purpose virtual device, so it wins here.
+    
+    
+    
+    
+    
+    
     [key: 'presence',  label: 'Location & presence',  caps: ['PresenceSensor']],
-    // Gordon's own taxonomy groups contact sensors, garage doors and gates
-    // as one "Doors & windows" category rather than splitting garage doors
-    // out - DoorControl is the generic (non-garage) door-actuator capability,
-    // included for completeness even though no device on this hub uses it.
+    
+    
+    
+    
     [key: 'doors',     label: 'Doors & windows',      caps: ['ContactSensor', 'GarageDoorControl', 'DoorControl']],
     [key: 'water',     label: 'Water',                caps: ['WaterSensor', 'Valve']],
     [key: 'motion',    label: 'Motion & occupancy',   caps: ['MotionSensor']],
@@ -3518,20 +4086,20 @@ String prettyMethod(String method) {
                                                               'DoubleTapableButton', 'ReleasableButton']],
     [key: 'cameras',   label: 'Cameras & doorbells',  caps: ['ImageCapture']],
     [key: 'shades',    label: 'Shades & coverings',   caps: ['WindowShade']],
-    // Found live: Gmail Broker (a notification-gateway integration device)
-    // declares Notification alongside the same generic Actuator/Refresh
-    // every device has - the only real signal it carries. Checked after
-    // presence on purpose: Mobile Proxy and the phone devices also declare
-    // Notification alongside PresenceSensor, and their actual purpose is
-    // presence tracking, not notification delivery, so presence must win
-    // for them.
+    
+    
+    
+    
+    
+    
+    
     [key: 'broker',    label: 'Notification gateway', caps: ['Notification']],
-    // Climate checked ahead of switch/lighting - found live: all three
-    // Sensibo Pods carry Switch alongside Thermostat (their own on/off
-    // baseline, same shape of problem as the Garage Dome Siren/security case
-    // below) and were resolving to plain switches before this was added.
-    // Fans are grouped into climate control per Gordon's own taxonomy
-    // ("Thermostats, HVAC, air conditioners, fans"), not split out alone.
+    
+    
+    
+    
+    
+    
     [key: 'climate',   label: 'Climate control',      caps: ['Thermostat', 'ThermostatMode', 'ThermostatSetpoint',
                                                               'ThermostatCoolingSetpoint', 'ThermostatHeatingSetpoint',
                                                               'ThermostatOperatingState', 'ThermostatFanMode',
@@ -3541,113 +4109,113 @@ String prettyMethod(String method) {
     [key: 'security',  label: 'Security & alarms',    caps: ['Alarm', 'Chime', 'Tone']],
     [key: 'media',     label: 'Media & audio',        caps: ['AudioVolume', 'SpeechSynthesis', 'MediaTransport',
                                                               'MusicPlayer']],
-    // Switch checked last among the "defining" tier, not alongside lighting -
-    // found live: Garage Dome Siren carries Switch alongside Alarm/Chime/Tone
-    // (its own on/off baseline) and was resolving to 'switch' before this was
-    // reordered. Switch is the single most common baseline capability on any
-    // actuator, so it must be the tier of last resort before the generic
-    // measurement-capability fallback, not a peer of the capabilities that
-    // are actually specific to a device's purpose.
+    
+    
+    
+    
+    
+    
+    
     [key: 'switches',  label: 'Switches & outlets',   caps: ['Switch', 'Outlet']],
-    // Checked AFTER switches on purpose: a smart plug used to power something
-    // (Towel Rail, Patio Camera Charger) also reports PowerMeter/EnergyMeter
-    // as a bonus, and should still read as what it is used for - a switch -
-    // not as an energy monitor. This tier only wins for a device that meters
-    // power with no on/off control of its own to be classified by first.
+    
+    
+    
+    
+    
     [key: 'energy',    label: 'Energy',               caps: ['PowerMeter', 'EnergyMeter', 'VoltageMeasurement']],
     [key: 'environmental', label: 'Environmental sensors', caps: ['TemperatureMeasurement', 'IlluminanceMeasurement',
                                                               'RelativeHumidityMeasurement', 'PressureMeasurement',
                                                               'CarbonDioxideMeasurement', 'UltravioletIndex']],
     [key: 'sensor',    label: 'Generic sensor',       caps: ['Sensor']],
-    // Override-only, on purpose: an empty caps list can never match in
-    // autoDetectIconKey (.any{} on an empty list is always false), so
-    // these two never win a scan. They exist so Gordon can manually tag a
-    // device as Hub or AI in the Device icons panel even though nothing on
-    // the hub currently justifies auto-detecting either - see the note
-    // below the table for why CoCoHue Bridge and a hypothetical AI-node
-    // device can't be told apart from an ordinary integration device by
-    // capability alone. Kept in this table, not a separate list, so they
-    // share the same label-building and ICON_KEYS-derivation code as every
-    // real rule.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     [key: 'hub',       label: 'Hub & infrastructure', caps: []],
     [key: 'ai',        label: 'AI node',              caps: []],
-    // These three also have an empty caps list - not override-only like
-    // hub/ai above, but driven entirely by ICON_NAME_HINTS below rather
-    // than capability. Appliance, Network and Display have no distinguishing
-    // Hubitat capability at all (see the note further down), but their name
-    // alone is usually unambiguous - Tuya Kettle, Internet Down, and the
-    // Google Nest Hub "display" devices are all bare Virtual Switches or
-    // Chromecast integration devices with nothing capability-wise to tell
-    // them apart from any other switch or speaker.
+    
+    
+    
+    
+    
+    
+    
+    
     [key: 'appliance', label: 'Appliance',            caps: []],
     [key: 'network',   label: 'Internet/network',     caps: []],
     [key: 'display',   label: 'Display',              caps: []],
-    // Empty caps like the four above, but detected off deviceType (the
-    // driver name) rather than name - see autoDetectIconKeyForDevice(). A
-    // Scene device (CoCoHue Scene, Hubitat's own Groups and Scenes) declares
-    // PushableButton same as a real button/remote, so capability alone
-    // resolves it to 'buttons', and its own name ("Dining - Relax") carries
-    // no hint either.
+    
+    
+    
+    
+    
+    
     [key: 'scene',     label: 'Scene',                caps: []],
-    // Empty caps, detected off deviceType like 'scene' above - v2.0.14's
-    // synthesized Connector device nodes (buildGraph(), for a Hub Variable
-    // Connector Hubitat's own /hub2/devicesList does not list - see
-    // Supporting Docs/hub_variable_v2014_implementation_spec.md) hardcode this
-    // key directly, since the caller already knows it is a connector. A real,
-    // independently-discovered Connector device would also match here via its
-    // driver name containing "Connector" (Hubitat's own Variable Connector
-    // driver family), the same deviceType-substring pattern 'scene' uses.
+    
+    
+    
+    
+    
+    
+    
+    
     [key: 'connector', label: 'Hub Variable connector', caps: []],
 ]
 
-// Name-based hints, checked BEFORE capability - added at Gordon's explicit
-// request after real misclassifications capability alone cannot fix:
-// Festoon Lights, Tuya Kettle, Internet Down and the Google Nest Hub
-// "display" devices are all either bare Virtual Switches or share a
-// capability set with an unrelated device type, so nothing in ICON_RULES
-// can tell them apart from a generic switch or speaker - but the device's
-// own name already says exactly what it is.
-//
-// Ordered like ICON_RULES: more specific/unambiguous words checked first,
-// so "Kitchen Downlight Button" matches "button" before this ever reaches
-// the substring "light" inside "Downlight". Matched as whole words only
-// (the name is split on anything that is not a letter or digit), not
-// substrings - "highlight" and "flashlight" do not become lighting.
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List ICON_NAME_HINTS = [
     [key: 'buttons',   words: ['button', 'remote']],
     [key: 'appliance', words: ['kettle', 'oven', 'fridge', 'refrigerator', 'dishwasher',
                                 'washer', 'dryer', 'microwave', 'toaster']],
     [key: 'network',   words: ['internet', 'wifi', 'router', 'modem']],
-    // 'bridge' specifically, not the broader "Hub & infrastructure" grouping
-    // the class comment above rules out by capability - CoCoHue Bridge and
-    // similar devices consistently carry "Bridge" in their own name even
-    // though nothing in their capability list says so.
+    
+    
+    
+    
     [key: 'hub',       words: ['bridge']],
-    // 'nest' rather than 'hub' for the Google Nest Hub devices - 'hub' alone
-    // is too generic a word to risk matching against unrelated devices.
+    
+    
     [key: 'display',   words: ['display', 'monitor', 'tablet', 'nest']],
-    // Both spellings kept - Gordon's own "Dehumidifyer" device is spelled
-    // without the second i, and word-matching is exact, not fuzzy.
+    
+    
     [key: 'climate',   words: ['heater', 'dehumidifier', 'dehumidifyer', 'humidifier', 'aircon']],
     [key: 'lighting',  words: ['light', 'lights', 'lamp', 'bulb']],
 ]
 
-// Splits a device name into lowercase whole words for ICON_NAME_HINTS -
-// deliberately not a capability, this reads the label the user gave the
-// device, which this project otherwise avoids doing anywhere else. Kept to
-// a small, curated word list rather than fuzzy/partial matching so a false
-// positive stays rare and easy to reason about.
+
+
+
+
+
 List nameWords(String name) {
     return (name ?: '').toLowerCase().split('[^a-z0-9]+') as List
 }
 
-// deviceType is the driver name (e.g. "CoCoHue Scene"), checked before both
-// the name hints and capability - it is the one signal here that is not the
-// user's own naming choice, so a substring match on it carries far less
-// false-positive risk than the same match would against a device's name.
-// Needed specifically for Scene devices: they declare PushableButton same as
-// a real button/remote, and their names ("Dining - Relax") say nothing about
-// being a scene at all, so neither of the other two signals can find them.
+
+
+
+
+
+
+
 String autoDetectIconKeyForDevice(String name, List capabilities, String deviceType = null) {
     if (deviceType && deviceType.toLowerCase().contains('scene')) return 'scene'
     if (deviceType && deviceType.toLowerCase().contains('connector')) return 'connector'
@@ -3658,54 +4226,54 @@ String autoDetectIconKeyForDevice(String name, List capabilities, String deviceT
     }
     return autoDetectIconKey(capabilities)
 }
-//
-// Six of Gordon's 24 categories are deliberately not in the table above,
-// checked directly against real devices before giving up on them rather
-// than assumed:
-// - Dimmers: not separable from Lighting. A dimmer module and a dimmable
-//   bulb both declare plain SwitchLevel; nothing distinguishes "this is a
-//   dimmer for an unknown fixture" from "this is a dimmable light."
-// - Appliances (washers, ovens, fridges) and Cleaning (robot vacuums):
-//   Hubitat has no base capability for either. Community drivers for both
-//   typically expose nothing beyond Switch/Outlet, identical to any other
-//   smart plug.
-// - Outdoor (weather stations, pools/spas) and Vehicles (EV chargers,
-//   vehicle presence): not a distinct capability grouping - a weather
-//   station reads as Environmental sensors, an EV charger as Switch or
-//   Energy, vehicle presence as Location & presence. Correct by capability,
-//   just not separately labelled "outdoor" or "vehicle".
-// - Hub & infrastructure (bridges, repeaters, network monitors) has no
-//   capability signal: NetworkDevice, the one that looks relevant, is also
-//   carried by ordinary media devices (the Chromecast speakers all declare
-//   it), so using it here would misclassify them. Checked directly against
-//   CoCoHue Bridge and Hub Information Driver when Gordon first asked for a
-//   "Hub" category: CoCoHue Bridge reports only [Actuator, Refresh,
-//   Initialize] - no capability distinguishes a bridge/hub device from any
-//   other integration-managed actuator. Bridges specifically are handled by
-//   name instead (ICON_NAME_HINTS' 'bridge' -> hub entry below) - repeaters
-//   and network monitors still have no signal, capability or name, and
-//   remain unclassified.
-// - Voice assistants (Google Home Mini, Google Nest Hub): also checked
-//   directly when Gordon asked for an "Assistant" category. These report
-//   the exact same capabilities as a plain Chromecast speaker (AudioVolume,
-//   MediaTransport, SpeechSynthesis, NetworkDevice) - nothing marks a
-//   device as an assistant rather than a speaker.
-// - Virtual & coordination: device.virtual is a real, separate field, but
-//   deliberately not used to override the table above - a virtual light
-//   switch is still functionally a light switch on this map, and losing
-//   that in favour of a generic "virtual" icon would make the map less
-//   useful, not more. Also Heater/dehumidifier and Display-vs-speaker,
-//   found while testing the table against real devices, not part of
-//   Gordon's list but the same shape of gap: Gordon's Gas Heater and
-//   Dehumidifyer report only [Switch, Refresh], and a Chromecast "display"
-//   reports the exact same capabilities as a Chromecast speaker - identical
-//   in both cases, nothing to key off without reading the device name.
 
-// The keys a manual override may pick from - ICON_RULES' own keys plus
-// 'unknown' and 'auto', the two states outside the table itself (nothing
-// matched, and no override set). Written literally rather than derived from
-// ICON_RULES to avoid relying on static-initializer ordering between two
-// @Field constants.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List<String> ICON_KEYS = [
     'locks', 'presence', 'doors', 'water', 'motion', 'safety', 'buttons',
     'cameras', 'shades', 'broker', 'climate', 'lighting', 'security', 'media',
@@ -3713,9 +4281,9 @@ String autoDetectIconKeyForDevice(String name, List capabilities, String deviceT
     'network', 'display', 'scene', 'connector', 'unknown',
 ]
 
-// Nothing in ICON_RULES matched - not a guess, an honest "this app does not
-// know what kind of device this is", drawn as a "?" rather than defaulting to
-// some other icon that would claim more than is true.
+
+
+
 String autoDetectIconKey(List capabilities) {
     List caps = (capabilities ?: []) as List
     for (rule in ICON_RULES) {
@@ -3725,10 +4293,10 @@ String autoDetectIconKey(List capabilities) {
     return 'unknown'
 }
 
-// Commands that leave the device in a lasting state, so two apps driving the
-// same device really can fight. Sending two notifications or two chimes is not
-// a conflict, which is why Mobile Proxy topping a "contested" list by 20 apps
-// would be noise rather than a finding.
+
+
+
+
 @Field static final List<String> STATEFUL_CAPABILITIES = [
     'capability.switch', 'capability.switchLevel', 'capability.colorControl',
     'capability.colorTemperature', 'capability.lock', 'capability.garageDoorControl',
@@ -3742,21 +4310,21 @@ boolean isStatefulCapability(String settingType) {
 }
 
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
-    // Rule Machine's private naming: tDev<n> = trigger device, rDev_<n> =
-    // condition device (both plain IF conditions and the required expression).
+    
+    
     if (settingName.startsWith('tDev')) return 'trigger'
     if (settingName.startsWith('rDev')) return 'constraint'
-    // The wildcard picker means the app took devices of ANY type, which is what
-    // integrations that publish devices to an external system do - Maker API and
-    // Google Home both use it. They neither react to nor drive these devices on
-    // their own, so calling them triggers or actions misrepresents them (Maker
-    // API Export alone contributed 192 bogus "commands this device" edges).
-    // Checked before the subscription test because such apps do subscribe, to
-    // push state outwards.
+    
+    
+    
+    
+    
+    
+    
     if (settingType == 'capability.*') return 'exposed'
-    // General signal: an app subscribes to what it listens to.
+    
     if (subscribed.contains(devId)) return 'trigger'
-    // Read-only by capability: watched, not driven.
+    
     if (SENSOR_CAPABILITIES.contains(settingType)) return 'monitor'
     return 'action'
 }
@@ -3771,99 +4339,99 @@ String stripTags(String s) {
     return s ? s.replaceAll('<[^>]*>', '').trim() : s
 }
 
-// Found live: a built-in app's own name ("Hubitat(R) Dashboards") came back
-// from /installedapp/statusJson with its registered-trademark symbol replaced
-// by the Unicode replacement character - always evidence of a decode mismatch
-// somewhere in the fetch, never a character any real name would intentionally
-// contain. Root cause not chased down (cosmetic, low priority - see
-// BACKLOG.md); this just keeps the artifact from propagating any further than
-// it already has. Written as a numeric codepoint rather than a unicode escape
-// literal in this file's source, since an escape literal here is Groovy's own
-// string syntax and would be consumed at parse time rather than reach this
-// method - the same trap check_template.sh below exists to catch.
+
+
+
+
+
+
+
+
+
+
 String stripReplacementChar(String s) {
     return s ? s.replace(new String(Character.toChars(0xFFFD)), '') : s
 }
 
-// Size of a hub collection whose shape is not guaranteed. Anything else,
-// including null and a bare value, counts as zero rather than throwing.
+
+
 int countOf(def v) {
     if (v instanceof List) return (v as List).size()
     if (v instanceof Map) return (v as Map).size()
     return 0
 }
 
-// scheduledJobs from statusJson is a List when an app has more than one job,
-// but a single job comes back as a bare Map - one job's own fields (handler,
-// nextRunTime, schedule, status, prevRunTime), not a collection of jobs at
-// all. countOf's Map branch counts THOSE FIELDS, so a one-job app with five
-// fields on its job record was reported as "5 scheduled jobs". Normalising
-// to a list first, always of job maps and never of a job's own keys, is what
-// makes both the count and the per-job detail below correct at once.
+
+
+
+
+
+
+
 List scheduledJobList(def raw) {
     if (raw instanceof List) return raw as List
     if (raw instanceof Map && raw) return [raw as Map]
     return []
 }
 
-// Removes hub-injected status from an app label, CONTENT AND ALL, where
-// stripTags removes only the markup and keeps the words.
-//
-// Hubitat wraps the status it appends in a span - "Christmas Cheer <span
-// style='color:red'>(Required Expression false)</span>" - so the span is what
-// identifies it, not the English inside it. Keying on the markup rather than on
-// the text is the whole point: it holds for whatever status a future firmware
-// injects, in whatever language, and it can never eat a name the USER wrote.
-// A pattern matching a trailing parenthetical would turn "Front Walkway
-// Announce (Day)" and "(Night)" into the same node.
+
+
+
+
+
+
+
+
+
+
 String stripStatusMarkup(String s) {
     if (!s) return s
-    // Non-greedy, so two spans in one label do not collapse into one match
-    // taking everything between them. Removing a span from the middle of a
-    // label leaves a double space behind, hence the squeeze.
+    
+    
+    
     return stripTags(s.replaceAll('<span[^>]*>.*?</span>', '')).replaceAll(' +', ' ')
 }
 
-// ===================================================================================================================
-// Graph building
-// ===================================================================================================================
 
-// Name (and deleted status) of a rule referenced by another rule. The app
-// phase creates an appInfo entry for every id returned by the complete
-// /hub2/appsList inventory, including an explicit fallback entry when an
-// app's relationship endpoint is unreadable. Therefore a target absent from
-// appInfo was not installed at scan time and is a dangling/deleted reference.
-// Resolving that fact from the completed inventory keeps buildGraph entirely
-// in-memory: graph finalization and abandoned-scan recovery can never stall on
-// a sequence of synchronous 10-second loopback lookups. Cached because a rule
-// can be both a flowchart target and a graph edge target.
-//
-// Returns [label, missing] rather than a bare label. The label alone used to
-// be the only record of a deleted target - "Rule 2328 - deleted" - which meant
-// the only way to find deleted references again was to string-match that
-// suffix. missing is now a fact a caller (Insights) can filter on directly,
-// separate from unscanned: unscanned means a real app the scan never reached,
-// missing means the id no longer resolves to anything at all.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Map linkedRuleName(String targetId, Map appInfo, Map cache) {
     if (cache.containsKey(targetId)) return cache[targetId] as Map
     Map target = appInfo[targetId] as Map
     String label = target?.label as String
     String draw = target?.drawLabel as String
     boolean missing = !appInfo.containsKey(targetId)
-    // Named so the user can act on it. "Rule 2328" invites a hunt for a
-    // rule that is not there; saying so turns it into a finding.
+    
+    
     if (!label && missing) label = "Rule ${targetId} - deleted"
     if (!label) label = "Rule ${targetId}"
-    // Falls back to the full label, which is what a scan from before drawLabel
-    // existed will have stored, and what a bare "Rule 2328" needs anyway.
+    
+    
     Map result = [label: label, draw: draw ?: label, missing: missing]
     cache[targetId] = result
     return result
 }
 
-// Action steps carry the ids of any rule they act on. Turned into names here,
-// added to the step's device list so the flowchart renders them under the
-// action exactly as it renders device names.
+
+
+
 List resolveFlowTargets(List flow, Map appInfo, Map cache) {
     (flow ?: []).each { step ->
         if (!(step instanceof Map)) return
@@ -3871,9 +4439,9 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
         List targets = (s.ruleTargets ?: []) as List
         if (!targets) return
         List devices = (s.devices ?: []) as List
-        // Named the way the rule page names it: "This Rule, Perimeter Closed".
-        // Only worth saying when the action reaches beyond this rule - a rule
-        // setting only its own boolean needs no list at all.
+        
+        
+        
         if (s.selfTarget && !devices.contains('This Rule')) devices << 'This Rule'
         targets.each { t ->
             String nm = (linkedRuleName("${t}", appInfo, cache).label) as String
@@ -3884,45 +4452,81 @@ List resolveFlowTargets(List flow, Map appInfo, Map cache) {
     return flow
 }
 
-// Three label forms, not two, and each is drawn somewhere different:
-//
-//   label  short, drawn on the canvas with nothing focused
-//   draw   full identity, drawn on the canvas with an app focused
-//   title  everything including hub status, shown only on hover
-//
-// draw exists because Hubitat injects live status into an app's label, and on
-// a focused map that status was the widest thing on screen and identical on
-// every node, so long names overwrote each other while carrying no information
-// that told them apart. The status is still one hover away.
-//
-// drawLabel defaults to fullLabel, so a caller with nothing to strip - every
-// device, and any app the hub has not annotated - passes one argument as before
-// and gets identical output.
-Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null,
+              String statusSuffix = null, boolean statusInTitle = true) {
     String label = fullLabel ?: id
     String clean = drawLabel ?: label
-    // Truncation runs on the cleaned text, so a name that is short in its own
-    // right survives whole. "Christmas Cheer" was reaching this as "Christmas
-    // Cheer (Required Expression false)" and being cut to "Christmas Cheer
-    // (Requi…", which is longer, uglier and no more informative.
+    
+    
+    
+    
     String shortLabel = clean
     if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
+    if (statusSuffix) shortLabel = "${shortLabel} (${statusSuffix})"
+    String canonicalName = subtitle ? "${clean} (${subtitle})" : clean
+    String drawText = statusSuffix ? "${canonicalName} (${statusSuffix})" : canonicalName
+    String titleText = subtitle ? "${label} (${subtitle})" : label
+    if (statusSuffix && statusInTitle) titleText = "${titleText} (${statusSuffix})"
     return [
         id: id,
         label: shortLabel,
-        draw: subtitle ? "${clean} (${subtitle})" : clean,
-        title: subtitle ? "${label} (${subtitle})" : label,
+        draw: drawText,
+        title: titleText,
+        name: canonicalName,
         group: group,
     ]
 }
 
-// Why an app with no device, no rule link and no endpoint is on the map anyway.
-//
-// Ordered by how completely each fact explains the emptiness. A container is
-// fully explained by its children and nothing else needs saying. A schedule
-// explains an app that acts on the hub rather than on devices, which is exactly
-// what Rebooter does. Falling all the way through is itself the answer, and the
-// only one of these worth a second look.
+
+
+
+
+
+
+
 String inertReason(Map inert, Map appInfo, String parentId = null) {
     if (!inert) return 'no relationships found'
 
@@ -3938,9 +4542,9 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     int subs = (inert.subs ?: 0) as Integer
     if (subs > 0) return "listens to ${subs} event${subs == 1 ? '' : 's'}"
 
-    // Last, because being someone's child explains where an app came from but
-    // not what it does. A button rule under a Button Controller is still an
-    // app that references nothing this map can see.
+    
+    
+    
     String parent = parentId
     if (parent) {
         Map p = appInfo[parent] as Map
@@ -3951,12 +4555,12 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     return 'references nothing'
 }
 
-// Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API,
-// NOT an HTTP endpoint - confirmed live 2026-08-26 after a dedicated search for
-// a loopback endpoint came back seven 404s. Called only
-// from finishScan()'s finishGeneration() closure, synchronously, so a failed or
-// stale inventory is published or discarded atomically with the rest of that
-// scan generation - never mixed into a different generation's graph.
+
+
+
+
+
+
 Map fetchHubVariableInventory() {
     try {
         Map allVars = getAllGlobalVars()
@@ -3973,18 +4577,18 @@ Map fetchHubVariableInventory() {
     }
 }
 
-// Map a platform Hub Variable type spelling to the canonical schema-4 value,
-// case-insensitively. Confirmed live 2026-08-26 against real test variables of
-// all five types (a v2.0.14 export of TestNumber/
-// TestDecimal/TestBoolean/TestDateTime for the rest): getAllGlobalVars()
-// returns Groovy runtime type names, not the UI's declared-type labels -
-// "integer" for Number, "bigdecimal" for Decimal, "boolean" and "datetime"
-// matching directly. The first live export (schema 4) showed variableType:
-// null for TestNumber/TestDecimal because this mapping only recognized
-// "number"/"decimal" at the time - the safe fallback worked exactly as
-// designed (no crash, no wrong guess), and this is
-// the confirmed correction, not a guess. Unrecognized input still returns
-// null.
+
+
+
+
+
+
+
+
+
+
+
+
 String normalizeHubVariableType(String rawType) {
     switch ("${rawType}".toLowerCase()) {
         case 'integer': return 'Number'
@@ -3996,8 +4600,8 @@ String normalizeHubVariableType(String rawType) {
     }
 }
 
-// Resolve stored references against the authoritative inventory. Exact identity
-// wins; the trailing-period fallback applies only to one unambiguous match.
+
+
 String canonicalHubVariableName(String rawName, Map inventoryVars) {
     String raw = rawName ?: ''
     if (!raw || !inventoryVars) return raw
@@ -4012,62 +4616,475 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     return matches.size() == 1 ? "${matches[0]}" : raw
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final Set<String> AM_VAR_BUILT_IN_TOKENS = ['device', 'time', 'date', 'value', 'text'] as Set<String>
+
+
+
+
+
+List extractLocalVariableDefinitions(Map data, String ownerAppId) {
+    Map st = [:]
+    (data.appState ?: []).each { e ->
+        if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
+    }
+    Map allLocalVars = (st.allLocalVars ?: [:]) as Map
+    List out = []
+    allLocalVars.each { name, meta ->
+        String varName = "${name}"
+        if (!varName) return
+        Map m = (meta instanceof Map) ? (meta as Map) : [:]
+        out << [
+            identity: "${ownerAppId}:${varName}",
+            name: varName,
+            variableType: normalizeHubVariableType(m.type as String),
+        ]
+    }
+    return out
+}
+
+
+
+
+
+
+
+Map classifyVariableReference(Map reference, Map context) {
+    String rawName = amVarText(reference.name)
+    if (!rawName) throw new IllegalArgumentException('reference.name is required')
+
+    String ownerAppId = amVarText(context.ownerAppId)
+    Map<String, Map> localDefinitions = amVarDefinitionsByName(context.localDefinitions)
+    Map<String, Map> hubDefinitions = amVarDefinitionsByName(context.hubDefinitions)
+    Set<String> builtInTokens = ((context.builtInTokens ?: AM_VAR_BUILT_IN_TOKENS) as Collection)
+        .collect { amVarText(it).toLowerCase() }
+        .findAll { it } as Set<String>
+
+    String evidenceKind = amVarText(reference.evidenceKind ?: 'structured-setting')
+    String provenScope = amVarText(reference.provenScope ?: reference.scopeHint).toLowerCase()
+    String scopeSource = amVarText(reference.scopeSource)
+
+    if (provenScope && !(provenScope in ['local', 'hub'])) {
+        throw new IllegalArgumentException("Unsupported proven scope '${provenScope}'")
+    }
+    if (provenScope && !scopeSource) {
+        throw new IllegalArgumentException('A proven scope requires scopeSource evidence')
+    }
+
+    
+    
+    
+    if (evidenceKind == 'text-token' && !provenScope) {
+        provenScope = amVarIndependentlyEstablishedScope(rawName, context.establishedScopes)
+        if (provenScope) scopeSource = 'independently-established-reference'
+    }
+
+    if (evidenceKind == 'text-token' && !provenScope) {
+        boolean builtIn = builtInTokens.contains(rawName.toLowerCase())
+        return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+            scope: null,
+            status: 'ignored',
+            canonicalName: null,
+            localIdentity: null,
+            candidateScopes: [],
+            candidates: [:],
+            reason: builtIn ? 'built-in-token-without-independent-scope' :
+                'weak-text-reference-without-independent-scope'
+        ]
+    }
+
+    Map localMatch = amVarMatchWithinScope(rawName, localDefinitions)
+    Map hubMatch = amVarMatchWithinScope(rawName, hubDefinitions)
+
+    if (provenScope) {
+        Map selected = provenScope == 'local' ? localMatch : hubMatch
+        return amVarClassifiedForProvenScope(reference, rawName, ownerAppId, evidenceKind,
+            scopeSource, provenScope, selected)
+    }
+
+    List<String> candidateScopes = []
+    if (localMatch.status == 'matched') candidateScopes << 'local'
+    if (hubMatch.status == 'matched') candidateScopes << 'hub'
+
+    if (candidateScopes == ['local']) {
+        return amVarResolved(reference, rawName, ownerAppId, evidenceKind, scopeSource,
+            'local', localMatch.canonicalName as String, localMatch.matchKind as String)
+    }
+    if (candidateScopes == ['hub']) {
+        return amVarResolved(reference, rawName, ownerAppId, evidenceKind, scopeSource,
+            'hub', hubMatch.canonicalName as String, hubMatch.matchKind as String)
+    }
+
+    Map candidates = [local: localMatch.candidates ?: [], hub: hubMatch.candidates ?: []]
+    if (candidateScopes.size() == 2 || localMatch.status == 'multiple' || hubMatch.status == 'multiple') {
+        return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+            scope: 'ambiguous',
+            status: 'ambiguous',
+            canonicalName: null,
+            localIdentity: null,
+            candidateScopes: candidateScopes,
+            candidates: candidates,
+            reason: candidateScopes.size() == 2 ? 'same-name-cross-scope' :
+                'normalization-produced-multiple-candidates'
+        ]
+    }
+
+    return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+        scope: 'unresolved',
+        status: 'unresolved',
+        canonicalName: null,
+        localIdentity: null,
+        candidateScopes: [],
+        candidates: candidates,
+        reason: 'no-definition-in-either-scope'
+    ]
+}
+
+private Map amVarClassifiedForProvenScope(Map reference, String rawName, String ownerAppId,
+        String evidenceKind, String scopeSource, String provenScope, Map selected) {
+    if (selected.status == 'matched') {
+        return amVarResolved(reference, rawName, ownerAppId, evidenceKind, scopeSource,
+            provenScope, selected.canonicalName as String, selected.matchKind as String)
+    }
+    if (selected.status == 'multiple') {
+        return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+            scope: 'ambiguous',
+            status: 'ambiguous',
+            canonicalName: null,
+            localIdentity: null,
+            candidateScopes: [provenScope],
+            candidates: [(provenScope): selected.candidates ?: []],
+            reason: 'normalization-produced-multiple-candidates'
+        ]
+    }
+    return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+        scope: 'unresolved',
+        status: 'unresolved',
+        canonicalName: null,
+        localIdentity: null,
+        candidateScopes: [provenScope],
+        candidates: [(provenScope): []],
+        reason: 'definition-missing-in-proven-scope'
+    ]
+}
+
+private Map amVarResolved(Map reference, String rawName, String ownerAppId, String evidenceKind,
+        String scopeSource, String scope, String canonicalName, String matchKind) {
+    if (scope == 'local' && !ownerAppId) {
+        throw new IllegalArgumentException('context.ownerAppId is required for a Local Variable')
+    }
+    return amVarBaseResult(reference, rawName, ownerAppId, evidenceKind, scopeSource) + [
+        scope: scope,
+        status: 'resolved',
+        canonicalName: canonicalName,
+        localIdentity: scope == 'local' ? "${ownerAppId}:${canonicalName}" : null,
+        candidateScopes: [scope],
+        candidates: [(scope): [canonicalName]],
+        reason: matchKind == 'exact' ? 'exact-name-in-one-scope' :
+            'one-unambiguous-normalized-match-in-one-scope'
+    ]
+}
+
+private Map amVarBaseResult(Map reference, String rawName, String ownerAppId,
+        String evidenceKind, String scopeSource) {
+    return [
+        name: rawName,
+        ownerAppId: ownerAppId ?: null,
+        operation: amVarText(reference.operation ?: 'read'),
+        usageRole: reference.containsKey('usageRole') ? reference.usageRole : null,
+        evidence: [
+            kind: evidenceKind,
+            field: amVarText(reference.field) ?: null,
+            scopeSource: scopeSource ?: null
+        ]
+    ]
+}
+
+
+
+
+
+private Map amVarMatchWithinScope(String rawName, Map<String, Map> definitions) {
+    if (definitions.containsKey(rawName)) {
+        return [status: 'matched', canonicalName: rawName, matchKind: 'exact', candidates: [rawName]]
+    }
+    String comparable = amVarRemoveOneTrailingPeriod(rawName)
+    List<String> matches = definitions.keySet().findAll { String candidate ->
+        amVarRemoveOneTrailingPeriod(candidate) == comparable
+    }.sort()
+    if (matches.size() == 1) {
+        return [status: 'matched', canonicalName: matches[0], matchKind: 'normalized', candidates: matches]
+    }
+    if (matches.size() > 1) {
+        return [status: 'multiple', canonicalName: null, matchKind: 'normalized', candidates: matches]
+    }
+    return [status: 'none', canonicalName: null, matchKind: null, candidates: []]
+}
+
+private Map<String, Map> amVarDefinitionsByName(Object rawDefinitions) {
+    Map<String, Map> out = new LinkedHashMap<>()
+    if (rawDefinitions instanceof Map) {
+        (rawDefinitions as Map).each { Object name, Object definition ->
+            String key = amVarText(name)
+            if (key) out[key] = definition instanceof Map ? new LinkedHashMap(definition as Map) : [:]
+        }
+    } else if (rawDefinitions instanceof Collection) {
+        (rawDefinitions as Collection).each { Object definition ->
+            if (!(definition instanceof Map)) return
+            String key = amVarText((definition as Map).name)
+            if (key) out[key] = new LinkedHashMap(definition as Map)
+        }
+    }
+    return out
+}
+
+private String amVarIndependentlyEstablishedScope(String rawName, Object establishedScopes) {
+    if (!(establishedScopes instanceof Map)) return ''
+    String scope = amVarText((establishedScopes as Map)[rawName]).toLowerCase()
+    return scope in ['local', 'hub'] ? scope : ''
+}
+
+private String amVarRemoveOneTrailingPeriod(String value) {
+    return value?.endsWith('.') ? value.substring(0, value.length() - 1) : value
+}
+
+private String amVarText(Object value) {
+    return value == null ? '' : "${value}".trim()
+}
+
+
+
+
+
+
+Map classifyRuleVariableReferences(List hubVarWrites, List hubVarReads, List localDefinitions,
+        Map hubDefinitions, String ownerAppId) {
+    List raw = []
+    (hubVarWrites ?: []).each { Map w ->
+        if (!w.variable) return
+        raw << [name: w.variable, operation: 'write', evidenceKind: 'structured-setting', field: w.field]
+    }
+    (hubVarReads ?: []).each { Map r ->
+        if (!r.variable) return
+        raw << [name: r.variable, operation: 'read', usageRole: r.usageRole,
+                 evidenceKind: r.evidenceKind, field: r.field]
+    }
+
+    
+    
+    
+    
+    Map establishedScopes = [:]
+    Map context = [ownerAppId: ownerAppId, localDefinitions: localDefinitions,
+                   hubDefinitions: hubDefinitions, establishedScopes: establishedScopes]
+
+    
+    
+    
+    List structured = raw.findAll { it.evidenceKind != 'text-token' }
+    List weakText = raw.findAll { it.evidenceKind == 'text-token' }
+
+    List resolved = []
+    List nonResolved = []
+    (structured + weakText).each { Map reference ->
+        Map result = classifyVariableReference(reference, context)
+        if (result.status == 'resolved') {
+            
+            
+            
+            
+            
+            
+            
+            
+            String canonical = result.canonicalName as String
+            if (canonical && !establishedScopes.containsKey(canonical)) establishedScopes[canonical] = result.scope
+            String rawResultName = result.name as String
+            if (rawResultName && !establishedScopes.containsKey(rawResultName)) establishedScopes[rawResultName] = result.scope
+        }
+        if (result.status == 'ignored') return
+        if (result.status == 'resolved') resolved << result
+        else nonResolved << result
+    }
+    return [variableReferences: resolved, nonResolvedVariableReferences: nonResolved]
+}
+
+
+
+
+
+
+
+
+
+
+
+void correctFlowVariableLabels(Map flows, Map ruleVariables) {
+    flows.each { String appNodeId, Object stepsObj ->
+        if (!(stepsObj instanceof List)) return
+        List refs = (ruleVariables[appNodeId]?.variableReferences ?: []) as List
+        List nonResolved = (ruleVariables[appNodeId]?.nonResolvedVariableReferences ?: []) as List
+        Map byField = [:]
+        (refs + nonResolved).each { Map r -> if (r.evidence?.field) byField["${r.evidence.field}"] = r }
+        (stepsObj as List).each { Object step ->
+            if (!(step instanceof Map)) return
+            Map s = step as Map
+            String field = s.variableField as String
+            if (!field) return
+            Map r = byField[field] as Map
+            if (!r) return
+            String currentLabel = s.label as String
+            if (!currentLabel?.startsWith('Set Variable ')) return
+            String rest = currentLabel.substring('Set Variable '.length())
+            int fromIdx = rest.indexOf(' from ')
+            String suffix = fromIdx >= 0 ? rest.substring(fromIdx) : ''
+            String varName = (r.canonicalName ?: r.name) as String
+            if (r.status == 'resolved' && r.scope == 'local') {
+                s.label = "Set Local Variable ${varName}${suffix}"
+            } else if (r.status == 'resolved' && r.scope == 'hub') {
+                s.label = "Set Hub Variable ${varName}${suffix}"
+            } else if (r.status == 'ambiguous') {
+                s.label = "Set Variable ${varName} (scope ambiguous)${suffix}"
+            } else if (r.status == 'unresolved') {
+                s.label = "Set Variable ${varName} (unresolved)${suffix}"
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+List buildHasComponentEdges(Set nodeIds, Map deviceParents) {
+    List result = []
+    deviceParents.each { childId, parentId ->
+        String childNodeId = "d${childId}"
+        String parentNodeId = "d${parentId}"
+        if (!nodeIds.contains(childNodeId) || !nodeIds.contains(parentNodeId)) return
+        result << [from: parentNodeId, to: childNodeId, kind: 'hasComponent']
+    }
+    return result
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
     Map deviceTypes = (state.deviceTypes ?: [:]) as Map
+    Set disabledDevices = (state.deviceDisabled ?: []) as Set
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
 
     Map<String, Map> nodes = [:]
     List<Map> edges = []
-    // Set, not List: dedup key membership is checked once per candidate edge,
-    // and a linear contains() over a growing List made the whole build quadratic.
+    
+    
     Set<String> seen = new LinkedHashSet<>()
     Map flows = [:]
     Map nameCache = [:]
     Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
 
-    // Every Hub Variable name confirmed anywhere on the hub via a structured
-    // reference (a write, or a condition/trigger read - never free text on
-    // its own). Collected hub-wide, in its own pass, before any edge is
-    // drawn: a free-text candidate found in one app can only be trusted
-    // against structured evidence that might live in a completely different
-    // app's rule. See extractHubVariableReads for why an unconfirmed match
-    // cannot be trusted alone - Rule Machine's own %device%/%time%/%date%
-    // notification tokens match the same pattern as a real Hub Variable
-    // reference and are not one.
     Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
     Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
-    Set confirmedVarNames = []
+
+    
+    
+    
+    
+    
+    
+    
+    
+    Map ruleVariables = [:]
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        (appMap.hubVarWrites ?: []).each { Map w ->
-            if (w.variable) confirmedVarNames << canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
-        }
-        (appMap.hubVarReads ?: []).each { Map r ->
-            if (r.variable && r.confirmed) confirmedVarNames << canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
-        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        if (!"${appMap.type}".startsWith('Rule-')) return
+        String classifyAppNodeId = "a${appId}"
+        Map classified = classifyRuleVariableReferences(
+            (appMap.hubVarWrites ?: []) as List,
+            (appMap.hubVarReads ?: []) as List,
+            (appMap.localVariables ?: []) as List,
+            hubVarInventoryVars,
+            classifyAppNodeId
+        )
+        ruleVariables[classifyAppNodeId] = [
+            localVariables: (appMap.localVariables ?: []) as List,
+            variableReferences: classified.variableReferences,
+            nonResolvedVariableReferences: classified.nonResolvedVariableReferences,
+        ]
     }
 
-    // Authoritative Hub Variable inventory (v2.0.14), published by finishScan()
-    // into state.hubVariableInventory inside its finishGeneration() closure -
-    // read here as already-durable, generation-consistent state, the same way
-    // appInfo/deviceLabels above are. Seeded into `nodes` BEFORE the per-app
-    // write/read loop below, so that loop's existing `if (!nodes[varNodeId])`
-    // guards naturally treat an inventory-sourced node as already present
-    // (parent spec 6.3 reconciliation) instead of overwriting it.
-    boolean hubVarInventoryComplete = "${hubVarInventory.status}" == 'complete'
-    // Findings: a proven structured reference to a name absent from a COMPLETE
-    // inventory (not promoted to a node - parent spec 6.3, a design review
-    // point 5). There is no equivalent "Connector missing" finding: a
-    // reported Connector deviceId is trusted unconditionally below (confirmed
-    // against live hub data), so no code path can
-    // ever fail to resolve one - see the synthesized-node comment just below
-    // for why, and the orphan/stale-ID limitation this trade-off leaves.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     List unresolvedHubVarReferences = []
+    ruleVariables.each { String ruleAppNodeId, Map rv ->
+        ((rv.nonResolvedVariableReferences ?: []) as List).each { Map r ->
+            if (r.status == 'unresolved' && r.candidateScopes == ['hub']) {
+                unresolvedHubVarReferences << [name: (r.canonicalName ?: r.name), appId: ruleAppNodeId, kind: r.operation]
+            }
+        }
+    }
     int hubVarConnectorCount = 0
     hubVarInventoryVars.each { String varName, meta ->
         if (!varName) return
@@ -4078,19 +5095,25 @@ Map buildGraph() {
         nodes[varNodeId].identitySource = 'hub-inventory'
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
-            // Connector devices do not appear in /hub2/devicesList, so
-            // getGlobalVar()'s deviceId is trusted directly - an ID-based
-            // reference, not the display-name join spec 7.2 warns against.
-            // When bulk discovery does find the device its real label is
-            // used; otherwise a minimal node is synthesized. Never write to
-            // `labels`: it may share state.deviceLabels' backing object.
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             String devNodeId = "d${connDevId}"
             boolean discovered = labels.containsKey(connDevId)
             if (!discovered && !nodes[devNodeId]) {
                 nodes[devNodeId] = nodeEntry(devNodeId, "${varName} Connector" as String, 'device')
-                // Hardcoded, not autoDetectIconKeyForDevice() - this call site
-                // already knows it is a connector (that is why the node was
-                // synthesized at all), so there is nothing to detect.
+                
+                
+                
                 nodes[devNodeId].icon = 'connector'
             }
             nodes[varNodeId].connectorDeviceId = connDevId
@@ -4108,66 +5131,72 @@ Map buildGraph() {
         if (!(info instanceof Map)) return
         Map appMap = info as Map
         Map roles = (appMap.roles ?: [:]) as Map
-        // A rule whose only relationship is to another rule has no device roles
-        // at all, and used to be dropped here before it could be drawn.
-        //
-        // An app with nothing at all is no longer dropped either. It used to be,
-        // back when device-led discovery meant such an app was never found - but
-        // once the scan enumerates every installed app, silently dropping 13 of
-        // them makes the summary claim a count the map does not show, and leaves
-        // the Focus app list disagreeing with both. Drawn with a reason instead.
-        // A fetch that threw never populated roles/ruleLinks/endpoints, so an
-        // unreadable app looked identical to one that genuinely references
-        // nothing - the exact same empty collections, for a completely
-        // different reason. "Could not be read" and "references nothing" are
-        // different findings and must not render the same way, so unreadable
-        // is checked and excluded from inert rather than folded into it.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         boolean unreadable = appMap.error != null
-        // A rule whose only relationship is to a Hub Variable (e.g. "_Test
-        // Variables Trigger", which touches no device at all) is not inert,
-        // and was being marked so before this - dimmed amber, labelled "no
-        // device or rule relationship", despite drawing a real edge on the
-        // map underneath that label. Checked against what will actually be
-        // drawn, not just whether hubVarReads is non-empty - an unconfirmed
-        // free-text candidate that confirmedVarNames goes on to filter out
-        // must not itself count as a relationship, or an app with only a
-        // false-positive candidate would be wrongly called non-inert too.
-        boolean hasVarRelationship = (appMap.hubVarWrites ?: []) ||
-            (appMap.hubVarReads ?: []).any { Map r ->
-                String canonical = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
-                r.confirmed == true || confirmedVarNames.contains(canonical)
-            }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        boolean hasVarRelationship = ((ruleVariables["a${appId}"]?.variableReferences ?: []) as List)
+            .any { Map r -> r.scope == 'hub' }
         boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         String appNodeId = "a${appId}"
-        String appLabel = appMap.inactive ? "${appMap.label} [paused]" : (appMap.label as String)
-        // [paused] is this app's own annotation, not the hub's, so it belongs on
-        // the drawn label too. drawLabel is absent from a scan taken before it
-        // existed, hence the fallback rather than a forced rescan.
-        String appDraw = (appMap.drawLabel ?: appMap.label) as String
-        if (appMap.inactive) appDraw = "${appDraw} [paused]"
-        // An inert app's subtitle carries why it is empty instead of its engine.
-        // The engine is the less useful of the two here: "Rule Machine" on a
-        // square with no edges raises the question, "holds 46 apps" answers it.
-        // This app's own instances are a fixed exception: they read the whole
-        // hub rather than driving anything, which is a fact about what they
-        // are, not an absence to explain the way an empty container is.
+        
+        
+        
+        
+        
+        
         boolean isSelfFamily = "${appMap.type}".startsWith(APP_FAMILY)
         String subtitle = unreadable ? 'could not be read' :
             (inert ? (isSelfFamily ? 'reads the whole hub, drives nothing' : inertReason(appMap.inert as Map, appInfo, appMap.parent as String)) : (appMap.type as String))
-        nodes[appNodeId] = nodeEntry(appNodeId, appLabel, 'app', subtitle, appDraw)
-        // The raw underlying type, unconditionally - subtitle above is
-        // overwritten with the inert/unreadable reason for those nodes, so it
-        // cannot be used to tell a rule apart from any other app once a node
-        // is in either of those states. Needed so a pivot table can filter to
-        // actual rules rather than "everything typed as an app", which was a
-        // rule reached only as another rule's target counted the same as
-        // LIFX Light Manager.
+        
+        
+        
+        
+        String statusWord = appMap.disabled ? 'Disabled' : (appMap.paused ? 'Paused' : null)
+        
+        
+        
+        
+        
+        nodes[appNodeId] = nodeEntry(appNodeId, appMap.label as String, 'app', subtitle,
+                                      appMap.drawLabel as String, statusWord, false)
+        
+        
+        
+        
+        
+        
+        
         nodes[appNodeId].appType = "${appMap.type}"
-        // Browser-local Community Context Card matching only (spec section
-        // 4.1) - deliberately absent from buildExportPayload()'s apps[]
-        // mapping, so it never reaches the AI-friendly export.
+        
+        
+        
         if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
         if (appMap.inactive) nodes[appNodeId].inactive = true
+        if (appMap.disabled) nodes[appNodeId].disabled = true
+        if (appMap.paused) nodes[appNodeId].paused = true
         if (unreadable) {
             nodes[appNodeId].unreadable = true
             nodes[appNodeId].reason = subtitle
@@ -4175,19 +5204,19 @@ Map buildGraph() {
         }
         if (inert) {
             nodes[appNodeId].inert = true
-            // Carried as its own field rather than left for the page to pick
-            // back out of the title. Parsing it out would mean a regex literal
-            // inside the GString that builds the page, which is the single
-            // mistake this file has been killed by three times.
+            
+            
+            
+            
             nodes[appNodeId].reason = subtitle
-            // What the click opens. Without these, focusing one of these nodes
-            // blanks the map to a lone square and opens no panel, because it has
-            // no edges to draw and no rule flow to render - it looked like a
-            // dead click rather than like an app with nothing attached.
-            //
-            // Child IDS, not names. Every child is already a node on this map
-            // carrying its own label, so sending names too would ship 46
-            // duplicate strings for Rule Machine alone.
+            
+            
+            
+            
+            
+            
+            
+            
             List kidIds = []
             appInfo.each { String otherId, other ->
                 if (!(other instanceof Map)) return
@@ -4195,54 +5224,57 @@ Map buildGraph() {
             }
             if (kidIds) nodes[appNodeId].kids = kidIds
             Map inertFacts = (appMap.inert ?: [:]) as Map
-            // The COUNT, sent alongside the ids. It is what lets the panel tell
-            // "holds nothing" apart from "holds something this scan did not
-            // record the ids for", which is every graph built before parent ids
-            // were captured.
+            
+            
+            
+            
             if ((inertFacts.kids ?: 0) as Integer) nodes[appNodeId].holds = inertFacts.kids
             if ((inertFacts.sched ?: 0) as Integer) {
                 nodes[appNodeId].sched = inertFacts.sched
-                // Absent rather than empty on a graph built before this was
-                // captured, so the panel can tell "no detail recorded" apart
-                // from "recorded, and there is genuinely nothing to add".
+                
+                
+                
                 if (inertFacts.schedJobs) nodes[appNodeId].schedJobs = inertFacts.schedJobs
             }
             if ((inertFacts.subs ?: 0) as Integer) nodes[appNodeId].subs = inertFacts.subs
             if ((inertFacts.devs ?: 0) as Integer) nodes[appNodeId].devs = inertFacts.devs
         }
-        // Deliberately outside the if (inert) block above, unlike kids/sched/
-        // subs/devs which exist specifically to give an EMPTY container node
-        // something to show when focused. parent is a plain structural fact
-        // true of the app whether or not it happens to be inert - a real
-        // Button Rule child with its own actions is not inert, but still has
-        // a parent Button Controller. Gating this the same way the inert-only
-        // fields are gated left every non-inert child's own node with no
-        // parent at all, an asymmetry an external export caught: 64 apps
-        // appeared in a container's kids list but had parent: null
-        // themselves, because kids is computed by scanning ALL of appInfo
-        // for children regardless of the child's own inert status, while
-        // parent was only ever set on a node already being built for the
-        // inert-focus-panel reason.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         if (appMap.parent) nodes[appNodeId].parent = "a${appMap.parent}"
-        // Flows come from appInfo during a scan, and from the previously built
-        // graph on a rebuild - see finishScan, which strips them from appInfo
-        // once they are here, so the same 60KB is not held twice.
+        
+        
+        
         if (appMap.flow) flows[appNodeId] = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
         else if (priorFlows[appNodeId]) flows[appNodeId] = priorFlows[appNodeId]
 
         roles.each { String devId, devRoles ->
             String devNodeId = "d${devId}"
             if (!nodes[devNodeId]) {
-                nodes[devNodeId] = nodeEntry(devNodeId, (labels[devId] ?: "Device ${devId}") as String, 'device')
-                // The user's own correction wins outright when one exists;
-                // only otherwise is it worth asking the name/capability
-                // fallback what this device is.
+                String devLabel = (labels[devId] ?: "Device ${devId}") as String
+                boolean devDisabled = disabledDevices.contains(devId)
+                nodes[devNodeId] = nodeEntry(devNodeId, devLabel, 'device', null, null, devDisabled ? 'Disabled' : null)
+                if (devDisabled) nodes[devNodeId].disabled = true
+                
+                
+                
                 nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
                     autoDetectIconKeyForDevice((labels[devId] ?: '') as String, deviceCaps[devId] as List,
                                                deviceTypes[devId] as String)
-                // A freeform note on an unrecognised device surfaces in the
-                // tooltip, not just the icon panel - otherwise the only place
-                // that context exists is a table the user has to go find.
+                
+                
+                
                 String note = (iconNotes[devId] as String)?.trim()
                 if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
             }
@@ -4257,89 +5289,201 @@ Map buildGraph() {
             }
         }
 
-        // Hub Variables: shared, hub-scoped state, not owned by any one app -
-        // so unlike a device the node is identified by name, not by an id the
-        // scan discovered it under.
-        (appMap.hubVarWrites ?: []).each { Map w ->
-            String varName = canonicalHubVariableName("${w.variable}", hubVarInventoryVars)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Map writesByField = [:]
+        (appMap.hubVarWrites ?: []).each { Map w -> if (w.field) writesByField["${w.field}"] = w }
+        List classifiedHubRefs = ((ruleVariables[appNodeId]?.variableReferences ?: []) as List)
+            .findAll { Map r -> r.scope == 'hub' }
+
+        classifiedHubRefs.findAll { it.operation == 'write' }.each { Map r ->
+            String varName = r.canonicalName as String
             if (!varName) return
             String varNodeId = "v${varName}"
-            // A proven structured write naming a variable absent from a
-            // COMPLETE authoritative inventory is an unresolved reference, not
-            // a node - it is not promoted (parent spec 6.3, a design review
-            // point 5). When inventory failed/is absent, behaviour below is
-            // unchanged from before v2.0.14 (reference-derived fallback).
-            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
-                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'write']
-                return
-            }
             if (!nodes[varNodeId]) {
+                
+                
+                
+                
+                
                 nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
-                nodes[varNodeId].identitySource = 'reference-derived'
+                nodes[varNodeId].identitySource = 'hub-inventory'
             }
             String key = "${appNodeId}|${varNodeId}|write"
             if (seen.contains(key)) return
             seen << key
+            Map original = (writesByField["${r.evidence?.field}"] as Map) ?: [:]
             Map edge = [from: appNodeId, to: varNodeId, kind: 'write']
-            if (w.sourceDevice && w.sourceAttr) edge.detail = "from ${w.sourceDevice}.${w.sourceAttr}"
-            // Structured, ID-based writeSource - only emitted when the source
-            // device ID resolves in the discovered device set, never joined by
-            // display label alone (parent spec 7.2).
-            if (w.sourceDeviceId && w.sourceAttr && labels.containsKey("${w.sourceDeviceId}")) {
-                edge.writeSource = [kind: 'deviceAttribute', deviceId: "${w.sourceDeviceId}", attribute: "${w.sourceAttr}"]
+            if (original.sourceDevice && original.sourceAttr) {
+                edge.detail = "from ${original.sourceDevice}.${original.sourceAttr}"
+            }
+            
+            
+            
+            if (original.sourceDeviceId && original.sourceAttr && labels.containsKey("${original.sourceDeviceId}")) {
+                edge.writeSource = [kind: 'deviceAttribute', deviceId: "${original.sourceDeviceId}", attribute: "${original.sourceAttr}"]
             }
             edges << edge
         }
-        // Stored from-app-to-variable the same as a write, NOT reversed, even
-        // though a read conceptually flows variable-to-rule - every edge on
-        // this map has an app in `from` (see the comment on pivotKindOptions
-        // in the page template), and other code depends on that holding for
-        // every edge, not just device ones. The visual arrow is corrected
-        // instead, the same way a device trigger already is: 'read' joins
-        // 'trigger'/'constraint'/'monitor' in the JS inbound list so the
-        // arrowhead still points at the app despite `from` being the app.
-        (appMap.hubVarReads ?: []).each { Map r ->
-            String varName = canonicalHubVariableName("${r.variable}", hubVarInventoryVars)
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Map readsByVarNode = [:]
+        classifiedHubRefs.findAll { it.operation != 'write' }.each { Map r ->
+            String varName = r.canonicalName as String
             if (!varName) return
-            // An unconfirmed (free-text-only) candidate is only drawn if
-            // some app, anywhere on the hub, confirms the same name via a
-            // structured reference. Otherwise it is exactly the RM-token
-            // false positive this pre-pass exists to catch - dropped
-            // silently rather than drawn as a guess.
-            if (r.confirmed != true && !confirmedVarNames.contains(varName)) return
-            String varNodeId = "v${varName}"
-            // Same unresolved-reference reconciliation as writes above.
-            if (hubVarInventoryComplete && !hubVarInventoryVars.containsKey(varName)) {
-                unresolvedHubVarReferences << [name: varName, appId: appNodeId, kind: 'read']
-                return
-            }
+            (readsByVarNode["v${varName}"] = (readsByVarNode["v${varName}"] ?: [])) << r
+        }
+        readsByVarNode.each { String varNodeId, List refs ->
             if (!nodes[varNodeId]) {
-                nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
-                nodes[varNodeId].identitySource = 'reference-derived'
+                nodes[varNodeId] = nodeEntry(varNodeId, (refs[0] as Map).canonicalName as String, 'hubVariable')
+                nodes[varNodeId].identitySource = 'hub-inventory'
             }
             String key = "${appNodeId}|${varNodeId}|read"
             if (seen.contains(key)) return
             seen << key
-            // usageRole: 'unknown-read' for every currently-decoded read; this
-            // app does not yet classify trigger/condition/action-input/
-            // text-substitution roles. Parent spec 6.2 explicitly prefers
-            // unknown-read over an invented role - first-class inventory is
-            // not delayed on complete role classification.
-            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            Set<String> distinctUsageRoles = refs.collect { (it as Map).usageRole as String } as Set<String>
+            String usageRole = (distinctUsageRoles.size() == 1 && distinctUsageRoles.first() != null) ? distinctUsageRoles.first() : 'unknown-read'
+            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: usageRole]
+        }
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        List localDefs = (ruleVariables[appNodeId]?.localVariables ?: []) as List
+        localDefs.each { Map d ->
+            String identity = d.identity as String
+            if (!identity) return
+            if (!nodes[identity]) {
+                String ownerLabel = (nodes[appNodeId]?.title ?: appNodeId) as String
+                nodes[identity] = nodeEntry(identity, d.name as String, 'localVariable', "Local Variable in ${ownerLabel}")
+                nodes[identity].ownerAppId = appNodeId
+                nodes[identity].variableType = d.variableType
+            }
+        }
+
+        
+        
+        
+        
+        
+        
+        
+        List classifiedLocalRefs = ((ruleVariables[appNodeId]?.variableReferences ?: []) as List)
+            .findAll { Map r -> r.scope == 'local' }
+
+        classifiedLocalRefs.findAll { it.operation == 'write' }.each { Map r ->
+            String identity = r.localIdentity as String
+            if (!identity || !nodes[identity]) return
+            String key = "${appNodeId}|${identity}|write"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: identity, kind: 'write']
+        }
+
+        Map localReadsByNode = [:]
+        classifiedLocalRefs.findAll { it.operation != 'write' }.each { Map r ->
+            String identity = r.localIdentity as String
+            if (!identity || !nodes[identity]) return
+            (localReadsByNode[identity] = (localReadsByNode[identity] ?: [])) << r
+        }
+        localReadsByNode.each { String identity, List refs ->
+            String key = "${appNodeId}|${identity}|read"
+            if (seen.contains(key)) return
+            seen << key
+            Set<String> distinctLocalUsageRoles = refs.collect { (it as Map).usageRole as String } as Set<String>
+            String localUsageRole = (distinctLocalUsageRoles.size() == 1 && distinctLocalUsageRoles.first() != null) ? distinctLocalUsageRoles.first() : 'unknown-read'
+            edges << [from: appNodeId, to: identity, kind: 'read', usageRole: localUsageRole]
         }
     }
 
-    // Device discovery is hub-wide, while the role pass above only encounters
-    // devices referenced by an app. Preserve every existing referenced device
-    // node exactly as built above, then append only discovered devices that had
-    // no relationship. This keeps existing node order, icons and edges stable
-    // while making the graph, Focus device list and AI export agree with the
-    // scan's device count.
+    
+    
+    
+    
+    
+    
+    Set<String> referencedLocalIds = [] as Set
+    edges.each { Map e ->
+        String toId = e.to as String
+        if (nodes[toId] && nodes[toId].group == 'localVariable') referencedLocalIds << toId
+    }
+    nodes.each { String nid, Map n ->
+        if (n.group == 'localVariable' && !referencedLocalIds.contains(nid)) {
+            n.unreferencedLocal = true
+        }
+    }
+
+    
+    
+    
+    
+    
+    
     labels.each { String devId, label ->
         String devNodeId = "d${devId}"
         if (nodes[devNodeId]) return
 
-        nodes[devNodeId] = nodeEntry(devNodeId, (label ?: "Device ${devId}") as String, 'device')
+        boolean devDisabled = disabledDevices.contains(devId)
+        String devLabel = (label ?: "Device ${devId}") as String
+        nodes[devNodeId] = nodeEntry(devNodeId, devLabel, 'device', null, null, devDisabled ? 'Disabled' : null)
+        if (devDisabled) nodes[devNodeId].disabled = true
         nodes[devNodeId].icon = (iconOverrides[devId] as String) ?:
             autoDetectIconKeyForDevice((label ?: '') as String, deviceCaps[devId] as List,
                                        deviceTypes[devId] as String)
@@ -4347,9 +5491,22 @@ Map buildGraph() {
         if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
     }
 
-    // App-to-app edges are emitted in a second pass, so a link is still drawn
-    // when it points at a rule that came later in the scan than the rule
-    // pointing at it.
+    
+    
+    
+    
+    
+    
+    buildHasComponentEdges(nodes.keySet(), (state.deviceParents ?: [:]) as Map).each { Map hc ->
+        String key = "${hc.from}|${hc.to}|${hc.kind}"
+        if (seen.contains(key)) return
+        seen << key
+        edges << hc
+    }
+
+    
+    
+    
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         List links = ((info as Map).ruleLinks ?: []) as List
@@ -4364,28 +5521,28 @@ Map buildGraph() {
             String toId = "a${targetId}"
 
             if (!nodes[toId]) {
-                // The target was never reached by the scan. Apps are discovered
-                // through the devices you selected, so a rule that touches no
-                // selected device is invisible to phase one - which is normal
-                // for a Rule Function. Drawn anyway, labelled for what it is,
-                // rather than dropping the relationship on the floor.
+                
+                
+                
+                
+                
                 Map target = appInfo[targetId] as Map
-                // Worth the lookup when the scan missed it: the alternative is
-                // a node reading "Rule 1845", which tells the user nothing.
+                
+                
                 Map named = linkedRuleName(targetId, appInfo, nameCache)
-                // A deleted target gets no subtitle. Every other node uses it
-                // for the engine, which a deleted rule no longer reports, and
-                // "not scanned" is both redundant and self-contradictory next
-                // to a label that already says deleted. That label is the only
-                // name this node will ever have, so it carries the fact alone.
+                
+                
+                
+                
+                
                 String subtitle = named.missing ? null : (target?.type ?: 'not scanned') as String
                 nodes[toId] = nodeEntry(toId, named.label as String, 'app', subtitle, named.draw as String)
                 if (!target) nodes[toId].unscanned = true
-                // Distinct from unscanned: unscanned is a real app the scan
-                // never reached, missing is an id that no longer resolves to
-                // anything. A deleted target is both (it was never reached
-                // AND does not exist), but Insights needs to tell them apart
-                // to report "broken reference" rather than "just not scanned".
+                
+                
+                
+                
+                
                 if (named.missing) nodes[toId].missing = true
             }
 
@@ -4396,17 +5553,17 @@ Map buildGraph() {
         }
     }
 
-    // External systems, declared by the user rather than discovered. Emitted
-    // last so every app node exists.
-    //
-    // Nodes are keyed on the system NAME, so two apps naming the same bridge
-    // share one node. That sharing is the whole point: it is what turns a list
-    // of dependencies into "everything that stops working if this fails".
-    // User declarations override the shared registry rather than adding to it.
-    // A user who has said anything at all about an app type has looked at it,
-    // and their answer beats a curated guess - Kasa and Tapo can each be local
-    // or cloud depending on how they were set up, so the shipped answer is
-    // right for roughly half of installs.
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     List externals = []
     List userRows = userRegistry()
     List userTypes = classifiedTypes()
@@ -4442,12 +5599,12 @@ Map buildGraph() {
             List appNodeIds = (typeToApps[extType] ?: []) as List
             if (!appNodeIds) return
 
-            // Hex hash of the ORIGINAL name appended, not just its stripped
-            // form - "OpenWeatherMap" and "Open Weather Map" reduce to the
-            // identical stripped string and would otherwise collapse onto one
-            // node, silently merging two different systems' dependencies. The
-            // stripped prefix stays for a readable id in the raw page source;
-            // the hash is what actually guarantees no collision.
+            
+            
+            
+            
+            
+            
             String extNodeId = "x${name.toLowerCase().replaceAll('[^a-z0-9]', '')}${Integer.toHexString(name.hashCode())}"
             if (!nodes[extNodeId]) {
                 String kindLabel = (EXTERNAL_KINDS["${e.kind}"] ?: 'External system') as String
@@ -4464,10 +5621,10 @@ Map buildGraph() {
         }
     }
 
-    // Endpoints a rule calls directly, read from its own settings rather than
-    // declared. These belong to ONE rule, not to its type, which is why they
-    // cannot come through the registry: every rule on a hub shares the type
-    // Rule-5.1, so a registry entry would attach the endpoint to all of them.
+    
+    
+    
+    
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         List eps = ((info as Map).endpoints ?: []) as List
@@ -4482,15 +5639,15 @@ Map buildGraph() {
             if (!host || host == 'null') return
             boolean loop = (e.loopback == true)
 
-            // Same collision-resistant shape as the declared-external-systems
-            // id above, and for the same reason: two different hosts (an IP
-            // with punctuation stripped differently, say) could otherwise
-            // reduce to the same stripped string.
+            
+            
+            
+            
             String nodeId = "x${host.toLowerCase().replaceAll('[^a-z0-9]', '')}${Integer.toHexString(host.hashCode())}"
             if (!nodes[nodeId]) {
-                // A rule POSTing to the hub itself is worth showing, since one
-                // of them reboots it, but it is not an external system and is
-                // labelled for what it actually is.
+                
+                
+                
                 nodes[nodeId] = nodeEntry(nodeId, loop ? 'This hub' : host, 'external',
                                           loop ? 'the hub itself' : 'endpoint a rule calls')
                 nodes[nodeId].kindKey = loop ? 'infra' : 'internet'
@@ -4504,37 +5661,48 @@ Map buildGraph() {
         }
     }
 
+    
+    
+    
+    correctFlowVariableLabels(flows, ruleVariables)
+
     return [nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
-            hubVariableConnectorCount: hubVarConnectorCount]
+            hubVariableConnectorCount: hubVarConnectorCount,
+            
+            
+            
+            
+            
+            ruleVariables: ruleVariables]
 }
 
-// Scheduled rather than called inline from a save handler so the web request
-// is limited to persisting the user's change. Scheduling it 1 second out, the
-// same pattern beginRegistryAndFinish already uses for fetchRegistry, answers
-// the POST immediately and lets the rebuild happen independently.
-// Runs by handler name, so two saves close together simply reschedule the
-// same job rather than queuing two rebuilds.
+
+
+
+
+
+
 void rebuildStoredGraph() {
     state.graph = buildGraph()
-    state.graphVersion = GRAPH_SCHEMA
+    atomicState.graphVersion = GRAPH_SCHEMA
 }
 
-// ===================================================================================================================
-// External systems
-//
-// What an app depends on OUTSIDE the hub: a Hue bridge, a vendor cloud, an MQTT
-// broker. None of it is discoverable - a Hubitat app's dependency on the LIFX
-// cloud is a fact about the integration, not something the hub records - so it
-// is declared rather than detected.
-//
-// Declarations are keyed on the app TYPE, not on the installed app id, so one
-// entry covers every instance and survives rules being added and removed. A hub
-// with 61 installed apps has only 19 distinct types.
-//
-// Stored as a flat list rather than nested under each type, because the UI adds
-// and removes single rows and a flat list leaves no orphans behind.
-// ===================================================================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 @Field static final Map EXTERNAL_KINDS = [
     local_bridge : 'Bridge or hub on my network',
@@ -4551,17 +5719,17 @@ void rebuildStoredGraph() {
     DISCOVERY_ONLY: 'Needed only to find devices',
 ]
 
-// Marks an app type the user has looked at and decided needs nothing external.
-// Distinct from never having been classified, which is the point: the map must
-// be able to say "nothing needed" separately from "nobody has said".
+
+
+
 @Field static final String EXTERNAL_NONE = '__none__'
 
-// First-party assessments for Hubitat's own automation apps, kept as their
-// own provenance tier rather than presented as reviewed community evidence.
-//
-// An explicit allow-list, NOT a namespace rule: Google Home, Chromecast, Hub
-// Mesh and Maker API are built-ins with real external relationships. Anything
-// not named here stays unassessed. A user declaration always wins.
+
+
+
+
+
+
 @Field static final Map BUILTIN_INTERNAL_ONLY = [
     'Rule Machine'             : 'Hub-local rule engine.',
     'Basic Rules'              : 'Hub-local rule engine.',
@@ -4573,8 +5741,8 @@ void rebuildStoredGraph() {
     'Export/Import/Clone'      : 'Hub-local app management.',
 ]
 
-// Reviewed community and deployment-specific hub-only assessments. Explicit
-// user declarations remain higher priority than these defaults.
+
+
 @Field static final Map REVIEWED_INTERNAL_ONLY = [
     'MCP Rule Server'                    : 'Runs on this hub.',
     'Presence Manager'                   : 'Uses participating devices already represented on this hub.',
@@ -4592,8 +5760,8 @@ void rebuildStoredGraph() {
     'mDNS Device Discovery'              : 'Runs on this hub.',
 ]
 
-// Reviewed dependency defaults remain separate from saved user declarations,
-// which stay portable and higher priority.
+
+
 @Field static final List REVIEWED_EXTERNAL_DEFAULTS = [
     [type: 'CoCoHue - Hue Bridge Integration', name: 'Hue Bridge',        kind: 'local_bridge', crit: 'RUNTIME'],
     [type: 'LIFX Light Manager',               name: 'LIFX Cloud',        kind: 'internet',     crit: 'MANAGEMENT'],
@@ -4606,33 +5774,33 @@ void rebuildStoredGraph() {
     [type: 'Meross MSG100 Garage Door Setup',  name: 'Meross Cloud',      kind: 'internet',     crit: 'SETUP_ONLY'],
 ]
 
-// ===================================================================================================================
-// Shared registry
-//
-// A curated list of what known integrations depend on, maintained separately
-// and validated against every package published to Hubitat Package Manager.
-// Fetched rather than embedded, so a new integration is one edit to a JSON
-// file instead of a release of this app.
-//
-// Only the MATCHES are kept. The registry is ~170KB and this app's state is
-// already large; storing it whole would roughly double state for data that is
-// 95% irrelevant to any one hub. A hub with 20 app types keeps a handful of
-// rows and discards the rest.
-// ===================================================================================================================
 
-// The SLIM registry, deliberately not the canonical one. The canonical file
-// carries provenance, status and documentation evidence for human review, and
-// had reached 165KB - enough to kill the execution that fetched it, silently.
-// See fetchRegistry for why that failure was invisible.
-//
-// The slim file holds only the fields evaluated below. It is generated from the
-// canonical registry by build_slim_registry.py, which fails the build if it ever
-// grows past 64KB, so this cannot quietly regress.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final String REGISTRY_URL =
     'https://raw.githubusercontent.com/GordonThelander/HPM_Manifest_Crawl/main/hubitat_automation_map_app_integration_registry_slim.json'
 
-// The registry's own vocabulary, mapped onto the four plain-English kinds the
-// classification page offers.
+
+
 @Field static final Map REGISTRY_CLASS_TO_KIND = [
     LOCAL_BRIDGE      : 'local_bridge',
     LOCAL_DEVICE      : 'local_device',
@@ -4643,48 +5811,48 @@ void rebuildStoredGraph() {
     UNKNOWN_EXTERNAL  : 'internet',
 ]
 
-// Fields this app can evaluate. It knows an app's TYPE and nothing else about
-// its identity, so a rule on a driver name or a user mapping is not false, it
-// is unanswerable - which is a different thing and must be treated as such.
-//
-// parentAppName is deliberately NOT here despite matching registryRuleMatches'
-// signature. Matching runs once per app TYPE across the whole hub, not per
-// installed instance, and a parent is inherently a per-instance relationship
-// - two instances of the same type can have different parents or none. No
-// single value could be threaded in here that would be correct for both.
-// Previously listed as evaluable while every rule was actually matched
-// against appType regardless of its field, so a parentAppName rule was
-// silently evaluated against the wrong datum rather than being marked
-// unanswerable. Add it back only alongside a genuine per-instance matcher.
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List<String> REGISTRY_EVALUABLE_FIELDS = ['appName']
 
-// ===================================================================================================================
-// Endpoints a rule calls directly
-//
-// A rule with an HTTP action names its endpoint in its own settings, under
-// httper.<n>. That makes it the one external dependency on the whole map that
-// is detected rather than declared, and safely so:
-//
-//   the endpoint is CONFIGURED, not a string found in source, so there is no
-//   iconUrl-versus-real-endpoint problem;
-//   an HTTP action unambiguously calls it, so no judgement is needed about
-//   whether it is a dependency;
-//   it is an action the rule performs, so it is RUNTIME for that rule by
-//   definition.
-//
-// It also fills a gap the shared registry structurally cannot. Registry entries
-// key on app TYPE, and every rule on a hub shares the type Rule-5.1, so an
-// entry there would attach the same endpoint to all 45 of them. A rule's
-// endpoint belongs to that one rule.
-// ===================================================================================================================
 
-// The hub calling itself, as in a rule that POSTs to /hub/reboot. Worth showing,
-// since a rule that reboots the hub is exactly what a dependency map should
-// surface, but it is not an EXTERNAL system and must not be drawn as one.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @Field static final List<String> LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', '::1']
 
-// Written without regex literals, like everything else on the page-building
-// path, because this file builds its HTML inside a GString.
+
+
 String hostFromUrl(String url) {
     if (!url) return null
     String s = url.trim()
@@ -4700,8 +5868,8 @@ String hostFromUrl(String url) {
     s = s.substring(0, cut)
     int bracket = s.lastIndexOf(']')
     if (bracket >= 0) {
-        // Bracketed IPv6 literal, e.g. [::1]:8080 - a port colon only ever
-        // appears after the closing bracket, never inside the literal itself.
+        
+        
         int portColon = s.indexOf(':', bracket)
         if (portColon > bracket) s = s.substring(0, portColon)
     } else {
@@ -4712,7 +5880,7 @@ String hostFromUrl(String url) {
     return s ?: null
 }
 
-// Endpoints named by one rule's actions. Returns [[host: ..., url: ..., loopback: bool]].
+
 List extractRuleEndpoints(Map data) {
     Map vals = [:]
     (data.appSettings ?: []).each { s ->
@@ -4753,9 +5921,9 @@ List registryMatches() {
     return (state.registryMatches ?: []) as List
 }
 
-// Case-insensitive and whitespace-trimmed, matching the validator that checks
-// this registry against live package data. Published names really are
-// inconsistent: BOND against Bond, Ecowitt against EcoWitt.
+
+
+
 boolean registryRuleMatches(String op, String value, String appType) {
     String n = value?.trim()?.toLowerCase()
     String h = appType?.trim()?.toLowerCase()
@@ -4765,14 +5933,14 @@ boolean registryRuleMatches(String op, String value, String appType) {
     return false
 }
 
-// Three states, not two.
-//
-// A rule this app cannot evaluate is NOT a failed rule. Treating it as one
-// would let an ALL entry match on its remaining rules alone, which is exactly
-// what the registry uses matchMode ALL to prevent: "Home Assistant via Maker
-// API" is gated behind a user mapping precisely so it does NOT fire on every
-// Maker API install. Ignoring that rule would attach Home Assistant to anyone
-// running Maker API.
+
+
+
+
+
+
+
+
 String registryEntryState(Map entry, String appType) {
     boolean anyMatch = false
     boolean anyFail = false
@@ -4798,30 +5966,30 @@ String registryEntryState(Map entry, String appType) {
     return 'NO_MATCH'
 }
 
-// Every app type the scan found, which is what the classification page offers.
-// Types rather than installed apps, and sorted so the page does not reshuffle
-// between visits.
+
+
+
 List discoveredAppTypes() {
     List types = []
     ((state.appInfo ?: [:]) as Map).each { String appId, info ->
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
         if (!t || t == 'null') return
-        // This app and its dev twin have no external dependency to declare -
-        // offering them here would ask the user to classify what Automation
-        // Map depends on, which is nothing.
+        
+        
+        
         if (t.startsWith(APP_FAMILY)) return
         if (!types.contains(t)) types << t
     }
     return types.sort()
 }
 
-// Identity and hierarchy per app type, so External Systems classifies the
-// ROOT integration rather than every definition independently.
-// discoveredAppTypes() reduces everything to a type name and discards both
-// namespace and parent, which is what fills the panel with child rule types.
-//
-// Returns type -> [type, namespace, count, rootType, isRoot, identities].
+
+
+
+
+
+
 Map appTypeIdentities() {
     Map info = (state.appInfo ?: [:]) as Map
     Map byIdentity = [:]
@@ -4832,11 +6000,11 @@ Map appTypeIdentities() {
         if (!t || t == 'null') return
         if (t.startsWith(APP_FAMILY)) return
 
-        // Walk to the root. Bounded and cycle-guarded on purpose: this is
-        // persisted state that outlives the apps it points at, so a stale
-        // parentAppId referring to a deleted app is possible even though none
-        // exists on this hub today. Either way the walk stops and the app is
-        // treated as its own root rather than looping.
+        
+        
+        
+        
+        
         Map cur = m
         Set seen = ["${appId}" as String]
         int hops = 0
@@ -4852,10 +6020,10 @@ Map appTypeIdentities() {
         String rootType = "${cur?.type}"
         if (!rootType || rootType == 'null') rootType = t
 
-        // Accumulate per {type, namespace}, NOT per type (a design review
-        // point 1). Two definitions sharing a type name across namespaces are
-        // different things: merging them pools their counts and lets one
-        // namespace's child status erase another namespace's root.
+        
+        
+        
+        
         String ns = m.namespace ? "${m.namespace}" : ''
         String key = "${t}||${ns}"
         Map e = byIdentity[key] as Map
@@ -4870,11 +6038,11 @@ Map appTypeIdentities() {
         }
     }
 
-    // Collapsed to type keys for the panel, because user declarations are
-    // type-keyed and must keep working - but the
-    // per-identity records travel with it so nothing is lost, and an old
-    // type-only declaration is understood to apply to every identity sharing
-    // that name.
+    
+    
+    
+    
+    
     Map out = [:]
     byIdentity.each { String key, Object v ->
         Map e = v as Map
@@ -4886,9 +6054,9 @@ Map appTypeIdentities() {
         agg.count = ((agg.count ?: 0) as Integer) + ((e.count ?: 0) as Integer)
         (agg.identities as List) << e
         if (!agg.namespace && e.namespace) agg.namespace = e.namespace
-        // A root under ANY namespace makes the type a root. The previous rule
-        // was the inverse - one child instance demoted the whole type - which
-        // is what could hide a genuine root definition.
+        
+        
+        
         if (e.isRoot) {
             agg.isRoot = true
             agg.rootType = e.type
@@ -4899,12 +6067,12 @@ Map appTypeIdentities() {
     return out
 }
 
-// The declarations for one app type. Returns [] for an unclassified type and
-// for one explicitly marked as needing nothing, which the caller separates by
-// asking classifiedTypes().
-// Every comparison below goes through a String-typed local on purpose. A GString
-// never equals a String and never matches one as a map key, because their hash
-// codes differ, and it fails silently rather than throwing.
+
+
+
+
+
+
 List externalsForType(String appType) {
     List out = []
     userRegistry().each { entry ->
@@ -4932,13 +6100,13 @@ String getLocalURL(String fileName) {
     return (fullURL =~ URL_PATTERN).findAll()[0][1]
 }
 
-// The Remote Admin fix. getLocalURL() above returns a path with no scheme or
-// host, which only resolves correctly when the browser is already on the hub's
-// own origin. A page loaded through remoteaccess.aws.hubitat.com has a
-// different origin, so that relative path 404s against the remote portal
-// instead of ever reaching the hub - this is JimB's scan-start failure.
-// These two give the browser both an absolute fallback and the origin to
-// decide with; see amPickURL() in the two templates that call them.
+
+
+
+
+
+
+
 String getLocalOrigin() {
     return (fullLocalApiServerUrl =~ ORIGIN_PATTERN).findAll()[0][1]
 }
@@ -4947,9 +6115,9 @@ String getCloudURL(String fileName) {
     return "${fullApiServerUrl}/${fileName}?access_token=${state.accessToken}"
 }
 
-// ===================================================================================================================
-// Map page
-// ===================================================================================================================
+
+
+
 
 mappings {
     path('/automation-map.html') { action: [ GET: 'renderMapMapping' ] }
@@ -4959,10 +6127,10 @@ mappings {
     path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
 }
 
-// The map page was read-only until this. It now accepts one write: the user's
-// own declarations about what their apps depend on. Nothing here commands a
-// device or alters another app, and the access token that already guards the
-// map guards this too.
+
+
+
+
 Map externalsGetMapping() {
     return render(status: 200, contentType: 'application/json', data: externalsJson())
 }
@@ -4981,8 +6149,8 @@ Map externalsSaveMapping() {
             String kind = "${r.kind}"
             String crit = "${r.crit}"
             Map entry = [type: type, name: name]
-            // A "nothing needed" marker carries no kind or criticality; storing
-            // them would imply a dependency that does not exist.
+            
+            
             if (name != EXTERNAL_NONE) {
                 entry.kind = EXTERNAL_KINDS.containsKey(kind) ? kind : 'internet'
                 entry.crit = EXTERNAL_CRITICALITY.containsKey(crit) ? crit : 'RUNTIME'
@@ -4996,13 +6164,13 @@ Map externalsSaveMapping() {
     }
 
     state.userRegistry = incoming
-    // Rebuilt from stored scan data rather than rescanning - the declarations
-    // changed, the hub did not - and rebuilt off the request entirely (see
-    // rebuildStoredGraph()) rather than inline. externalsJson() below does not
-    // read state.graph, so the response is unaffected by the rebuild being
-    // deferred.
+    
+    
+    
+    
+    
     runIn(1, 'rebuildStoredGraph')
-    log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
+    if (diagOn()) log.info "${app.label}: saved ${incoming.size()} external system declaration(s)"
     return render(status: 200, contentType: 'application/json', data: externalsJson())
 }
 
@@ -5022,14 +6190,14 @@ String externalsJson() {
         criticality: EXTERNAL_CRITICALITY,
         noneMarker: EXTERNAL_NONE,
         appTypes: types,
-        // Identity and hierarchy alongside the flat type list, not instead of
-        // it: user declarations are keyed by type string and must keep
-        // working unchanged.
+        
+        
+        
         appTypeInfo: appTypeIdentities(),
         builtinInternal: internalOnly,
         reviewed: reviewed,
-        // Unclassified means nobody has said, by user OR registry. An app type
-        // the registry covers is not a gap the user needs to fill.
+        
+        
         unclassified: types.findAll {
             !classified.contains(it) && !reviewedTypes.contains(it) &&
                 !regTypes.contains(it) && !internalOnly.containsKey(it)
@@ -5041,10 +6209,10 @@ String externalsJson() {
     return groovy.json.JsonOutput.toJson(out)
 }
 
-// Device icons. Same exception as /externals above: read-only everywhere
-// else, one write accepted here, guarded by the same access token as the map
-// itself, and touching nothing but this app's own state - no device, no
-// other app.
+
+
+
+
 Map iconOverridesGetMapping() {
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
@@ -5059,17 +6227,17 @@ Map iconOverridesSaveMapping() {
         (overrides ?: [:]).each { k, v ->
             String devId = "${k}"
             String iconKey = "${v}"
-            // 'auto' means the user cleared their override, not that they chose
-            // an icon key called "auto" - dropping it here is what lets
-            // autoDetectIconKey take over again on the next graph build.
+            
+            
+            
             if (ICON_KEYS.contains(iconKey)) incoming[devId] = iconKey
         }
         Map notes = payload.notes as Map
         (notes ?: [:]).each { k, v ->
             String devId = "${k}"
-            // Capped rather than rejected outright - a pasted paragraph is
-            // still worth keeping the first bit of, and this is a tooltip
-            // annotation, not a document.
+            
+            
+            
             String note = "${v}".trim()
             if (note.length() > 200) note = note.substring(0, 200)
             if (note) incomingNotes[devId] = note
@@ -5082,11 +6250,11 @@ Map iconOverridesSaveMapping() {
 
     state.deviceIconOverrides = incoming
     state.deviceIconNotes = incomingNotes
-    // Same reasoning as externalsSaveMapping: rebuilt off the request via
-    // rebuildStoredGraph(), not inline - the overrides changed, the hub did
-    // not, and iconOverridesJson() below does not read state.graph.
+    
+    
+    
     runIn(1, 'rebuildStoredGraph')
-    log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
+    if (diagOn()) log.info "${app.label}: saved ${incoming.size()} device icon override(s), ${incomingNotes.size()} note(s)"
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
 
@@ -5124,117 +6292,129 @@ String iconOverridesJson() {
     return groovy.json.JsonOutput.toJson(out)
 }
 
-// Starting a scan from a URL rather than only from the page button, so a stalled
-// scan can be restarted (and diagnosed) without sitting in the app UI.
-//
-// startScan() ran unguarded here. Hubitat's own OAuth mapping layer renders an
-// UNCAUGHT exception as an HTML error page - sometimes with a 200 status, which
-// is what let this slip past the client-side r.ok check added for the same bug:
-// the browser correctly parsed the response as "successful", then choked trying
-// to read HTML as JSON, and the resulting SyntaxError was indistinguishable from
-// the original report. Whatever throws inside startScan() on a given hub, this
-// mapping must always answer with real JSON so the client has something to show
-// instead of a raw parser error.
+
+
+
+
+
+
+
+
+
+
+
 Map scanMapping() {
-    // Unconditional, and FIRST. This is what makes the log test binary: if this
-    // line does not appear when the user presses Scan, Hubitat never dispatched
-    // the request into this app at all, and no handler here can be at fault.
-    // Logging only from the catch below could not prove that - a throw in the
-    // success path (scanStatusJson/render) would also leave the log silent while
-    // Hubitat returned its HTML error page.
-    log.info "${app.label}: /scan endpoint reached"
+    
+    
+    
+    
+    
+    
+    if (diagOn()) log.info "${app.label}: /scan endpoint reached"
     try {
-        // Guarded the same way scheduledScanHandler() already is - a repeat
-        // GET while a scan is running must not restart it. Restarting orphans
-        // the previous scan's own fetchRegistry/finishScan jobs, which is
-        // exactly the stale-watchdog failure startScan()'s own unschedule()
-        // calls now guard against; skipping here closes the other half of
-        // that same gap. Answering with the current status instead of an
-        // error keeps the page's poll loop working unchanged either way.
-        //
-        // state.scanRunning here is a fast-path check only, harmless if
-        // stale - startScan()'s own atomic lock is the real guard. A second
-        // execution can read this as false before the winner's own commit
-        // lands (state only commits durably at the end of a whole
-        // execution), call startScan(), and lose that lock instead - not a
-        // failure, just this execution finding out it isn't the owner, and
-        // worth its own distinct log line rather than folding into the
-        // fast-path message below.
-        //
-        // casLost is tracked separately from "did this request skip
-        // starting a scan" - caught in review: an ordinary request arriving
-        // while a scan is already fully running (the state.scanRunning==true
-        // branch) is NOT the same situation as losing the CAS race, and must
-        // not be forced into the same "alreadyStarting" response. Only the
-        // genuine race case needs the override; the ordinary case already
-        // has an accurate live state.scanRunning to report as-is.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         boolean casLost = false
         if (state.scanRunning) {
-            log.info "${app.label}: /scan reached while a scan is already running, not restarting"
+            if (diagOn()) log.info "${app.label}: /scan reached while a scan is already running, not restarting"
         } else {
             Map result = startScan()
             if (!result.acquired) {
                 casLost = true
-                log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
+                if (diagOn()) log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
             }
         }
-        // Inside the try, not after it. Left outside, an exception in
-        // scanStatusJson() or render() escaped this handler entirely and
-        // produced the same unexplained HTML page the handler exists to stop.
-        //
-        // forceRunning (the casLost case) exists because this execution's
-        // own state.scanRunning can still read false here even though a
-        // scan genuinely is starting - it is the LOSING execution's stale
-        // snapshot, not the winner's, and scanStatusJson() would otherwise
-        // report a truthfully-wrong "running:false".
+        
+        
+        
+        
+        
+        
+        
+        
+        
         return render(status: 200, contentType: 'application/json', data: scanStatusJson(casLost))
     } catch (Exception ex) {
         log.warn "${app.label}: scanMapping failed to start a scan: ${ex.message}"
-        // Serialised to a String, not passed as a Map. Every other render() in
-        // this file passes a String, and this was the only one that did not -
-        // if render() does not coerce a Map, this handler throws inside its own
-        // catch, Hubitat renders its HTML error page, and the caller sees the
-        // exact parser error this handler exists to prevent. Which would make
-        // the 1.8.7 fix invisible rather than wrong. Caught by external review.
+        
+        
+        
+        
+        
+        
         return render(status: 200, contentType: 'application/json',
             data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))
     }
 }
 
 Map scanStatusMapping() {
-    // Same self-heal main() already runs on every settings-page load. That path
-    // only fires while the settings page specifically is open, in the
-    // foreground, with its refreshInterval auto-refresh not throttled by a
-    // backgrounded tab - confirmed live to leave a scan looking stuck for
-    // several minutes when a user is instead watching the map page, or has
-    // switched away, even though the scan itself finished reading every app.
-    // This endpoint is already the documented "scan appears stuck" check
-    // (README Troubleshooting), so running the same recovery here means any
-    // status poll can un-stick a scan, not only a settings-page reload.
+    
+    
+    
+    
+    
+    
+    
+    
+    
     clearAbandonedScan()
     return render(status: 200, contentType: 'application/json', data: scanStatusJson())
 }
 
-// forceRunning exists for exactly one caller: scanMapping() when this
-// execution lost the startScan() single-flight lock to a concurrent one.
-// This execution's own state.scanRunning is that losing execution's stale
-// pre-commit snapshot, not the winner's - reporting it as false would be a
-// truthfully-wrong "nothing is happening" while a scan genuinely starts.
+
+
+
+
+
 String scanStatusJson(boolean forceRunning = false) {
-    // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
-    // the phase-starting execution itself - never by a callback or reaper,
-    // which must stay entirely state-free. During an active phase the true
-    // live counters are DEVICE_SCANS/APP_SCANS[scanId]'s own accumulator;
-    // read directly from there rather than report a frozen, misleadingly-
-    // early snapshot for the whole phase.
+    migrateGraphVersionIfNeeded()
+    selfHealGraphIfNeeded()
+    
+    
+    
+    
+    
+    
     ConcurrentHashMap liveScan = null
     if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
     else if (state.scanPhase == 'apps') liveScan = liveAppScan()
     int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
-    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : state.scanDone
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: state.scanTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
-        running: forceRunning || (state.scanRunning as boolean),
+        running: forceRunning || scanEffectivelyActive(),
         alreadyStarting: forceRunning,
         phase: state.scanPhase,
         done: done,
@@ -5252,24 +6432,32 @@ String scanStatusJson(boolean forceRunning = false) {
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
         heartbeat: heartbeat,
-        graphVersion: state.graphVersion,
+        graphVersion: atomicState.graphVersion,
     ])
 }
 
 Map renderMapMapping() {
-    // The settings-page link is already hidden during a scan, but an existing
-    // tab, bookmark or copied URL can still request this endpoint directly.
-    // startScan deliberately retains the previous graph while the replacement
-    // is assembled, and its supporting state maps are being replaced phase by
-    // phase, so rendering during that window produces an internally mixed map.
-    // Refuse the endpoint until publication finishes rather than presenting
-    // stale and current data as one coherent result.
-    if (state.scanRunning) {
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    clearAbandonedScan()
+    if (scanEffectivelyActive()) {
         return render(
             status: 200,
             contentType: 'text/html',
             data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map - scan in progress</title></head>
-<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<body style="background:#062733; color:#eee; font-family:ui-sans-serif, system-ui, sans-serif; padding:2em; line-height:1.5">
 <h2>Scan in progress</h2>
 <p>The map is temporarily unavailable while Automation Map discovers and publishes the new data.</p>
 <p>Return to the Automation Map app when the scan has completed, then open the map again.</p>
@@ -5282,7 +6470,7 @@ Map renderMapMapping() {
             status: 200,
             contentType: 'text/html',
             data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
-<body style="background:#062733; color:#eee; font-family:sans-serif; padding:2em; line-height:1.5">
+<body style="background:#062733; color:#eee; font-family:ui-sans-serif, system-ui, sans-serif; padding:2em; line-height:1.5">
 <h2>This map is out of date</h2>
 <p>It was saved in a format this release no longer reads.
 Relationship types have changed since then, so the graph would render without role colours.</p>
@@ -5293,16 +6481,16 @@ Relationship types have changed since then, so the graph would render without ro
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
 
-// A device or app name is free text the hub owner controls, and it ends up
-// inside a JSON blob embedded straight into a <script> block. Pattern-matching
-// closing-tag spellings ('</script>', case-insensitively) is fragile: HTML
-// also tolerates whitespace before the '>' ('</script >'), which slips past a
-// pattern for the exact string, and there is no guarantee that is the last
-// variant a browser accepts. Escaping every '<' as \u003c sidesteps
-// enumerating tag spellings entirely - '<' never appears outside a JSON
-// string value in the first place, so this changes nothing about how the
-// JSON parses, and with no literal '<' left anywhere in the output there is
-// nothing left for the browser's tag scanner to match, spelled any way at all.
+
+
+
+
+
+
+
+
+
+
 String jsonForScriptEmbed(Object obj) {
     return JsonOutput.toJson(obj).replace('<', '\\u003c')
 }
@@ -5312,27 +6500,55 @@ String buildMapHtml() {
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
     String jsonStr = jsonForScriptEmbed(graph)
-    // For the AI friendly export feature - scan provenance the client-side GRAPH
-    // blob above does not carry on its own. Built the same safe way GRAPH
-    // is (JsonOutput, not manual string splicing) so an exception message
-    // in scanError can never break out of the embedding script tag.
-    // v2.0.14: schema 4 - hubVariables changes meaning from an inferred
-    // referenced subset to an authoritative inventory when available, plus
-    // Connector topology and completeness metadata (parent spec 11.1). Not a
-    // dual-export mode - schema 3 files remain readable by their own
-    // consumers, but this app now generates schema 4 only (a design review
-    // point 4).
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 4,
+        exportSchemaVersion: 8,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
         appsUnreadable: state.appsUnreadable ?: 0,
         devicesUnreadable: ((state.deviceIdsUnreadable ?: []) as List).size(),
-        // Inventory completeness kept separate from relationship-decoder
-        // completeness (parent spec 6.1) - a consumer must not assume one
-        // implies the other.
+        
+        
+        
         hubVariableInventoryStatus: hubVarInventoryMeta.status ?: 'not-supported',
         hubVariableInventoryError: hubVarInventoryMeta.error,
         hubVariableInventoryCount: hubVarInventoryMeta.count ?: 0,
@@ -5344,6 +6560,12 @@ String buildMapHtml() {
 <html>
 <head>
 <meta charset="utf-8">
+<!-- Never disclose the hub page URL, its private LAN origin, or OAuth-bearing
+     path as referrer metadata when this page loads external libraries,
+     Community Utilities data, images, fonts, audio, or opens external links.
+     This changes request metadata only; it does not change any target URL,
+     same-origin hub request, credential handling, or CORS behaviour. -->
+<meta name="referrer" content="no-referrer">
 <!-- Without this a phone renders at a ~980px virtual width, so the small-screen
      media query never fires and the page silently shrinks to an unusable size
      instead of showing the desktop-only notice. -->
@@ -5382,15 +6604,94 @@ String buildMapHtml() {
     font-weight: normal;
     font-style: normal;
   }
-  html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:sans-serif; }
-  #status { position:absolute; top:10px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:0.85em; }
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; max-width:340px; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:6px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:230px; }
-  #controls label { display:block; margin-bottom:2px; }
-  #controls select { width:100%; box-sizing:border-box; }
-  #controls input[type=search] { width:100%; box-sizing:border-box; margin-bottom:3px; padding:3px 5px; font-size:1em; }
+  /* Mulish - matches the typeface used across gordonthelander.github.io/HPM_Manifest_Crawl/
+     (Hubitat Community Utilities), per Gordon's request to bring this page's look closer to
+     that one. Self-hosted from this repo rather than fetched live from Google Fonts on every
+     page load - this app just removed its own telemetry driver because a call to any third
+     party read as intrusive to some users, and a live Google Fonts request is the same class
+     of thing even though it carries no app data. Single variable-weight WOFF2 (Latin subset
+     only; this app's own UI text is English) covers every weight actually used (400/600/700/
+     800) with one file - Google Fonts serves the identical file for all of them, confirmed by
+     diffing the returned @font-face rules for each weight. SIL Open Font License 1.1 permits
+     bundling/self-hosting freely; its one redistribution condition is carrying the licence
+     text itself, not a credit line - Fonts/OFL.txt (the exact upstream file) satisfies that. */
+  @font-face {
+    font-family: 'Mulish';
+    src: url('https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Fonts/Mulish-VariableWeight-latin.woff2') format('woff2');
+    font-weight: 400 800;
+    font-style: normal;
+    font-display: swap;
+  }
+  html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
+  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:999px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
+  /* Fixed width, matching #status exactly (was max-width, sized to
+     content) - the two need to line up regardless of viewport width, not
+     just coincidentally happen to at one particular size. */
+  /* Fixed width (matching #status) made rows wrap more, running the panel
+     off the bottom of the screen - smaller text plus a hard max-height/
+     scroll safety net so it can never do that again regardless of viewport
+     height or how much the legend itself grows later. */
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:12px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
+  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
+  /* Small bold letter-spaced label above each control - the same "eyebrow"
+     treatment gordonthelander.github.io/HPM_Manifest_Crawl/ uses above its
+     own headings (e.g. "COMMUNITY TOOLS FOR HUBITAT"), borrowed for shape/
+     type only, not its light-card colours. */
+  #controls label { display:block; margin-bottom:3px; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; }
+  #showFilterLabel { margin-top:22px; }
+  /* The one remaining native <select> (Show/kindFilter) was left to the
+     browser's own default white dropdown chrome - now matches the pill
+     buttons and combobox next to it instead of standing out as unstyled. */
+  #controls select { width:100%; box-sizing:border-box; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:5px 10px; }
   #controls button, #controls select, #controls option { font-size:14px; font-family:inherit; }
-  #controls button { margin-top:2px; cursor:pointer; }
+  /* Left to the browser default before this, every unstyled button (Insights,
+     External systems, Pivot tables, Device icons, AI friendly export, Hubitat
+     release activity, Exit map) rendered as a stark light-grey pill against
+     this dark panel - the only two that looked deliberate were "Show all"
+     and "Community utilities", which already set their own inline colours.
+     Blue accent taken from gordonthelander.github.io/HPM_Manifest_Crawl/
+     (Hubitat Community Utilities) - #17699a/#eef7fc there on a light card,
+     inverted here for a dark one so every plain action button reads as one
+     deliberate family instead of an unstyled default. */
+  /* Pill-shaped, matching the rounded buttons/badges on
+     gordonthelander.github.io/HPM_Manifest_Crawl/ - shape only, this app
+     stays on its own dark background rather than that site's light one. */
+  #controls button { margin-top:2px; cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; }
+  #controls button:hover { background:#1a4d6b; }
+  /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
+     the old stacked search input + <select> pair, ported from the standalone
+     harness verified in Bucket/combobox-harness/. Closed control is a plain
+     non-editable button; the search field lives inside the popup only. */
+  /* Every combobox mounts inside a <label> (see initCombo/HTML below), and
+     the new eyebrow-label styling on #controls label - tiny, bold, letter-
+     spaced, uppercase, blue - is otherwise inherited by everything nested
+     inside it. .cb-opt and .cb-search have no font-weight/text-transform/
+     letter-spacing/colour of their own to block that (confirmed live:
+     .cb-search measured at 11px/800/blue - the label's values, not its
+     own), so it stops here instead, restoring normal text for the whole
+     combobox subtree regardless of which label it happens to sit inside. */
+  .cb { position:relative; font-weight:400; font-size:14px; letter-spacing:normal; text-transform:none; color:#eee; }
+  .cb-button { width:100%; box-sizing:border-box; padding:4px 12px; font:inherit; text-align:left; border:1px solid #1e5878; border-radius:999px; background:#0a2530; color:#eee; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .cb-button:focus { outline:2px solid #4a90d9; outline-offset:-1px; }
+  .cb-button-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cb-arrow { flex:none; color:#cfd8dc; font-size:12px; }
+  .cb-is-open .cb-arrow { transform:rotate(180deg); }
+  /* Right-aligned and wider than the closed button, not left:0/right:0 - the
+     150px control truncated every real app/device name to a few characters.
+     #controls is pinned to the right edge of the screen, so the popup grows
+     leftward off the button's right edge rather than off-screen. */
+  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:12px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
+  /* The dedicated search field - first row of the popup, auto-focused on
+     open, visually its own zone (bottom border) above the options list. */
+  .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #1e5878; background:#0d3446; color:#eee; }
+  .cb-search::placeholder { color:#8fc4e0; font-style:italic; opacity:1; }
+  .cb-search:focus { outline:none; }
+  .cb-list { list-style:none; margin:0; padding:0; max-height:260px; overflow-y:auto; }
+  .cb-opt { padding:4px 8px; cursor:pointer; white-space:normal; word-break:break-word; font-size:14px; line-height:1.3; }
+  .cb-opt-active { background:#34506b; }
+  .cb-opt-selected { font-weight:600; }
+  .cb-opt-sticky { font-style:italic; opacity:.9; border-top:1px dashed #4a4f57; }
+  .cb-count { padding:4px 8px; font-size:12px; color:#9aa4ad; border-top:1px solid #3a3f47; background:#031218; }
   #network { width:100%; height:100vh; }
   /* Sits behind the network canvas (earlier in DOM order, no z-index of its
      own, and vis-network's own canvas has no background fill so empty space
@@ -5398,10 +6699,16 @@ String buildMapHtml() {
      absolute - pinned to a fixed point on the actual screen regardless of
      where physics settles the graph's own bounding box. Moved off dead
      centre (was 50/50) since a fully-populated graph's own node cluster
-     tends to sit left-of-centre; positioned below #controls specifically
-     (not just anywhere clear of the graph) per Gordon's own instruction,
-     confirmed against a live screenshot rather than guessed. */
-  #hubWatermark { position:fixed; top:68%; left:82%; transform:translate(-50%, -50%);
+     tends to sit left-of-centre; positioned below #controls specifically,
+     horizontally centred under the Exit map button, per Gordon's own
+     instruction, confirmed against a live screenshot rather than guessed.
+     right, not left: #controls itself is anchored right:10px and 300px
+     wide, so its own horizontal centre is a fixed distance from the
+     viewport's RIGHT edge (10px + 150px = 160px) regardless of viewport
+     width - a left:X% value has no way to track that reliably, which is
+     why the panel's own 150px->300px widening (item, live 2026-09-02) threw
+     the previous left:82% off centre under Exit map. */
+  #hubWatermark { position:fixed; top:76%; right:160px; transform:translate(50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
   /* Hub photo specifically shown at half the Christmas tree's size, per
@@ -5410,12 +6717,14 @@ String buildMapHtml() {
   /* First shipped as a bare 1em glyph with no background - reported as "had to
      go hunting for it". A visible pill with its own border and a hover state
      reads as a button; a lone triangle in a wall of text does not. */
-  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:bold; padding:2px; border-radius:4px; }
+  /* Matches the right-hand panel's own theme: blue accent border/background
+     on the toggle pill, letter-spaced accent-blue heading text. */
+  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:800; letter-spacing:0.4px; color:#7fb6d6; padding:2px; border-radius:4px; }
   #legend-head:hover { background:rgba(255,255,255,0.10); }
-  #legend-toggle { background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.35); color:#fff; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:5px; padding:0; cursor:pointer; }
+  #legend-toggle { background:#123a52; border:1px solid #1e5878; color:#cfe9fb; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:999px; padding:0; cursor:pointer; }
   #legend.collapsed #legend-body { display:none; }
   #legend.collapsed { padding:6px 10px; }
-  .legend-row { display:flex; align-items:center; margin:4px 0; }
+  .legend-row { display:flex; align-items:center; margin:3px 0; }
   /* Shape is per row now. The old single .swatch rule forced border-radius 50%
      on every swatch, so the legend drew a circle for an app that the map draws
      as a square, and rotating that circle 45 degrees for an external system was
@@ -5425,6 +6734,7 @@ String buildMapHtml() {
   .sw-square { border-radius:2px; }
   .sw-diamond { width:10px; height:10px; border-radius:1px; transform:rotate(45deg); margin:1px 9px 1px 1px; }
   .sw-triangle { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:11px solid currentColor; background:none !important; margin-right:8px; }
+  .sw-triangle-down { width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:11px solid currentColor; background:none !important; margin-right:8px; }
   .sw-outline { background:#2b2b2b; border:2px solid #e8a33d; box-sizing:border-box; }
   /* Deliberately not a variant of sw-outline. A deleted target and an unscanned
      rule are different findings, and sharing a style is what made them
@@ -5493,7 +6803,7 @@ String buildMapHtml() {
      against #flow's own dark theme is the clearest way to say so at a glance.
      Overrides every #flow-inherited color (h4/.sub/a) that would otherwise
      stay light-on-light here. */
-  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; }
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:50%; }
   #communityCard h4 { color:#1a2733; margin-top:0; }
   #communityCard .sub { color:#4a5a63; }
   #communityCard a { color:#1565c0; }
@@ -5562,6 +6872,10 @@ String buildMapHtml() {
   #icons table { border-collapse:collapse; width:100%; font-size:0.8em; }
   #icons th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #icons td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
+  /* Same AMIcons glyph the map itself draws for this device (ICON_GLYPHS),
+     shown here too so the effective icon is visible at a glance instead of
+     only as text inside the override dropdown. */
+  .devIconGlyph { font-family:'AMIcons'; display:inline-block; width:16px; margin-right:6px; text-align:center; color:#7fb6d6; }
   #icons tr.overridden td { background:rgba(79,179,169,0.09); }
   #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -5665,12 +6979,15 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
-  <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled</div>
+  <div class="legend-row"><span class="swatch sw-square" style="background:#6d6a5f"></span>App paused or disabled - label ends "(Paused)" or "(Disabled)"</div>
   <div class="legend-row"><span class="swatch sw-square sw-inert"></span>App with no device or rule relationship - its label says why</div>
   <div class="legend-row"><span class="swatch sw-square sw-unreadable"></span>Could not be read during the scan - rescan to retry</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device - icon by type (light, door, sensor...), grey with no app focused. Wrong? Device icons panel.</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5f7d8c"></span>Device disabled on the hub - same colour and icon as any device, label ends "(Disabled)"</div>
   <div class="legend-row"><span class="swatch sw-diamond" style="background:#cfd8dc"></span>External system - declared, not detected</div>
   <div class="legend-row"><span class="swatch sw-triangle" style="color:#4fb3a9"></span>Hub Variable - shared state a rule writes or reads</div>
+  <div class="legend-row"><span class="swatch sw-triangle-down" style="color:#7986cb"></span>Local Variable - belongs to one rule only</div>
+  <div class="legend-row"><span class="swatch sw-triangle-down" style="color:#7986cb; opacity:0.55"></span>Local Variable, dashed - declared but no proven decoded reference in this rule</div>
   <div class="note" style="margin:2px 0 6px 0">Focus an app and each device instead takes the colour of its role below, shown as both a line and the dot the device itself becomes.</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#9b59b6"></span><span class="line" style="border-color:#9b59b6"></span>Trigger - app listens to this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#16a085"></span><span class="line" style="border-color:#16a085"></span>Constraint - condition / required expression</div>
@@ -5678,8 +6995,9 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#7fae42"></span><span class="line" style="border-color:#7fae42"></span>Action - app can command this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
-  <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub Variable's value</div>
-  <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub Variable in a condition or action</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#5c6bc0"></span><span class="line" style="border-color:#5c6bc0"></span>Has component - device-owned component of a parent device (e.g. Shelly, Bond, a Matter bridge)</div>
+  <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub or Local Variable's value</div>
+  <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub or Local Variable in its decoded logic</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
@@ -5731,10 +7049,11 @@ String buildMapHtml() {
   <p>Open this same link on a computer.</p>
 </div>
 <div id="controls">
-  <label>Focus app<input id="appSearch" type="search" placeholder="search apps..." autocomplete="off"><select id="appFilter" size="1"><option value="__all__">All apps</option></select></label>
-  <label>Focus device<input id="deviceSearch" type="search" placeholder="search devices..." autocomplete="off"><select id="deviceFilter" size="1"><option value="__all__">All devices</option></select></label>
-  <label>Focus hub variable<input id="hubVarSearch" type="search" placeholder="search hub variables..." autocomplete="off"><select id="hubVarFilter" size="1"><option value="__all__">All hub variables</option></select></label>
-  <label>Show<select id="kindFilter">
+  <label>Focus app<span id="appComboMount"></span></label>
+  <label>Focus device<span id="deviceComboMount"></span></label>
+  <label>Focus hub variable<span id="hubVarComboMount"></span></label>
+  <label>Focus local variable<span id="localVarComboMount"></span></label>
+  <label id="showFilterLabel">Show<select id="kindFilter">
     <option value="all">All relationships</option>
     <option value="trigger">Triggers only</option>
     <option value="constraint">Constraints only</option>
@@ -5742,25 +7061,26 @@ String buildMapHtml() {
     <option value="action">Actions only</option>
     <option value="exposed">Exposed only</option>
     <option value="owns">Ownership only</option>
+    <option value="hasComponent">Has component only</option>
     <option value="rulelinks">Rule to rule only</option>
     <option value="depends">External systems only</option>
   </select></label>
-  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214;">Show all</button>
+  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
   <button id="insightsBtn" type="button">Insights</button>
   <button id="extBtn" type="button">External systems</button>
   <button id="pivotBtn" type="button">Pivot tables</button>
   <button id="iconsBtn" type="button">Device icons</button>
   <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
   <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
   <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="communityCard"></div></div>
+<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
 <div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
 <div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
 <div id="releaseActivity"><button id="releaseActivityClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody"></div></div>
-<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
+<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -5789,8 +7109,8 @@ const GRAPH = ${jsonStr};
 const SCAN_META = ${scanMetaJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
-                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc' };
-const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9' };
+                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', hasComponent: '#5c6bc0' };
+const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9', localVariable: '#7986cb' };
 
 // Device icon glyphs, keyed by n.icon (see ICON_RULES/autoDetectIconKey in the
 // Groovy source - the Groovy side decides WHICH key a device gets, this side
@@ -5856,29 +7176,34 @@ const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
 // different ways.
 const KIND_LABEL = {
   trigger: 'Trigger', constraint: 'Constraint', monitor: 'Monitor', action: 'Action',
-  exposed: 'Exposed', owns: 'Owns', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
+  exposed: 'Exposed', owns: 'Owns', hasComponent: 'Has component', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
   setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read'
 };
-const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable' };
+const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
 
 // Which edge kinds actually connect two node groups, keyed order-independently
 // (device|app and app|device are the same relationship read from either end).
-// Every edge on this map has an app in `from` - buildGraph never creates one
-// the other way round - so 'device' and 'external' never appear as a source
-// group here, only as a target. That is a fact about the data, not a design
-// choice made here, and it is what makes every combination this map can
-// produce meaningful: there is no such thing as a Device x External pivot,
-// because no edge on the graph could ever populate one.
+// Every edge on this map EXCEPT hasComponent has an app in `from` - that one
+// is device-to-device, added in v2.1.7, and deliberately excluded from pivot
+// support rather than given a device|device entry: the pivot feature is
+// app-centric by construction (pivotColOptions() only offers multiple
+// columns when rowGroup === 'app'), and a device-to-device relationship
+// doesn't fit that shape. The relationship stays fully present on the graph
+// and in the AI export either way - only the pivot-table view omits it.
+// 'device' and 'external' still never appear as a source group here, only as
+// a target - true for every OTHER edge kind, not a blanket fact about the
+// data anymore.
 function pivotKindOptions(g1, g2) {
   const key = [g1, g2].sort().join('|');
   if (key === 'app|app') return ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
   if (key === 'app|device') return ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'];
   if (key === 'app|external') return ['depends'];
   if (key === 'app|hubVariable') return ['write', 'read'];
+  if (key === 'app|localVariable') return ['write', 'read'];
   return [];
 }
 function pivotColOptions(rowGroup) {
-  return rowGroup === 'app' ? ['app', 'device', 'external', 'hubVariable'] : ['app'];
+  return rowGroup === 'app' ? ['app', 'device', 'external', 'hubVariable', 'localVariable'] : ['app'];
 }
 
 // The fixed menu (option A from the discussion): each entry is a ready-made
@@ -6108,6 +7433,14 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // "does not exist". Filled, not outlined: the app is real and installed,
   // only unread.
   if (n.unreadable) color = { background: '#4a1f1f', border: '#d9534f' };
+  // A Local Variable with no proven decoded reference in this rule (v2.1.6)
+  // - not read in a trigger, condition or action, and not written - its own
+  // dimmed variant, not n.inert (review 311
+  // correction 3: that flag feeds inert-APP layout, focus behaviour and
+  // Insights specifically, and reusing it would misreport this as an inert
+  // app). Dimmed the same visual way for the same reason: still real, just
+  // not connected to anything else on the map.
+  if (n.unreferencedLocal) color = { background: '#262a3d', border: '#7986cb' };
   // External systems get their own shape as well as their own colour, because
   // they are the only nodes on the map that nobody measured.
   //
@@ -6121,6 +7454,13 @@ function styledNode(n, useFullLabel, roleByDevice) {
   if (n.group === 'app') shape = 'square';
   else if (n.group === 'external') shape = 'diamond';
   else if (n.group === 'hubVariable') shape = 'triangle';
+  // Deliberately not 'diamond' or 'square' - fallbackSector() in
+  // sectorLayout below reads shape alone to place a node with no matching
+  // edge kind, and diamond specifically means "external system" there. A
+  // Local Variable is the opposite of external; triangleDown keeps it out
+  // of that check while still reading as "a variable, upside down from a
+  // Hub Variable's shared triangle" at a glance.
+  else if (n.group === 'localVariable') shape = 'triangleDown';
   else if (n.group === 'device') shape = 'icon';
   const styled = {
     // n.draw is the full identity without the hub's live status; n.title keeps
@@ -6163,8 +7503,10 @@ function styledNode(n, useFullLabel, roleByDevice) {
   // Dashed outline as well as the dimmed fill. Two signals rather than one,
   // because the fill alone is close to the paused colour at a glance and these
   // mean very different things: paused is an app that would do something, inert
-  // is an app that has nothing to do it to.
-  if (n.inert) {
+  // is an app that has nothing to do it to. unreferencedLocal (v2.1.6) gets the
+  // same treatment for the same visual reason, but stays its own flag - see the
+  // colour block above for why it is never merged into n.inert.
+  if (n.inert || n.unreferencedLocal) {
     styled.shapeProperties = { borderDashes: [4, 3] };
     styled.size = 14;
     // The shelf position is re-applied on every render, not set once after the
@@ -6231,7 +7573,13 @@ document.fonts.ready.then(function () {
 let shelfDivider = null;
 
 function shelveInertNodes() {
-  const inertIds = ALL_NODES.filter(function (n) { return n.inert; })
+  // n.unreferencedLocal (v2.1.6) shares this shelf on purpose - both flags
+  // mean the same thing to this layout (no edges, physics would fling it to
+  // an empty margin) even though they mean different things everywhere else
+  // (review 311, correction 3). This filter is the one deliberately generalised
+  // spot; state.appsInert, Insights and n.inert's colour/label meaning are
+  // untouched.
+  const inertIds = ALL_NODES.filter(function (n) { return n.inert || n.unreferencedLocal; })
     .sort(function (a, b) { return a.title.localeCompare(b.title); })
     .map(function (n) { return n.id; });
   if (!inertIds.length) return;
@@ -6371,23 +7719,60 @@ window.addEventListener('resize', function () {
   refitTimer = setTimeout(function () { network.fit({ animation: false }); }, 200);
 });
 
+// Three passes, not one, so a hasComponent (device-owned component) edge
+// shows up in focus views it doesn't itself touch directly:
+// 1. One-hop edges touching the focus node directly - unchanged behaviour
+//    for every other edge kind.
+// 2. A visible hasComponent child pulls in its not-yet-visible parent, plus
+//    that edge - one-directional and not recursive, so adding the parent
+//    here does not itself cascade to the parent's other children. Covers an
+//    app that touches a component child but never references the parent.
+// 3. Backfill any hasComponent edge where both ends are already visible
+//    (from pass 1, pass 2, or the focus node itself) - catches a second
+//    app-touched sibling of a parent pass 2 just added, regardless of which
+//    order pass 2 happened to visit edges in.
 function neighborhood(nodeId, edgePool) {
   const ids = {};
   ids[nodeId] = true;
   const edgeList = [];
+  const addedKeys = {};
+  const addEdge = function (e) {
+    const key = e.from + '|' + e.to + '|' + e.kind;
+    if (addedKeys[key]) return;
+    addedKeys[key] = true;
+    edgeList.push(e);
+  };
+
   edgePool.forEach(function (e) {
     if (e.from === nodeId || e.to === nodeId) {
       ids[e.from] = true; ids[e.to] = true;
-      edgeList.push(e);
+      addEdge(e);
     }
   });
+
+  edgePool.forEach(function (e) {
+    if (e.kind !== 'hasComponent') return;
+    if (ids[e.to] && !ids[e.from]) {
+      ids[e.from] = true;
+      addEdge(e);
+    }
+  });
+
+  edgePool.forEach(function (e) {
+    if (e.kind !== 'hasComponent') return;
+    if (ids[e.from] && ids[e.to]) {
+      addEdge(e);
+    }
+  });
+
   return { ids: ids, edgeList: edgeList };
 }
 
 function applyFilters() {
-  const appVal = document.getElementById('appFilter').value;
-  const devVal = document.getElementById('deviceFilter').value;
-  const hubVarVal = document.getElementById('hubVarFilter').value;
+  const appVal = appSelect.getValue();
+  const devVal = deviceSelect.getValue();
+  const hubVarVal = hubVarSelect.getValue();
+  const localVarVal = localVarSelect.getValue();
   const kindVal = document.getElementById('kindFilter').value;
 
   let pool = ALL_EDGES;
@@ -6399,7 +7784,7 @@ function applyFilters() {
 
   let ids = null;
   let shownEdges = pool;
-  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : null));
+  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : (localVarVal !== '__all__' ? localVarVal : null)));
   if (focusId) {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
@@ -6576,6 +7961,12 @@ function sectorLayout(appId, styledNodes, shownEdges) {
 // focused app is a rule its decoded steps are drawn as a real flowchart.
 // ---------------------------------------------------------------------------
 const FLOWS = GRAPH.flows || {};
+// Gate C (v2.1.4): owner-scoped Local Variable definitions and classified
+// references, keyed the same way as FLOWS. Raw Groovy shape (canonicalName/
+// scope/status/candidateScopes/evidence), not the export's renamed fields -
+// the AI export builds its own shape from the same GRAPH.ruleVariables
+// separately, see buildExportPayload().
+const RULE_VARIABLES = GRAPH.ruleVariables || {};
 if (window.mermaid) {
   mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false } });
 }
@@ -6852,6 +8243,35 @@ function showInertPanel(node) {
       focusNode(a.getAttribute('data-node'));
     });
   });
+  // Gate C (v2.1.4), review 296 correction: without this, selecting a rule
+  // with variable evidence and then an inert app left the previous rule's
+  // list stale underneath this panel's own content - this path never touched
+  // ruleVariablesCard at all. Same centralized renderer as showFlow() uses,
+  // so an inert/unreadable app (which has no relationships, variable
+  // evidence included) correctly clears the container via that function's
+  // own empty-state branch, not a separate ad hoc clear here.
+  renderRuleVariablesCard(node.id);
+  renderCommunityCard(node);
+  bringToFront(flowPanel);
+}
+
+// A Local Variable with no proven decoded reference in this rule (v2.1.6) -
+// the same "click opened nothing" problem showInertPanel solved for an app
+// that references nothing, but a deliberately separate function (review 311
+// correction 3): the content here is variable-specific (which rule declared
+// it), not app-specific (schedule/subscription/child-app facts
+// showInertPanel reports), and conflating the two risked this eventually
+// growing app-shaped fields that make no sense on a variable.
+function showUnreferencedLocalPanel(node) {
+  const owner = ALL_NODES.filter(function (n) { return n.id === node.ownerAppId; })[0];
+  document.getElementById('flowTitle').textContent = node.title + ' (Local Variable)';
+  document.getElementById('flowSub').textContent = 'Declared in ' + (owner ? owner.title : 'a rule no longer on this map') + '.';
+  flowChart.innerHTML = '<p class="sub">No proven decoded reference in this rule - not read in a trigger, condition or action, and not written.</p>';
+  // Both correctly no-op on a non-rule/non-app node (their own group checks
+  // already handle that) - called anyway so switching here from a rule with
+  // stale content in either card actually clears it, the same discipline
+  // the review 296 correction established for showInertPanel above.
+  renderRuleVariablesCard(node.id);
   renderCommunityCard(node);
   bringToFront(flowPanel);
 }
@@ -6872,6 +8292,10 @@ function showFlow(appId) {
     document.getElementById('flowTitle').textContent = node ? node.title : 'App details';
     document.getElementById('flowSub').textContent = 'This app has no decoded rule flow to show.';
     flowChart.innerHTML = '';
+    // Gate C (v2.1.4): a rule can have variable evidence even when its step
+    // sequence itself could not be decoded (or genuinely has none) - shown
+    // regardless of which branch of this function is taken.
+    renderRuleVariablesCard(appId);
     renderCommunityCard(node);
     bringToFront(flowPanel);
     return;
@@ -6890,14 +8314,59 @@ function showFlow(appId) {
     // over whatever the user has actually picked since.
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
+    renderRuleVariablesCard(appId);
     renderCommunityCard(node);
     bringToFront(flowPanel);
   }).catch(function (err) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
+    renderRuleVariablesCard(appId);
     renderCommunityCard(node);
     bringToFront(flowPanel);
   });
+}
+
+// Gate C (v2.1.4). "names, operation, and usage role only, never values" -
+// see Supporting Docs/local_hub_variable_identity_proposal.md and WIP/
+// local_hub_variable_gate_c_integration_plan.md section 5. Reads the same
+// normalized classification records the flow labels themselves were
+// corrected against (see correctFlowVariableLabels() in Groovy), so this
+// section and the flow chart cannot disagree. Wording for ambiguous/
+// unresolved stays neutral - never "broken" unless Rule Machine's own
+// persisted marker already says so on the flow step itself.
+function renderRuleVariablesCard(appId) {
+  const box = document.getElementById('ruleVariablesCard');
+  if (!box) return;
+  const rv = RULE_VARIABLES[appId];
+  const refs = (rv && rv.variableReferences) || [];
+  const nonResolved = (rv && rv.nonResolvedVariableReferences) || [];
+  if (!refs.length && !nonResolved.length) { box.innerHTML = ''; return; }
+
+  // tag is the same [XXX] convention as the Focus dropdowns (queue 305/306) -
+  // LOC/HVR reflect only the already-proven scope filter below, never guessed.
+  function line(name, operation, usageRole, tag) {
+    const op = operation === 'write' ? 'writes' : 'reads';
+    const role = usageRole ? ' (' + extEsc(usageRole) + ')' : '';
+    const prefix = tag ? '[' + tag + '] ' : '';
+    return '<li>' + prefix + extEsc(name) + ' - ' + op + role + '</li>';
+  }
+
+  const localItems = refs.filter(function (r) { return r.scope === 'local'; })
+    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'LOC'); });
+  const hubItems = refs.filter(function (r) { return r.scope === 'hub'; })
+    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'HVR'); });
+  const reviewItems = nonResolved.map(function (r) {
+    const reason = r.status === 'ambiguous' ? 'scope not distinguishable from configuration' : 'no matching definition found';
+    return '<li>' + extEsc(r.name) + ' - ' + (r.operation === 'write' ? 'writes' : 'reads') + ', ' + reason + '</li>';
+  });
+
+  if (!localItems.length && !hubItems.length && !reviewItems.length) { box.innerHTML = ''; return; }
+
+  let html = '<h4>Variables used by this rule</h4>';
+  if (localItems.length) html += '<p class="sub">Local</p><ul>' + localItems.join('') + '</ul>';
+  if (hubItems.length) html += '<p class="sub">Hub</p><ul>' + hubItems.join('') + '</ul>';
+  if (reviewItems.length) html += '<p class="sub">Needs review</p><ul>' + reviewItems.join('') + '</ul>';
+  box.innerHTML = html;
 }
 
 const flowCloseBtn = document.getElementById('flowClose');
@@ -7234,21 +8703,28 @@ function renderCommunityCard(node) {
   const box = document.getElementById('communityCard');
   if (!box) return;
   const seq = ++communityCardRequestSeq;
-  if (!node || node.group !== 'app') { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  // box.hidden, not just an empty innerHTML - the card's own light background
+  // still painted a blank box with nothing in it (reported live: a plain
+  // white rectangle with no text). Emptying the content was never enough on
+  // its own to remove the box from the page.
+  if (!node || node.group !== 'app') { box.innerHTML = ''; box.hidden = true; ccApplyClickable(box, null); return; }
   // A child app is an instance the user built inside an engine - a rule, a
   // button rule, a notifier. No community package exists for one, so the card
   // could only ever say "nothing found". Show nothing instead.
-  if (node.parent) { box.innerHTML = ''; ccApplyClickable(box, null); return; }
+  if (node.parent) { box.innerHTML = ''; box.hidden = true; ccApplyClickable(box, null); return; }
+  box.hidden = false;
   box.innerHTML = '<h4>Community information</h4><p class="sub">Checking Community Utilities...</p>';
   ccApplyClickable(box, null);
   loadCommunityContext().then(function (data) {
     if (seq !== communityCardRequestSeq) return;
     const rendered = ccCardHtml(matchCommunityContext(data, node), data.snapshotGenerated, node.appType);
+    box.hidden = false;
     box.innerHTML = rendered.html;
     ccApplyClickable(box, rendered.clickUrl);
   }).catch(function (e) {
     if (seq !== communityCardRequestSeq) return;
     console.warn('Community information unavailable: ' + e.message);
+    box.hidden = false;
     box.innerHTML = '<h4>Community information</h4><p class="sub">Community information is temporarily unavailable.</p>';
     ccApplyClickable(box, null);
   });
@@ -7322,53 +8798,420 @@ const DEVICE_ICON_TAGS = {
 function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
 }
+// Same convention for the Hub Variable Focus list (Gate C follow-up, agreed
+// 2026-08-29, queue 305/306). Uses HVR rather than the
+// APP_TYPE_TAGS HUB code - that one already means "built-in Hubitat app", a
+// different axis from variable scope, and reusing it here would conflate the
+// two. connectorDeviceId is the same authoritative field buildGraph() already
+// resolves onto the node - no new backend field for this.
+function hubVarOptionText(n) {
+  return '[' + (n.connectorDeviceId ? 'CON' : 'HVR') + '] ' + n.title;
+}
+// A Local Variable's visible name is not unique across rules by design (Gate
+// A found two rules can each declare their own same-named one), so the
+// dropdown text has to name the owning rule to tell them apart - id alone
+// already does (ownerAppId-scoped identity), this is purely for a human
+// reading the list. Built once here rather than looked up per option: this
+// runs once per dropdown render, not once per keystroke.
+const APP_TITLE_BY_ID = {};
+ALL_NODES.forEach(function (n) { if (n.group === 'app') APP_TITLE_BY_ID[n.id] = n.title; });
+function localVarOptionText(n) {
+  const ownerTitle = APP_TITLE_BY_ID[n.ownerAppId] || 'an unknown rule';
+  const unused = n.unreferencedLocal ? ', unused' : '';
+  return '[LOC] ' + n.title + ' (in ' + ownerTitle + unused + ')';
+}
 function pickOptionText(n, group) {
   if (group === 'app') return appOptionText(n);
   if (group === 'device') return deviceOptionText(n);
+  if (group === 'hubVariable') return hubVarOptionText(n);
+  if (group === 'localVariable') return localVarOptionText(n);
   return n.title;
 }
 
-// With 194 devices a plain dropdown is unusable, so each one gets a search box
-// that filters its options as you type. Rebuilt rather than hidden, because
-// hidden <option> elements are not reliably honoured across browsers.
-function fillSelect(selectId, searchId, group, allLabel) {
-  const sel = document.getElementById(selectId);
-  const search = document.getElementById(searchId);
-  const items = ALL_NODES.filter(function (n) { return n.group === group; })
-    .slice().sort(function (a, b) { return a.title.localeCompare(b.title); });
+// Combined combobox for the Focus dropdowns. Closed state is a plain,
+// non-editable button (label + arrow) - opening it reveals a popup whose
+// first row is a dedicated, auto-focused search field, with the scrollable
+// options list directly below it. Not the closed control doubling as the
+// search box - that shape was built, deployed and rejected live (Gordon's
+// reference: a spreadsheet-style searchable dropdown, 2026-09-02). Built and
+// verified standalone first in Bucket/combobox-harness/ (31 automated checks
+// + hands-on) before this port; unchanged from that harness version.
+// Framework-free ES5-ish idiom - no arrow functions, no template literals -
+// because this whole page is one Groovy GString and a JS template literal's
+// own interpolation syntax would collide with Groovy's.
+(function (root) {
+  'use strict';
 
-  function render(term) {
-    const q = (term || '').toLowerCase();
-    const keep = sel.value;
-    sel.innerHTML = '';
-    const all = document.createElement('option');
-    all.value = '__all__'; all.textContent = allLabel;
-    sel.appendChild(all);
-    let shown = 0;
-    items.forEach(function (n) {
-      if (q && n.title.toLowerCase().indexOf(q) < 0) return;
-      const opt = document.createElement('option');
-      opt.value = n.id; opt.textContent = pickOptionText(n, group);
-      sel.appendChild(opt);
-      shown++;
-    });
-    // Keep the current selection visible even if it no longer matches, so
-    // typing does not silently reset the view.
-    if (keep && keep !== '__all__' && !sel.querySelector('option[value="' + keep + '"]')) {
-      const cur = items.filter(function (n) { return n.id === keep; })[0];
-      if (cur) {
-        const opt = document.createElement('option');
-        opt.value = cur.id; opt.textContent = pickOptionText(cur, group);
-        sel.appendChild(opt);
+  var ALL = '__all__';
+  var DISABLED_COLOR = '#e57373';
+  var idSeq = 0;
+
+  function createCombobox(opts) {
+    opts = opts || {};
+    var uid = 'cb' + (++idSeq);
+    var mount = opts.mount;
+    if (!mount) { throw new Error('createCombobox: opts.mount is required'); }
+
+    var allLabel = opts.allLabel != null ? String(opts.allLabel) : 'All';
+    var onChange = typeof opts.onChange === 'function' ? opts.onChange : function () {};
+
+    var items = [];
+    var value = ALL;
+    var open = false;
+    var activeIndex = -1;   // index into `rows` (the currently rendered rows)
+    var rows = [];          // [{ value, label, disabled, el }]
+
+    // --- DOM -----------------------------------------------------------------
+    var elRoot = document.createElement('div');
+    elRoot.className = 'cb';
+    elRoot.setAttribute('data-cb', uid);
+
+    // Closed control - a plain button, not an editable field. Shows the
+    // current selection and an arrow; click/Enter/Space/ArrowDown opens the
+    // popup. Never receives typed text itself.
+    var elButton = document.createElement('button');
+    elButton.type = 'button';
+    elButton.className = 'cb-button';
+    elButton.setAttribute('aria-haspopup', 'listbox');
+    elButton.setAttribute('aria-expanded', 'false');
+
+    var elButtonLabel = document.createElement('span');
+    elButtonLabel.className = 'cb-button-label';
+
+    var elArrow = document.createElement('span');
+    elArrow.className = 'cb-arrow';
+    elArrow.setAttribute('aria-hidden', 'true');
+    elArrow.innerHTML = '&#9662;';
+
+    elButton.appendChild(elButtonLabel);
+    elButton.appendChild(elArrow);
+
+    var elPopup = document.createElement('div');
+    elPopup.className = 'cb-popup';
+    elPopup.hidden = true;
+
+    // The dedicated search field - first thing in the popup, auto-focused on
+    // open, always empty when it appears (never carries the selection text).
+    var elSearch = document.createElement('input');
+    elSearch.type = 'text';
+    elSearch.className = 'cb-search';
+    elSearch.autocomplete = 'off';
+    elSearch.spellcheck = false;
+    elSearch.setAttribute('role', 'searchbox');
+    elSearch.setAttribute('aria-autocomplete', 'list');
+    elSearch.setAttribute('aria-controls', uid + '-list');
+    if (opts.placeholder != null) { elSearch.placeholder = String(opts.placeholder); }
+
+    var elList = document.createElement('ul');
+    elList.className = 'cb-list';
+    elList.id = uid + '-list';
+    elList.setAttribute('role', 'listbox');
+
+    var elCount = document.createElement('div');
+    elCount.className = 'cb-count';
+    elCount.setAttribute('aria-live', 'polite');
+
+    elPopup.appendChild(elSearch);
+    elPopup.appendChild(elList);
+    elPopup.appendChild(elCount);
+    elRoot.appendChild(elButton);
+    elRoot.appendChild(elPopup);
+    mount.appendChild(elRoot);
+
+    // --- helpers -----------------------------------------------------------
+    function currentItem() {
+      if (value === ALL) { return null; }
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].id === value) { return items[i]; }
+      }
+      return null;
+    }
+
+    function selectionLabel() {
+      var it = currentItem();
+      if (!it) { return allLabel; }
+      return it.optionText != null ? it.optionText : it.title;
+    }
+
+    function sortItems(list) {
+      return list.slice().sort(function (a, b) {
+        return String(a.title).localeCompare(String(b.title));
+      });
+    }
+
+    // Filter on title only, keep the current selection visible even when it
+    // no longer matches - same contract fillSelect() used to guarantee.
+    function computeRows(term) {
+      var q = (term || '').toLowerCase();
+      var out = [];
+      // Reset row only makes sense against the full, unfiltered list - once
+      // actively searching, a plain filtered list reads cleaner.
+      if (!q) { out.push({ value: ALL, label: allLabel, disabled: false }); }
+      var seen = {};
+      var shown = 0;
+      for (var i = 0; i < items.length; i++) {
+        var n = items[i];
+        if (q && String(n.title).toLowerCase().indexOf(q) < 0) { continue; }
+        out.push({
+          value: n.id,
+          label: n.optionText != null ? n.optionText : n.title,
+          disabled: !!(n.disabled || n.paused)
+        });
+        seen[n.id] = true;
+        shown++;
+      }
+      if (value !== ALL && !seen[value]) {
+        var cur = currentItem();
+        if (cur) {
+          out.push({
+            value: cur.id,
+            label: cur.optionText != null ? cur.optionText : cur.title,
+            disabled: !!(cur.disabled || cur.paused),
+            sticky: true
+          });
+        }
+      }
+      return { rows: out, shown: shown, total: items.length };
+    }
+
+    function renderList() {
+      var res = computeRows(elSearch.value);
+      rows = res.rows;
+      elList.innerHTML = '';
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        var li = document.createElement('li');
+        li.className = 'cb-opt' + (r.sticky ? ' cb-opt-sticky' : '');
+        li.id = uid + '-opt-' + i;
+        li.setAttribute('role', 'option');
+        li.textContent = r.label + (r.sticky ? '  (current selection)' : '');
+        if (r.disabled) { li.style.color = DISABLED_COLOR; }
+        if (r.value === value) { li.setAttribute('aria-selected', 'true'); li.className += ' cb-opt-selected'; }
+        li.setAttribute('data-idx', String(i));
+        r.el = li;
+        elList.appendChild(li);
+      }
+      elCount.textContent = res.shown + ' of ' + res.total + ' shown';
+      // Keep the active row in range and reflect it.
+      if (activeIndex >= rows.length) { activeIndex = rows.length - 1; }
+      paintActive();
+    }
+
+    function paintActive() {
+      for (var i = 0; i < rows.length; i++) {
+        if (!rows[i].el) { continue; }
+        if (i === activeIndex) {
+          rows[i].el.classList.add('cb-opt-active');
+          elSearch.setAttribute('aria-activedescendant', rows[i].el.id);
+          scrollIntoView(rows[i].el);
+        } else {
+          rows[i].el.classList.remove('cb-opt-active');
+        }
+      }
+      if (activeIndex < 0) { elSearch.removeAttribute('aria-activedescendant'); }
+    }
+
+    function scrollIntoView(el) {
+      var top = el.offsetTop;
+      var bottom = top + el.offsetHeight;
+      if (top < elList.scrollTop) { elList.scrollTop = top; }
+      else if (bottom > elList.scrollTop + elList.clientHeight) {
+        elList.scrollTop = bottom - elList.clientHeight;
       }
     }
-    sel.value = keep || '__all__';
-    search.title = shown + ' of ' + items.length + ' shown';
+
+    function openPopup() {
+      if (open) { return; }
+      open = true;
+      elPopup.hidden = false;
+      elRoot.classList.add('cb-is-open');
+      elButton.setAttribute('aria-expanded', 'true');
+      // Always starts empty - the search field never carries the selection
+      // text, so there is nothing to clear-on-reopen the way a merged
+      // input/display would need.
+      elSearch.value = '';
+      renderList();
+      activeIndex = indexOfValue(value);
+      paintActive();
+      elSearch.focus();
+      document.addEventListener('mousedown', onDocMouseDown, true);
+    }
+
+    function closePopup() {
+      if (!open) { return; }
+      open = false;
+      elPopup.hidden = true;
+      elRoot.classList.remove('cb-is-open');
+      elButton.setAttribute('aria-expanded', 'false');
+      elSearch.removeAttribute('aria-activedescendant');
+      activeIndex = -1;
+      document.removeEventListener('mousedown', onDocMouseDown, true);
+    }
+
+    function indexOfValue(v) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].value === v) { return i; }
+      }
+      return -1;
+    }
+
+    function commit(v, fireChange) {
+      var changed = v !== value;
+      value = v;
+      elButtonLabel.textContent = selectionLabel();
+      if (changed && fireChange !== false) {
+        onChange(value, currentItem());
+      }
+    }
+
+    function moveActive(delta) {
+      if (!rows.length) { return; }
+      var i = activeIndex;
+      // Skip nothing - disabled rows are still selectable in the native
+      // <select> this replaces, so keep them reachable.
+      i += delta;
+      if (i < 0) { i = rows.length - 1; }
+      if (i >= rows.length) { i = 0; }
+      activeIndex = i;
+      paintActive();
+    }
+
+    // --- events ----------------------------------------------------------
+    function onDocMouseDown(e) {
+      if (elRoot.contains(e.target)) { return; }
+      closePopup();
+    }
+
+    elButton.addEventListener('click', function () {
+      if (open) { closePopup(); } else { openPopup(); }
+    });
+
+    // Enter/Space already open it via the native click a button fires on
+    // activation - only ArrowDown needs its own handling here.
+    elButton.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' && !open) { e.preventDefault(); openPopup(); }
+    });
+
+    elSearch.addEventListener('input', function () {
+      activeIndex = -1;
+      renderList();
+      // Point at the first real match so Enter selects something sensible -
+      // skip past row 0 only when it is the reset row (computeRows omits it
+      // once a filter term is active, so most keystrokes land here already
+      // pointing at row 0, the actual first match).
+      if (rows.length) {
+        activeIndex = (rows[0].value === ALL && rows.length > 1) ? 1 : 0;
+      }
+      paintActive();
+    });
+
+    elSearch.addEventListener('keydown', function (e) {
+      switch (e.key) {
+        case 'ArrowDown': e.preventDefault(); moveActive(1); break;
+        case 'ArrowUp': e.preventDefault(); moveActive(-1); break;
+        case 'Home': e.preventDefault(); activeIndex = 0; paintActive(); break;
+        case 'End': e.preventDefault(); activeIndex = rows.length - 1; paintActive(); break;
+        case 'Enter':
+          e.preventDefault();
+          var pick = activeIndex >= 0 ? rows[activeIndex] : rows[0];
+          if (pick) { commit(pick.value, true); }
+          closePopup();
+          elButton.focus();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          closePopup();
+          elButton.focus();
+          break;
+        case 'Tab':
+          closePopup();
+          break;
+        default: break;
+      }
+    });
+
+    elList.addEventListener('mousemove', function (e) {
+      var li = e.target.closest ? e.target.closest('.cb-opt') : null;
+      if (!li) { return; }
+      var idx = parseInt(li.getAttribute('data-idx'), 10);
+      if (idx === activeIndex) { return; }
+      activeIndex = idx;
+      paintActive();
+    });
+
+    // mousedown, not click: fires before the search field's blur so focus
+    // handling stays simple.
+    elList.addEventListener('mousedown', function (e) {
+      var li = e.target.closest ? e.target.closest('.cb-opt') : null;
+      if (!li) { return; }
+      e.preventDefault();
+      var idx = parseInt(li.getAttribute('data-idx'), 10);
+      var pick = rows[idx];
+      if (pick) { commit(pick.value, true); }
+      closePopup();
+      elButton.focus();
+    });
+
+    // --- init ----------------------------------------------------------
+    items = sortItems(opts.items || []);
+    if (opts.value != null) { value = opts.value; }
+    elButtonLabel.textContent = selectionLabel();
+    renderList();
+
+    // --- public --------------------------------------------------------
+    return {
+      element: elRoot,
+      button: elButton,
+      searchInput: elSearch,
+      getValue: function () { return value; },
+      getItem: function () { return currentItem(); },
+      setValue: function (id, label) {
+        if (id == null || id === ALL) { commit(ALL, false); if (open) { renderList(); } return; }
+        var found = currentItemById(id);
+        if (!found && label != null) {
+          // forceSelect() equivalent: re-add an item the filter had removed.
+          items.push({ id: id, title: label, optionText: label });
+          items = sortItems(items);
+        }
+        commit(id, false);
+        if (open) { renderList(); }
+      },
+      setItems: function (next) {
+        items = sortItems(next || []);
+        if (value !== ALL && !currentItemById(value)) { value = ALL; }
+        elButtonLabel.textContent = selectionLabel();
+        if (open) { renderList(); }
+      },
+      open: openPopup,
+      close: closePopup,
+      focus: function () { elButton.focus(); }
+    };
+
+    function currentItemById(id) {
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].id === id) { return items[i]; }
+      }
+      return null;
+    }
   }
 
-  render('');
-  search.addEventListener('input', function () { render(search.value); });
-  return sel;
+  root.createCombobox = createCombobox;
+}(window));
+
+// Builds one Focus combobox: filters ALL_NODES to the given group, attaches
+// each node's decorated option text, and mounts it into the given element id.
+// Replaces fillSelect() + forceSelect() together - createCombobox's own
+// setValue(id, label) is forceSelect()'s re-add-if-filtered-out behaviour.
+function initCombo(mountId, group, allLabel, placeholder, onChange) {
+  const items = ALL_NODES.filter(function (n) { return n.group === group; });
+  items.forEach(function (n) { n.optionText = pickOptionText(n, group); });
+  return createCombobox({
+    mount: document.getElementById(mountId),
+    allLabel: allLabel,
+    placeholder: placeholder,
+    items: items,
+    onChange: onChange
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -8558,7 +10401,7 @@ function iconsRender(message, filter) {
     const isOverridden = d.override && d.override !== 'auto';
     const isUnknown = iconsEffectiveKey(d) === 'unknown';
     h += '<tr' + (isOverridden ? ' class="overridden"' : '') + '>';
-    h += '<td>' + extEsc(d.name) + '</td>';
+    h += '<td><span class="devIconGlyph">' + (ICON_GLYPHS[iconsEffectiveKey(d)] || ICON_GLYPHS.unknown) + '</span>' + extEsc(d.name) + '</td>';
     h += '<td>' + extEsc(d.room) + '</td>';
     h += '<td>' + extEsc(labels[d.detected] || d.detected) + '</td>';
     h += '<td><select data-dev="' + extEsc(d.id) + '">';
@@ -8764,13 +10607,18 @@ function ref(id, nameOf) { return { id: id, name: nameOf[id] || id }; }
 function buildExportPayload(ext, icons, failedFetches) {
   const nodeById = {};
   ALL_NODES.forEach(function (n) { nodeById[n.id] = n; });
-  // n.draw is the stable identity with no live-status suffix baked in
-  // (n.title is "Mode Alarm Reminder (Required Expression false) (Rule-5.1)",
-  // n.draw is "Mode Alarm Reminder (Rule-5.1)" - the status is exposed
-  // separately as apps[].status instead). Falls back to title for any
-  // graph cached before draw existed.
+  // n.name is the stable identity with no live-status suffix baked in at
+  // all (n.title is "Mode Alarm Reminder (Required Expression false)
+  // (Rule-5.1) (Paused)", n.draw is the same minus the hub-injected
+  // "(Required Expression false)" but DOES carry "(Paused)"/"(Disabled)"
+  // since v2.1.7 - the status is exposed separately as apps[].status/
+  // devices[].disabled instead). Falls back to draw, then title, for any
+  // graph cached before name existed (review 372: draw itself gained
+  // a live-status suffix this same version, so it is no longer a safe
+  // identity fallback for a *current* graph, only for one old enough to
+  // predate both fields).
   const nameOf = {};
-  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.draw || n.title; });
+  ALL_NODES.forEach(function (n) { nameOf[n.id] = n.name || n.draw || n.title; });
 
   const flowIds = {};
   Object.keys(GRAPH.flows || {}).forEach(function (id) { flowIds[id] = true; });
@@ -8834,13 +10682,20 @@ function buildExportPayload(ext, icons, failedFetches) {
       id: n.id, name: nameOf[n.id],
       room: ic ? ic.room : null,
       iconCategory: n.icon || 'unknown',
-      capabilities: ic ? ic.capabilities : null
+      capabilities: ic ? ic.capabilities : null,
+      disabled: !!n.disabled
     };
   });
   const apps = ALL_NODES.filter(function (n) { return n.group === 'app'; }).map(function (n) {
     return {
       id: n.id, name: nameOf[n.id], appType: n.appType || null,
-      status: n.missing ? 'deleted-but-referenced' : n.unreadable ? 'unreadable' : n.inactive ? 'paused-or-disabled' :
+      // v2.1.7, schema 8: 'disabled' and 'paused' replace the collapsed
+      // 'paused-or-disabled' value - the hub reports these as two distinct
+      // signals (installedApp.disabled, Rule Machine's own paused appState),
+      // not one, so this export no longer merges them. disabled wins when
+      // both happen to be true, matching the map's own label precedence.
+      status: n.missing ? 'deleted-but-referenced' : n.unreadable ? 'unreadable' :
+        n.disabled ? 'disabled' : n.paused ? 'paused' :
         n.unscanned ? 'unscanned' : n.inert ? 'inert' : 'active',
       parentId: n.parent || null,
       childIds: n.kids || [],
@@ -8852,15 +10707,25 @@ function buildExportPayload(ext, icons, failedFetches) {
   });
   // v2.0.14, schema 4 (parent spec 11.3): variableType/identitySource/
   // connector come straight off the node - buildGraph() (Groovy) populates
-  // them from the authoritative getAllGlobalVars() inventory when available,
-  // or leaves them at their reference-derived defaults otherwise.
+  // them from the authoritative getAllGlobalVars() inventory.
+  // v2.1.4, schema 5 (Gate C): the reference-derived fallback this
+  // identitySource default used to cover is retired - every hubVariable node
+  // that can still exist is confirmed against authoritative inventory (Gate C
+  // decision 3), so identitySource is always 'hub-inventory' in practice now.
+  //
+  // review 296 correction: a missing/malformed identitySource must NOT default
+  // to 'hub-inventory' here - that would convert an absent or invalid
+  // provenance field into a POSITIVE claim of the highest confidence level
+  // this export has, exactly backwards for a defensive fallback. Falls back
+  // to null instead, so a genuine backend invariant violation stays visible
+  // to a consumer rather than being quietly asserted as confirmed.
   // currentValue stays null in every default export (parent spec 10) - no
   // opt-in value export exists yet.
   const hubVariables = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) {
     return {
       id: n.id, name: nameOf[n.id],
       variableType: n.variableType || null,
-      identitySource: n.identitySource || 'reference-derived',
+      identitySource: n.identitySource || null,
       connector: n.connectorDeviceId ? { deviceId: n.connectorDeviceId, connectorType: n.connectorType || null } : null,
       currentValue: null
     };
@@ -8875,13 +10740,15 @@ function buildExportPayload(ext, icons, failedFetches) {
       // false everywhere else, so it does not look like a real "no" for a
       // relationship kind the field was never about.
       stateful: e.kind === 'action' ? !!e.stateful : null,
-      // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated only for
-      // proven Hub Variable reads (Groovy currently always emits
-      // 'unknown-read' - role classification is not yet built, per parent
-      // spec 6.2's explicit preference for unknown-read over an invented
-      // role). writeSource is populated only when the write's source device
-      // ID resolved in the discovered device set -
-      // both null on every other relationship kind.
+      // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated on
+      // proven Hub or Local Variable read edges (schema 6, v2.1.6, extends
+      // this to Local reads) - a single trusted role (condition/trigger/
+      // etc.) when every decoded occurrence for that pair agrees, otherwise
+      // 'unknown-read' rather than an invented one, per parent spec 6.2's
+      // explicit preference. writeSource is Hub-write specific - populated
+      // only when a Hub Variable write's source device ID resolved in the
+      // discovered device set - null on every other relationship kind for
+      // both fields.
       usageRole: e.usageRole || null,
       writeSource: e.writeSource || null
     };
@@ -8922,7 +10789,12 @@ function buildExportPayload(ext, icons, failedFetches) {
     const n = nodeById[appId];
     const steps = (GRAPH.flows[appId] || []).map(function (step) {
       const out = {};
-      Object.keys(step).forEach(function (k) { if (k !== 'devices') out[k] = step[k]; });
+      // variableField (Gate C, v2.1.4) is an internal join key used only to
+      // correct this step's own label against its classified reference
+      // before export ever runs (see correctFlowVariableLabels() in Groovy)
+      // - excluded here the same way devices already is, not user-facing
+      // export data.
+      Object.keys(step).forEach(function (k) { if (k !== 'devices' && k !== 'variableField') out[k] = step[k]; });
       out.references = Array.isArray(step.devices)
         ? step.devices.map(function (nm) { return resolveFlowReference(nm, appId); }) : [];
       // ruleTargets are Rule Machine's own app-id-only setting values (no
@@ -8937,7 +10809,47 @@ function buildExportPayload(ext, icons, failedFetches) {
       }
       return out;
     });
-    return { appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps };
+    // Gate C (v2.1.4): owner-scoped Local Variable definitions and classified
+    // references, published by buildGraph() (Groovy) as GRAPH.ruleVariables,
+    // keyed by the same appId as flows. See Supporting Docs/
+    // local_hub_variable_identity_proposal.md and WIP/
+    // local_hub_variable_gate_c_integration_plan.md section 6.2 for the
+    // design. variableReferences is resolved (local/hub) evidence only -
+    // ambiguous and unresolved records live in nonResolvedVariableReferences
+    // instead, and neither ever contains a definition or runtime value.
+    const rv = (GRAPH.ruleVariables && GRAPH.ruleVariables[appId]) || {};
+    const localVariables = (rv.localVariables || []).map(function (v) {
+      return { identity: v.identity, name: v.name, variableType: v.variableType || null };
+    });
+    const variableReferences = (rv.variableReferences || []).map(function (r) {
+      return {
+        name: r.canonicalName || r.name,
+        scope: r.scope,
+        localIdentity: r.localIdentity || null,
+        operation: r.operation,
+        usageRole: r.usageRole || null,
+        evidenceKind: r.evidence ? r.evidence.kind : null,
+        field: r.evidence ? r.evidence.field : null
+      };
+    });
+    const nonResolvedVariableReferences = (rv.nonResolvedVariableReferences || []).map(function (r) {
+      return {
+        name: r.name,
+        status: r.status,
+        operation: r.operation,
+        usageRole: r.usageRole || null,
+        candidateScopes: r.candidateScopes || [],
+        evidenceKind: r.evidence ? r.evidence.kind : null,
+        field: r.evidence ? r.evidence.field : null,
+        reason: r.reason || null
+      };
+    });
+    return {
+      appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps,
+      localVariables: localVariables,
+      variableReferences: variableReferences,
+      nonResolvedVariableReferences: nonResolvedVariableReferences
+    };
   });
 
   // Was a plain boolean, !scanError - technically correct but misleadingly
@@ -8961,7 +10873,12 @@ function buildExportPayload(ext, icons, failedFetches) {
     contestedDeviceCount: contested.length,
     unreferencedDeviceCount: unreferencedDevices.length,
     inertAppCount: inertApps.length,
-    brokenRuleReferenceCount: brokenRuleReferences.length
+    brokenRuleReferenceCount: brokenRuleReferences.length,
+    // v2.1.4, schema 5 (Gate C): decoded evidence from the rules this export
+    // could read, NOT a hub-wide inventory the way hubVariableCount above is
+    // - see the limitations entry on this distinction.
+    localVariableCount: ruleFlows.reduce(function (sum, f) { return sum + (f.localVariables ? f.localVariables.length : 0); }, 0),
+    nonResolvedVariableReferenceCount: ruleFlows.reduce(function (sum, f) { return sum + (f.nonResolvedVariableReferences ? f.nonResolvedVariableReferences.length : 0); }, 0)
   };
   // What "apps[].hasDecodedFlow: false" can mean beyond "not a rule at
   // all" - named once here rather than only in the schema prose, so a
@@ -8969,7 +10886,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // English out of the schema block.
   const limitations = [
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
-    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
+    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub and Local Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
     'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
@@ -8977,7 +10894,14 @@ function buildExportPayload(ext, icons, failedFetches) {
     'Multiple writers on a Hub Variable (insights.hubVariables.multipleWriters) are not proof of a race condition - static configuration proves shared writers, not simultaneous execution.',
     'A Hub Variable connector is a synchronized projection of the same shared state (relationship: synchronizedWith), not an independent value - do not treat the variable and its connector device as two different things to reconcile.',
     'A Hub Variable write edge with a deviceAttribute writeSource means the rule copies or derives its write from that device attribute - it does not mean the device writes the Hub Variable directly.',
-    'A Connector deviceId Hubitat reports is trusted directly and always resolved into hubVariables[].connector - there is no check against a case where that Connector was later deleted or replaced outside the normal remove-connector flow. Such a stale or orphaned ID would still be reported here as a resolved connector; this export cannot distinguish that from a genuine one with the data it has.'
+    'A Connector deviceId Hubitat reports is trusted directly and always resolved into hubVariables[].connector - there is no check against a case where that Connector was later deleted or replaced outside the normal remove-connector flow. Such a stale or orphaned ID would still be reported here as a resolved connector; this export cannot distinguish that from a genuine one with the data it has.',
+    // v2.1.4, schema 5 (Gate C) - Local/Hub/Connector Variable identity notes.
+    'ruleFlows[].localVariables and summary.localVariableCount are decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariables[] is - a Local Variable belonging to a rule on an undecodable engine, or one this scan could not read, is simply absent, not counted as zero.',
+    'A Local Variable and a Hub Variable sharing the exact same name inside one rule cannot be told apart from stored Rule Machine configuration alone - this is a genuine platform ambiguity, not a decoding gap. Such a reference appears in ruleFlows[].nonResolvedVariableReferences with reason "same-name-cross-scope" and status "ambiguous", and creates no hubVariables[] edge.',
+    'A reference to a Local or Hub Variable that no longer exists appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than being silently dropped or treated as broken - Rule Machine itself may separately mark the underlying action broken (see the label on that flow step), which this export reflects but does not infer on its own.',
+    // v2.1.6, schema 6 - Local Variable graph nodes.
+    'A write/read edge in edges[] whose toId is absent from hubVariables[] is a Local Variable reference, not a data gap - resolve it by flattening ruleFlows[].localVariables[] and matching on identity (see the edges schema entry). Do not treat an unmatched toId as an error before checking there.',
+    'A Local Variable with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. The same "may simply be unused" caveat that already applies to a Hub Variable with insights.hubVariables.noDecodedUsage applies here too, just without a dedicated insights finding for it yet.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -9003,6 +10927,8 @@ function buildExportPayload(ext, icons, failedFetches) {
     'Do not frame contested devices, inert apps, or any other count as evidence the hub is in a bad state. A hub with dozens of rules and hundreds of devices will always show some of these as a normal by-product of scale - contested devices in particular are usually several ordinary rules sharing one light or switch (motion, time-of-day, manual override), not automations fighting. Avoid adversarial words - fighting, broken as an unqualified judgment, conflict - for anything the export itself does not use that word for; state the plain mechanism instead (the last app to run decides the outcome) and let the user judge whether it is intentional.',
     'State a count in proportion to the whole (e.g. "30 of 194 devices" rather than a bare "30 devices") so the user can judge scale themselves rather than be primed by an isolated number.',
     'Never infer a missing relationship solely because two names look similar.',
+    'Resolve a write/read edge target by its id against hubVariables[] first, then ruleFlows[].localVariables[] (matched by identity) - never by assuming every such edge targets a Hub Variable, and never by joining on the toName field alone.',
+    'Never join a ruleFlows[] localVariables or variableReferences record to anything outside its own appId by name alone - Local Variable identity is owner-scoped (see localIdentity), and the same visible name in two different rules is two different variables. A nonResolvedVariableReferences record with status "ambiguous" must be reported as genuinely ambiguous, never resolved to either scope by guessing.',
     'Open a first response with a short plain-language summary of what was understood - counts plus two or three specific named apps or devices as evidence the file was actually read, not a templated response.',
     'State findings before recommendations, in visibly separate sections.',
     'Surface scan-quality caveats (scan.status, unresolved or ambiguous references) in that opening summary, not after conclusions have already been presented.',
@@ -9044,15 +10970,15 @@ function buildExportPayload(ext, icons, failedFetches) {
     insightGuidance: GUIDE,
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
-      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device does not appear in the same bulk device-enumeration endpoint every other device on this hub is discovered through (a live platform finding), so its capabilities/room are null unless the regular device inventory for this hub happens to also list it independently, in which case its real reported data is used same as any other device. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry.',
-      apps: 'Every installed app, including every automation rule. status: active | paused-or-disabled | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
+      devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
-      hubVariables: 'Hub-wide shared state - schema 4 (v2.0.14): every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules read or write. A variable found only via a decoded reference, with no matching inventory entry (inventory was unavailable for this scan), has identitySource "reference-derived" instead - a weaker guarantee: it was found in a decoded rule configuration at scan time, not confirmed against the authoritative variable list the hub itself reports. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations).',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. write/read: a rule sets/reads a Hub Variable (see usageRole/writeSource below). synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4) is populated only on proven Hub Variable read edges - "unknown-read" is the only value this app currently produces (a real read was proven, its narrower role - trigger/condition/action-input/text-substitution - was not); null on every other edge. writeSource (schema 4) is populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including when a source detail exists but could not be resolved to an ID.',
-      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous.',
+      hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
+      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
-      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported; a variable in hubVariables[] with identitySource "reference-derived" instead of "hub-inventory" means this status was not "complete" when it was found. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
-      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data.',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry - see that schema entry for why a weaker-guarantee node is no longer manufactured here. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
+      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data. localVariableCount and nonResolvedVariableReferenceCount (schema 5, v2.1.4) total ruleFlows[].localVariables and ruleFlows[].nonResolvedVariableReferences across every decoded rule - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
       recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.',
       insightGuidance: 'The same deterministic interpretation catalogue shown in the on-hub Insights panel. categories explains each group and its recommended priority; findings gives what the observation means, why it may be normal when applicable, and what to check next. It is guidance for investigation, never authority to change the hub.'
@@ -9153,23 +11079,65 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   });
 })();
 
-const appSelect = fillSelect('appFilter', 'appSearch', 'app', 'All apps');
-const deviceSelect = fillSelect('deviceFilter', 'deviceSearch', 'device', 'All devices');
-const hubVarSelect = fillSelect('hubVarFilter', 'hubVarSearch', 'hubVariable', 'All hub variables');
-
-// Clicking a node is the first thing anyone tries, so it drills in: click an
-// app to see what it uses, click one of those devices to see everything else
-// touching it, and so on. A search filter may have removed the option from the
-// dropdown, so put it back before selecting it, otherwise the assignment is
-// silently ignored and the click appears to do nothing.
-function forceSelect(sel, id, label) {
-  if (!sel.querySelector('option[value="' + id + '"]')) {
-    const opt = document.createElement('option');
-    opt.value = id; opt.textContent = label;
-    sel.appendChild(opt);
+// Each combobox's onChange enforces the four-way focus exclusivity (picking
+// one clears the other three) the same way the old <select> 'change'
+// listeners did - setValue() never fires onChange itself, so these resets
+// cannot recurse into each other.
+const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...', function (value) {
+  if (value !== '__all__') {
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    closeSecondaryPanels();
   }
-  sel.value = id;
-}
+  applyFilters();
+  if (value === '__all__') {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+  } else {
+    showFlow(value);
+  }
+});
+const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'search devices...', function (value) {
+  if (value !== '__all__') {
+    appSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    closeSecondaryPanels();
+  }
+  flowPanel.style.display = 'none';
+  syncLegendVisibility();
+  applyFilters();
+});
+const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub variables', 'search hub variables...', function (value) {
+  if (value !== '__all__') {
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    closeSecondaryPanels();
+  }
+  flowPanel.style.display = 'none';
+  syncLegendVisibility();
+  applyFilters();
+});
+const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All local variables', 'search local variables...', function (value, item) {
+  if (value !== '__all__') {
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    closeSecondaryPanels();
+  }
+  // Same unreferenced exemption as focusNode's own localVariable branch -
+  // picking one straight from this dropdown must not collapse the map to a
+  // lone dot any more than clicking its node on the canvas would.
+  if (item && item.unreferencedLocal) {
+    showUnreferencedLocalPanel(item);
+  } else {
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
+  }
+});
 
 // Browser Back is wired to the map's own focus changes rather than left
 // alone. Without it, Back from anywhere in the map leaves the map entirely
@@ -9198,9 +11166,10 @@ function focusLabel(id) {
 }
 
 function currentFocus() {
-  if (appSelect.value !== '__all__') return appSelect.value;
-  if (deviceSelect.value !== '__all__') return deviceSelect.value;
-  if (hubVarSelect.value !== '__all__') return hubVarSelect.value;
+  if (appSelect.getValue() !== '__all__') return appSelect.getValue();
+  if (deviceSelect.getValue() !== '__all__') return deviceSelect.getValue();
+  if (hubVarSelect.getValue() !== '__all__') return hubVarSelect.getValue();
+  if (localVarSelect.getValue() !== '__all__') return localVarSelect.getValue();
   return null;
 }
 
@@ -9244,9 +11213,10 @@ function closeSecondaryPanels() {
 }
 
 function exitToWholeMap() {
-  appSelect.value = '__all__';
-  deviceSelect.value = '__all__';
-  hubVarSelect.value = '__all__';
+  appSelect.setValue('__all__');
+  deviceSelect.setValue('__all__');
+  hubVarSelect.setValue('__all__');
+  localVarSelect.setValue('__all__');
   document.getElementById('kindFilter').value = 'all';
   flowPanel.style.display = 'none';
   closeSecondaryPanels();
@@ -9300,9 +11270,10 @@ function focusNode(id) {
   // than needing to be threaded into each branch separately.
   closeSecondaryPanels();
   if (node.group === 'app') {
-    forceSelect(appSelect, node.id, node.title);
-    deviceSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
+    appSelect.setValue(node.id, node.title);
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
     // An inert app has no edges by definition, so filtering the graph down to
     // its neighbourhood - what applyFilters does for every other app - leaves
     // nothing to draw: the whole map collapses to that one square. Nothing is
@@ -9318,19 +11289,39 @@ function focusNode(id) {
     showFlow(node.id);
   } else if (node.group === 'hubVariable') {
     // Own branch, not the device else below - a Hub Variable used to fall
-    // into that branch by default (forceSelect(deviceSelect, ...)), which
-    // worked visually but mis-filed it as a device selection. Split out once
-    // this dropdown existed to give it somewhere correct to go.
-    forceSelect(hubVarSelect, node.id, node.title);
-    appSelect.value = '__all__';
-    deviceSelect.value = '__all__';
+    // into that branch by default (setValue on deviceSelect), which worked
+    // visually but mis-filed it as a device selection. Split out once this
+    // dropdown existed to give it somewhere correct to go.
+    hubVarSelect.setValue(node.id, node.title);
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
+  } else if (node.group === 'localVariable') {
+    // Own branch, same reasoning as Hub Variable's above it - a Local
+    // Variable is neither an app nor a device. Referenced (has an edge)
+    // filters to its neighbourhood, which is always exactly its one owning
+    // rule by construction. Unreferenced mirrors the inert-app exemption
+    // just above: no edges means nothing for applyFilters to draw, so its
+    // own panel opens instead of collapsing the map to a lone dot.
+    localVarSelect.setValue(node.id, node.title);
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    if (node.unreferencedLocal) {
+      showUnreferencedLocalPanel(node);
+    } else {
+      flowPanel.style.display = 'none';
+      syncLegendVisibility();
+      applyFilters();
+    }
   } else {
-    forceSelect(deviceSelect, node.id, node.title);
-    appSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
+    deviceSelect.setValue(node.id, node.title);
+    appSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
@@ -9387,40 +11378,6 @@ const canvasEl = document.getElementById('network');
 network.on('hoverNode', function () { canvasEl.style.cursor = 'pointer'; });
 network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
 
-appSelect.addEventListener('change', function () {
-  if (appSelect.value !== '__all__') {
-    deviceSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  applyFilters();
-  if (appSelect.value === '__all__') {
-    flowPanel.style.display = 'none';
-    syncLegendVisibility();
-  } else {
-    showFlow(appSelect.value);
-  }
-});
-deviceSelect.addEventListener('change', function () {
-  if (deviceSelect.value !== '__all__') {
-    appSelect.value = '__all__';
-    hubVarSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  flowPanel.style.display = 'none';
-  syncLegendVisibility();
-  applyFilters();
-});
-hubVarSelect.addEventListener('change', function () {
-  if (hubVarSelect.value !== '__all__') {
-    appSelect.value = '__all__';
-    deviceSelect.value = '__all__';
-    closeSecondaryPanels();
-  }
-  flowPanel.style.display = 'none';
-  syncLegendVisibility();
-  applyFilters();
-});
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 // Short synthesised confirmation tone, agreed with Gordon 2026-08-19 - no
 // audio file, no external asset, consistent with the rest of this page being
@@ -9464,7 +11421,7 @@ function playSynthesizedFallback() {
 // (Pixabay Content License - free for this use, attribution not required,
 // credited in README anyway). Same lazy-load/branch-aware/fallback pattern
 // as playSynthesizedFallback() above.
-const COMMUNITY_UTILITIES_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${APP_NAME.contains('(Dev)') ? 'dev' : 'main'}/assets/community-utilities-sound.mp3';
+const COMMUNITY_UTILITIES_SOUND_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/assets/community-utilities-sound.mp3';
 let communityUtilitiesAudio = null;
 function playCommunityUtilitiesSound() {
   try {
@@ -9553,9 +11510,9 @@ document.getElementById('exitMapBtn').addEventListener('click', function () {
 }
 
 String comparatorFrameHtml() {
-    // Hubitat inserts paragraph HTML after the host page has loaded. Browsers do
-    // not execute script elements added that way, so render the comparator as a
-    // standalone iframe document whose script is parsed and executed normally.
+    
+    
+    
     String document = """<!doctype html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
