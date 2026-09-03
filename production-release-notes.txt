@@ -1,0 +1,12 @@
+v2.2.0: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.
+
+Since the last production release (2.1.1):
+
+- Improved nested Device discovery
+- Local Variables now appear as their own nodes on the map and in exports, correctly distinguished from Hub Variables and Variable Connector devices.
+- The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single searchable control each, instead of one long scrollable list.
+- The automatic-scan time field now shows its real default time instead of appearing blank.
+- Added a diagnostic-logging toggle for troubleshooting.
+- Refreshed the visual style.
+- Fixed two scan-completion timing issues that could leave the map looking stuck, or briefly hide the map link and counts, right after a scan actually finished.
+- Fixed a timing issue in registry lookups that could leave dependency information incomplete under specific conditions.

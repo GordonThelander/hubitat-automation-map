@@ -86,11 +86,11 @@ static Map runGit(File repoRoot, List<String> gitArgs) {
 
 // The single source of truth for "what am I generating from, and is it
 // trustworthy": the input file must be exactly this checkout's own tracked
-// apps/automation_map.groovy (never an arbitrary path), the commit SHA is
-// derived from git itself (never trusted as a caller-supplied argument), the
-// path must be genuinely tracked BY HEAD (not just absent from `git status`,
+// file at relativePath (never an arbitrary path), the commit SHA is derived
+// from git itself (never trusted as a caller-supplied argument), the path
+// must be genuinely tracked BY HEAD (not just absent from `git status`,
 // which says nothing about an ignored/untracked file at the same path - an
-// ignored+untracked apps/automation_map.groovy would otherwise produce empty
+// ignored+untracked file at the expected path would otherwise produce empty
 // porcelain output too, letting unrelated, uncommitted bytes be labelled as
 // this commit's tracked source - review, queue 452), the working tree must
 // be clean for that exact file, AND the worktree content's own git object
@@ -98,11 +98,8 @@ static Map runGit(File repoRoot, List<String> gitArgs) {
 // git's own change-detection, which an assume-unchanged/skip-worktree index
 // flag can suppress even though the actual bytes differ (review, queue
 // 454). Every one of these checks review 450/452/454 required.
-static Map resolveVerifiedProvenance(File repoRoot) {
-    File expected = new File(repoRoot, 'apps/automation_map.groovy')
-    if (!expected.exists()) {
-        return [ok: false, reason: "expected Dev source not found at ${expected.canonicalFile}"]
-    }
+//
+static Map resolveHeadSha(File repoRoot) {
     Map headResult = runGit(repoRoot, ['rev-parse', '--verify', 'HEAD'])
     if (headResult.exitCode != 0) {
         return [ok: false, reason: "git rev-parse --verify HEAD failed: ${(headResult.stderr as String).trim()}"]
@@ -111,28 +108,47 @@ static Map resolveVerifiedProvenance(File repoRoot) {
     if (!(sha ==~ /^[0-9a-f]{40}$/)) {
         return [ok: false, reason: "git rev-parse --verify HEAD did not return a 40-character lowercase hex SHA: '${sha}'"]
     }
+    return [ok: true, sha: sha]
+}
+
+// Verifies ONE path against an ALREADY-RESOLVED HEAD sha - factored out of
+// resolveVerifiedProvenance() (backlog item 16 phase 2d) so
+// resolveVerifiedProvenanceMulti() below can verify several paths against
+// the exact same sha without re-resolving HEAD once per path, which is
+// itself the whole point: a single package build must bind every input to
+// one shared commit, not merely "several HEAD reads that happened to agree."
+static Map verifyPathAgainstSha(File repoRoot, String sha, String relativePath) {
+    File expected = new File(repoRoot, relativePath)
+    if (!expected.exists()) {
+        return [ok: false, reason: "expected tracked source not found at ${expected.canonicalFile}"]
+    }
     // Proves the path is genuinely tracked in the index. `git ls-files
     // --error-unmatch` exits non-zero for any path git is not actually
     // tracking - including an ignored file, which `git status --porcelain`
     // silently omits by default rather than flagging.
-    Map trackedResult = runGit(repoRoot, ['ls-files', '--error-unmatch', '--', 'apps/automation_map.groovy'])
+    Map trackedResult = runGit(repoRoot, ['ls-files', '--error-unmatch', '--', relativePath])
     if (trackedResult.exitCode != 0) {
-        return [ok: false, reason: "apps/automation_map.groovy is not tracked by git: ${(trackedResult.stderr as String).trim()}"]
+        return [ok: false, reason: "${relativePath} is not tracked by git: ${(trackedResult.stderr as String).trim()}"]
     }
     // Proves HEAD's own tree actually contains this exact path as a real
     // blob - not just "currently in the index," which alone would still
     // pass for a brand-new file staged but never committed.
-    Map blobResult = runGit(repoRoot, ['rev-parse', '--verify', 'HEAD:apps/automation_map.groovy'])
+    // ('HEAD:' + relativePath), not a GString: ProcessBuilder's internal
+    // array copy requires actual java.lang.String elements and throws
+    // ArrayStoreException on a GString, which Groovy does not auto-coerce
+    // in this position - caught immediately by rerunning the existing
+    // suites after this generalization, not by inspection.
+    Map blobResult = runGit(repoRoot, ['rev-parse', '--verify', ('HEAD:' + relativePath)])
     if (blobResult.exitCode != 0) {
-        return [ok: false, reason: "HEAD does not contain apps/automation_map.groovy: ${(blobResult.stderr as String).trim()}"]
+        return [ok: false, reason: "HEAD does not contain ${relativePath}: ${(blobResult.stderr as String).trim()}"]
     }
-    Map statusResult = runGit(repoRoot, ['status', '--porcelain', '--', 'apps/automation_map.groovy'])
+    Map statusResult = runGit(repoRoot, ['status', '--porcelain', '--', relativePath])
     if (statusResult.exitCode != 0) {
         return [ok: false, reason: "git status failed: ${(statusResult.stderr as String).trim()}"]
     }
     String statusOut = (statusResult.stdout as String).trim()
     if (!statusOut.isEmpty()) {
-        return [ok: false, reason: "working tree is dirty relative to HEAD for apps/automation_map.groovy, refusing to claim provenance to a commit the actual source does not match: ${statusOut}"]
+        return [ok: false, reason: "working tree is dirty relative to HEAD for ${relativePath}, refusing to claim provenance to a commit the actual source does not match: ${statusOut}"]
     }
     // Direct content-identity proof, independent of git's own change-
     // detection heuristics (review, queue 454): `ls-files`/`status` above
@@ -145,17 +161,58 @@ static Map resolveVerifiedProvenance(File repoRoot) {
     // that directly against the HEAD blob ID already resolved above closes
     // this gap regardless of any index flag.
     String headBlobSha = (blobResult.stdout as String).trim()
-    Map hashResult = runGit(repoRoot, ['hash-object', '--path', 'apps/automation_map.groovy', 'apps/automation_map.groovy'])
+    Map hashResult = runGit(repoRoot, ['hash-object', '--path', relativePath, relativePath])
     if (hashResult.exitCode != 0) {
         return [ok: false, reason: "git hash-object failed: ${(hashResult.stderr as String).trim()}"]
     }
     String worktreeBlobSha = (hashResult.stdout as String).trim()
     if (worktreeBlobSha != headBlobSha) {
-        return [ok: false, reason: "worktree content for apps/automation_map.groovy does not match HEAD's tracked blob " +
+        return [ok: false, reason: "worktree content for ${relativePath} does not match HEAD's tracked blob " +
             "(HEAD blob: ${headBlobSha}, worktree content hashes to: ${worktreeBlobSha}) - refusing to claim provenance " +
             'to a commit the actual source does not match (possibly assume-unchanged/skip-worktree masking a real difference)']
     }
-    return [ok: true, sha: sha, appFile: expected]
+    return [ok: true, sha: sha, file: expected]
+}
+
+// The single source of truth for "what am I generating from, and is it
+// trustworthy" for ONE file - the input file must be exactly this
+// checkout's own tracked file at relativePath (never an arbitrary path),
+// the commit SHA is derived from git itself (never trusted as a caller-
+// supplied argument). Every check review 450/452/454 required.
+//
+// Generalized to accept relativePath (backlog item 16 phase 2d) so the
+// manifest builder can reuse this exact function via parseClass() for
+// packageManifest.json's own provenance, rather than duplicating the same
+// git-plumbing a second time - production-profile.groovy's own CLI passes
+// 'apps/automation_map.groovy' explicitly below; this generalization changes
+// no behaviour for that one call site.
+static Map resolveVerifiedProvenance(File repoRoot, String relativePath) {
+    Map headResult = resolveHeadSha(repoRoot)
+    if (!headResult.ok) return headResult
+    return verifyPathAgainstSha(repoRoot, headResult.sha as String, relativePath)
+}
+
+// Resolves HEAD exactly ONCE, then verifies every path in relativePaths
+// against that SAME sha (backlog item 16 phase 2d; review, queue 461, "two
+// independent commands do not bind a package to one commit") - the
+// structural guarantee a package build needs: one shared, git-verified
+// commit for the app source, the Dev manifest, and the release-notes input
+// together, not three separate resolutions that merely happened not to
+// race. Fails closed on the first path that does not verify, naming which
+// one.
+static Map resolveVerifiedProvenanceMulti(File repoRoot, List<String> relativePaths) {
+    Map headResult = resolveHeadSha(repoRoot)
+    if (!headResult.ok) return headResult
+    String sha = headResult.sha as String
+    Map<String, File> files = [:]
+    for (path in relativePaths) {
+        Map r = verifyPathAgainstSha(repoRoot, sha, path)
+        if (!r.ok) {
+            return [ok: false, reason: "${path}: ${r.reason}"]
+        }
+        files[path] = r.file as File
+    }
+    return [ok: true, sha: sha, files: files]
 }
 
 // --- The versioned allowlist ---
@@ -408,6 +465,84 @@ static Map writeCandidateAtomically(File outFile, String finalSrc, Closure failA
     }
 }
 
+// --- Core generation (extracted, review queue 461, so the package-build
+// orchestrator can call this in-process against an already-verified commit
+// instead of shelling out to a second, independently re-verifying CLI
+// invocation - the whole point being one shared, structurally-guaranteed
+// commit for the whole package, not "two commands that happened not to
+// race"). Pure: takes an already-resolved inFile/devCommitSha, performs no
+// provenance check of its own (the caller - CLI body below, or the
+// orchestrator - is responsible for that), and does not write anything to
+// disk. Returns ok:false with a stage/reason on the first failure,
+// otherwise ok:true plus finalSrc and every reporting field the CLI's own
+// stdout uses. ---
+static Map generateAppCandidateSource(def Comparison, def StripComments, File inFile, String devCommitSha) {
+    String originalSrc = inFile.getText('UTF-8')
+    List<Token> originalTokens = lexAllChannels(StripComments, originalSrc)
+
+    // Stage A: comment removal only, via the SAME functions strip-comments.groovy
+    // itself uses - proven correct there, not reimplemented here.
+    String strippedSrc = StripComments.stripSource(originalSrc, originalTokens, Comparison)
+    List<Token> strippedTokens = lexAllChannels(StripComments, strippedSrc)
+    Map stageAStream = Comparison.compareComparisonStreams(originalTokens, strippedTokens)
+    if (!stageAStream.ok) {
+        return [ok: false, stage: 'stage A (comment removal) ordered comparison-stream equivalence', reason: stageAStream.reason]
+    }
+    Set<Integer> stringTypes = StripComments.stringLikeTypes()
+    Map stageAStrings = StripComments.compareStringTokens(originalTokens, strippedTokens, stringTypes, Comparison)
+    if (!stageAStrings.ok) {
+        return [ok: false, stage: 'stage A (comment removal) string-token equivalence', reason: stageAStrings.reason]
+    }
+
+    // Stage B: apply the allowlist to the STRIPPED (comment-free) source, then
+    // prove the only executable-token differences from stage A's output are
+    // exactly the allowlisted substitutions, each firing exactly once.
+    List<Map> allowlistEntries = allowlist()
+    Map substitution = applyAllowlist(strippedSrc, allowlistEntries)
+    if (!substitution.ok) {
+        return [ok: false, stage: 'allowlist substitution', reason: substitution.reason]
+    }
+    String candidateBodySrc = substitution.candidateSrc as String
+    List<Token> candidateBodyTokens = lexAllChannels(StripComments, candidateBodySrc)
+    Map stageBStream = compareSubstitutionAwareStreams(strippedTokens, candidateBodyTokens, allowlistEntries, Comparison)
+    if (!stageBStream.ok) {
+        return [ok: false, stage: 'stage B (allowlist substitution) token equivalence', reason: stageBStream.reason]
+    }
+    // Line-ending count must be identical between stripped and candidate bodies -
+    // substitutions replace single-line declarations with single-line
+    // declarations, never introducing or removing a line break.
+    int strippedLineEndings = Comparison.lineEndingPattern().matcher(strippedSrc).with { m -> int c = 0; while (m.find()) c++; c }
+    int candidateLineEndings = Comparison.lineEndingPattern().matcher(candidateBodySrc).with { m -> int c = 0; while (m.find()) c++; c }
+    if (strippedLineEndings != candidateLineEndings) {
+        return [ok: false, stage: 'line-ending count check', reason: "changed by substitution: stripped ${strippedLineEndings}, candidate ${candidateLineEndings}"]
+    }
+
+    // Trim the leading blank-line run left by the removed Dev architecture
+    // header comment - proven safe against the already-verified token stream,
+    // not assumed (review, queue 450, scope decision 3).
+    Map trim = trimLeadingBlankLines(candidateBodySrc, candidateBodyTokens)
+    if (!trim.ok) {
+        return [ok: false, stage: 'leading-blank-line trim', reason: trim.reason]
+    }
+    String trimmedBodySrc = trim.trimmedSrc as String
+
+    String header = buildHeader(devCommitSha)
+    String finalSrc = header + trimmedBodySrc
+
+    List<String> forbidden = forbiddenInCandidate()
+    List<String> leaked = forbidden.findAll { finalSrc.contains(it) }
+    if (!leaked.isEmpty()) {
+        return [ok: false, stage: 'Dev-marker leak check', reason: "found forbidden text in the generated candidate: ${leaked.join(', ')}"]
+    }
+
+    return [
+        ok: true, finalSrc: finalSrc,
+        stageAStream: stageAStream, stageAStrings: stageAStrings,
+        stageBStream: stageBStream, allowlistEntries: allowlistEntries, substitutionCounts: substitution.counts,
+        trimRemovedChars: trim.removedChars, forbiddenCount: forbidden.size(),
+    ]
+}
+
 // --- CLI ---
 
 File thisScriptFile
@@ -468,13 +603,13 @@ if (outFile.exists()) {
     }
 }
 
-Map provenance = resolveVerifiedProvenance(repoRoot)
+Map provenance = resolveVerifiedProvenance(repoRoot, 'apps/automation_map.groovy')
 if (!provenance.ok) {
     System.err.println("FAIL provenance verification: ${provenance.reason}")
     System.exit(1)
 }
 String devCommitSha = provenance.sha as String
-File inFile = provenance.appFile as File
+File inFile = provenance.file as File
 
 if (inFile.canonicalPath == outFile.canonicalPath) {
     System.err.println('Refusing to run: input and output resolve to the same file. This tool must never ' +
@@ -482,70 +617,12 @@ if (inFile.canonicalPath == outFile.canonicalPath) {
     System.exit(1)
 }
 
-String originalSrc = inFile.getText('UTF-8')
-List<Token> originalTokens = lexAllChannels(StripComments, originalSrc)
-
-// Stage A: comment removal only, via the SAME functions strip-comments.groovy
-// itself uses - proven correct there, not reimplemented here.
-String strippedSrc = StripComments.stripSource(originalSrc, originalTokens, Comparison)
-List<Token> strippedTokens = lexAllChannels(StripComments, strippedSrc)
-Map stageAStream = Comparison.compareComparisonStreams(originalTokens, strippedTokens)
-if (!stageAStream.ok) {
-    System.err.println("FAIL stage A (comment removal) ordered comparison-stream equivalence: ${stageAStream.reason}")
+Map genResult = generateAppCandidateSource(Comparison, StripComments, inFile, devCommitSha)
+if (!genResult.ok) {
+    System.err.println("FAIL ${genResult.stage}: ${genResult.reason}")
     System.exit(1)
 }
-Set<Integer> stringTypes = StripComments.stringLikeTypes()
-Map stageAStrings = StripComments.compareStringTokens(originalTokens, strippedTokens, stringTypes, Comparison)
-if (!stageAStrings.ok) {
-    System.err.println("FAIL stage A (comment removal) string-token equivalence: ${stageAStrings.reason}")
-    System.exit(1)
-}
-
-// Stage B: apply the allowlist to the STRIPPED (comment-free) source, then
-// prove the only executable-token differences from stage A's output are
-// exactly the allowlisted substitutions, each firing exactly once.
-List<Map> allowlistEntries = allowlist()
-Map substitution = applyAllowlist(strippedSrc, allowlistEntries)
-if (!substitution.ok) {
-    System.err.println("FAIL allowlist substitution: ${substitution.reason}")
-    System.exit(1)
-}
-String candidateBodySrc = substitution.candidateSrc as String
-List<Token> candidateBodyTokens = lexAllChannels(StripComments, candidateBodySrc)
-Map stageBStream = compareSubstitutionAwareStreams(strippedTokens, candidateBodyTokens, allowlistEntries, Comparison)
-if (!stageBStream.ok) {
-    System.err.println("FAIL stage B (allowlist substitution) token equivalence: ${stageBStream.reason}")
-    System.exit(1)
-}
-// Line-ending count must be identical between stripped and candidate bodies -
-// substitutions replace single-line declarations with single-line
-// declarations, never introducing or removing a line break.
-int strippedLineEndings = Comparison.lineEndingPattern().matcher(strippedSrc).with { m -> int c = 0; while (m.find()) c++; c }
-int candidateLineEndings = Comparison.lineEndingPattern().matcher(candidateBodySrc).with { m -> int c = 0; while (m.find()) c++; c }
-if (strippedLineEndings != candidateLineEndings) {
-    System.err.println("FAIL line-ending count changed by substitution: stripped ${strippedLineEndings}, candidate ${candidateLineEndings}")
-    System.exit(1)
-}
-
-// Trim the leading blank-line run left by the removed Dev architecture
-// header comment - proven safe against the already-verified token stream,
-// not assumed (review, queue 450, scope decision 3).
-Map trim = trimLeadingBlankLines(candidateBodySrc, candidateBodyTokens)
-if (!trim.ok) {
-    System.err.println("FAIL leading-blank-line trim: ${trim.reason}")
-    System.exit(1)
-}
-String trimmedBodySrc = trim.trimmedSrc as String
-
-String header = buildHeader(devCommitSha)
-String finalSrc = header + trimmedBodySrc
-
-List<String> forbidden = forbiddenInCandidate()
-List<String> leaked = forbidden.findAll { finalSrc.contains(it) }
-if (!leaked.isEmpty()) {
-    System.err.println("FAIL Dev-marker leak check: found forbidden text in the generated candidate: ${leaked.join(', ')}")
-    System.exit(1)
-}
+String finalSrc = genResult.finalSrc as String
 
 Map writeResult = writeCandidateAtomically(outFile, finalSrc)
 if (!writeResult.ok) {
@@ -564,10 +641,10 @@ println 'NOTE: this is an app-source-only candidate. There is no production pack
     'and no whole-package production validation path - this is NOT a complete or deployable production ' +
     'artifact on its own (review, queue 450).'
 println "Provenance: apps/automation_map.groovy at verified clean commit ${devCommitSha} (git rev-parse --verify HEAD, working tree confirmed clean for this file)."
-println "Stage A (comment removal): ${stageAStream.recordCount} comparison records identical; ${stageAStrings.stringTokenCount} string/GString tokens byte-identical."
-println "Stage B (allowlist substitution): ${stageBStream.recordCount} comparison records identical except ${allowlistEntries.size()} allowlisted substitution(s), each fired exactly once: ${substitution.counts}."
-println "Leading blank-line trim: removed ${trim.removedChars} pure line-ending byte(s), verified to contain no token or other content."
-println "Dev-marker leak check: clean (none of ${forbidden.size()} forbidden pattern(s) found)."
+println "Stage A (comment removal): ${genResult.stageAStream.recordCount} comparison records identical; ${genResult.stageAStrings.stringTokenCount} string/GString tokens byte-identical."
+println "Stage B (allowlist substitution): ${genResult.stageBStream.recordCount} comparison records identical except ${genResult.allowlistEntries.size()} allowlisted substitution(s), each fired exactly once: ${genResult.substitutionCounts}."
+println "Leading blank-line trim: removed ${genResult.trimRemovedChars} pure line-ending byte(s), verified to contain no token or other content."
+println "Dev-marker leak check: clean (none of ${genResult.forbiddenCount} forbidden pattern(s) found)."
 println "Original: ${originalBytes} bytes (physical file size)."
 println "Candidate: ${candidateBytes} bytes (physical file size). SHA-256: ${candidateHash}"
 println "Reduction: ${byteReduction} bytes (${String.format('%.1f', pct)}%)."

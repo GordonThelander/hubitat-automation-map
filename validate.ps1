@@ -5,7 +5,32 @@ param(
     # Exercises each gate below against a known-bad fixture and against the
     # real source, then exits. A gate nobody has seen fail is not evidence of
     # anything.
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    # Explicit build profile (backlog item 16 phase 2d; review, queue 461).
+    # Unset (default): today's normal behaviour, completely unchanged -
+    # branch autodetected from `git branch --show-current`, no extra
+    # cross-profile assertions, repository.json checked normally.
+    #
+    # 'ProductionCandidate': validates a GENERATED production app+manifest
+    # pair while the actual worktree may still be on 'dev' (generation
+    # happens from a frozen Dev commit) - autodetection alone would wrongly
+    # flag correct 'main' URLs as pointing to the wrong branch. This is not
+    # just a branch override: it asserts the full production identity
+    # (BUILD_CHANNEL, DIAGNOSTIC_LEVEL, app name, manifest package/app name,
+    # the fixed production app id, release-notes version binding and
+    # Dev-marker freedom) - see Test-ProductionCandidateProfile. Internally
+    # implies the branch is 'main' and skips the repository.json branch
+    # check (repository.json is a separate, permanent top-level index, not
+    # part of what the app-source/manifest builders generate - its own
+    # branch consistency belongs to the later promotion-PR step). That
+    # exclusion is an internal consequence of selecting this profile only -
+    # there is no standalone bypass switch.
+    #
+    # 'Dev': explicit Dev-identity assertions (BUILD_CHANNEL='dev',
+    # DIAGNOSTIC_LEVEL=2, Dev-suffixed app name) made explicit rather than
+    # only implied by autodetection, for symmetry with ProductionCandidate.
+    [ValidateSet('Dev', 'ProductionCandidate')]
+    [string]$BuildProfile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -145,6 +170,67 @@ function Find-ObsoleteTraceRemnants([string]$Text) {
         }
     }
     return $found
+}
+
+# Every cross-profile assertion queue 461 requires for a GENERATED
+# production candidate: app identity, channel/level constants, manifest
+# package/app identity, the fixed production app id, and release-notes
+# version binding plus Dev-marker freedom. Factored as a plain function
+# (like every other gate here) so -SelfTest can exercise it directly against
+# fixtures, not just trust it against whatever real candidate happens to be
+# passed in.
+function Test-ProductionCandidateProfile([string]$AppName, [string]$AppVersion, [string]$BuildChannelValue, [string]$DiagnosticLevelValue, $Manifest) {
+    $violations = New-Object 'System.Collections.Generic.List[string]'
+    if ($AppName -ne 'Automation Map') {
+        $violations.Add("app name '$AppName' is not the production name 'Automation Map'.")
+    }
+    if ($BuildChannelValue -ne 'production') {
+        $violations.Add("BUILD_CHANNEL '$BuildChannelValue' is not 'production'.")
+    }
+    if ($DiagnosticLevelValue -ne '0') {
+        $violations.Add("DIAGNOSTIC_LEVEL '$DiagnosticLevelValue' is not '0'.")
+    }
+    if ($null -ne $Manifest) {
+        if ($Manifest.packageName -ne 'Automation Map') {
+            $violations.Add("manifest packageName '$($Manifest.packageName)' is not the production name 'Automation Map'.")
+        }
+        $manifestApp = @($Manifest.apps)[0]
+        if ($null -ne $manifestApp) {
+            if ($manifestApp.name -ne 'Automation Map') {
+                $violations.Add("manifest app name '$($manifestApp.name)' is not the production name 'Automation Map'.")
+            }
+            if ($manifestApp.id -ne '184c8f7d-5b2a-4352-a883-45d36ef4860b') {
+                $violations.Add("manifest app id '$($manifestApp.id)' is not the fixed production app id.")
+            }
+        }
+        $releaseNotes = [string]$Manifest.releaseNotes
+        $expectedPrefix = "v${AppVersion}:"
+        if ($releaseNotes -notlike "$expectedPrefix*") {
+            $violations.Add("manifest releaseNotes does not begin with the expected '$expectedPrefix' version prefix.")
+        }
+        if ($releaseNotes -match 'DEV CHANNEL' -or $releaseNotes -match 'blob/dev/') {
+            $violations.Add('manifest releaseNotes contains a Dev-channel marker.')
+        }
+    }
+    return $violations
+}
+
+# The Dev-profile counterpart, for symmetry (review, queue 461: "the
+# corresponding Dev identity/channel expectations made explicit where
+# needed") - normal (no -BuildProfile) validation does not call this; only
+# an explicit -BuildProfile Dev invocation does.
+function Test-DevProfile([string]$AppName, [string]$BuildChannelValue, [string]$DiagnosticLevelValue) {
+    $violations = New-Object 'System.Collections.Generic.List[string]'
+    if ($AppName -notlike '*(Dev)*') {
+        $violations.Add("app name '$AppName' does not carry the expected '(Dev)' suffix.")
+    }
+    if ($BuildChannelValue -ne 'dev') {
+        $violations.Add("BUILD_CHANNEL '$BuildChannelValue' is not 'dev'.")
+    }
+    if ($DiagnosticLevelValue -ne '2') {
+        $violations.Add("DIAGNOSTIC_LEVEL '$DiagnosticLevelValue' is not '2'.")
+    }
+    return $violations
 }
 
 # Finds every inline <script>...</script> block in the rendered HTML (skips
@@ -328,6 +414,27 @@ try {
         Assert-True ((Find-ObsoleteTraceRemnants "log.info 'AM-TRACE at=foo'").Count -gt 0) 'a reintroduced AM-TRACE log line is caught'
         Assert-True ((Find-ObsoleteTraceRemnants $realText).Count -eq 0) 'current source has zero obsolete trace/watchdog-test markers'
 
+        Write-Host 'Self-test: production-candidate / Dev build-profile gates' -ForegroundColor Cyan
+        $goodProdManifest = '{"packageName":"Automation Map","apps":[{"name":"Automation Map","id":"184c8f7d-5b2a-4352-a883-45d36ef4860b"}],"releaseNotes":"v2.2.0: description.\n\n- change."}' | ConvertFrom-Json
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '0' $goodProdManifest).Count -eq 0) 'a fully correct production candidate has zero profile violations'
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map (Dev)' '2.2.0' 'production' '0' $goodProdManifest).Count -gt 0) 'a Dev-suffixed app name fails the production-candidate profile'
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'dev' '0' $goodProdManifest).Count -gt 0) 'BUILD_CHANNEL=dev fails the production-candidate profile'
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '2' $goodProdManifest).Count -gt 0) 'DIAGNOSTIC_LEVEL=2 fails the production-candidate profile'
+        $badPackageNameManifest = '{"packageName":"Automation Map (Dev)","apps":[{"name":"Automation Map","id":"184c8f7d-5b2a-4352-a883-45d36ef4860b"}],"releaseNotes":"v2.2.0: description."}' | ConvertFrom-Json
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '0' $badPackageNameManifest).Count -gt 0) 'a Dev-suffixed manifest packageName fails the production-candidate profile'
+        $badAppNameManifest = '{"packageName":"Automation Map","apps":[{"name":"Automation Map (Dev)","id":"184c8f7d-5b2a-4352-a883-45d36ef4860b"}],"releaseNotes":"v2.2.0: description."}' | ConvertFrom-Json
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '0' $badAppNameManifest).Count -gt 0) 'a Dev-suffixed manifest app name fails the production-candidate profile'
+        $badIdManifest = '{"packageName":"Automation Map","apps":[{"name":"Automation Map","id":"2c2c28d6-f6eb-4c88-afad-d9d32a6013bc"}],"releaseNotes":"v2.2.0: description."}' | ConvertFrom-Json
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '0' $badIdManifest).Count -gt 0) 'the Dev app id in the manifest fails the production-candidate profile'
+        $staleNotesManifest = '{"packageName":"Automation Map","apps":[{"name":"Automation Map","id":"184c8f7d-5b2a-4352-a883-45d36ef4860b"}],"releaseNotes":"v2.1.0: wrong version."}' | ConvertFrom-Json
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '0' $staleNotesManifest).Count -gt 0) 'release notes for the wrong version fail the production-candidate profile'
+        $devMarkerNotesManifest = '{"packageName":"Automation Map","apps":[{"name":"Automation Map","id":"184c8f7d-5b2a-4352-a883-45d36ef4860b"}],"releaseNotes":"v2.2.0: DEV CHANNEL leaked through."}' | ConvertFrom-Json
+        Assert-True ((Test-ProductionCandidateProfile 'Automation Map' '2.2.0' 'production' '0' $devMarkerNotesManifest).Count -gt 0) 'a leaked DEV CHANNEL marker in release notes fails the production-candidate profile'
+        Assert-True ((Test-DevProfile 'Automation Map (Dev)' 'dev' '2').Count -eq 0) 'a fully correct Dev candidate has zero Dev-profile violations'
+        Assert-True ((Test-DevProfile 'Automation Map' 'dev' '2').Count -gt 0) 'a production-shaped app name fails the Dev profile'
+        Assert-True ((Test-DevProfile 'Automation Map (Dev)' 'production' '2').Count -gt 0) 'BUILD_CHANNEL=production fails the Dev profile'
+        Assert-True ((Test-DevProfile 'Automation Map (Dev)' 'dev' '0').Count -gt 0) 'DIAGNOSTIC_LEVEL=0 fails the Dev profile'
+
         if ($failures.Count -gt 0) {
             Write-Host "Self-test FAILED: $($failures.Count) assertion(s)." -ForegroundColor Red
             exit 1
@@ -375,6 +482,14 @@ try {
         Add-ValidationError "Found obsolete trace/watchdog-test marker(s) that should not exist in source: $($obsoleteTraceMarkers -join ', ')."
     }
 
+    if ($BuildProfile -eq 'ProductionCandidate') {
+        $profileViolations = Test-ProductionCandidateProfile $appName $appVersion $buildChannel $diagnosticLevelText $manifest
+        foreach ($v in $profileViolations) { Add-ValidationError "Production-candidate profile: $v" }
+    } elseif ($BuildProfile -eq 'Dev') {
+        $profileViolations = Test-DevProfile $appName $buildChannel $diagnosticLevelText
+        foreach ($v in $profileViolations) { Add-ValidationError "Dev profile: $v" }
+    }
+
     if ($null -ne $manifest) {
         if ($manifest.packageName -ne $appName) {
             Add-ValidationError "Package name '$($manifest.packageName)' does not match APP_NAME '$appName'."
@@ -412,8 +527,20 @@ try {
 
     $branch = $null
     if (Get-Command git -ErrorAction SilentlyContinue) {
-        $branch = (& git branch --show-current 2>$null | Select-Object -First 1).Trim()
-        if ($LASTEXITCODE -eq 0 -and $branch -in @('dev', 'main')) {
+        $autodetectOk = $true
+        if ($BuildProfile -eq 'ProductionCandidate') {
+            # The worktree can genuinely still be on 'dev' while validating a
+            # generated 'main'-shaped candidate (generation happens from a
+            # frozen Dev commit) - autodetection from the actual checked-out
+            # branch would be wrong here, not just unavailable.
+            $branch = 'main'
+        } elseif ($BuildProfile -eq 'Dev') {
+            $branch = 'dev'
+        } else {
+            $branch = (& git branch --show-current 2>$null | Select-Object -First 1).Trim()
+            $autodetectOk = ($LASTEXITCODE -eq 0)
+        }
+        if ($autodetectOk -and $branch -in @('dev', 'main')) {
             $expectedSegment = "/$branch/"
             if ($null -ne $manifest) {
                 if (@($manifest.apps)[0].location -notlike "*$expectedSegment*") {
@@ -450,7 +577,7 @@ try {
                     }
                 }
             }
-            if ($null -ne $repository -and @($repository.packages)[0].location -notlike "*$expectedSegment*") {
+            if ($BuildProfile -ne 'ProductionCandidate' -and $null -ne $repository -and @($repository.packages)[0].location -notlike "*$expectedSegment*") {
                 Add-ValidationError "Repository package location does not point to the $branch branch."
             }
         }
