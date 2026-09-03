@@ -26,6 +26,30 @@ item 16 (production build) for what remains before any promotion.
 
 ## Now
 
+### 20. Production-builder line-ending hardening
+
+Found during the v2.2.0 `main` promotion (2026-09-03): the production candidate generator is not
+actually commit-pure. It consumes the physical line endings of the working-tree checkout rather than
+a canonicalized form, while the provenance check (`git hash-object --path`) applies Git's own EOL
+normalization for comparison - so provenance can pass while checkout-specific line-ending bytes
+(e.g. after switching branches on a machine with `core.autocrlf=true`) still change the generated
+candidate's actual bytes. Independently confirmed by Codex (queue 469): "must be treated as required
+hardening before the next production build, not merely an optional polish item." The v2.2.0 release
+itself is unaffected - the contaminated build was caught before promotion and rebuilt in an isolated
+`git worktree`, verified byte-identical to the previously-reviewed candidate - but the underlying gap
+in the tooling remains.
+
+**Both parts required together, per Codex:**
+
+1. Make candidate generation commit-pure: canonicalize output line endings (e.g. always emit LF), or
+   fail closed on mixed/noncanonical line endings in the input before generating.
+2. Add an explicit `.gitattributes` policy for `apps/*.groovy` and `packageManifest.json` (the repo
+   currently has none - `apps/automation_map.groovy` and `packageManifest.json` even have different
+   stored EOL conventions in git history today), with a deterministic LF/CRLF fixture test proving
+   identical candidate bytes from equivalent checkouts either way.
+
+**Next action:** wait for Gordon to explicitly start this phase, same gating discipline as item 16.
+
 ## Next
 
 ### 1. Desktop UI review and map workspace modernisation
@@ -164,35 +188,6 @@ from Automation Map, compare against `location.hub.firmwareVersionString`, and l
 honestly as "latest known as of `releasedAt`" rather than "latest available" so the crawl lag stays
 visible. Report only - never trigger an install from within Automation Map itself.
 
-### 16. Structured Dev diagnostics and a comment-stripping production build
-
-Gordon wants two things: a small structured trace schema for Dev troubleshooting (replacing the
-current ad-hoc `AM-TRACE` log prose), and a build step that strips developer commentary out of what
-`main`/HPM actually distributes, since end users installing via HPM do not need the annotated Dev
-source's commentary. Development comments and diagnostic-only wording must never be exposed in the
-production UI, exports, logs, telemetry, or generated source. The design also contains mandatory
-runbooks for safe hub deployment and disciplined telemetry assessment, so future sessions do not
-improvise either process. Full agreed design lives in the private, cross-project
-`production-protocol` repo (`production_build_methodology.md`), not in this repo - moved there
-2026-08-28 so it is reusable across projects instead of scoped to this one:
-https://github.com/GordonThelander/production-protocol/blob/main/production_build_methodology.md
-
-**Status: design agreed, nothing implemented.** The registry-finalization-race prerequisite this item
-was previously waiting on is closed (v2.1.3, Dev-verified and independently confirmed on Steve's C-5
-hardware; queue 270/271 record the controlled tests). That does not itself authorise starting this
-item - it just removes a stale blocker from this text.
-
-A narrower slice of the logging half was implemented separately as v2.1.8 (see Hold/closed) - an on-demand,
-runtime-toggle-gated diagnostic channel available in both Dev and production, off by default. That
-is not this item: the structured, privacy-safe Dev-only trace schema replacing `AM-TRACE`, and the
-comment-stripping production build, are both still fully unstarted and still gated on Gordon
-starting this phase explicitly.
-
-**Next action:** wait for Gordon to explicitly start this phase. No work begins before then. First
-actual step, once started, is a small feasibility spike proving the Groovy-lexer-based comment
-stripper works correctly on `apps/automation_map.groovy` alone - see the spec doc for the full spike
-scope before any CI or branch-protection work is considered.
-
 ## Later / v3
 
 ### 11. Move graph derivation into the browser
@@ -222,6 +217,21 @@ never presenting stale data as a completed current scan.
 
 ## Hold / closed
 
+- **Structured Dev diagnostics and a comment-stripping production build (item 16):** the
+  comment-stripping production build half shipped as v2.2.0 (2026-09-03) - a small, versioned
+  allowlist of exact substitutions (never a general transform), each proven via full
+  structural/positional comparison against the annotated Dev source, git-bound to one verified
+  commit. Built as `tools/production-builder/` (`production-profile.groovy`,
+  `production-manifest.groovy`, `production-package.groovy`), hardened across multiple review
+  rounds with independent verification at each step, methodology generalized and written up at
+  `hubitat_dev_utililities/Provenance-Verified Substitution Build/README.md` for reuse elsewhere.
+  Release path: verified build -> isolated manual HPM install/test on a non-colliding app id ->
+  Gordon's explicit hub confirmation and production authorization -> promotion to `main` (commit
+  `72ff48a`) -> live HPM update -> community notice. A real gap found during the promotion build
+  (candidate generation is not actually commit-pure with respect to local checkout line endings) is
+  tracked separately as item 20, not blocking this closure. The structured Dev-only trace schema
+  replacing `AM-TRACE` (the other half of this item) remains unstarted - if still wanted, re-open as
+  its own item rather than reviving this one.
 - **Open Automation Map in a normal browser tab (was item 2):** dropped as infeasible within the
   Hubitat-generated app UI, which controls the map link's small pop-out window. Do not pursue a link
   rewrite unless Hubitat later exposes a supported way for the app to choose normal-tab behaviour.
