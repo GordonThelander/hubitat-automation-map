@@ -1,23 +1,22 @@
 {
-  "packageName": "Automation Map",
-  "author": "Gordon Thelander",
-  "version": "2.1.1",
-  "minimumHEVersion": "2.5.1",
-  "dateReleased": "2026-08-27",
-  "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
-  "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-  "releaseNotes": "Automation Map 2.1.1 - maintenance update, no functional changes since 2.1.0. Refer here for more information: https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
-  "apps": [
-    {
-      "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
-      "name": "Automation Map",
-      "namespace": "Hubitat Integrations",
-      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/apps/automation_map.groovy",
-      "required": true,
-      "oauth": true,
-      "primary": true,
-      "version": "2.1.1"
-    }
-  ],
-  "drivers": []
+    "packageName": "Automation Map",
+    "author": "Gordon Thelander",
+    "version": "2.2.0",
+    "minimumHEVersion": "2.5.1",
+    "dateReleased": "2026-09-02",
+    "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
+    "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
+    "releaseNotes": "v2.2.0: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.\n\nSince the last production release (2.1.1):\n\n- Improved nested Device discovery\n- Local Variables now appear as their own nodes on the map and in exports, correctly distinguished from Hub Variables and Variable Connector devices.\n- The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single searchable control each, instead of one long scrollable list.\n- The automatic-scan time field now shows its real default time instead of appearing blank.\n- Added a diagnostic-logging toggle for troubleshooting.\n- Refreshed the visual style.\n- Fixed two scan-completion timing issues that could leave the map looking stuck, or briefly hide the map link and counts, right after a scan actually finished.\n- Fixed a timing issue in registry lookups that could leave dependency information incomplete under specific conditions.",
+    "apps": [
+        {
+            "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
+            "name": "Automation Map",
+            "namespace": "Hubitat Integrations",
+            "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/apps/automation_map.groovy",
+            "required": true,
+            "oauth": true,
+            "primary": true,
+            "version": "2.2.0"
+        }
+    ]
 }
