@@ -4,6 +4,12 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.2.1
+
+In development on the dev channel. Insights work: surfacing rules that are paused, disabled, or
+reporting an execution error, which are currently invisible unless a user already suspects
+something is wrong and goes to check Rule Machine directly.
+
 ## 2.2.0
 
 Production-cleanup release. Local review and automated gates passed; deployed to Automation Map
