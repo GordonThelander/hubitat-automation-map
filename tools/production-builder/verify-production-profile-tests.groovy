@@ -283,5 +283,61 @@ check('two runPipeline() calls produce identical finalSrc') {
     assert r1.finalSrc == r2.finalSrc
 }
 
+// Exercises the REAL generateAppCandidateSource() against files on disk, not
+// runPipeline()'s in-memory stand-in: the defect these cover was in the file
+// read itself, so an in-memory test could not have caught it.
+println '--- Line-ending canonicalization: equivalent LF and CRLF checkouts generate identical bytes ---'
+File eolTestDir = new File(thisScriptFile.parentFile.parentFile.parentFile, 'tmp/production-profile-eol-test')
+eolTestDir.deleteDir()
+eolTestDir.mkdirs()
+String LF_SRC = FIXTURE.replace('\r\n', '\n').replace('\r', '\n')
+String CRLF_SRC = LF_SRC.replace('\n', '\r\n')
+String MIXED_SRC = LF_SRC.readLines().withIndex().collect { String line, int i ->
+    line + (i % 2 == 0 ? '\r\n' : '\n')
+}.join('')
+File lfFile = new File(eolTestDir, 'lf-source.groovy')
+File crlfFile = new File(eolTestDir, 'crlf-source.groovy')
+File mixedFile = new File(eolTestDir, 'mixed-source.groovy')
+lfFile.setText(LF_SRC, 'UTF-8')
+crlfFile.setText(CRLF_SRC, 'UTF-8')
+mixedFile.setText(MIXED_SRC, 'UTF-8')
+
+check('the fixture files genuinely differ on disk (guards this test against testing nothing)') {
+    assert lfFile.getText('UTF-8') != crlfFile.getText('UTF-8')
+    assert !lfFile.getText('UTF-8').contains('\r')
+    assert crlfFile.getText('UTF-8').contains('\r')
+    assert mixedFile.getText('UTF-8').contains('\r\n')
+    assert mixedFile.getText('UTF-8') != crlfFile.getText('UTF-8')
+}
+check('canonicalizeLineEndings() maps CRLF, lone CR and LF alike to LF') {
+    assert Profile.canonicalizeLineEndings('a\r\nb\rc\nd') == 'a\nb\nc\nd'
+    assert Profile.canonicalizeLineEndings('') == ''
+    assert Profile.canonicalizeLineEndings(null) == null
+}
+check('buildHeader() is LF-only regardless of this tool file\'s own checkout line endings') {
+    assert !(Profile.buildHeader(DEV_SHA) as String).contains('\r')
+}
+check('generateAppCandidateSource() produces byte-identical output from LF and CRLF checkouts') {
+    Map lfResult = Profile.generateAppCandidateSource(Comparison, StripComments, lfFile, DEV_SHA)
+    Map crlfResult = Profile.generateAppCandidateSource(Comparison, StripComments, crlfFile, DEV_SHA)
+    assert lfResult.ok : "LF build failed at ${lfResult.stage}: ${lfResult.reason}"
+    assert crlfResult.ok : "CRLF build failed at ${crlfResult.stage}: ${crlfResult.reason}"
+    assert lfResult.finalSrc == crlfResult.finalSrc
+}
+check('a mixed CRLF/LF checkout canonicalizes to that same output, not a third variant') {
+    Map lfResult = Profile.generateAppCandidateSource(Comparison, StripComments, lfFile, DEV_SHA)
+    Map mixedResult = Profile.generateAppCandidateSource(Comparison, StripComments, mixedFile, DEV_SHA)
+    assert mixedResult.ok : "mixed build failed at ${mixedResult.stage}: ${mixedResult.reason}"
+    assert mixedResult.finalSrc == lfResult.finalSrc
+}
+check('every generated candidate is LF-only whatever the input was') {
+    [lfFile, crlfFile, mixedFile].each { File f ->
+        Map r = Profile.generateAppCandidateSource(Comparison, StripComments, f, DEV_SHA)
+        assert r.ok
+        assert !(r.finalSrc as String).contains('\r') : "candidate from ${f.name} still contains a carriage return"
+    }
+}
+eolTestDir.deleteDir()
+
 println "${pass} passed, ${fail} failed"
 if (fail > 0) System.exit(1)

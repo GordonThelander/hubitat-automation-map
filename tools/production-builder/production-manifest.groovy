@@ -348,7 +348,12 @@ static String sha256(byte[] bytes) {
 // already-resolved File objects, rather than a second CLI invocation that
 // would redundantly re-verify provenance itself. Pure: no provenance check,
 // no disk write - just parse, substitute, compare, leak-check. ---
-static Map generateManifestCandidateJson(File manifestFile, File releaseNotesFile) {
+// Profile supplies canonicalizeLineEndings() rather than this file duplicating
+// it: the curated release-notes text is embedded verbatim as a JSON string
+// value, so its checkout line endings would otherwise change the candidate's
+// bytes for the same commit. The manifest's own line endings are irrelevant
+// (JsonOutput re-emits the structure with LF regardless).
+static Map generateManifestCandidateJson(File manifestFile, File releaseNotesFile, def Profile) {
     String originalText = manifestFile.getText('UTF-8')
     Object originalParsed
     try {
@@ -357,7 +362,7 @@ static Map generateManifestCandidateJson(File manifestFile, File releaseNotesFil
         return [ok: false, stage: 'manifest JSON parse', reason: "${manifestFile.name} is not valid JSON: ${e.message}"]
     }
 
-    String releaseNotesText = releaseNotesFile.getText('UTF-8').trim()
+    String releaseNotesText = Profile.canonicalizeLineEndings(releaseNotesFile.getText('UTF-8')).trim()
     String manifestVersion = (originalParsed as Map).version as String
     Map notesCheck = verifyReleaseNotesText(releaseNotesText, manifestVersion)
     if (!notesCheck.ok) {
@@ -386,6 +391,12 @@ static Map generateManifestCandidateJson(File manifestFile, File releaseNotesFil
     Map leakCheck = verifyNoLeakedDevValues(candidateJson, allowlistEntries)
     if (!leakCheck.ok) {
         return [ok: false, stage: 'Dev-marker leak check', reason: leakCheck.reason]
+    }
+
+    // Same fail-closed backstop as the app builder: a stray CR (raw, or escaped
+    // into a JSON string value) means canonicalization was bypassed somewhere.
+    if (candidateJson.contains('\r') || candidateJson.contains('\\r')) {
+        return [ok: false, stage: 'line-ending canonicalization check', reason: 'generated manifest candidate contains a carriage return; output must be LF-only to stay reproducible across checkouts']
     }
 
     return [ok: true, candidateJson: candidateJson, allowlistEntries: allowlistEntries]
@@ -470,7 +481,7 @@ if (releaseNotesSha != devCommitSha) {
 }
 File releaseNotesFile = notesProvenance.file as File
 
-Map genResult = generateManifestCandidateJson(inFile, releaseNotesFile)
+Map genResult = generateManifestCandidateJson(inFile, releaseNotesFile, Profile)
 if (!genResult.ok) {
     System.err.println("FAIL ${genResult.stage}: ${genResult.reason}")
     System.exit(1)

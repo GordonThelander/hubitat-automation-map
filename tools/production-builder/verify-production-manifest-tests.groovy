@@ -13,7 +13,9 @@ import groovy.json.JsonOutput
 
 File thisScriptFile = new File(this.class.protectionDomain.codeSource.location.toURI())
 File manifestBuilderFile = new File(thisScriptFile.parentFile, 'production-manifest.groovy')
+File profileFile = new File(thisScriptFile.parentFile, 'production-profile.groovy')
 def Mfst = new GroovyClassLoader(this.class.classLoader).parseClass(manifestBuilderFile)
+def Profile = new GroovyClassLoader(this.class.classLoader).parseClass(profileFile)
 
 int pass = 0, fail = 0
 def check = { String name, Closure body ->
@@ -280,6 +282,45 @@ check('two runPipeline() calls produce identical candidateJson') {
     assert r1.ok && r2.ok
     assert r1.candidateJson == r2.candidateJson
 }
+
+// The curated notes are embedded verbatim as a JSON string value, so a CRLF
+// checkout of that file would otherwise escape as \r\n inside the candidate
+// and change its bytes for the same commit. Exercises the real
+// generateManifestCandidateJson() against files on disk for that reason.
+println '--- Line-ending canonicalization: LF and CRLF release-notes checkouts generate identical bytes ---'
+File eolTestDir = new File(thisScriptFile.parentFile.parentFile.parentFile, 'tmp/production-manifest-eol-test')
+eolTestDir.deleteDir()
+eolTestDir.mkdirs()
+File eolManifestFile = new File(eolTestDir, 'packageManifest.json')
+eolManifestFile.setText(JsonOutput.prettyPrint(JsonOutput.toJson(fixtureManifest())) + '\n', 'UTF-8')
+String NOTES_LF = (FIXTURE_RELEASE_NOTES + '\n\nSecond paragraph, so there is a line break to get wrong.\n')
+        .replace('\r\n', '\n').replace('\r', '\n')
+String NOTES_CRLF = NOTES_LF.replace('\n', '\r\n')
+File notesLfFile = new File(eolTestDir, 'notes-lf.txt')
+File notesCrlfFile = new File(eolTestDir, 'notes-crlf.txt')
+notesLfFile.setText(NOTES_LF, 'UTF-8')
+notesCrlfFile.setText(NOTES_CRLF, 'UTF-8')
+
+check('the release-notes fixtures genuinely differ on disk (guards this test against testing nothing)') {
+    assert notesLfFile.getText('UTF-8') != notesCrlfFile.getText('UTF-8')
+    assert !notesLfFile.getText('UTF-8').contains('\r')
+    assert notesCrlfFile.getText('UTF-8').contains('\r')
+}
+check('generateManifestCandidateJson() produces byte-identical output from LF and CRLF release notes') {
+    Map lfResult = Mfst.generateManifestCandidateJson(eolManifestFile, notesLfFile, Profile)
+    Map crlfResult = Mfst.generateManifestCandidateJson(eolManifestFile, notesCrlfFile, Profile)
+    assert lfResult.ok : "LF build failed at ${lfResult.stage}: ${lfResult.reason}"
+    assert crlfResult.ok : "CRLF build failed at ${crlfResult.stage}: ${crlfResult.reason}"
+    assert lfResult.candidateJson == crlfResult.candidateJson
+}
+check('the generated manifest carries no escaped carriage return in its embedded notes') {
+    Map crlfResult = Mfst.generateManifestCandidateJson(eolManifestFile, notesCrlfFile, Profile)
+    assert crlfResult.ok
+    String json = crlfResult.candidateJson as String
+    assert !json.contains('\\r') : 'release notes embedded an escaped carriage return into the candidate'
+    assert !json.contains('\r')
+}
+eolTestDir.deleteDir()
 
 println "${pass} passed, ${fail} failed"
 if (fail > 0) System.exit(1)

@@ -183,7 +183,7 @@ static Map buildPackage(File repoRoot, File toolDir, def Comparison, def StripCo
         File tempAppFile = new File(tempDir, appCandidateFileName())
         tempAppFile.setText(appResult.finalSrc as String, 'UTF-8')
 
-        Map manifestResult = Mfst.generateManifestCandidateJson(files[manifestRelativePath()], files[releaseNotesRelativePath()])
+        Map manifestResult = Mfst.generateManifestCandidateJson(files[manifestRelativePath()], files[releaseNotesRelativePath()], Profile)
         if (!manifestResult.ok) {
             return [ok: false, stage: "manifest generation (${manifestResult.stage})", reason: manifestResult.reason]
         }

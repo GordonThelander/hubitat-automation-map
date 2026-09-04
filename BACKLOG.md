@@ -42,10 +42,9 @@ in the tooling remains.
 
 1. Make candidate generation commit-pure: canonicalize output line endings (e.g. always emit LF), or
    fail closed on mixed/noncanonical line endings in the input before generating.
-2. Add an explicit `.gitattributes` policy for `apps/*.groovy` and `packageManifest.json` (the repo
-   currently has none - `apps/automation_map.groovy` and `packageManifest.json` even have different
-   stored EOL conventions in git history today), with a deterministic LF/CRLF fixture test proving
-   identical candidate bytes from equivalent checkouts either way.
+2. Add an explicit `.gitattributes` policy for the build-input paths (the repo currently has none,
+   and every build input is stored CRLF-in-blob today), with a deterministic LF/CRLF fixture test
+   proving identical candidate bytes from equivalent checkouts either way.
 
 **Next action:** wait for Gordon to explicitly start this phase, same gating discipline as item 16.
 
