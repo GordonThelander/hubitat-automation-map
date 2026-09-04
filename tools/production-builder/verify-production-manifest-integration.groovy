@@ -303,7 +303,14 @@ try {
             'powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', validatePs1.absolutePath,
         ], repoRoot)
         assert normalResult.exitCode == 0 : "stdout: ${normalResult.stdout}\nstderr: ${normalResult.stderr}"
-        assert (normalResult.stdout as String).contains('(Dev)') && (normalResult.stdout as String).contains('on branch dev')
+        // The branch half depends on how this checkout was materialized rather
+        // than on the code under test - an isolated-worktree run sits on a
+        // detached HEAD with no branch name to report. Accept either form; what
+        // this case actually proves is that the plain, profile-less invocation
+        // still validates the real Dev source cleanly.
+        String normalOut = normalResult.stdout as String
+        assert normalOut.contains('(Dev)')
+        assert normalOut.contains('on branch dev') || normalOut.contains('on a detached HEAD') : "unexpected summary: ${normalOut}"
     }
 
     // Two more required negative cases (review, queue 461), run against

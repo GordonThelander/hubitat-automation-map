@@ -672,7 +672,8 @@ try {
         exit 1
     }
 
-    Write-Host "Validation clean: $appName v$appVersion on branch $branch" -ForegroundColor Green
+    $branchLabel = if ([string]::IsNullOrWhiteSpace($branch)) { 'a detached HEAD' } else { "branch $branch" }
+    Write-Host "Validation clean: $appName v$appVersion on $branchLabel" -ForegroundColor Green
 } finally {
     Pop-Location
 }
