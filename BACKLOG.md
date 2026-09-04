@@ -25,29 +25,7 @@ historical record, not an open gate.
 
 ## Now
 
-### 20. Production-builder line-ending hardening
-
-Found during the v2.2.0 `main` promotion (2026-09-03): the production candidate generator is not
-actually commit-pure. It consumes the physical line endings of the working-tree checkout rather than
-a canonicalized form, while the provenance check (`git hash-object --path`) applies Git's own EOL
-normalization for comparison - so provenance can pass while checkout-specific line-ending bytes
-(e.g. after switching branches on a machine with `core.autocrlf=true`) still change the generated
-candidate's actual bytes. Independently confirmed on review as required hardening before the next
-production build, not an optional polish item. The v2.2.0 release
-itself is unaffected - the contaminated build was caught before promotion and rebuilt in an isolated
-`git worktree`, verified byte-identical to the previously-reviewed candidate - but the underlying gap
-in the tooling remains.
-
-**Both parts required together:**
-
-1. Make candidate generation commit-pure: canonicalize output line endings (e.g. always emit LF), or
-   fail closed on mixed/noncanonical line endings in the input before generating.
-2. Add an explicit `.gitattributes` policy for the build-input paths. Every build input is stored
-   LF in the repository, but the repo declares no policy, so `core.autocrlf` converts them to CRLF
-   in the working tree on checkout - the exact mechanism behind the v2.2.0 incident. Needs a
-   deterministic LF/CRLF fixture test proving identical candidate bytes either way.
-
-**Next action:** wait for Gordon to explicitly start this phase, same gating discipline as item 16.
+_Nothing open._
 
 ## Next
 
@@ -216,6 +194,24 @@ never presenting stale data as a completed current scan.
 
 ## Hold / closed
 
+- **Production-builder line-ending hardening (item 20):** completed 2026-09-05. Generation is now
+  independent of how a checkout materialized. Three paths carried the defect, not the one originally
+  identified: the app source read, the header literal (which inherited the builder file's own
+  checkout line endings), and the curated release notes, which embed verbatim into the manifest JSON
+  as a string value and escaped as `\r\n`. All three canonicalize to LF, and each generator now
+  fails closed if a carriage return survives into its finished candidate rather than trusting that
+  canonicalization held. `.gitattributes` pins the build inputs and the builders to `eol=lf`
+  (`validate.ps1` deliberately excluded, CRLF being native for PowerShell); no renormalization was
+  needed since every affected blob was already LF, the exposure being that `core.autocrlf` rewrote
+  them on checkout. Verified three ways: LF/CRLF/mixed fixtures through the real generator functions
+  (confirmed failing without the fix), a fresh checkout under `core.autocrlf=true` keeping the inputs
+  LF while the excluded `validate.ps1` converted as expected, and byte-identical candidates from two
+  independent checkouts of the same commit. A CRLF-corrupted checkout is now additionally rejected by
+  provenance verification itself rather than building silently. Generated output is unchanged: the
+  candidate is byte-identical to the shipped v2.2.0 artifact apart from the embedded commit SHA.
+  Fixed in passing: `validate.ps1` aborted on a detached HEAD (`git branch --show-current` returns
+  nothing), which broke exactly the isolated-worktree builds used to recover from the original
+  incident.
 - **Structured Dev diagnostics and a comment-stripping production build (item 16):** the
   comment-stripping production build half shipped as v2.2.0 (2026-09-03) - a small, versioned
   allowlist of exact substitutions (never a general transform), each proven via full
