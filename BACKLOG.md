@@ -42,9 +42,10 @@ in the tooling remains.
 
 1. Make candidate generation commit-pure: canonicalize output line endings (e.g. always emit LF), or
    fail closed on mixed/noncanonical line endings in the input before generating.
-2. Add an explicit `.gitattributes` policy for the build-input paths (the repo currently has none,
-   and every build input is stored CRLF-in-blob today), with a deterministic LF/CRLF fixture test
-   proving identical candidate bytes from equivalent checkouts either way.
+2. Add an explicit `.gitattributes` policy for the build-input paths. Every build input is stored
+   LF in the repository, but the repo declares no policy, so `core.autocrlf` converts them to CRLF
+   in the working tree on checkout - the exact mechanism behind the v2.2.0 incident. Needs a
+   deterministic LF/CRLF fixture test proving identical candidate bytes either way.
 
 **Next action:** wait for Gordon to explicitly start this phase, same gating discipline as item 16.
 
