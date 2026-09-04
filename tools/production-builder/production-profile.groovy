@@ -337,6 +337,16 @@ static String sha256(byte[] bytes) {
     return md.digest(bytes).collect { String.format('%02x', it) }.join('')
 }
 
+// Canonicalizes line endings to LF. Without this the same commit can produce
+// different candidate bytes: a checkout may legitimately hold CRLF (git's own
+// core.autocrlf) while provenance hashing normalizes it away. Applied to every
+// text input AND to this tool's own header literal below, which carries
+// whatever line endings this file itself was checked out with.
+static String canonicalizeLineEndings(String text) {
+    if (text == null) return null
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+}
+
 // The complete required production header (methodology "Production header"
 // section): Apache licence/copyright notice, a short generated-file notice,
 // the exact Dev source commit SHA, and a link to the canonical annotated
@@ -348,7 +358,7 @@ static String sha256(byte[] bytes) {
 // already removed by the comment-stripping stage before this header is
 // ever prepended - nothing extra to strip for that on this file's part.
 static String buildHeader(String devCommitSha) {
-    return """/*
+    return canonicalizeLineEndings("""/*
  * Automation Map
  *
  * Copyright 2026 Gordon Thelander
@@ -372,7 +382,7 @@ static String buildHeader(String devCommitSha) {
  * Canonical annotated source:
  * https://github.com/GordonThelander/hubitat-automation-map/blob/${devCommitSha}/apps/automation_map.groovy
  */
-"""
+""")
 }
 
 // Removes ONLY a leading run of pure line-ending bytes (review, queue 450,
@@ -477,7 +487,7 @@ static Map writeCandidateAtomically(File outFile, String finalSrc, Closure failA
 // otherwise ok:true plus finalSrc and every reporting field the CLI's own
 // stdout uses. ---
 static Map generateAppCandidateSource(def Comparison, def StripComments, File inFile, String devCommitSha) {
-    String originalSrc = inFile.getText('UTF-8')
+    String originalSrc = canonicalizeLineEndings(inFile.getText('UTF-8'))
     List<Token> originalTokens = lexAllChannels(StripComments, originalSrc)
 
     // Stage A: comment removal only, via the SAME functions strip-comments.groovy
@@ -533,6 +543,14 @@ static Map generateAppCandidateSource(def Comparison, def StripComments, File in
     List<String> leaked = forbidden.findAll { finalSrc.contains(it) }
     if (!leaked.isEmpty()) {
         return [ok: false, stage: 'Dev-marker leak check', reason: "found forbidden text in the generated candidate: ${leaked.join(', ')}"]
+    }
+
+    // Fail-closed backstop proving canonicalization actually held, rather than
+    // trusting it - a stray CR anywhere means some path bypassed it and the
+    // output is no longer a pure function of the source commit.
+    int strayCr = finalSrc.count('\r')
+    if (strayCr > 0) {
+        return [ok: false, stage: 'line-ending canonicalization check', reason: "generated candidate contains ${strayCr} carriage return(s); output must be LF-only to stay reproducible across checkouts"]
     }
 
     return [
