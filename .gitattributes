@@ -1,0 +1,23 @@
+# Line-ending policy for the production build inputs.
+#
+# The production builders generate a candidate whose bytes must be a pure
+# function of the source commit. They canonicalize line endings themselves and
+# fail closed if a stray carriage return survives, so this file is a second
+# layer rather than the only defence: it keeps the stored blobs and every
+# checkout consistent, so a working copy on any platform feeds the builders
+# the same bytes git recorded.
+#
+# Scoped deliberately to build inputs and the builders themselves. Files
+# outside this list (validate.ps1 in particular, where CRLF is the native
+# convention) keep whatever they already use.
+
+apps/*.groovy                    text eol=lf
+packageManifest.json             text eol=lf
+production-release-notes.txt     text eol=lf
+tools/production-builder/*.groovy text eol=lf
+
+# Binary assets: never line-ending converted, never diffed as text.
+*.png    binary
+*.jpg    binary
+*.mp3    binary
+*.woff2  binary
