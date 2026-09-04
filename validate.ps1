@@ -537,8 +537,13 @@ try {
         } elseif ($BuildProfile -eq 'Dev') {
             $branch = 'dev'
         } else {
-            $branch = (& git branch --show-current 2>$null | Select-Object -First 1).Trim()
-            $autodetectOk = ($LASTEXITCODE -eq 0)
+            # A detached HEAD (any isolated-worktree build) reports no branch
+            # name at all, so this must stay null-safe: treat it as "cannot
+            # autodetect" and skip the branch-specific URL checks, rather than
+            # calling .Trim() on nothing and aborting the whole run.
+            $branchRaw = (& git branch --show-current 2>$null | Select-Object -First 1)
+            $branch = if ($null -ne $branchRaw) { $branchRaw.Trim() } else { '' }
+            $autodetectOk = ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($branch))
         }
         if ($autodetectOk -and $branch -in @('dev', 'main')) {
             $expectedSegment = "/$branch/"
