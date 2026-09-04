@@ -32,13 +32,13 @@ actually commit-pure. It consumes the physical line endings of the working-tree 
 a canonicalized form, while the provenance check (`git hash-object --path`) applies Git's own EOL
 normalization for comparison - so provenance can pass while checkout-specific line-ending bytes
 (e.g. after switching branches on a machine with `core.autocrlf=true`) still change the generated
-candidate's actual bytes. Independently confirmed by Codex (queue 469): "must be treated as required
-hardening before the next production build, not merely an optional polish item." The v2.2.0 release
+candidate's actual bytes. Independently confirmed on review as required hardening before the next
+production build, not an optional polish item. The v2.2.0 release
 itself is unaffected - the contaminated build was caught before promotion and rebuilt in an isolated
 `git worktree`, verified byte-identical to the previously-reviewed candidate - but the underlying gap
 in the tooling remains.
 
-**Both parts required together, per Codex:**
+**Both parts required together:**
 
 1. Make candidate generation commit-pure: canonicalize output line endings (e.g. always emit LF), or
    fail closed on mixed/noncanonical line endings in the input before generating.
