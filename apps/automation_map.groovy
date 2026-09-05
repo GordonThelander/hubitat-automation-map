@@ -7833,11 +7833,46 @@ function fitCurrentView() {
   });
 }
 
+// Panels are populated AFTER being shown (bringToFront then extLoad/iconsLoad),
+// so framing at the moment one opens measures an empty panel and the content
+// then grows over the graph. Their close buttons do not reframe either, so the
+// freed space was never reclaimed. Rather than chase every open/load/close
+// site and miss the next one, watch the overlays themselves and reframe
+// whenever their geometry changes. Debounced, because a panel rendering a long
+// table resizes many times in a row.
+let panelResizeTimer = null;
+function watchOverlayGeometry() {
+  if (typeof ResizeObserver === 'undefined') return;
+  const observer = new ResizeObserver(function () {
+    if (panelResizeTimer) clearTimeout(panelResizeTimer);
+    panelResizeTimer = setTimeout(fitCurrentView, 120);
+  });
+  // moveTo() cannot change a panel's size, so this cannot feed itself.
+  [document.getElementById('legend'), document.getElementById('controls')]
+    .concat(allPanels())
+    .forEach(function (el) { if (el && el.nodeType === 1) observer.observe(el); });
+}
+// Deferred one tick: the panel consts are declared much further down this
+// script, so they do not exist yet at this point in the file.
+setTimeout(watchOverlayGeometry, 0);
+
 // shelve is false for any narrowed view: the shelf belongs to the whole-hub
 // map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
 // which is an upsert, so running it against a focused dataset silently added
 // every inert node back and collapsed the fit to a fraction of its scale.
 function settle(shelve) {
+  // A narrowed view rebuilds the DataSet with physics live, so the nodes are
+  // watched flying apart and the framing then snaps the view back. The page's
+  // own first settle never shows that because it happens before anything is
+  // drawn. So hide the canvas for the duration and reveal it already framed:
+  // the correction stops being something to watch.
+  //
+  // opacity, NEVER display:none - hiding by display collapses the container to
+  // zero width, and fitCurrentView() measures that container to decide the
+  // scale. It would frame against nothing and bail out.
+  const canvasEl = document.getElementById('network');
+  const reveal = function () { if (canvasEl) canvasEl.style.opacity = ''; };
+  if (!shelve && canvasEl) canvasEl.style.opacity = '0';
   let finished = false;
   const finish = function () {
     if (finished) return;
@@ -7845,6 +7880,7 @@ function settle(shelve) {
     network.setOptions({ physics: { enabled: false } });
     if (shelve) shelveInertNodes();
     fitCurrentView();
+    reveal();
   };
   network.once('stabilizationIterationsDone', finish);
   // vis does not always emit that event, and when it does not the fit never
@@ -7855,7 +7891,12 @@ function settle(shelve) {
   // around this and is left exactly as it was. A handful of nodes settles well
   // inside this delay, so the timer only fires when the event genuinely did
   // not, and finish() is guarded so both routes cannot run it twice.
-  if (!shelve) setTimeout(finish, 1500);
+  if (!shelve) {
+    setTimeout(finish, 1500);
+    // Last resort. finish() already reveals and is guarded, but the canvas must
+    // never be left invisible if anything above throws.
+    setTimeout(reveal, 4000);
+  }
 }
 settle(true);
 
