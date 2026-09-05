@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.6'
+@Field static final String APP_VERSION = '2.2.7'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -7729,17 +7729,41 @@ network.on('afterDrawing', function (ctx) {
 const FOCUS_MAX_ZOOM = 2.0;
 let currentFitOptions = { animation: false };
 
-// Width covered by an open left-anchored panel (#flow, #ext, #pivot), in
-// screen pixels. They are drawn over the canvas rather than beside it, so
-// anything fitted to the full canvas ends up partly underneath the open one.
-function obscuredLeftWidth() {
-  let widest = 0;
-  allPanels().forEach(function (p) {
-    if (!p || getComputedStyle(p).display === 'none') return;
-    const edge = p.offsetLeft + p.offsetWidth;
-    if (edge > widest) widest = edge;
-  });
-  return widest;
+// The area of the canvas actually free to draw in, in container pixels. Every
+// panel is drawn OVER the canvas rather than beside it, so framing against the
+// full width slid content underneath whichever ones were open - the controls
+// menu on the right in particular, which is always there and was never
+// accounted for. Measured from real rects, so a panel that changes width does
+// not need this to be updated.
+function visibleRegion(container) {
+  const box = container.getBoundingClientRect();
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  let left = 0;
+  let right = width;
+  const shown = function (el) {
+    if (!el) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  };
+  const consider = function (el) {
+    if (!shown(el)) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    const l = r.left - box.left;
+    const rt = r.right - box.left;
+    // Decide the side an overlay sits on by its own midpoint, so this keeps
+    // working if a panel is ever re-anchored.
+    if ((l + rt) / 2 < width / 2) {
+      if (rt > left) left = rt;
+    } else if (l < right) {
+      right = l;
+    }
+  };
+  consider(document.getElementById('legend'));
+  consider(document.getElementById('controls'));
+  allPanels().forEach(consider);
+  return { left: left, right: right };
 }
 
 ${''}
@@ -7782,10 +7806,8 @@ function fitCurrentView() {
   });
   if (minX === null) return;
 
-  // Only a narrowed view yields space to an open panel; the whole-hub map is
-  // deliberately left to use the full canvas.
-  const obscured = currentFitOptions.maxZoomLevel ? obscuredLeftWidth() : 0;
-  const usableW = canvasW - obscured - VIEW_PADDING_PX * 2;
+  const region = visibleRegion(container);
+  const usableW = (region.right - region.left) - VIEW_PADDING_PX * 2;
   const usableH = canvasH - VIEW_PADDING_PX * 2;
   if (usableW <= 0 || usableH <= 0) return;
 
@@ -7801,10 +7823,11 @@ function fitCurrentView() {
   );
   if (!(scale > 0) || !isFinite(scale)) return;
 
-  // Centre the content in the free region: its own centre, shifted left in
-  // canvas units by half the covered width so it sits clear of the panel.
+  // Centre the content on the free region rather than on the canvas: shift by
+  // how far that region's own centre sits from the canvas centre.
+  const offsetPx = (region.left + region.right) / 2 - canvasW / 2;
   network.moveTo({
-    position: { x: (minX + maxX) / 2 - (obscured / 2) / scale, y: (minY + maxY) / 2 },
+    position: { x: (minX + maxX) / 2 - offsetPx / scale, y: (minY + maxY) / 2 },
     scale: scale,
     animation: false
   });
