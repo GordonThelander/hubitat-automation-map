@@ -6814,10 +6814,13 @@ String buildMapHtml() {
   #hint button { cursor:pointer; padding:5px 14px; font-weight:600; }
   /* Deliberately not made to work on a phone. A few hundred nodes, a filter
      panel and a flowchart need room and a pointer; a shrunken version would be
-     frustrating rather than useful, so small screens get told plainly. */
+     frustrating rather than useful, so small screens get told plainly - the
+     message should be the only thing on screen, not layered under the normal
+     page's own status pill and watermark image, which #status/#hubWatermark's
+     own fixed/absolute positioning was never designed to hide itself. */
   #smallscreen { display:none; }
   @media (max-width: 820px) {
-    #controls, #legend, #hint, #network, #flow { display:none !important; }
+    #controls, #legend, #hint, #network, #flow, #status, #hubWatermark { display:none !important; }
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
   #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;

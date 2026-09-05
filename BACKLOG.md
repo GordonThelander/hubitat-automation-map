@@ -122,21 +122,6 @@ overrides and icon choices.
 **Next action:** define a versioned schema, conflict rules, preview step and validation behaviour.
 Never import scan results or secrets as configuration.
 
-### 9. Surface broken or disabled rules in Insights
-
-Rule Machine rules that are paused, disabled, or already reporting an execution error are invisible
-in the current map and Insights output; a user has to already know something is wrong and go check
-Rule Machine directly.
-
-**Next action:** confirm what rule health signals are reliably readable (paused/disabled state via
-RMUtils, recent error status), then add a ranked Insights finding surfacing them, distinct from the
-existing structural findings.
-
-**Related bug found while designing item 18, fixed 2026-08-31:** the app label was showing a
-duplicate inactive suffix on some live rules (observed as `[paused] [paused]`) - fixed as part of
-item 18's work (`nodeEntry()`'s `statusInTitle` parameter) and confirmed live: the same rule's title
-now reads `(Paused)` exactly once.
-
 ### 10. Live Hubitat platform update check
 
 The existing "Hubitat release activity" panel only shows historical Community Utilities/Hubitat
@@ -194,6 +179,23 @@ never presenting stale data as a completed current scan.
 
 ## Hold / closed
 
+- **Surface broken or disabled rules in Insights (item 9):** completed and verified live on the Dev
+  hub (v2.2.1, 2026-09-05). Adds findings for things that look fine but silently do nothing: a
+  paused or disabled rule another rule still calls, a disabled device automations still command or
+  use as a trigger, and rules Hubitat itself marks broken via its own `*BROKEN*` label - the only
+  place that state is exposed; genuine runtime execution errors remain unreadable and are documented
+  as a limitation, not claimed as covered. Every paused/disabled rule is also listed as plain context
+  under expected patterns rather than as a fault, and Local Variables with no decoded usage get the
+  finding their Hub Variable equivalent already had. Each finding needs a second fact before it is
+  reported - pause/resume callers and constraint/monitor reads are deliberately excluded, since those
+  are the mechanism working, not a failure. All of it derives from the same `deriveInsightData()` the
+  export already used, so the panel and export cannot drift; confirmed on a real 220-device/116-app
+  scan, both from the panel and from a downloaded AI-friendly export (`rulesFlaggedBroken`,
+  `disabledDevicesStillUsed`, `inactiveRulesStillCalled`, `inactiveRules`,
+  `unreferencedLocalVariables` all present and correctly populated). Additive export fields, so the
+  schema version is unchanged. Also fixed in passing: the "best viewed on a desktop" small-screen
+  message was sharing the page with the live status pill and hub watermark image, both left visible
+  by the small-screen media query - now hidden with everything else the desktop UI doesn't need.
 - **Production-builder line-ending hardening (item 20):** completed 2026-09-05. Generation is now
   independent of how a checkout materialized. Three paths carried the defect, not the one originally
   identified: the app source read, the header literal (which inherited the builder file's own
