@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit 1e56f05e8d3447ff7ce8503a5a97e1075f5be4ea; developer
+ * builder from the annotated Dev source at commit f07799d33df079ce04cdf7c7343606c4e8bb33fd; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/1e56f05e8d3447ff7ce8503a5a97e1075f5be4ea/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/f07799d33df079ce04cdf7c7343606c4e8bb33fd/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -152,6 +152,9 @@ void installed() {
     if (diagOn()) log.info "${app.label}: starting first scan"
     startScan()
     scheduleAutoScan()
+    scheduleUpdateCheck()
+    
+    runIn(30, 'updateCheckHandler')
 }
 
 void updated() {
@@ -164,6 +167,85 @@ void updated() {
     
     scheduleAutoScan()
     scheduleDiagnosticLoggingExpiry()
+    scheduleUpdateCheck()
+}
+
+
+
+
+
+
+
+
+
+
+
+String updateManifestUrl() {
+    String branch = isDevBuild() ? 'dev' : 'main'
+    return "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${branch}/packageManifest.json"
+}
+
+
+
+boolean isNewerVersion(String candidate, String current) {
+    if (!candidate || !current) return false
+    try {
+        List a = candidate.tokenize('.').collect { it.toInteger() }
+        List b = current.tokenize('.').collect { it.toInteger() }
+        int len = Math.max(a.size(), b.size())
+        for (int i = 0; i < len; i++) {
+            int x = i < a.size() ? a[i] : 0
+            int y = i < b.size() ? b[i] : 0
+            if (x != y) return x > y
+        }
+        return false
+    } catch (Exception ignored) {
+        return false
+    }
+}
+
+
+
+
+
+void scheduleUpdateCheck() {
+    unschedule('updateCheckHandler')
+    int minute = Math.abs((app.id as Integer)) % 60
+    schedule("0 ${minute} 3 * * ?", 'updateCheckHandler')
+    if (diagOn()) log.info "${app.label}: update check scheduled daily at 03:${minute.toString().padLeft(2, '0')} local"
+}
+
+void updateCheckHandler() {
+    try {
+        asynchttpGet('updateCheckCb', [uri: updateManifestUrl(), contentType: 'text/plain', timeout: 20])
+    } catch (Exception e) {
+        
+        if (diagOn()) log.info "${app.label}: update check could not start: ${e.message}"
+    }
+}
+
+void updateCheckCb(resp, data) {
+    try {
+        if (resp?.status != 200) return
+        Map published = new groovy.json.JsonSlurper().parseText(resp.data as String) as Map
+        String latest = published?.version as String
+        if (!latest) return
+        state.latestPublishedVersion = latest
+    } catch (Exception e) {
+        if (diagOn()) log.info "${app.label}: update check response unusable: ${e.message}"
+    }
+}
+
+
+
+String updateNoticeSuffix() {
+    String latest = state.latestPublishedVersion as String
+    
+    
+    
+    
+    
+    return isNewerVersion(latest, APP_VERSION) ? " <span style='color:#1565c0'>(update available: ${latest})</span>" : ''
 }
 
 
@@ -403,7 +485,7 @@ Map main() {
     
     
     
-    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
+    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}${updateNoticeSuffix()}</b>", install: true, uninstall: ready,
                        refreshInterval: (ready && scanActive) ? 60 : 0) {
         
         
@@ -560,6 +642,14 @@ Map main() {
                 
                 
                 paragraph "Runs automatically once a day, on by default at ${defaultAutoScanTime()} - turn off below if you would rather press Scan yourself."
+                
+                
+                
+                
+                
+                
+                
+                paragraph "Separately, once a day this app reads a small file from its own GitHub repository to see whether a newer version has been published, and shows the version number at the top of this page if so. Nothing is sent, and it never installs anything - updates are still made through Hubitat Package Manager."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
                     defaultValue: true, submitOnChange: true
