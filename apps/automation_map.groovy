@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String APP_NAME = 'Automation Map'
+@Field static final String APP_NAME = 'Automation Map (Preprod)'
 
 
 
