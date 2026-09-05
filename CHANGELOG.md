@@ -6,9 +6,25 @@ stays easy to review.
 
 ## 2.2.1
 
-In development on the dev channel. Insights work: surfacing rules that are paused, disabled, or
-reporting an execution error, which are currently invisible unless a user already suspects
-something is wrong and goes to check Rule Machine directly.
+In development on the dev channel. Insights gains a set of findings for things that look fine but
+silently do nothing, each pairing a state with the second fact that makes it worth acting on rather
+than reporting the state alone:
+
+- A paused or disabled rule that another rule still runs, so that step in the caller silently does
+  nothing. Pause/resume links are deliberately excluded, since a rule whose job is to resume this
+  one is the mechanism working rather than a failure.
+- A disabled device automations still command or wait on as a trigger. Constraint and monitor reads
+  are excluded as a weaker, much noisier claim than a command that cannot land.
+- Rules Hubitat itself marks broken, read from its own label rather than judged by this scan.
+- Every paused or disabled rule as plain context under expected patterns, not as a fault list, and
+  never double-counted with the ones reported under Needs attention.
+- Local Variables declared in a rule with no decoded read or write, carrying the same "may simply be
+  unused" caveat the equivalent Hub Variable finding already has.
+
+All findings reach the AI-friendly export as additive fields with their own limitations, which no
+consumer is required to understand, so the export schema version is unchanged. Note that none of
+this observes runtime behaviour: it is static configuration evidence that a step cannot do anything,
+not evidence that it was ever reached.
 
 ## 2.2.0
 
