@@ -152,6 +152,52 @@ visible. Report only - never trigger an install from within Automation Map itsel
 
 ## Later / v3
 
+### 21. Tell the user when a newer version has been published
+
+The app never says a new version exists. A user only finds out by opening HPM and checking, so
+fixes can sit unnoticed for weeks on installs that are otherwise working fine.
+
+**Scope: notify only, never self-install.** Installing an update from inside the app is technically
+possible - HPM does it, by authenticating against the local admin UI and posting to the hub's
+internal code endpoints - and is deliberately out of scope. It would need the user's hub
+credentials, it rewrites the app's own source while that source is executing (HPM's own changelog
+records crashing on self-upgrade for exactly this reason), it depends on undocumented endpoints that
+shift between firmware versions, and it offers no rollback or repair when it goes wrong. HPM
+remains the thing that installs; this only makes the user aware there is something to install.
+
+**Where it shows:**
+
+- The settings page title, which already reads `<b>${APP_NAME} v${APP_VERSION}</b>`. Append the
+  notice there so it sits beside the number it is comparing against, and omit it entirely when
+  there is nothing to report. No coloured banner: item 1 already records that important actions
+  compete with raw data on this page, and a loud box above the Scan button would make that worse.
+
+**Design constraints, each of which has a specific failure behind it:**
+
+- **Compare against the channel the build came from, not always `main`.** A naive check would tell
+  every Dev tester they are behind when they are usually ahead. `isDevBuild()` already exists for
+  this split: the Dev build checks the `dev` manifest, production checks `main`. Preprod checks
+  nothing, being a throwaway channel.
+- **Never fetch during page render.** The settings page re-renders on `submitOnChange` and on a
+  refresh interval while a scan runs; a synchronous fetch would hang it on GitHub latency. Check on
+  a schedule, store the result in `state`, and let rendering be a string read.
+- **Schedule it independently of the auto-scan toggle.** Riding on the scan schedule would silently
+  stop update checks for anyone who turns auto-scan off, which is exactly the group who press Scan
+  by hand and would most benefit from being told.
+- **Schedule in hub-local time with per-install jitter.** Hubitat cron runs in the hub's own
+  timezone, so an early-morning local hour is correct for every user in every region with no UTC
+  table and no DST handling. Derive the minute from the app id so installs do not all fire at once.
+- **Disclose it plainly, next to the scan schedule.** This is a new outbound request the app did not
+  previously make, and the objection to the removed telemetry driver was never about what it
+  collected but that it phoned out without the user having agreed. Say what it fetches: a small
+  JSON file from this project's own GitHub repository, with nothing sent. Match the tone of the
+  diagnostic-logging paragraph.
+- **Fail silent.** A failed or malformed fetch shows nothing at all. An update check must never
+  produce a visible error or a stale claim.
+
+**Next action:** wait for Gordon to start this phase. Worth pairing with item 10, which is the same
+shape of check against a different source.
+
 ### 11. Move graph derivation into the browser
 
 Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
