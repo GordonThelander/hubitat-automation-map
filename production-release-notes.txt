@@ -1,9 +1,8 @@
-v2.2.1: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.
+v2.2.3: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.
 
-Since the last production release (2.2.0):
+Since the last production release (2.2.1):
 
-- Insights now flags a paused or disabled rule that another rule still calls, so you can see where a calling rule silently does nothing at that step.
-- Insights now flags a disabled device that automations still command or wait on as a trigger, where those commands cannot land and those triggers cannot fire.
-- Insights now lists any rule Hubitat itself has marked broken.
-- Every paused or disabled rule is also listed as plain context rather than as a fault, since pausing a rule is usually deliberate.
-- Local Variables that are declared but never read or written now get their own finding, matching what Hub Variables already had.
+- Focusing an app, device or variable now fills the available space properly, instead of leaving a handful of nodes too small to read.
+- The map no longer draws underneath the legend, the controls menu, or an open panel such as the rule flowchart, External systems or Pivot tables.
+- Node labels are no longer cut off at the edge of the view.
+- The map no longer visibly jumps about while a focused view settles.
