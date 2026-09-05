@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit 7db882cbdfd16d0623be091cdd657f074a1328ab; developer
+ * builder from the annotated Dev source at commit 1e56f05e8d3447ff7ce8503a5a97e1075f5be4ea; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/7db882cbdfd16d0623be091cdd657f074a1328ab/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/1e56f05e8d3447ff7ce8503a5a97e1075f5be4ea/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.1'
+@Field static final String APP_VERSION = '2.2.3'
 
 
 
@@ -7677,14 +7677,185 @@ network.on('afterDrawing', function (ctx) {
   ctx.restore();
 });
 
-function settle() {
-  network.once('stabilizationIterationsDone', function () {
-    network.setOptions({ physics: { enabled: false } });
-    shelveInertNodes();
-    network.fit({ animation: false });
+// vis-network's fit() will not zoom in past 1.0 unless told it may, so a view
+// holding a handful of nodes was left at 1:1 in a full-size canvas and read as
+// tiny. Whole-hub views compute far below 1.0 anyway, so this cap only ever
+// applies to a narrowed view. Held as state rather than passed at each call
+// site so settle(), the resize refit and the focused-app path cannot disagree
+// about the zoom of the same view.
+const FOCUS_MAX_ZOOM = 2.0;
+let currentFitOptions = { animation: false };
+
+// The area of the canvas actually free to draw in, in container pixels. Every
+// panel is drawn OVER the canvas rather than beside it, so framing against the
+// full width slid content underneath whichever ones were open - the controls
+// menu on the right in particular, which is always there and was never
+// accounted for. Measured from real rects, so a panel that changes width does
+// not need this to be updated.
+function visibleRegion(container) {
+  const box = container.getBoundingClientRect();
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  let left = 0;
+  let right = width;
+  const shown = function (el) {
+    if (!el) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  };
+  const consider = function (el) {
+    if (!shown(el)) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    const l = r.left - box.left;
+    const rt = r.right - box.left;
+    // Decide the side an overlay sits on by its own midpoint, so this keeps
+    // working if a panel is ever re-anchored.
+    if ((l + rt) / 2 < width / 2) {
+      if (rt > left) left = rt;
+    } else if (l < right) {
+      right = l;
+    }
+  };
+  consider(document.getElementById('legend'));
+  consider(document.getElementById('controls'));
+  allPanels().forEach(consider);
+  return { left: left, right: right };
+}
+
+${''}
+// Breathing room in screen pixels. Node labels are already inside the
+// measured content box (see getBoundingBox below), so this is margin only,
+// not an allowance for anything unmeasured.
+const VIEW_PADDING_PX = 28;
+
+// Frames the current nodes arithmetically instead of calling network.fit(),
+// which frames centres only, will not zoom past 1.0, and knows nothing about
+// the panels drawn over the canvas. Every term here is already known: the node
+// bounding box, the usable area, and the zoom cap.
+function fitCurrentView() {
+  const container = document.getElementById('network');
+  const ids = nodes.getIds();
+  if (!container || !ids.length) return;
+  const canvasW = container.clientWidth;
+  const canvasH = container.clientHeight;
+  if (!canvasW || !canvasH) return;
+
+  // getBoundingBox() gives each node's real drawn extent INCLUDING its label,
+  // which getPositions() does not: a node with a three-line label reaches about
+  // 69 units below its centre against 17 above, and framing on centres alone is
+  // what left those labels cut off at the canvas edge. Falls back to the bare
+  // position if a node has no box yet.
+  const pos = network.getPositions(ids);
+  let minX = null, maxX = null, minY = null, maxY = null;
+  ids.forEach(function (id) {
+    let box = null;
+    try { box = network.getBoundingBox(id); } catch (e) { box = null; }
+    if (!box || !isFinite(box.left) || !isFinite(box.top)) {
+      const p = pos[id];
+      if (!p) return;
+      box = { left: p.x, right: p.x, top: p.y, bottom: p.y };
+    }
+    if (minX === null || box.left < minX) minX = box.left;
+    if (maxX === null || box.right > maxX) maxX = box.right;
+    if (minY === null || box.top < minY) minY = box.top;
+    if (maxY === null || box.bottom > maxY) maxY = box.bottom;
+  });
+  if (minX === null) return;
+
+  const region = visibleRegion(container);
+  const usableW = (region.right - region.left) - VIEW_PADDING_PX * 2;
+  const usableH = canvasH - VIEW_PADDING_PX * 2;
+  if (usableW <= 0 || usableH <= 0) return;
+
+  // A single node, or a row of them, has no extent on one axis - fall back to
+  // the cap on that axis rather than dividing by zero.
+  const contentW = maxX - minX;
+  const contentH = maxY - minY;
+  const cap = currentFitOptions.maxZoomLevel || 1;
+  const scale = Math.min(
+    contentW > 0 ? usableW / contentW : cap,
+    contentH > 0 ? usableH / contentH : cap,
+    cap
+  );
+  if (!(scale > 0) || !isFinite(scale)) return;
+
+  // Centre the content on the free region rather than on the canvas: shift by
+  // how far that region's own centre sits from the canvas centre.
+  const offsetPx = (region.left + region.right) / 2 - canvasW / 2;
+  network.moveTo({
+    position: { x: (minX + maxX) / 2 - offsetPx / scale, y: (minY + maxY) / 2 },
+    scale: scale,
+    animation: false
   });
 }
-settle();
+
+// Panels are populated AFTER being shown (bringToFront then extLoad/iconsLoad),
+// so framing at the moment one opens measures an empty panel and the content
+// then grows over the graph. Their close buttons do not reframe either, so the
+// freed space was never reclaimed. Rather than chase every open/load/close
+// site and miss the next one, watch the overlays themselves and reframe
+// whenever their geometry changes. Debounced, because a panel rendering a long
+// table resizes many times in a row.
+let panelResizeTimer = null;
+function watchOverlayGeometry() {
+  if (typeof ResizeObserver === 'undefined') return;
+  const observer = new ResizeObserver(function () {
+    if (panelResizeTimer) clearTimeout(panelResizeTimer);
+    panelResizeTimer = setTimeout(fitCurrentView, 120);
+  });
+  // moveTo() cannot change a panel's size, so this cannot feed itself.
+  [document.getElementById('legend'), document.getElementById('controls')]
+    .concat(allPanels())
+    .forEach(function (el) { if (el && el.nodeType === 1) observer.observe(el); });
+}
+// Deferred one tick: the panel consts are declared much further down this
+// script, so they do not exist yet at this point in the file.
+setTimeout(watchOverlayGeometry, 0);
+
+// shelve is false for any narrowed view: the shelf belongs to the whole-hub
+// map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
+// which is an upsert, so running it against a focused dataset silently added
+// every inert node back and collapsed the fit to a fraction of its scale.
+function settle(shelve) {
+  // A narrowed view rebuilds the DataSet with physics live, so the nodes are
+  // watched flying apart and the framing then snaps the view back. The page's
+  // own first settle never shows that because it happens before anything is
+  // drawn. So hide the canvas for the duration and reveal it already framed:
+  // the correction stops being something to watch.
+  //
+  // opacity, NEVER display:none - hiding by display collapses the container to
+  // zero width, and fitCurrentView() measures that container to decide the
+  // scale. It would frame against nothing and bail out.
+  const canvasEl = document.getElementById('network');
+  const reveal = function () { if (canvasEl) canvasEl.style.opacity = ''; };
+  if (!shelve && canvasEl) canvasEl.style.opacity = '0';
+  let finished = false;
+  const finish = function () {
+    if (finished) return;
+    finished = true;
+    network.setOptions({ physics: { enabled: false } });
+    if (shelve) shelveInertNodes();
+    fitCurrentView();
+    reveal();
+  };
+  network.once('stabilizationIterationsDone', finish);
+  // vis does not always emit that event, and when it does not the fit never
+  // runs and the view keeps the previous zoom. Measured live on a device
+  // focus: six nodes left at whole-hub scale in a three-pixel blob. The
+  // fallback is deliberately limited to narrowed views - shelve is true only
+  // for the whole-hub map, whose startup path has been broken twice by changes
+  // around this and is left exactly as it was. A handful of nodes settles well
+  // inside this delay, so the timer only fires when the event genuinely did
+  // not, and finish() is guarded so both routes cannot run it twice.
+  if (!shelve) {
+    setTimeout(finish, 1500);
+    // Last resort. finish() already reveals and is guarded, but the canvas must
+    // never be left invisible if anything above throws.
+    setTimeout(reveal, 4000);
+  }
+}
+settle(true);
 
 // Gordon's own fix for the "no visible jiggle on first open" request, after
 // the earlier attempt to rebuild this by changing the physics/stabilization
@@ -7726,7 +7897,7 @@ network.once('stabilizationIterationsDone', function () {
 let refitTimer = null;
 window.addEventListener('resize', function () {
   if (refitTimer) clearTimeout(refitTimer);
-  refitTimer = setTimeout(function () { network.fit({ animation: false }); }, 200);
+  refitTimer = setTimeout(fitCurrentView, 200);
 });
 
 // Three passes, not one, so a hasComponent (device-owned component) edge
@@ -7848,11 +8019,18 @@ function applyFilters() {
   nodes.clear(); nodes.add(styled);
   edges.clear(); edges.add(shownEdges);
 
+  // ids is null only when nothing is focused AND the relationship filter is
+  // "all" - exactly the start-up / Show all view the shelf belongs to. Any
+  // narrowed view skips the shelf and is allowed to magnify instead.
+  const wholeMap = (ids === null);
+  currentFitOptions = wholeMap ? { animation: false }
+                               : { animation: false, maxZoomLevel: FOCUS_MAX_ZOOM };
+
   if (placed) {
-    network.fit({ animation: false });
+    fitCurrentView();
   } else {
     network.setOptions({ physics: { enabled: true } });
-    settle();
+    settle(wholeMap);
   }
 }
 
@@ -8171,6 +8349,9 @@ function bringToFront(panel) {
   panel.style.zIndex = panelTopZ;
   panel.style.display = 'block';
   syncLegendVisibility();
+  // The panel now covers part of the canvas, so a narrowed view needs
+  // re-framing into what is left. No-ops on the whole-hub map.
+  fitCurrentView();
 }
 
 // An app that references nothing has no flow to draw, but it is not true that
@@ -8384,6 +8565,7 @@ if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () {
     flowPanel.style.display = 'none';
     syncLegendVisibility();
+    fitCurrentView();
   });
 }
 
@@ -11357,6 +11539,7 @@ function closeSecondaryPanels() {
     }
   }
   syncLegendVisibility();
+  fitCurrentView();
 }
 
 function exitToWholeMap() {

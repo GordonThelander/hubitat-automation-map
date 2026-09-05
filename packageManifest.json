@@ -1,12 +1,12 @@
 {
     "packageName": "Automation Map (Preprod)",
     "author": "Gordon Thelander",
-    "version": "2.2.1",
+    "version": "2.2.3",
     "minimumHEVersion": "2.5.1",
     "dateReleased": "2026-09-02",
     "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/preprod/README.md",
     "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-    "releaseNotes": "v2.2.1: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.\n\nSince the last production release (2.2.0):\n\n- Insights now flags a paused or disabled rule that another rule still calls, so you can see where a calling rule silently does nothing at that step.\n- Insights now flags a disabled device that automations still command or wait on as a trigger, where those commands cannot land and those triggers cannot fire.\n- Insights now lists any rule Hubitat itself has marked broken.\n- Every paused or disabled rule is also listed as plain context rather than as a fault, since pausing a rule is usually deliberate.\n- Local Variables that are declared but never read or written now get their own finding, matching what Hub Variables already had.",
+    "releaseNotes": "v2.2.3: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.\n\nSince the last production release (2.2.1):\n\n- Focusing an app, device or variable now fills the available space properly, instead of leaving a handful of nodes too small to read.\n- The map no longer draws underneath the legend, the controls menu, or an open panel such as the rule flowchart, External systems or Pivot tables.\n- Node labels are no longer cut off at the edge of the view.\n- The map no longer visibly jumps about while a focused view settles.",
     "apps": [
         {
             "id": "ad31f3b0-cad1-4aaa-8f17-6215e4a3b6d0",
@@ -16,7 +16,7 @@
             "required": true,
             "oauth": true,
             "primary": true,
-            "version": "2.2.1"
+            "version": "2.2.3"
         }
     ]
 }
