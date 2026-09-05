@@ -3037,6 +3037,12 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             // status is real information, it just does not belong painted
             // across the canvas. See nodeEntry for which form goes where.
             out.drawLabel = stripStatusMarkup(rawLabel)
+            // Hubitat marks an app it considers broken by injecting *BROKEN*
+            // into the label itself; there is no separate structured flag for
+            // it. Read before the markup is stripped, and kept out of
+            // statusWord below so the title cannot show a duplicate of what
+            // Hubitat already renders.
+            out.broken = rawLabel.contains('*BROKEN*')
             out.type = stripReplacementChar(installedApp?.name as String)
             // definitionName's namespace, for the Community Context Card match
             // only (spec section 4.1) - never added to the AI-friendly export.
@@ -5240,6 +5246,7 @@ Map buildGraph() {
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (appMap.disabled) nodes[appNodeId].disabled = true
         if (appMap.paused) nodes[appNodeId].paused = true
+        if (appMap.broken) nodes[appNodeId].broken = true
         if (unreadable) {
             nodes[appNodeId].unreadable = true
             nodes[appNodeId].reason = subtitle
@@ -9305,6 +9312,34 @@ function deriveInsightData() {
   const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; });
   const hubVarIds = ALL_NODES.filter(function (n) { return n.group === 'hubVariable'; }).map(function (n) { return n.id; });
 
+  // Things that look fine but silently do nothing. Each needs a second fact
+  // beyond the state itself: a paused rule nothing calls, or a disabled device
+  // nothing uses, is very often paused or disabled on purpose and is not a
+  // finding. Only the combination is actionable.
+  const disabledDeviceIds = {};
+  devices.forEach(function (n) { if (n.disabled) disabledDeviceIds[n.id] = true; });
+  // pauseResume is deliberately excluded: a rule whose whole job is to pause
+  // or resume another rule is the mechanism working, not a silent failure.
+  const INVOKE_KINDS = { runs: 1, cancelTimedActions: 1, setspb: 1 };
+  const invokedBy = {};
+  const disabledDeviceUsers = {};
+  ALL_EDGES.forEach(function (e) {
+    if (INVOKE_KINDS[e.kind]) {
+      if (!invokedBy[e.to]) invokedBy[e.to] = [];
+      if (invokedBy[e.to].indexOf(e.from) < 0) invokedBy[e.to].push(e.from);
+    }
+    // An action a disabled device can never carry out, or a trigger it can
+    // never emit. Constraint and monitor reads are excluded - a stale reading
+    // is a weaker and much noisier claim than a command that cannot land.
+    if ((e.kind === 'action' || e.kind === 'trigger') && disabledDeviceIds[e.to]) {
+      if (!disabledDeviceUsers[e.to]) disabledDeviceUsers[e.to] = [];
+      if (disabledDeviceUsers[e.to].indexOf(e.from) < 0) disabledDeviceUsers[e.to].push(e.from);
+    }
+  });
+  const inactiveApps = ALL_NODES.filter(function (n) {
+    return n.group === 'app' && (n.disabled || n.paused);
+  });
+
   return {
     missingIds: missingIds,
     referencesTo: referencesTo,
@@ -9322,6 +9357,21 @@ function deriveInsightData() {
     }).map(function (n) { return n.id; }),
     inertNodes: ALL_NODES.filter(function (n) { return n.inert; }),
     unreadableNodes: ALL_NODES.filter(function (n) { return n.unreadable; }),
+    invokedBy: invokedBy,
+    disabledDeviceUsers: disabledDeviceUsers,
+    // Paused or disabled, and still invoked by another rule that therefore
+    // silently does nothing at that step.
+    inactiveInvoked: inactiveApps
+      .filter(function (n) { return invokedBy[n.id] && invokedBy[n.id].length; })
+      .map(function (n) { return n.id; }),
+    // Every paused/disabled rule, reported as context rather than as a fault.
+    inactiveApps: inactiveApps.map(function (n) { return n.id; }),
+    // Hubitat's own broken marker, not this scan's opinion.
+    brokenApps: ALL_NODES.filter(function (n) { return n.broken; }).map(function (n) { return n.id; }),
+    disabledDevicesInUse: Object.keys(disabledDeviceUsers),
+    unreferencedLocals: ALL_NODES
+      .filter(function (n) { return n.group === 'localVariable' && n.unreferencedLocal; })
+      .map(function (n) { return n.id; }),
     hubVar: {
       readers: hubVarReaders,
       writers: hubVarWriters,
@@ -9429,6 +9479,30 @@ function insightGuidance() {
         meaning: 'No decoded rule reads or writes this Hub Variable.',
         normal: 'It may be unused, manually maintained, externally consumed or used by an app engine this scan cannot decode.',
         next: 'Check Connectors, dashboards and external integrations before deciding it is obsolete.'
+      },
+      inactiveRuleInvoked: {
+        meaning: 'This rule is paused or disabled, but another rule still runs it. That step in the calling rule silently does nothing.',
+        normal: 'Pausing a rule on purpose is normal. It is the caller that still expects it to work which makes this worth checking.',
+        next: 'Either resume this rule, or open the calling rule and remove the action that no longer does anything.'
+      },
+      ruleFlaggedBroken: {
+        meaning: 'Hubitat itself marks this rule as broken, usually because it references something that no longer exists.',
+        next: 'Open the rule in Rule Machine. Hubitat shows the broken step directly, which is faster than working back from the map.'
+      },
+      disabledDeviceInUse: {
+        meaning: 'This device is disabled, but automations still send it commands or wait on it as a trigger. Those commands cannot land and those triggers cannot fire.',
+        normal: 'A device disabled deliberately while being repaired or replaced will look like this until the automations are updated too.',
+        next: 'Either re-enable the device, or update the automations listed here so they no longer depend on it.'
+      },
+      inactiveRule: {
+        meaning: 'This rule is paused or disabled, so it will not run.',
+        normal: 'Almost always deliberate - seasonal automations, rules kept for reference, or ones paused by another rule.',
+        next: 'No action needed unless you expected it to be running. Anything paused that another rule still calls is listed separately under Needs attention.'
+      },
+      unreferencedLocalVariable: {
+        meaning: 'This Local Variable is declared in its rule, but no decoded trigger, condition or action reads or writes it.',
+        normal: 'It may be genuinely unused, or used in a part of the rule this scan cannot decode. The same caveat already applies to Hub Variables with no decoded usage.',
+        next: 'Open the owning rule and check whether the variable is still needed before removing it.'
       }
     }
   };
@@ -9503,7 +9577,8 @@ function buildInsights() {
 
   // --- Needs attention: only things genuinely wrong -----------------------
   const scanBad = D.scan.status !== 'complete';
-  const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0);
+  const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0) +
+    D.brokenApps.length + D.inactiveInvoked.length + D.disabledDevicesInUse.length;
   let attentionBody = '';
   if (scanBad) {
     const what = D.scan.status === 'failed'
@@ -9516,6 +9591,23 @@ function buildInsights() {
     attentionBody += rows(D.brokenTargets,
       function (id) { return (D.referencesTo[id] || []).length + ' referencing'; },
       function (id) { return advice('brokenRuleReference') + '<p class="sub"><b>Referenced by:</b> ' + appLinks(D.referencesTo[id]) + '</p>'; });
+  }
+  if (D.brokenApps.length) {
+    attentionBody += '<p class="insLead">' + D.brokenApps.length + ' rule(s) are marked broken by Hubitat itself.</p>';
+    attentionBody += rows(D.brokenApps, function () { return 'flagged by Hubitat'; },
+      function () { return advice('ruleFlaggedBroken'); });
+  }
+  if (D.inactiveInvoked.length) {
+    attentionBody += '<p class="insLead">' + D.inactiveInvoked.length + ' paused or disabled rule(s) are still called by another rule, which silently does nothing at that step.</p>';
+    attentionBody += rows(D.inactiveInvoked,
+      function (id) { return (D.invokedBy[id] || []).length + ' calling'; },
+      function (id) { return advice('inactiveRuleInvoked') + '<p class="sub"><b>Called by:</b> ' + appLinks(D.invokedBy[id]) + '</p>'; });
+  }
+  if (D.disabledDevicesInUse.length) {
+    attentionBody += '<p class="insLead">' + D.disabledDevicesInUse.length + ' disabled device(s) are still commanded or used as a trigger. Those commands cannot land and those triggers cannot fire.</p>';
+    attentionBody += rows(D.disabledDevicesInUse,
+      function (id) { return (D.disabledDeviceUsers[id] || []).length + ' automations'; },
+      function (id) { return advice('disabledDeviceInUse') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.disabledDeviceUsers[id]) + '</p>'; });
   }
 
   // --- Shared control to confirm: review prompts, not faults ---------------
@@ -9577,7 +9669,12 @@ function buildInsights() {
 
   // --- Normal patterns: explanations, not findings -------------------------
   const containers = D.inertNodes.filter(function (n) { return n.holds || (n.kids && n.kids.length); });
-  const normalCount = D.readOnly.length + D.notifiedOnly.length + containers.length + hv.noDecodedUsage.length;
+  // Paused rules already reported under Needs attention because something calls
+  // them are excluded here, so one rule is never counted as both a fault and an
+  // expected pattern.
+  const inactiveQuiet = D.inactiveApps.filter(function (id) { return D.inactiveInvoked.indexOf(id) < 0; });
+  const normalCount = D.readOnly.length + D.notifiedOnly.length + containers.length +
+    hv.noDecodedUsage.length + inactiveQuiet.length + D.unreferencedLocals.length;
   let normalBody = '';
   if (D.notifiedOnly.length) {
     normalBody += '<p class="insLead">' + D.notifiedOnly.length + ' device(s) are commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
@@ -9597,6 +9694,19 @@ function buildInsights() {
         const held = n ? (n.holds || (n.kids || []).length) : 0;
         return 'holds ' + held;
       }, function () { return advice('containerApp'); });
+  }
+  if (inactiveQuiet.length) {
+    normalBody += '<p class="insLead">' + inactiveQuiet.length + ' rule(s) are paused or disabled and nothing else calls them. Usually deliberate.</p>';
+    normalBody += rows(inactiveQuiet,
+      function (id) {
+        const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
+        return (n && n.disabled) ? 'disabled' : 'paused';
+      }, function () { return advice('inactiveRule'); });
+  }
+  if (D.unreferencedLocals.length) {
+    normalBody += '<p class="insLead">' + D.unreferencedLocals.length + ' local variable(s) are declared but have no decoded read or write in their own rule.</p>';
+    normalBody += rows(D.unreferencedLocals, function () { return 'no decoded usage'; },
+      function () { return advice('unreferencedLocalVariable'); });
   }
   if (hv.noDecodedUsage.length) {
     normalBody += '<p class="insLead">' + hv.noDecodedUsage.length + ' hub variable(s) have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode.</p>';
@@ -10699,6 +10809,30 @@ function buildExportPayload(ext, icons, failedFetches) {
     return { target: ref(id, nameOf), referencedBy: (referencesTo[id] || []).map(function (a) { return ref(a, nameOf); }) };
   });
 
+  // Silent-failure findings (v2.2.1). Additive fields, so no schema bump by the
+  // rule stated above recommendedAiBehaviour. Each pairs a state with the second
+  // fact that makes it actionable rather than reporting the state alone.
+  const inactiveRulesStillCalled = INS.inactiveInvoked.map(function (id) {
+    const n = nodeById[id];
+    return {
+      rule: ref(id, nameOf),
+      state: (n && n.disabled) ? 'disabled' : 'paused',
+      calledBy: (INS.invokedBy[id] || []).map(function (a) { return ref(a, nameOf); })
+    };
+  });
+  const inactiveRules = INS.inactiveApps.map(function (id) {
+    const n = nodeById[id];
+    return { rule: ref(id, nameOf), state: (n && n.disabled) ? 'disabled' : 'paused' };
+  });
+  const rulesFlaggedBroken = INS.brokenApps.map(function (id) { return ref(id, nameOf); });
+  const disabledDevicesStillUsed = INS.disabledDevicesInUse.map(function (id) {
+    return {
+      device: ref(id, nameOf),
+      usedBy: (INS.disabledDeviceUsers[id] || []).map(function (a) { return ref(a, nameOf); })
+    };
+  });
+  const unreferencedLocalVariables = INS.unreferencedLocals.map(function (id) { return ref(id, nameOf); });
+
   // Hub Variable findings (v2.0.14, schema 4 - parent spec 8.3/11.5). Reader/
   // writer/multiple-writer findings are computed from the same GRAPH.edges
   // data as every insight above. unresolvedReferences is the one exception:
@@ -10944,7 +11078,9 @@ function buildExportPayload(ext, icons, failedFetches) {
     'A reference to a Local or Hub Variable that no longer exists appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than being silently dropped or treated as broken - Rule Machine itself may separately mark the underlying action broken (see the label on that flow step), which this export reflects but does not infer on its own.',
     // v2.1.6, schema 6 - Local Variable graph nodes.
     'A write/read edge in edges[] whose toId is absent from hubVariables[] is a Local Variable reference, not a data gap - resolve it by flattening ruleFlows[].localVariables[] and matching on identity (see the edges schema entry). Do not treat an unmatched toId as an error before checking there.',
-    'A Local Variable with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. The same "may simply be unused" caveat that already applies to a Hub Variable with insights.hubVariables.noDecodedUsage applies here too, just without a dedicated insights finding for it yet.'
+    'A Local Variable with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. The same "may simply be unused" caveat that already applies to a Hub Variable with insights.hubVariables.noDecodedUsage applies here too; these are now also collected in insights.unreferencedLocalVariables.',
+    'insights.rulesFlaggedBroken reflects the *BROKEN* marker Hubitat itself puts on an app label, which is the only place that state is exposed. It is read, not judged: absence of the marker is not proof a rule is healthy, and this scan cannot see runtime execution errors, failed actions or exceptions at all - nothing here is evidence about whether a rule actually ran or succeeded.',
+    'insights.inactiveRulesStillCalled and insights.disabledDevicesStillUsed pair a paused/disabled state with a still-live reference, which is static configuration evidence that a step cannot do anything - not evidence that it was ever reached at runtime. The calling rule may itself be paused, conditional, or never triggered.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -11019,7 +11155,7 @@ function buildExportPayload(ext, icons, failedFetches) {
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
-      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry - see that schema entry for why a weaker-guarantee node is no longer manufactured here. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data. localVariableCount and nonResolvedVariableReferenceCount (schema 5, v2.1.4) total ruleFlows[].localVariables and ruleFlows[].nonResolvedVariableReferences across every decoded rule - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
@@ -11037,6 +11173,14 @@ function buildExportPayload(ext, icons, failedFetches) {
       unreferencedDevices: unreferencedDevices,
       inertApps: inertApps,
       brokenRuleReferences: brokenRuleReferences,
+      // v2.2.1, additive. inactiveRulesStillCalled/disabledDevicesStillUsed are
+      // genuine silent failures; inactiveRules/unreferencedLocalVariables are
+      // context, almost always deliberate - see this section's limitations.
+      inactiveRulesStillCalled: inactiveRulesStillCalled,
+      rulesFlaggedBroken: rulesFlaggedBroken,
+      disabledDevicesStillUsed: disabledDevicesStillUsed,
+      inactiveRules: inactiveRules,
+      unreferencedLocalVariables: unreferencedLocalVariables,
       // v2.0.14, schema 4 (parent spec 8.3/11.5). Neutral findings, not fault
       // claims - see recommendedAiBehaviour and this section's own limitations
       // note above.
