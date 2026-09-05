@@ -1,5 +1,5 @@
 {
-    "packageName": "Automation Map",
+    "packageName": "Automation Map (Preprod)",
     "author": "Gordon Thelander",
     "version": "2.2.1",
     "minimumHEVersion": "2.5.1",
@@ -10,7 +10,7 @@
     "apps": [
         {
             "id": "ad31f3b0-cad1-4aaa-8f17-6215e4a3b6d0",
-            "name": "Automation Map",
+            "name": "Automation Map (Preprod)",
             "namespace": "Hubitat Integrations",
             "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/preprod/apps/automation_map.groovy",
             "required": true,
