@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.4'
+@Field static final String APP_VERSION = '2.2.5'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -7742,22 +7742,62 @@ function obscuredLeftWidth() {
   return widest;
 }
 
-// Re-frames a narrowed view only, which is the case where the panel and the
-// graph get read together. Doing it to the whole-hub map as well would squeeze
-// all 384 nodes into whatever Insights leaves free, and nobody reading a panel
-// over the full map wants the map shrunk to suit it.
+${''}
+// Screen pixels held clear on every side. network.fit() frames node CENTRES,
+// so a node landing on the edge still had its label and the bulge of its
+// curved edges clipped. Sized for a node radius plus a wrapped label.
+const VIEW_PADDING_PX = 90;
+
+// Frames the current nodes arithmetically instead of calling network.fit(),
+// which frames centres only, will not zoom past 1.0, and knows nothing about
+// the panels drawn over the canvas. Every term here is already known: the node
+// bounding box, the usable area, and the zoom cap.
 function fitCurrentView() {
-  network.fit(currentFitOptions);
-  if (!currentFitOptions.maxZoomLevel) return;
   const container = document.getElementById('network');
-  const canvasW = container ? container.clientWidth : 0;
-  const obscured = obscuredLeftWidth();
-  if (!canvasW || obscured <= 0 || obscured >= canvasW) return;
-  // Shrink to what is actually visible, then pan by half the covered width so
-  // the content centres in the free region rather than on the whole canvas.
-  const scale = network.getScale() * ((canvasW - obscured) / canvasW);
-  const pos = network.getViewPosition();
-  network.moveTo({ position: { x: pos.x - (obscured / 2) / scale, y: pos.y }, scale: scale, animation: false });
+  const ids = nodes.getIds();
+  if (!container || !ids.length) return;
+  const canvasW = container.clientWidth;
+  const canvasH = container.clientHeight;
+  if (!canvasW || !canvasH) return;
+
+  const pos = network.getPositions(ids);
+  let minX = null, maxX = null, minY = null, maxY = null;
+  ids.forEach(function (id) {
+    const p = pos[id];
+    if (!p) return;
+    if (minX === null || p.x < minX) minX = p.x;
+    if (maxX === null || p.x > maxX) maxX = p.x;
+    if (minY === null || p.y < minY) minY = p.y;
+    if (maxY === null || p.y > maxY) maxY = p.y;
+  });
+  if (minX === null) return;
+
+  // Only a narrowed view yields space to an open panel; the whole-hub map is
+  // deliberately left to use the full canvas.
+  const obscured = currentFitOptions.maxZoomLevel ? obscuredLeftWidth() : 0;
+  const usableW = canvasW - obscured - VIEW_PADDING_PX * 2;
+  const usableH = canvasH - VIEW_PADDING_PX * 2;
+  if (usableW <= 0 || usableH <= 0) return;
+
+  // A single node, or a row of them, has no extent on one axis - fall back to
+  // the cap on that axis rather than dividing by zero.
+  const contentW = maxX - minX;
+  const contentH = maxY - minY;
+  const cap = currentFitOptions.maxZoomLevel || 1;
+  const scale = Math.min(
+    contentW > 0 ? usableW / contentW : cap,
+    contentH > 0 ? usableH / contentH : cap,
+    cap
+  );
+  if (!(scale > 0) || !isFinite(scale)) return;
+
+  // Centre the content in the free region: its own centre, shifted left in
+  // canvas units by half the covered width so it sits clear of the panel.
+  network.moveTo({
+    position: { x: (minX + maxX) / 2 - (obscured / 2) / scale, y: (minY + maxY) / 2 },
+    scale: scale,
+    animation: false
+  });
 }
 
 // shelve is false for any narrowed view: the shelf belongs to the whole-hub
