@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.5'
+@Field static final String APP_VERSION = '2.2.6'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -7743,10 +7743,10 @@ function obscuredLeftWidth() {
 }
 
 ${''}
-// Screen pixels held clear on every side. network.fit() frames node CENTRES,
-// so a node landing on the edge still had its label and the bulge of its
-// curved edges clipped. Sized for a node radius plus a wrapped label.
-const VIEW_PADDING_PX = 90;
+// Breathing room in screen pixels. Node labels are already inside the
+// measured content box (see getBoundingBox below), so this is margin only,
+// not an allowance for anything unmeasured.
+const VIEW_PADDING_PX = 28;
 
 // Frames the current nodes arithmetically instead of calling network.fit(),
 // which frames centres only, will not zoom past 1.0, and knows nothing about
@@ -7760,15 +7760,25 @@ function fitCurrentView() {
   const canvasH = container.clientHeight;
   if (!canvasW || !canvasH) return;
 
+  // getBoundingBox() gives each node's real drawn extent INCLUDING its label,
+  // which getPositions() does not: a node with a three-line label reaches about
+  // 69 units below its centre against 17 above, and framing on centres alone is
+  // what left those labels cut off at the canvas edge. Falls back to the bare
+  // position if a node has no box yet.
   const pos = network.getPositions(ids);
   let minX = null, maxX = null, minY = null, maxY = null;
   ids.forEach(function (id) {
-    const p = pos[id];
-    if (!p) return;
-    if (minX === null || p.x < minX) minX = p.x;
-    if (maxX === null || p.x > maxX) maxX = p.x;
-    if (minY === null || p.y < minY) minY = p.y;
-    if (maxY === null || p.y > maxY) maxY = p.y;
+    let box = null;
+    try { box = network.getBoundingBox(id); } catch (e) { box = null; }
+    if (!box || !isFinite(box.left) || !isFinite(box.top)) {
+      const p = pos[id];
+      if (!p) return;
+      box = { left: p.x, right: p.x, top: p.y, bottom: p.y };
+    }
+    if (minX === null || box.left < minX) minX = box.left;
+    if (maxX === null || box.right > maxX) maxX = box.right;
+    if (minY === null || box.top < minY) minY = box.top;
+    if (maxY === null || box.bottom > maxY) maxY = box.bottom;
   });
   if (minX === null) return;
 
