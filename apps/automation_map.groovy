@@ -195,6 +195,9 @@ void installed() {
     if (diagOn()) log.info "${app.label}: starting first scan"
     startScan()
     scheduleAutoScan()
+    scheduleUpdateCheck()
+    // One check straight away, so a fresh install is not silent until 3am.
+    runIn(30, 'updateCheckHandler')
 }
 
 void updated() {
@@ -207,6 +210,85 @@ void updated() {
     // chosen time takes effect immediately.
     scheduleAutoScan()
     scheduleDiagnosticLoggingExpiry()
+    scheduleUpdateCheck()
+}
+
+// Update notice (backlog item 21). Tells the user a newer version has been
+// published; never installs anything. Installing from inside the app would
+// need their hub credentials and would rewrite this file while it is
+// executing, which is a class of problem HPM itself has been bitten by.
+//
+// Checked against the channel THIS build came from, not always main: a Dev
+// build is normally ahead of main, and comparing it to main would tell every
+// tester they are behind. A preprod build reports as production and so checks
+// main, which is correct - its version deliberately matches production, so it
+// has nothing to report unless production genuinely moves ahead.
+String updateManifestUrl() {
+    String branch = isDevBuild() ? 'dev' : 'main'
+    return "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${branch}/packageManifest.json"
+}
+
+// Numeric, segment by segment. A string compare would rank 2.2.10 below
+// 2.2.9. Anything unparseable returns false rather than guessing.
+boolean isNewerVersion(String candidate, String current) {
+    if (!candidate || !current) return false
+    try {
+        List a = candidate.tokenize('.').collect { it.toInteger() }
+        List b = current.tokenize('.').collect { it.toInteger() }
+        int len = Math.max(a.size(), b.size())
+        for (int i = 0; i < len; i++) {
+            int x = i < a.size() ? a[i] : 0
+            int y = i < b.size() ? b[i] : 0
+            if (x != y) return x > y
+        }
+        return false
+    } catch (Exception ignored) {
+        return false
+    }
+}
+
+// Daily, in the hub's OWN timezone - Hubitat cron is local, so one early
+// hour is correct in every region with no UTC conversion and no DST handling.
+// The minute is derived from the app id so installs do not all wake at the
+// same instant and hit GitHub together.
+void scheduleUpdateCheck() {
+    unschedule('updateCheckHandler')
+    int minute = Math.abs((app.id as Integer)) % 60
+    schedule("0 ${minute} 3 * * ?", 'updateCheckHandler')
+    if (diagOn()) log.info "${app.label}: update check scheduled daily at 03:${minute.toString().padLeft(2, '0')} local"
+}
+
+void updateCheckHandler() {
+    try {
+        asynchttpGet('updateCheckCb', [uri: updateManifestUrl(), contentType: 'text/plain', timeout: 20])
+    } catch (Exception e) {
+        // Silent by design: an update check must never surface an error.
+        if (diagOn()) log.info "${app.label}: update check could not start: ${e.message}"
+    }
+}
+
+void updateCheckCb(resp, data) {
+    try {
+        if (resp?.status != 200) return
+        Map published = new groovy.json.JsonSlurper().parseText(resp.data as String) as Map
+        String latest = published?.version as String
+        if (!latest) return
+        state.latestPublishedVersion = latest
+    } catch (Exception e) {
+        if (diagOn()) log.info "${app.label}: update check response unusable: ${e.message}"
+    }
+}
+
+// Empty string when there is nothing to say, so the caller can append it
+// unconditionally.
+String updateNoticeSuffix() {
+    String latest = state.latestPublishedVersion as String
+    // Blue rather than red: this is information, not a fault, and red reads
+    // as something being wrong. Darker than the page's own link blue so it is
+    // not mistaken for something clickable. Single-quoted attribute so this
+    // stays clear of the quoting and backslash traps that have killed this
+    // file's page script before.
+    return isNewerVersion(latest, APP_VERSION) ? " <span style='color:#1565c0'>(update available: ${latest})</span>" : ''
 }
 
 // v2.1.8: on-demand diagnostic logging for troubleshooting, off by default.
@@ -446,7 +528,7 @@ Map main() {
     // A long fallback interval is kept, not removed entirely, in case the
     // JS poll itself ever fails to start or silently stalls - the same
     // belt-and-suspenders reasoning as the async pipeline's own watchdogs.
-    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}</b>", install: true, uninstall: ready,
+    return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}${updateNoticeSuffix()}</b>", install: true, uninstall: ready,
                        refreshInterval: (ready && scanActive) ? 60 : 0) {
         // Scan status, the map link and the Scan button all sit ABOVE the device
         // picker. The picker renders as a list of every device on the hub, so
@@ -603,6 +685,14 @@ Map main() {
                 // inputs (confirmed live - item 8), so the explanation is a
                 // paragraph instead, which does render.
                 paragraph "Runs automatically once a day, on by default at ${defaultAutoScanTime()} - turn off below if you would rather press Scan yourself."
+                // Plain disclosure of the one outbound request this app makes
+                // on its own. The objection to the removed telemetry driver
+                // was never what it collected, it was that it phoned out
+                // without the user having agreed to it - so this says exactly
+                // what is fetched and that nothing is sent. Deliberately not
+                // tied to the scan toggle above: turning scanning off must not
+                // silently stop update notices.
+                paragraph "Separately, once a day this app reads a small file from its own GitHub repository to see whether a newer version has been published, and shows the version number at the top of this page if so. Nothing is sent, and it never installs anything - updates are still made through Hubitat Package Manager."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
                     defaultValue: true, submitOnChange: true
