@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.3'
+@Field static final String APP_VERSION = '2.2.4'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -7765,11 +7765,24 @@ function fitCurrentView() {
 // which is an upsert, so running it against a focused dataset silently added
 // every inert node back and collapsed the fit to a fraction of its scale.
 function settle(shelve) {
-  network.once('stabilizationIterationsDone', function () {
+  let finished = false;
+  const finish = function () {
+    if (finished) return;
+    finished = true;
     network.setOptions({ physics: { enabled: false } });
     if (shelve) shelveInertNodes();
     fitCurrentView();
-  });
+  };
+  network.once('stabilizationIterationsDone', finish);
+  // vis does not always emit that event, and when it does not the fit never
+  // runs and the view keeps the previous zoom. Measured live on a device
+  // focus: six nodes left at whole-hub scale in a three-pixel blob. The
+  // fallback is deliberately limited to narrowed views - shelve is true only
+  // for the whole-hub map, whose startup path has been broken twice by changes
+  // around this and is left exactly as it was. A handful of nodes settles well
+  // inside this delay, so the timer only fires when the event genuinely did
+  // not, and finish() is guarded so both routes cannot run it twice.
+  if (!shelve) setTimeout(finish, 1500);
 }
 settle(true);
 
