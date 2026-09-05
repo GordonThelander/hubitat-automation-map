@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.1'
+@Field static final String APP_VERSION = '2.2.2'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -7720,14 +7720,28 @@ network.on('afterDrawing', function (ctx) {
   ctx.restore();
 });
 
-function settle() {
+// vis-network's fit() will not zoom in past 1.0 unless told it may, so a view
+// holding a handful of nodes was left at 1:1 in a full-size canvas and read as
+// tiny. Whole-hub views compute far below 1.0 anyway, so this cap only ever
+// applies to a narrowed view. Held as state rather than passed at each call
+// site so settle(), the resize refit and the focused-app path cannot disagree
+// about the zoom of the same view.
+const FOCUS_MAX_ZOOM = 2.0;
+let currentFitOptions = { animation: false };
+function fitCurrentView() { network.fit(currentFitOptions); }
+
+// shelve is false for any narrowed view: the shelf belongs to the whole-hub
+// map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
+// which is an upsert, so running it against a focused dataset silently added
+// every inert node back and collapsed the fit to a fraction of its scale.
+function settle(shelve) {
   network.once('stabilizationIterationsDone', function () {
     network.setOptions({ physics: { enabled: false } });
-    shelveInertNodes();
-    network.fit({ animation: false });
+    if (shelve) shelveInertNodes();
+    fitCurrentView();
   });
 }
-settle();
+settle(true);
 
 // Gordon's own fix for the "no visible jiggle on first open" request, after
 // the earlier attempt to rebuild this by changing the physics/stabilization
@@ -7769,7 +7783,7 @@ network.once('stabilizationIterationsDone', function () {
 let refitTimer = null;
 window.addEventListener('resize', function () {
   if (refitTimer) clearTimeout(refitTimer);
-  refitTimer = setTimeout(function () { network.fit({ animation: false }); }, 200);
+  refitTimer = setTimeout(fitCurrentView, 200);
 });
 
 // Three passes, not one, so a hasComponent (device-owned component) edge
@@ -7891,11 +7905,18 @@ function applyFilters() {
   nodes.clear(); nodes.add(styled);
   edges.clear(); edges.add(shownEdges);
 
+  // ids is null only when nothing is focused AND the relationship filter is
+  // "all" - exactly the start-up / Show all view the shelf belongs to. Any
+  // narrowed view skips the shelf and is allowed to magnify instead.
+  const wholeMap = (ids === null);
+  currentFitOptions = wholeMap ? { animation: false }
+                               : { animation: false, maxZoomLevel: FOCUS_MAX_ZOOM };
+
   if (placed) {
-    network.fit({ animation: false });
+    fitCurrentView();
   } else {
     network.setOptions({ physics: { enabled: true } });
-    settle();
+    settle(wholeMap);
   }
 }
 
