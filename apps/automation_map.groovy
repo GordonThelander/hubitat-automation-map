@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.2'
+@Field static final String APP_VERSION = '2.2.3'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -7728,7 +7728,37 @@ network.on('afterDrawing', function (ctx) {
 // about the zoom of the same view.
 const FOCUS_MAX_ZOOM = 2.0;
 let currentFitOptions = { animation: false };
-function fitCurrentView() { network.fit(currentFitOptions); }
+
+// Width covered by an open left-anchored panel (#flow, #ext, #pivot), in
+// screen pixels. They are drawn over the canvas rather than beside it, so
+// anything fitted to the full canvas ends up partly underneath the open one.
+function obscuredLeftWidth() {
+  let widest = 0;
+  allPanels().forEach(function (p) {
+    if (!p || getComputedStyle(p).display === 'none') return;
+    const edge = p.offsetLeft + p.offsetWidth;
+    if (edge > widest) widest = edge;
+  });
+  return widest;
+}
+
+// Re-frames a narrowed view only, which is the case where the panel and the
+// graph get read together. Doing it to the whole-hub map as well would squeeze
+// all 384 nodes into whatever Insights leaves free, and nobody reading a panel
+// over the full map wants the map shrunk to suit it.
+function fitCurrentView() {
+  network.fit(currentFitOptions);
+  if (!currentFitOptions.maxZoomLevel) return;
+  const container = document.getElementById('network');
+  const canvasW = container ? container.clientWidth : 0;
+  const obscured = obscuredLeftWidth();
+  if (!canvasW || obscured <= 0 || obscured >= canvasW) return;
+  // Shrink to what is actually visible, then pan by half the covered width so
+  // the content centres in the free region rather than on the whole canvas.
+  const scale = network.getScale() * ((canvasW - obscured) / canvasW);
+  const pos = network.getViewPosition();
+  network.moveTo({ position: { x: pos.x - (obscured / 2) / scale, y: pos.y }, scale: scale, animation: false });
+}
 
 // shelve is false for any narrowed view: the shelf belongs to the whole-hub
 // map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
@@ -8235,6 +8265,9 @@ function bringToFront(panel) {
   panel.style.zIndex = panelTopZ;
   panel.style.display = 'block';
   syncLegendVisibility();
+  // The panel now covers part of the canvas, so a narrowed view needs
+  // re-framing into what is left. No-ops on the whole-hub map.
+  fitCurrentView();
 }
 
 // An app that references nothing has no flow to draw, but it is not true that
@@ -8448,6 +8481,7 @@ if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () {
     flowPanel.style.display = 'none';
     syncLegendVisibility();
+    fitCurrentView();
   });
 }
 
@@ -11421,6 +11455,7 @@ function closeSecondaryPanels() {
     }
   }
   syncLegendVisibility();
+  fitCurrentView();
 }
 
 function exitToWholeMap() {
