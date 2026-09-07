@@ -7019,7 +7019,20 @@ String buildMapHtml() {
      compete for attention rather than blend in. The accent border reuses
      the app-node amber already established elsewhere on the page rather
      than introducing a new colour. */
-  #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:#0a2530; padding:14px 18px; border-radius:6px;
+  /* right:360px, not 16px - #controls (right:10px, width:300px, no
+     box-sizing:border-box so its own 14px+14px padding renders it at a real
+     328px, not 300px) has grown to 11+ rows over this session's own
+     additions (five focus combos, the show filter, the full tool rail) and
+     can genuinely reach this far down the page on a fresh install with no
+     data-dependent shortening, so a bottom-right hint anchored the old,
+     closer 16px sat directly under it - #controls' z-index:9000 then
+     painted over it regardless of #hint's own z-index below, since a taller
+     sibling always wins that fight. Clearing it horizontally
+     (10 + 328 actual rendered width + 22 gap = 360, confirmed live against
+     the real rendered width, not the bare CSS number) is a permanent fix
+     that does not depend on either element's height, unlike a z-index
+     number would. */
+  #hint { position:absolute; bottom:16px; right:360px; z-index:15; background:#0a2530; padding:14px 18px; border-radius:6px;
           max-width:320px; font-size:0.85em; line-height:1.5; border:2px solid #e8a33d;
           box-shadow:0 4px 28px rgba(0,0,0,0.6), 0 0 0 4px rgba(232,163,61,0.12); }
   #hint b:first-child { display:block; font-size:1.25em; color:#e8a33d; margin-bottom:6px; }
@@ -12004,8 +12017,8 @@ document.getElementById('legendPanelClose').addEventListener('click', function (
   hint.id = 'hint';
   hint.innerHTML = '<b>Start here</b><br>' +
     'This is every app and device on your hub at once, so it looks busy - that is expected.<br><br>' +
-    '<b>Click any node</b> to drill in, or use the dropdowns above to search by app or device instead. Click a rule and you also get a flowchart of how it works. Click one of its devices to see everything else touching that device.<br><br>' +
-    '<b>Other panels:</b> Insights (devices several apps share), External systems, Pivot tables, Device icons.<br><br>' +
+    '<b>Click any node</b> to drill in, or use Quick Search or the dropdowns above to jump straight to an app, device or variable. Click a rule and you also get a flowchart of how it works. Click one of its devices to see everything else touching that device.<br><br>' +
+    '<b>Other panels:</b> Insights (a health check for the whole map), External systems, Pivot tables, Device icons, Hubitat release activity.<br><br>' +
     'Take your time to explore.' +
     '<div style="margin-top:12px"><button id="hintClose" type="button">Got it</button></div>';
   document.body.appendChild(hint);
