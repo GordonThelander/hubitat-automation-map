@@ -6972,38 +6972,44 @@ String buildMapHtml() {
     #controls, #legend, #hint, #network, #flow, #status, #hubWatermark { display:none !important; }
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
-  /* Draggable and defaults to sitting below the legend rather than the
-     usual top:100px/left:10px corner or a fixed centred position - both
-     tried and rejected live, Gordon wants this panel out of the legend's
-     way AND moveable by hand, not auto-positioned only. JS (positionFlow
-     PanelDefault(), called from bringToFront() the first time this panel
-     opens each page load) sets the real left/top against the legend's own
-     current bottom edge; this rule's own top/left is only the pre-JS
-     fallback. Smaller base font-size (was unset, inheriting the page's
-     16px) shrinks every em-based rule below it in one place - #insRoot
-     sets its own explicit 15px and is unaffected, this only touches the
-     flowchart's surrounding chrome (title/back-link/notes); the
-     flowchart's own rendered text size is mermaid's own theme config, set
-     separately where mermaid.initialize() is called. */
-  #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:0 16px 12px 16px; border-radius:6px;
-          font-size:13px; max-width:min(62vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
-  /* The drag handle, and the visual cue that this panel can be dragged at
-     all - solid, saturated green (the app's own established accent, same
-     as Community utilities/the status pill) is deliberately not part of
-     this page's otherwise dark/blue palette, so it reads as "this bar
-     behaves differently" rather than blending in as ordinary chrome.
-     Negative side/top margins cancel #flow's own padding so the bar reaches
+  /* Shared by every panel now (backlog item 1 follow-up, same day as the
+     flow-only version above it): Gordon asked for the flow panel's own
+     draggable-green-header-plus-large-area treatment to become the
+     standard for all five, not stay a one-off. One class each instead of
+     five near-duplicate id rules - a future panel gets this for free by
+     using the class, not by copying CSS.
+     Large by design, not just "bigger than before" - width/height are
+     computed against the viewport (minus the ~330px the right-hand
+     control rail plus margin needs) rather than sized to content, matching
+     Gordon's own live-annotated "use the full display area" mark rather
+     than a guessed number. Position/size only; each panel keeps its own
+     content CSS below (tables, forms, the flowchart, Insights) exactly as
+     the Phase 2 shared-shell comment already explained - that split was
+     already correct, this only extends what the shared half itself covers.
+     JS (positionPanelBelowLegend(), called from bringToFront() the first
+     time any given panel opens each page load, then never again once the
+     user has dragged that specific panel - see makePanelDraggable()) sets
+     the real left/top against the legend's own current bottom edge; this
+     rule's own top/left is only the pre-JS fallback. */
+  .modernPanel { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:0 16px 12px 16px; border-radius:6px;
+                 font-size:13px; width:calc(100vw - 340px); max-width:calc(100vw - 340px); height:calc(100vh - 70px); max-height:calc(100vh - 70px);
+                 display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+  /* The drag handle, and the visual cue that a panel can be dragged at all -
+     solid, saturated green (the app's own established accent, same as
+     Community utilities/the status pill) is deliberately not part of this
+     page's otherwise dark/blue palette, so it reads as "this bar behaves
+     differently" rather than blending in as ordinary chrome. Negative
+     side/top margins cancel .modernPanel's own padding so the bar reaches
      the panel's true edges instead of sitting inset within it, with a
      matching border-radius on just the top two corners. */
-  #flowHeader { cursor:move; user-select:none; background:#81BC00; margin:0 -16px 10px -16px; padding:8px 12px 8px 16px;
-                border-radius:6px 6px 0 0; display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  #flowHeader h3 { color:#121214; }
-  /* Back to a normal flex child instead of .panelClose's own
-     position:absolute - that rule is shared with every other panel's close
-     button, which still needs it; only this one moved into a header bar of
-     its own. */
-  #flowHeader .panelClose { position:static; color:#121214; }
-  #flow h3 { margin:0; font-size:0.95em; }
+  .modernPanelHeader { cursor:move; user-select:none; background:#81BC00; flex:none; margin:0 -16px 10px -16px; padding:8px 12px 8px 16px;
+                        border-radius:6px 6px 0 0; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .modernPanelHeader h3 { color:#121214; margin:0; font-size:0.95em; }
+  /* A normal flex child instead of .panelClose's own position:absolute -
+     legendPanel needs the identical override for the identical reason (see
+     #legendTopBar below), applied separately there since it is not one of
+     the five modernPanel panels. */
+  .modernPanelHeader .panelClose { position:static; color:#121214; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
   #flow ul { margin:4px 0 0 0; padding-left:18px; }
   #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
@@ -7051,9 +7057,6 @@ String buildMapHtml() {
      adding this card's CSS crossed it. This empty interpolation splits the
      constant in two without changing anything rendered; needed again if this
      block grows much further. */
-  #ext { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-         max-width:min(74vw, 1040px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
   #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #ext table { border-collapse:collapse; width:100%; font-size:0.8em; }
   #ext th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
@@ -7076,14 +7079,11 @@ String buildMapHtml() {
   /* Its own panel rather than reusing #ext or #flow's markup for CONTENT - a
      table of links and a small query builder is a different shape of content
      from either (a settings form, a rule flowchart), so each panel still owns
-     its own table/tag/form CSS below. The outer chrome (position, background,
-     max-height, close button, header-fixed/content-scrolling behaviour) is
-     the one thing genuinely identical across all five panels - backlog item 1
-     Phase 2 pulls that into .panelBody/.panelClose (see those rules) instead
-     of five copies of the same shell rules. */
-  #pivot { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(80vw, 1100px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #pivot h3 { margin:0 0 4px 0; font-size:16px; }
+     its own table/tag/form CSS below. The outer chrome - position, size,
+     background, close button, header-fixed/content-scrolling behaviour - is
+     the one thing genuinely identical across all five panels, and now lives
+     entirely in .modernPanel/.modernPanelHeader/.panelBody/.panelClose
+     instead of five copies of the same shell rules. */
   #pivot .sub { opacity:0.72; font-size:14px; margin:0 0 12px 0; line-height:1.4; }
   #pivot a { color:#7fb6d6; text-decoration:none; }
   #pivot a:hover { text-decoration:underline; }
@@ -7097,9 +7097,6 @@ String buildMapHtml() {
   /* Its own panel rather than reusing #ext's markup for CONTENT, same as
      above - this one needs a search box and can run to ~200 rows, #ext's
      does not. */
-  #icons { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(74vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #icons h3 { margin:0 0 4px 0; font-size:0.95em; }
   #icons .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #icons input[type=search] { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:4px 7px; font-size:0.9em; font-family:inherit; width:240px; margin-bottom:10px; }
   #icons table { border-collapse:collapse; width:100%; font-size:0.8em; }
@@ -7170,32 +7167,14 @@ String buildMapHtml() {
   #insRoot a { color:#7fb6d6; text-decoration:none; }
   #insRoot a:hover { text-decoration:underline; }
   @media (max-width: 1100px) { #insRoot .insCards { grid-template-columns:repeat(2, 1fr); } }
-  /* Same "one panel's own CSS" convention as #ext/#pivot/#icons above, not a
-     reused class - see those panels' own comments for why. */
-  /* An explicit width, not just max-width like the other panels here - this
-     one needs it for a real reason, not copied without thought. The others
-     size themselves from their own content (a table's natural column
-     widths); an iframe has none of its own the browser can see, so
-     "width:100%" on it had nothing concrete to resolve against inside a
-     shrink-to-fit, width-less parent and silently fell back to a browser
-     default around 300px regardless of max-width - confirmed live, this is
-     exactly what was cramping the chart, not the CSS gap that later comment
-     used to describe as the whole story. Matches #pivot's own max-width
-     figure - the widest existing panel - which also happens to match the
-     spec's own stated upper design bound of 1100 CSS pixels
-     (community_release_activity_embed_spec.md section 3.3). */
-  /* Centered, unlike #flow/#ext/#pivot/#icons' shared top:100px/left:10px
-     corner placement - a deliberate departure for this one panel, not an
-     oversight of the convention. A rule flowchart or a data table reads
-     fine pinned to a corner; a wide chart the user is meant to actually
-     look at does not. 92vw (up from 80vw) reaches the 1100px cap on more
-     realistic window widths - the cap itself stays at 1100px, the embed's
-     own stated design bound (section 3.3), since widening the panel past
-     what the chart itself was built and tested for would add empty space
-     around it, not a bigger chart. */
-  #releaseActivity { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           width:min(92vw, 1100px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
+  /* Content CSS only now - position/size joined .modernPanel with the other
+     four (Gordon's live direction: every panel uses the same large area and
+     look, not a one-off centred/corner-pinned mix). The iframe's own
+     width:100% still needs a parent with a real resolved width to size
+     against (an iframe has none of its own the browser can see) - confirmed
+     live this was what was cramping the chart originally, not a CSS gap -
+     and .modernPanel gives it one via its own explicit width, same as it
+     did when this panel had that width set directly. */
   #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
   #releaseActivity a { color:#7fb6d6; text-decoration:none; }
@@ -7307,17 +7286,16 @@ String buildMapHtml() {
     <button id="pivotBtn" type="button">Pivot tables</button>
     <button id="iconsBtn" type="button">Device icons</button>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
-    <button id="legendBtn" type="button">Legend</button>
     <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
     <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow"><div id="flowHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
-<div id="ext"><button id="extClose" class="panelClose" type="button" title="Close">&times;</button><h3>External systems</h3><div id="extBody" class="panelBody"></div></div>
-<div id="pivot"><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button><h3>Pivot tables</h3><div id="pivotBody" class="panelBody"></div></div>
-<div id="icons"><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button><h3>Device icons</h3><div id="iconsBody" class="panelBody"></div></div>
-<div id="releaseActivity"><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="flow" class="modernPanel"><div id="flowHeader" class="modernPanelHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
+<div id="ext" class="modernPanel"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
+<div id="pivot" class="modernPanel"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
+<div id="icons" class="modernPanel"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
+<div id="releaseActivity" class="modernPanel"><div class="modernPanelHeader"><h3>Hubitat releases over time</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -8599,46 +8577,52 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // drags it for every later open - repositioning it back to default on
 // every focus change would make dragging pointless, since this panel closes
 // and reopens on almost every click.
-let flowPositionCustomized = false;
-function positionFlowPanelDefault() {
+// Generalized from the flow-panel-only version (same day): Gordon wants
+// every modernPanel panel draggable with this same below-the-legend
+// default, not just flow. A WeakMap rather than five separate booleans -
+// keyed by the panel element itself, so adding a sixth panel later needs no
+// new flag variable, just one more entry in the setup list near the bottom
+// of this script (after every panel's own const exists).
+const panelCustomPosition = new WeakMap();
+function positionPanelBelowLegend(panel) {
   const legendEl = document.getElementById('legend');
   const legendRect = legendEl ? legendEl.getBoundingClientRect() : null;
   const gap = 14;
-  flowPanel.style.left = (legendRect ? legendRect.left : 10) + 'px';
-  flowPanel.style.top = (legendRect ? legendRect.bottom : 55) + gap + 'px';
+  panel.style.left = (legendRect ? legendRect.left : 10) + 'px';
+  panel.style.top = (legendRect ? legendRect.bottom : 55) + gap + 'px';
 }
-(function () {
-  const header = document.getElementById('flowHeader');
-  if (!header || typeof flowPanel.getBoundingClientRect !== 'function') return;
+function makePanelDraggable(panel, header) {
+  if (!header || !panel || typeof panel.getBoundingClientRect !== 'function') return;
   let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
   header.addEventListener('mousedown', function (e) {
-    // The close button lives inside this same bar now - a click there must
+    // The close button lives inside this same bar - a click there must
     // close the panel, not start a drag.
     if (e.target.closest('.panelClose')) return;
     dragging = true;
-    flowPositionCustomized = true;
-    const rect = flowPanel.getBoundingClientRect();
+    panelCustomPosition.set(panel, true);
+    const rect = panel.getBoundingClientRect();
     startX = e.clientX; startY = e.clientY;
     startLeft = rect.left; startTop = rect.top;
     e.preventDefault();
   });
   document.addEventListener('mousemove', function (e) {
     if (!dragging) return;
-    flowPanel.style.left = (startLeft + (e.clientX - startX)) + 'px';
-    flowPanel.style.top = (startTop + (e.clientY - startY)) + 'px';
+    panel.style.left = (startLeft + (e.clientX - startX)) + 'px';
+    panel.style.top = (startTop + (e.clientY - startY)) + 'px';
   });
   document.addEventListener('mouseup', function () {
     if (!dragging) return;
     dragging = false;
-    // Dragging only moves the panel, never resizes it, so the ResizeObserver
-    // watchOverlayGeometry() already relies on elsewhere never fires for
-    // this - but visibleRegion() decides free canvas space from every
-    // panel's own position too, not just its size, so a narrowed view can
-    // genuinely have more or less room after a drag. One fit once the drag
-    // actually ends, not on every mousemove.
+    // Dragging only moves the panel, never resizes it, so the
+    // ResizeObserver watchOverlayGeometry() relies on elsewhere never
+    // fires for this - but visibleRegion() decides free canvas space from
+    // every panel's own position too, not just its size, so a narrowed
+    // view can genuinely have more or less room after a drag. One fit once
+    // the drag actually ends, not on every mousemove.
     fitCurrentView();
   });
-})();
+}
+makePanelDraggable(flowPanel, document.getElementById('flowHeader'));
 // Legend is entirely static markup - no *Load() function, nothing to fetch
 // or rebuild on open - so declared here rather than beside ext/pivot/icons's
 // own dynamic-render code further down the file.
@@ -8717,10 +8701,10 @@ function bringToFront(panel) {
   });
   panelTopZ += 1;
   panel.style.zIndex = panelTopZ;
-  // Below the legend by default, first open only - see
-  // positionFlowPanelDefault()'s own comment for why this doesn't run again
-  // once the user has dragged the panel.
-  if (panel === flowPanel && !flowPositionCustomized) positionFlowPanelDefault();
+  // Below the legend by default, first open only for each individual panel -
+  // see positionPanelBelowLegend()/panelCustomPosition's own comments for
+  // why this doesn't run again once the user has dragged that panel.
+  if (panel.classList && panel.classList.contains('modernPanel') && !panelCustomPosition.get(panel)) positionPanelBelowLegend(panel);
   // flex, not block: every panel is now display:flex; flex-direction:column
   // (backlog item 1 Phase 2) so its .panelBody can be the one child that
   // scrolls while the title/close stay fixed - block would still render the
@@ -11031,6 +11015,21 @@ const iconsPanel = document.getElementById('icons');
 const iconsBody = document.getElementById('iconsBody');
 let ICONS = null;
 
+// makePanelDraggable() itself is defined much earlier (with flowPanel's own
+// call), but ext/pivot/releaseActivity/icons's own panel consts are each
+// declared beside their own *Load()/render code, scattered through the
+// file - this is the point after the last of them (iconsPanel) exists, so
+// it is the one safe place to wire up all four remaining panels at once
+// rather than four separate call sites each needing its own header lookup.
+[
+  { panel: extPanel, id: 'ext' },
+  { panel: pivotPanel, id: 'pivot' },
+  { panel: releaseActivityPanel, id: 'releaseActivity' },
+  { panel: iconsPanel, id: 'icons' }
+].forEach(function (p) {
+  makePanelDraggable(p.panel, document.querySelector('#' + p.id + ' .modernPanelHeader'));
+});
+
 function iconsLoad() {
   iconsBody.innerHTML = '<p class="sub">Loading...</p>';
   fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' })
@@ -11757,12 +11756,10 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   pivotPanel.style.display = 'none';
   syncLegendVisibility();
 });
-// Two openers for the same panel - the tool-rail button and the compact
-// legend's own "Full legend" link - same as everything else here, both just
-// go through bringToFront so z-index/one-panel-at-a-time stay coordinated.
-document.getElementById('legendBtn').addEventListener('click', function () {
-  bringToFront(legendPanel);
-});
+// The tool rail's own "Legend" button was removed (Gordon's live call - it
+// opened the exact same panel as this "Full legend" link right next to the
+// compact legend, and having both was pure redundancy, not two genuinely
+// different paths). This is the only opener left.
 document.getElementById('legendMoreBtn').addEventListener('click', function () {
   bringToFront(legendPanel);
 });
