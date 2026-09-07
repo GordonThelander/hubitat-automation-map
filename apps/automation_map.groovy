@@ -7002,7 +7002,7 @@ String buildMapHtml() {
   #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
   #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #ext table { border-collapse:collapse; width:100%; font-size:0.8em; }
-  #ext th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #ext th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #ext td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   #ext tr.unclassified td { background:rgba(217,83,79,0.09); }
   #ext tr.grouphdr td { background:#0a2029; border-top:1px solid #2a4a57; padding-top:9px; padding-bottom:7px; }
@@ -7034,7 +7034,7 @@ String buildMapHtml() {
   #pivot a { color:#7fb6d6; text-decoration:none; }
   #pivot a:hover { text-decoration:underline; }
   #pivot table { border-collapse:collapse; width:100%; font-size:14px; }
-  #pivot th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #pivot th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #pivot td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   #pivot select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:14px; font-family:inherit; }
   #pivot label { font-size:14px; display:flex; align-items:center; gap:4px; }
@@ -7049,7 +7049,7 @@ String buildMapHtml() {
   #icons .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #icons input[type=search] { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:4px 7px; font-size:0.9em; font-family:inherit; width:240px; margin-bottom:10px; }
   #icons table { border-collapse:collapse; width:100%; font-size:0.8em; }
-  #icons th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #icons th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #icons td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   /* Same AMIcons glyph the map itself draws for this device (ICON_GLYPHS),
      shown here too so the effective icon is visible at a glance instead of
@@ -7159,7 +7159,20 @@ String buildMapHtml() {
      the panel's title/back-link stay outside .panelBody as ordinary static
      children, so only .panelBody scrolls. */
   .panelClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
-  .panelBody { flex:1; min-height:0; overflow:auto; }${''}
+  .panelBody { flex:1; min-height:0; overflow:auto; }
+  /* Gordon flagged External systems/Pivot tables/Device icons's own table
+     headers scrolling off with the rows above them - the panel's outer title
+     (fixed by .panelBody above) was never the only header that could do
+     that. One rule covers every table in every current and future panel
+     body, rather than three copies. background matches these three panels'
+     own #041b23 exactly, needed so rows scrolling underneath don't show
+     through a sticky header with no fill of its own. box-shadow instead of
+     each th's own border-bottom - border-collapse:collapse plus
+     position:sticky is a known Chromium rendering bug (the collapsed border
+     belongs to the table, not the offset cell, and can flicker or vanish
+     while scrolling); a box-shadow paints the same 1px line without
+     participating in border collapsing at all. */
+  .panelBody th { position:sticky; top:0; z-index:1; background:#041b23; box-shadow:0 1px 0 #2a4a57; }${''}
 </style>
 </head>
 <body>
