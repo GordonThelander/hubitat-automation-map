@@ -131,6 +131,101 @@ apps already represented by the map.
 **Next action:** confirm a reliable read-only source for dashboard device references, model the
 relationship, then suppress false unused-device findings.
 
+### 24. Variable usage from apps and platforms Automation Map cannot decode (webCoRE, Dashboard)
+
+Community feedback from thebearmay (Hubitat forum, replying to Gordon re: the Hub Variable identity
+work) on the current Rule Machine variable handling: "the variables look correct" - but flags two
+gaps in coverage:
+
+- webCoRE has its own variable ecosystem entirely invisible to Automation Map today: webCoRE local
+  variables (his read: easy to locate), webCoRE global variables (a dynamic table, names hashed -
+  "still working out the specifics" even from his side), and webCoRE's own use of Hub Variables.
+  Discovery currently only decodes Rule Machine/Notifier/VRB2 flows, so none of this is captured.
+- Dashboard's use of Hub Variables specifically - item 4 above already covers Dashboard's *device*
+  references, but not Hub Variable usage.
+
+The more promising lead in his message: he believes Hubitat itself may maintain some registry of
+"what uses this Hub Variable," visible on the platform's own Hub Variables page, though he does not
+know where it is sourced from ("can see it on the Hub Variables page so I know it exists"). If real
+and read-accessible, this would be a single, authoritative source covering webCoRE, Dashboard and any
+other third-party consumer at once, rather than needing bespoke per-platform decoding for each one -
+consistent with how Hub Variable identity itself is already sourced authoritatively via
+`getAllGlobalVars()` rather than purely inferred from decoded flows.
+
+**Registry interface finding (2026-09-07):** the registry is real but
+not a viable production data source. Confirmed live with a test webCoRE piston referencing a Hub
+Variable directly (no Connector device) - the Hub Variables page did list it as a consumer, and kept
+listing it even after the piston was paused and its runtime subscriptions/controls removed, meaning
+the registry reflects saved app *configuration*, not current runtime activity. No safe read-only
+interface to it was found on firmware 2.5.1.181: the Hub Variables app's own status JSON does not
+carry it, and the one endpoint that returns per-variable consumers
+(`/installedapp/configure/json/<id>/hubVar`) only answers for whichever variable is currently
+selected in that built-in app's own UI state - switching variables means POSTing to the undocumented
+generic `/installedapp/btn` handler, which is not an appropriate thing for Automation Map to depend
+on in production.
+
+**Independent re-verification (2026-09-07), same conclusion via a different route:**
+decompiled the Hub Variables page's own client-side `buttonClick()` function directly rather than
+inferring from network traffic - confirms the original finding: showing a variable's consumers
+calls `$.post('/installedapp/btn', {id, name, stateAttribute:'inUse', ...})`, a stateful call against
+the built-in app's own session, with no stateless GET or URL-parameterized equivalent. The caution
+against depending on it stands, now confirmed two independent ways.
+
+**But found a working alternative for webCoRE specifically, with real decoded data, not just a
+plan:** a webCoRE piston's own settings are readable through the exact same generic per-app
+config fetch Automation Map already uses for every other app (`hub_get_app_config`/
+`installedapp/statusJson` - no special endpoint, no POST, fully read-only). Built a real test piston
+(`__AM Hub Variable Registry Test`) referencing `AMGateA_HubOnly` directly with no Connector device,
+fetched its own settings, and found the piston's compiled logic in a base64-encoded JSON field
+(`chunk:0`) with the variable reference sitting in cleartext:
+`{"t":"condition","lo":{"t":"x","x":"@@AMGateA_HubOnly","f":"l","vt":"string"},"co":"changes",...}`.
+`chunk:` prefixed settings confirmed as the real, general mechanism against webCoRE's own public
+source (`ady624/webCoRE`, `webcore-piston.groovy`, `setup()`) - large pistons split across multiple
+`chunk:N` fields when a single one would exceed the platform's per-setting size limit.
+
+**Hubitat-port namespace correction, verified against the exact installed source version:** the
+generic webCoRE documentation describes `@@` as a Superglobal and `@` as a Global, but the current
+Hubitat port deliberately maps Hub Variables into that `@@` namespace. Its `AddHeGlobals()` reads
+`getAllGlobalVars()` and publishes every entry as `@@<name>`; its read and write paths strip the two
+prefix characters and call Hubitat's `getGlobalVar()` / `setGlobalVar()`. Plain `@<name>` remains a
+webCoRE global. The checked source constants exactly match the installed built-in webCoRE and piston
+versions, so for this Hubitat implementation a typed variable operand (`t:"x"`) whose `x` begins
+`@@` is a Hub Variable reference. The adjacent `f:"l"` field is not needed to distinguish a legacy
+webCoRE Superglobal. Any extracted name must still be reconciled against Automation Map's
+authoritative Hub Variable inventory before creating a relationship.
+
+**webCoRE's own usage report, now checked:** "Dump global variables in use" is safely readable with
+the existing read-only app-config fetch (`pageDumpGlob`); it does not require a state-changing button
+POST. Matching source shows that it renders a static in-memory `globalVarsUseFLD` cache populated by
+piston analysis/execution paths, rather than decoding each piston's saved settings at request time.
+The live report currently still lists the paused test piston, disproving the absolute claim that a
+paused piston will not appear, but the cache can still be incomplete or stale across lifecycle/code
+reload boundaries. It is useful corroboration, not an authoritative replacement for `chunk:N`
+configuration decoding.
+
+**Prototype result:**
+`tmp/webcore-variable-decoder-prototype.groovy` mirrors the matching Hubitat-port implementation:
+contiguous chunk assembly, Base64/UTF-8 and emoji decoding, JSON parsing, and typed variable-operand
+classification for Hub Variables (`@@`), webCoRE globals (`@`), and declared piston locals. Nine
+targeted checks pass, including arbitrary multi-chunk boundaries and fail-closed malformed-input
+cases; a sanitized read-only decode of the installed test piston also matches. The hub currently has
+no representative real pistons beyond that synthetic fixture, so real-world diversity remains
+untested. The prototype proves consumer-reference discovery only, not read/write role or full flow
+reconstruction.
+
+**v2.2.5 implementation reviewed and verified on Dev:** Automation Map now decodes each
+webCoRE piston's saved `chunk:N` configuration during its existing app scan, reconciles `@@` names
+against the authoritative Hub Variable inventory, and emits a distinct `usesVar` relationship with
+direction explicitly unknown. The graph, focused-app card, fixed and custom pivot tables, Insights,
+scan-quality status, and AI export all preserve that distinction rather than manufacturing a read or
+write. Malformed configuration produces only a fixed error code, keeps every other app relationship,
+and marks the scan complete-with-gaps; decoded documents and values are never retained or exported.
+The export contract moves to schema 9 and the cached graph to schema 11. Targeted source-bound tests
+cover chunking, malformed input, privacy, reconciliation, inert-app handling, rendering/pivots,
+Insights and export semantics. Dashboard and other community apps remain open. The Hub Variables
+page and webCoRE usage report stay manual corroboration, not production data sources. Absence from
+decoded configuration still cannot prove non-use where a reference is constructed dynamically.
+
 ### 5. Add runtime activity and performance context
 
 Users want help finding automations that may contribute to hub load, but configuration structure is
