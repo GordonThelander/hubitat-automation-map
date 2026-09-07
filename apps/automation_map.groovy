@@ -6802,15 +6802,28 @@ String buildMapHtml() {
      grouped so the panel reads as three zones - find something, act on the
      current view, open a secondary tool - instead of one long list. No
      graph/filter/export/panel-content behaviour changes here. */
-  #focusSection { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; }
+  /* Every internal gap in these two zones comes from one flex `gap`, not
+     margins on individual children - a per-element margin (e.g. a first-child
+     top margin standing in for the summary-to-label gap) reads as uneven the
+     moment a sibling's own margin differs, which is what Gordon flagged live.
+     Overriding the general label margin to 0 makes gap the only source of
+     spacing here.
+     The gap lives on #focusList, a plain div, not on #focusSection itself:
+     Chromium renders a <details> as summary + one internal ::details-content
+     box wrapping everything else, so a flex gap set directly on <details>
+     only ever sees those two boxes - confirmed live, it produced a correct
+     10px gap after the summary and 0px between every label after that,
+     since the labels were never the flex container's real children. */
+  #focusSection { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; display:flex; flex-direction:column; gap:10px; }
   #focusSection summary { cursor:pointer; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; padding:2px; border-radius:4px; list-style:none; }
   #focusSection summary::-webkit-details-marker { display:none; }
   #focusSection summary::before { content:'▸'; display:inline-block; margin-right:6px; transition:transform 0.1s; }
   #focusSection[open] summary::before { transform:rotate(90deg); }
   #focusSection summary:hover { background:rgba(255,255,255,0.10); }
-  #focusSection label:first-of-type { margin-top:10px; }
-  #workspaceHeader { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; }
-  #workspaceHeader #showFilterLabel { margin-top:2px; }
+  #focusList { display:flex; flex-direction:column; gap:10px; }
+  #focusList label { margin-bottom:0; }
+  #workspaceHeader { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; display:flex; flex-direction:column; gap:10px; }
+  #workspaceHeader #showFilterLabel { margin-top:0; margin-bottom:0; }
   #headerActions { display:flex; gap:8px; }
   #headerActions button { flex:1; margin-top:2px; }
   #toolRail { display:flex; flex-direction:column; }
@@ -7211,10 +7224,12 @@ String buildMapHtml() {
 <div id="controls">
   <details id="focusSection" open>
     <summary>Focus</summary>
-    <label>Focus app<span id="appComboMount"></span></label>
-    <label>Focus device<span id="deviceComboMount"></span></label>
-    <label>Focus hub variable<span id="hubVarComboMount"></span></label>
-    <label>Focus local variable<span id="localVarComboMount"></span></label>
+    <div id="focusList">
+      <label>Focus app<span id="appComboMount"></span></label>
+      <label>Focus device<span id="deviceComboMount"></span></label>
+      <label>Focus hub variable<span id="hubVarComboMount"></span></label>
+      <label>Focus local variable<span id="localVarComboMount"></span></label>
+    </div>
   </details>
   <div id="workspaceHeader">
     <label id="showFilterLabel">Show<select id="kindFilter">
