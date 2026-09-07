@@ -6826,8 +6826,9 @@ String buildMapHtml() {
   #workspaceHeader #showFilterLabel { margin-top:0; margin-bottom:0; }
   #headerActions { display:flex; gap:8px; }
   #headerActions button { flex:1; margin-top:2px; }
-  #toolRail { display:flex; flex-direction:column; }
-  #toolRail #exitMapBtn { margin-top:16px; }
+  #toolRail { display:flex; flex-direction:column; gap:8px; }
+  #toolRail button { margin-top:0; }
+  #toolRail #exitMapBtn { margin-top:8px; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
      harness verified in Bucket/combobox-harness/. Closed control is a plain
