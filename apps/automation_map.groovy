@@ -6869,7 +6869,16 @@ String buildMapHtml() {
      150px control truncated every real app/device name to a few characters.
      #controls is pinned to the right edge of the screen, so the popup grows
      leftward off the button's right edge rather than off-screen. */
-  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:12px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
+  /* z-index:9000, not 50 - panels' own z-index (panelTopZ in the JS below)
+     starts at 30 and increments by 1 on every single panel open, with no
+     ceiling, so across a long session it climbs past whatever fixed number
+     this used to be. Confirmed live: after enough panel switches this
+     session, an open panel was drawing on top of the Focus combobox popup
+     instead of under it. A combobox popup is always transient, top-level
+     interactive UI - nothing should ever legitimately need to sit above
+     it, so this is set far enough past any realistic panelTopZ value that
+     it does not need recalculating against that counter as it grows. */
+  .cb-popup { position:absolute; z-index:9000; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:12px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
   /* The dedicated search field - first row of the popup, auto-focused on
      open, visually its own zone (bottom border) above the options list. */
   .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #1e5878; background:#0d3446; color:#eee; }
@@ -7212,7 +7221,17 @@ String buildMapHtml() {
      (see the comment above) rather than stretching it edge-to-edge across
      a panel now far wider than that. */
   #releaseActivity .panelBody { display:flex; flex-direction:column; }
-  #releaseActivity iframe { border:0; display:block; width:100%; max-width:1100px; flex:1; min-height:0; border-radius:4px; margin:0 auto; align-self:center; }
+  /* position:relative + an explicit z-index (not "auto", the default) -
+     confirmed live this is required for a live <iframe> specifically: it
+     was rendering above the Focus combobox popup despite the popup's own
+     z-index being far higher (9000 vs the panel's own ~90s). A browsable
+     iframe gets its own compositing layer, and without an explicit z-index
+     of its own some browsers paint that layer above ordinary
+     higher-z-index siblings regardless of the surrounding stacking order -
+     a known quirk, not something specific to this app. z-index:1 is
+     already enough since it only needs to properly join its own parent's
+     (#releaseActivity, z-index ~90s) stacking context rather than escape it. */
+  #releaseActivity iframe { position:relative; z-index:1; border:0; display:block; width:100%; max-width:1100px; flex:1; min-height:0; border-radius:4px; margin:0 auto; align-self:center; }
   #releaseActivity a { color:#7fb6d6; text-decoration:none; }
   #releaseActivity a:hover { text-decoration:underline; }
   /* Backlog item 1 Phase 2 - the shared shell for all five panels
