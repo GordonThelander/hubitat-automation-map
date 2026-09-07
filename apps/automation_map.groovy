@@ -7087,6 +7087,18 @@ String buildMapHtml() {
   #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
   #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
+  /* #flow has no explicit width in classic mode (.flowClassicSize is a
+     max-width cap, not a width) - it shrink-to-fits, and the browser's
+     shrink-to-fit measures every child's UNWRAPPED preferred width, not
+     its wrapped one. This one caption line is the widest thing classic
+     mode ever contains by far (the mermaid diagram itself typically
+     renders well under 300px), so without a cap of its own it dragged the
+     whole panel out to however wide it takes to fit "Decoded execution
+     order..." on one line - confirmed live, matched the panel's rendered
+     width to the pixel. #flowSub specifically, not the shared .sub class -
+     Insights reuses .sub for its own "Used by"/"Controlling apps" detail
+     rows at the full large-panel width, which this must not narrow. */
+  #flowSub { max-width:420px; }
   #flow a { color:#7fb6d6; text-decoration:none; }
   #flow a:hover { text-decoration:underline; }
   /* Above the flowchart, where a back affordance is looked for - now below
@@ -8723,6 +8735,19 @@ const panelCustomPosition = new WeakMap();
 function setFlowSizeMode(large) {
   flowPanel.classList.toggle('modernPanelLarge', large);
   flowPanel.classList.toggle('flowClassicSize', !large);
+  // sizeModernPanel() only ever sets width/height for the large case - it
+  // never had a reason to clear them again, so once #flow had been opened
+  // large even once, its inline width/height stuck around afterwards. CSS
+  // max-width then merely capped that leftover value instead of the panel
+  // ever going back to shrink-wrapping its own content, so a narrow rule
+  // flowchart still rendered at the full 900px cap - most of it empty space
+  // - instead of the width its own boxes actually need. Clearing both here
+  // hands sizing back to .flowClassicSize's max-width/max-height and the
+  // content itself, exactly as if the panel had never been large at all.
+  if (!large) {
+    flowPanel.style.width = '';
+    flowPanel.style.height = '';
+  }
 }
 function sizeModernPanel(panel) {
   const statusEl = document.getElementById('status');
