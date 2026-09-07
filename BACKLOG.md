@@ -25,9 +25,69 @@ historical record, not an open gate.
 
 ## Now
 
-_Nothing open._
+### 22. Fix two misleading/incorrect text bugs found by independent UI assessment
+
+An independent UI assessment (2026-09-07, `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`)
+verified against source on the dev branch at commit `9c1f9fc`. Two of its findings are plain content
+bugs with no design ambiguity - confirmed directly against current source, not yet fixed:
+
+- Focusing the Automation Map app itself on its own graph shows "Nothing at all: no children, no
+  schedule, no subscriptions. Either it is not configured yet, or it is left over from something
+  that has been removed." - even though the app runs a real, configured scheduled scan. The self-app
+  is a special "reads the whole hub, drives nothing" family (`apps/automation_map.groovy:5311`) with
+  no decoded facts of its own, so it falls into the generic abandoned-app fallback
+  (`apps/automation_map.groovy:8987`), which was never taught to exclude the one app that is always
+  legitimately schedule-only with no facts to decode.
+- The Full legend's Private Boolean row is a visibly truncated sentence: "Private Boolean - rule
+  sets another rule's" (`apps/automation_map.groovy:7350`), missing its object. The contextual
+  compact legend already has the correct wording elsewhere in the same file
+  (`apps/automation_map.groovy:7469`): "Private Boolean - rule sets the Private Boolean of another
+  rule."
+
+**Next action:** give the self-app family a truthful description (or otherwise exempt it from the
+no-schedule fallback), and fix the truncated legend sentence to match the compact legend's wording.
+Both are isolated, low-risk text/logic fixes.
 
 ## Next
+
+### 23. Remaining findings from the independent UI assessment (2026-09-07)
+
+Full report: `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`. The two purely
+textual bugs it found are item 22 above; everything below needs an actual design/implementation
+decision, not just a wording fix. Spot-verified against source (line citations, opacity/stabilization
+timing, `#status`/`#legend` 375px and `#controls` 300px fixed widths, the 820px small-screen
+breakpoint, close buttons using generic `title="Close"` with no `aria-label`, Quick Search's group
+allowlist excluding `externalSystem`) - all checked claims matched current code.
+
+- Narrowing the relationship filter (e.g. "External systems only") blanks the graph for roughly
+  1.5s with no busy indicator before the narrowed layout appears - the network's opacity is
+  deliberately zeroed during physics stabilization (`apps/automation_map.groovy` `settle()`) with a
+  1500ms fallback reveal, and nothing tells the user layout is still running during that window.
+- Quick Search excludes `externalSystem` nodes by construction (`SEARCH_ALL_GROUP_LABEL` only lists
+  app/device/hubVariable/localVariable) despite its placeholder reading "search everything..." -
+  and there is no existing Focus-dropdown mechanism for external systems to dispatch a match into
+  even if included, so this needs a real focus path decided first, not just a filter change.
+  Alternative: narrow the placeholder wording to match actual scope.
+- Duplicate visible labels in Quick Search results are indistinguishable - no room, parent, or ID
+  discriminator shown when two nodes share a label, only a hidden internal id.
+- Panels (Insights, External systems, Pivot tables, Device icons, flow/details, release activity)
+  have no `role="dialog"`/`aria-labelledby`, close buttons expose only "x" with no `aria-label`, and
+  focus does not move into an opened panel or return to the launching control on close. The graph
+  canvas has no keyboard-accessible node structure.
+- At 1024x768 the fixed 375px legend plus ~300px control rail leaves a narrow central strip for a
+  large map, but the small-screen fallback message only triggers below 820px - so 1024px is treated
+  as a fully supported desktop graph layout while being difficult to read in practice.
+- Panel-internal action styling is inconsistent - the main tool rail uses large rounded buttons,
+  but External systems/Device icons render Save, backup/restore, and similar actions as small
+  browser-default buttons, and Pivot tables/Export CSV use yet another compact treatment.
+- The initial whole-map view packs ~386 nodes into a small central cluster with unreadable labels
+  until the user searches or focuses; overlaps with item 1's existing "search-first" direction below.
+
+**Next action:** each bullet needs its own scoped design decision before implementation (matches
+item 1's review scope for the layout/styling ones) - not a batch to fix blind. Raise with Gordon
+which to schedule and in what order; the assessment's own suggested order was: self-app status (now
+item 22) -> busy-state feedback -> Quick Search coverage/disambiguation -> panel accessibility ->
+legend/button consistency (now item 22 for the legend text) -> 1024px layout and search guidance.
 
 ### 1. Desktop UI review and map workspace modernisation
 
