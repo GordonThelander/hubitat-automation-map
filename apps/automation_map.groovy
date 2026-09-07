@@ -6811,6 +6811,8 @@ String buildMapHtml() {
   #focusSection label:first-of-type { margin-top:10px; }
   #workspaceHeader { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; }
   #workspaceHeader #showFilterLabel { margin-top:2px; }
+  #headerActions { display:flex; gap:8px; }
+  #headerActions button { flex:1; margin-top:2px; }
   #toolRail { display:flex; flex-direction:column; }
   #toolRail #exitMapBtn { margin-top:16px; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
@@ -7227,8 +7229,10 @@ String buildMapHtml() {
       <option value="rulelinks">Rule to rule only</option>
       <option value="depends">External systems only</option>
     </select></label>
-    <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
-    <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit map</button>
+    <div id="headerActions">
+      <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
+      <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit map</button>
+    </div>
   </div>
   <div id="toolRail">
     <button id="insightsBtn" type="button">Insights</button>
