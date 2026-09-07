@@ -6960,8 +6960,19 @@ String buildMapHtml() {
     #controls, #legend, #hint, #network, #flow, #status, #hubWatermark { display:none !important; }
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
-  #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
-          max-width:min(62vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+  /* Floating/centred rather than the usual top:100px/left:10px corner
+     (same treatment as #releaseActivity below, for the same reason) -
+     Gordon reported this specific panel overlapping the legend live, and
+     wants the legend to stay put rather than hide itself. Centring moves
+     the conflict away entirely instead of trading it for a disappearing
+     legend. Smaller base font-size (was unset, inheriting the page's 16px)
+     shrinks every em-based rule below it in one place - #insRoot sets its
+     own explicit 15px and is unaffected, this only touches the flowchart's
+     surrounding chrome (title/back-link/notes); the flowchart's own
+     rendered text size is mermaid's own fontSize init option, set
+     separately where mermaid.initialize() is called. */
+  #flow { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
+          font-size:13px; max-width:min(62vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
   #flow ul { margin:4px 0 0 0; padding-left:18px; }
@@ -8417,7 +8428,14 @@ const FLOWS = GRAPH.flows || {};
 // separately, see buildExportPayload().
 const RULE_VARIABLES = GRAPH.ruleVariables || {};
 if (window.mermaid) {
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false } });
+  // A bare top-level fontSize option does nothing on this pinned mermaid
+  // build (10.9.8) - confirmed live, still measured 16px with it set. The
+  // theme's own themeVariables.fontSize is what actually reaches the
+  // rendered node text; confirmed live via mermaid.render() directly before
+  // changing this, not assumed. Added per Gordon's request - the rendered
+  // node text (mermaid's own 16px default) was the dominant reason the
+  // panel ran large.
+  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '12px' } });
 }
 
 // Written without regex literals on purpose: this whole page is a Groovy
@@ -8574,19 +8592,13 @@ const resourcesPanel = document.getElementById('resources') || { style: {} };
 // whole script has already finished its first pass and all of them exist -
 // same as every other forward reference in this file.
 //
-// Wrong claim removed 2026-09-07: this comment used to say the legend is
-// always "one line... well below its own ~93px bottom edge" so it never
-// needs to hide for a panel. That was true of the ORIGINAL single-row
-// collapsed state, but not of the compact legend Phase 1 introduced (3 rows,
-// ~112px even before it became contextual) - both start at the same left
-// edge as every panel, and a panel starts at top:100px while the legend
-// starts at top:55px, so anything over ~45px tall already reaches into
-// where a panel sits. Confirmed live: Gordon reported the rule flowchart
-// panel visibly overlapping the legend, exactly this gap. Restored the
-// hide-while-a-panel-is-open behaviour below, now covering both #legend and
-// #hint - correct for a legend whose height can range from a few rows to
-// all 20 (contextual legend, same Phase 3 batch), not just the old fixed
-// single-line and full-expanded cases this comment was written against.
+// Correction, same day: the legend hiding itself while a panel is open was
+// tried and explicitly rejected live - Gordon wants the legend to stay put
+// regardless of what else is open, not disappear. #flow is what moved
+// instead (see its own CSS - floating/centred rather than corner-pinned at
+// the legend's own top:10px/left:10px corner), so the two no longer share
+// space in the first place and neither needs to hide for the other. #hint
+// still hides for any open panel, unchanged from before any of this.
 ${''}
 // Single source of truth for panel coordination - bringToFront,
 // syncLegendVisibility and closeSecondaryPanels all read it, so a new panel is
@@ -8599,12 +8611,10 @@ function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseAc
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
-  const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
   const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
-  if (lg) lg.style.visibility = panelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
