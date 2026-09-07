@@ -7190,9 +7190,7 @@ String buildMapHtml() {
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
 <div id="legend">
-  <div class="legend-row"><span class="swatch sw-dot" style="background:#9b59b6"></span><span class="line" style="border-color:#9b59b6"></span>Trigger</div>
-  <div class="legend-row"><span class="swatch sw-dot" style="background:#7fae42"></span><span class="line" style="border-color:#7fae42"></span>Action</div>
-  <div class="legend-row"><span class="swatch sw-dot" style="background:#3d7ea6"></span><span class="line" style="border-color:#3d7ea6"></span>Monitor</div>
+  <div id="legendCompactBody"></div>
   <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
 </div>
 <div id="legendPanel"><button id="legendPanelClose" class="panelClose" type="button" title="Close">&times;</button><h3>Legend</h3><div id="legendPanelBody" class="panelBody">
@@ -7313,6 +7311,72 @@ const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', hasComponent: '#5c6bc0' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9', localVariable: '#7986cb' };
+
+// Contextual compact legend (Gordon's live feedback on backlog item 1 Phase
+// 3): the fixed Trigger/Action/Monitor rows were plain wrong for a view that
+// draws none of those - a focused rule showing Trigger/Action/Runs still
+// only listed Monitor among its three, with Runs (clearly on screen, red
+// dashed lines) nowhere in the legend at all. Rows now reflect exactly the
+// edge kinds and node groups actually drawn right now, computed from the
+// same live nodes/edges DataSets the graph itself renders from - not a
+// second, parallel classification that could drift from what is on screen.
+// Colours read from roleColors/groupColors above rather than being
+// hardcoded again, so the legend cannot show a colour the graph itself does
+// not actually use.
+const LEGEND_GROUP_ROWS = [
+  { group: 'app', html: '<span class="swatch sw-square" style="background:' + groupColors.app + '"></span>App' },
+  { group: 'device', html: '<span class="swatch sw-dot" style="background:' + groupColors.device + '"></span>Device' },
+  { group: 'external', html: '<span class="swatch sw-diamond" style="background:' + groupColors.external + '"></span>External system' },
+  { group: 'hubVariable', html: '<span class="swatch sw-triangle" style="color:' + groupColors.hubVariable + '"></span>Hub Variable' },
+  { group: 'localVariable', html: '<span class="swatch sw-triangle-down" style="color:' + groupColors.localVariable + '"></span>Local Variable' }
+];
+// key matches applyFilters()'s own edge.kind, with depends split by e.crit
+// exactly as the actual line rendering above splits it (dashes/width).
+const LEGEND_EDGE_ROWS = [
+  { key: 'trigger', html: '<span class="swatch sw-dot" style="background:' + roleColors.trigger + '"></span><span class="line" style="border-color:' + roleColors.trigger + '"></span>Trigger - app listens to this device' },
+  { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '"></span>Constraint - condition / required expression' },
+  { key: 'monitor', html: '<span class="swatch sw-dot" style="background:' + roleColors.monitor + '"></span><span class="line" style="border-color:' + roleColors.monitor + '"></span>Monitor - app reads the state of this device' },
+  { key: 'action', html: '<span class="swatch sw-dot" style="background:' + roleColors.action + '"></span><span class="line" style="border-color:' + roleColors.action + '"></span>Action - app can command this device' },
+  { key: 'exposed', html: '<span class="swatch sw-dot" style="background:' + roleColors.exposed + '"></span><span class="line" style="border-color:' + roleColors.exposed + '; border-top-style:dotted"></span>Exposed - published to an external system' },
+  { key: 'owns', html: '<span class="swatch sw-dot" style="background:' + roleColors.owns + '"></span><span class="line" style="border-color:' + roleColors.owns + '; border-top-style:dashed"></span>Owns - app created this device' },
+  { key: 'hasComponent', html: '<span class="swatch sw-dot" style="background:' + roleColors.hasComponent + '"></span><span class="line" style="border-color:' + roleColors.hasComponent + '"></span>Has component - device-owned component of a parent device' },
+  { key: 'write', html: '<span class="line" style="border-color:' + roleColors.write + '"></span>Write - rule sets the value of a Hub or Local Variable' },
+  { key: 'read', html: '<span class="line" style="border-color:' + roleColors.read + '"></span>Read - rule uses a Hub or Local Variable in its decoded logic' },
+  { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs the actions of another rule' },
+  { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels a pending Wait/Delay on another rule' },
+  { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets the Private Boolean of another rule' },
+  { key: 'pauseResume', html: '<span class="line ln-pat ln-dashdot" style="color:' + roleColors.pauseResume + '"></span>Pause / resume - rule pauses or resumes another rule' },
+  { key: 'depends:RUNTIME', html: '<span class="line ln-pat ln-thick" style="border-color:' + roleColors.depends + '; background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time' },
+  { key: 'depends:SETUP', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage' }
+];
+// Called from applyFilters() right after nodes/edges are rebuilt, and once
+// at page load for the initial whole-hub view - the two places those
+// DataSets actually change.
+//
+// nodeList takes the pre-styling node array (shownNodes in applyFilters(),
+// ALL_NODES by default here) rather than reading document group off the
+// live `nodes` DataSet - styledNode()'s own returned object never includes
+// n.group at all (only uses it to pick color/shape/size, then drops it), so
+// nodes.get() here would silently see every node as group:undefined.
+// Confirmed live: an early version of this read from the live DataSet
+// directly and every group row vanished, whole-hub view included. Edges are
+// fine read live - the edge styling map explicitly keeps kind/crit in its
+// output object.
+function updateCompactLegend(nodeList) {
+  const el = document.getElementById('legendCompactBody');
+  if (!el) return;
+  const groupsShown = {};
+  (nodeList || ALL_NODES).forEach(function (n) { groupsShown[n.group] = true; });
+  const kindsShown = {};
+  edges.get().forEach(function (e) {
+    kindsShown[e.kind] = true;
+    if (e.kind === 'depends') kindsShown['depends:' + (e.crit === 'RUNTIME' ? 'RUNTIME' : 'SETUP')] = true;
+  });
+  let html = '';
+  LEGEND_GROUP_ROWS.forEach(function (r) { if (groupsShown[r.group]) html += '<div class="legend-row">' + r.html + '</div>'; });
+  LEGEND_EDGE_ROWS.forEach(function (r) { if (kindsShown[r.key]) html += '<div class="legend-row">' + r.html + '</div>'; });
+  el.innerHTML = html || '<div class="note">Nothing on screen yet.</div>';
+}
 
 // Device icon glyphs, keyed by n.icon (see ICON_RULES/autoDetectIconKey in the
 // Groovy source - the Groovy side decides WHICH key a device gets, this side
@@ -7739,6 +7803,10 @@ const network = new vis.Network(document.getElementById('network'), { nodes: nod
   interaction: { hover: true, tooltipDelay: 100 },
   edges: { smooth: { type: 'continuous' } }
 });
+// Initial whole-hub view - applyFilters() covers every later change, but
+// nothing runs it on first load since nodes/edges start populated directly
+// via the DataSet constructor above, not through applyFilters() itself.
+updateCompactLegend();
 
 // The very first device icons can be drawn before the AMIcons webfont has
 // actually finished downloading - @font-face loads asynchronously, but the
@@ -8210,6 +8278,7 @@ function applyFilters() {
 
   nodes.clear(); nodes.add(styled);
   edges.clear(); edges.add(shownEdges);
+  updateCompactLegend(shownNodes);
 
   // ids is null only when nothing is focused AND the relationship filter is
   // "all" - exactly the start-up / Show all view the shelf belongs to. Any
