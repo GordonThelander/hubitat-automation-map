@@ -6904,13 +6904,25 @@ String buildMapHtml() {
      no longer only #controls that needs it. */
   .pillBtn { cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; font-family:inherit; font-size:14px; }
   .pillBtn:hover { background:#1a4d6b; }
+  /* Explicit 14px base - Gordon flagged the full legend panel's text as
+     inconsistently large live. #legendPanel is not a descendant of #legend
+     (which sets its own 12px), so .legend-row/.note etc had nothing to
+     inherit from but the page's own 16px default. 14px matches the app's
+     other standard body text (#controls and its combobox popups). */
   #legendPanel { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-                 max-width:min(60vw, 640px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+                 font-size:14px; max-width:min(60vw, 640px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #legendPanel h3 { margin:0 0 8px 0; font-size:0.95em; }
-  #resources { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-               max-width:min(60vw, 420px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #resources h3 { margin:0 0 4px 0; font-size:0.95em; }
-  #resources .panelBody { display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  /* "Collapse Legend" instead of a bare X, per Gordon's request - the verb
+     pairs with "Full legend" on the compact legend's own button, making the
+     compact/full relationship explicit rather than relying on a close
+     glyph to imply it. Still .panelClose underneath (same close handler,
+     same hover/pill styling), just wider than the single-glyph case
+     .panelClose's own position:absolute assumes, so this one is a normal
+     right-aligned flex child instead - #flowHeader's close button needed
+     the identical override for the identical reason. */
+  #legendTopBar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  #legendTopBar h3 { margin:0; }
+  #legendPanelClose { position:static; white-space:nowrap; }
   .legend-row { display:flex; align-items:center; margin:3px 0; }
   /* Shape is per row now. The old single .swatch rule forced border-radius 50%
      on every swatch, so the legend drew a circle for an app that the map draws
@@ -7223,7 +7235,7 @@ String buildMapHtml() {
   <div id="legendCompactBody"></div>
   <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
 </div>
-<div id="legendPanel"><button id="legendPanelClose" class="panelClose" type="button" title="Close">&times;</button><h3>Legend</h3><div id="legendPanelBody" class="panelBody">
+<div id="legendPanel"><div id="legendTopBar"><h3>Legend</h3><button id="legendPanelClose" class="panelClose pillBtn" type="button" title="Collapse back to the compact legend">Collapse Legend</button></div><div id="legendPanelBody" class="panelBody">
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
@@ -7296,7 +7308,8 @@ String buildMapHtml() {
     <button id="iconsBtn" type="button">Device icons</button>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
     <button id="legendBtn" type="button">Legend</button>
-    <button id="resourcesBtn" type="button">Resources</button>
+    <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
+    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
@@ -7305,11 +7318,6 @@ String buildMapHtml() {
 <div id="pivot"><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button><h3>Pivot tables</h3><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons"><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button><h3>Device icons</h3><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity"><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
-<div id="resources"><button id="resourcesClose" class="panelClose" type="button" title="Close">&times;</button><h3>Resources</h3><div class="panelBody">
-  <p class="sub">External references and tools - not part of the map itself.</p>
-  <button id="releaseActivityBtn" class="pillBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-  <button id="communityUtilitiesBtn" class="pillBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
-</div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -8631,11 +8639,10 @@ function positionFlowPanelDefault() {
     fitCurrentView();
   });
 })();
-// Legend and Resources are entirely static markup - no *Load() function,
-// nothing to fetch or rebuild on open - so declared here rather than beside
-// ext/pivot/icons's own dynamic-render code further down the file.
+// Legend is entirely static markup - no *Load() function, nothing to fetch
+// or rebuild on open - so declared here rather than beside ext/pivot/icons's
+// own dynamic-render code further down the file.
 const legendPanel = document.getElementById('legendPanel') || { style: {} };
-const resourcesPanel = document.getElementById('resources') || { style: {} };
 
 // The four floating panels (flow/Insights, External systems, Pivot tables,
 // Device icons) started with fixed CSS z-index values, so whichever one
@@ -8672,14 +8679,24 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, resourcesPanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
+  const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
   const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
+  // Narrower than the old "hide for any open panel" rule Gordon rejected -
+  // that one hid the compact legend for every panel, including ones (the
+  // flow panel) that do not actually overlap it any more. This only hides
+  // it while the FULL legend panel specifically is open, since showing both
+  // the compact and the complete legend at once is genuinely redundant, not
+  // just occasionally inconvenient - confirmed live, Gordon flagged the
+  // compact legend still visibly showing behind the full panel.
+  const legendPanelOpen = legendPanel && getComputedStyle(legendPanel).display !== 'none';
+  if (lg) lg.style.visibility = legendPanelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
@@ -11746,13 +11763,6 @@ document.getElementById('legendMoreBtn').addEventListener('click', function () {
 });
 document.getElementById('legendPanelClose').addEventListener('click', function () {
   legendPanel.style.display = 'none';
-  syncLegendVisibility();
-});
-document.getElementById('resourcesBtn').addEventListener('click', function () {
-  bringToFront(resourcesPanel);
-});
-document.getElementById('resourcesClose').addEventListener('click', function () {
-  resourcesPanel.style.display = 'none';
   syncLegendVisibility();
 });
 
