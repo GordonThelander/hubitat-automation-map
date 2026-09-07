@@ -6931,9 +6931,10 @@ String buildMapHtml() {
   #hubWatermark { position:fixed; top:76%; right:160px; transform:translate(50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
-  /* Hub photo specifically shown at half the Christmas tree's size, per
-     Gordon's request - the tree's own dimensions (38vw/38vh) are unaffected. */
-  #hubWatermark.hubPhoto { max-width:19vw; max-height:19vh; }
+  /* Hub photo specifically shown at a quarter of the Christmas tree's size
+     (halved again per Gordon's live request) - the tree's own dimensions
+     (38vw/38vh) are unaffected. */
+  #hubWatermark.hubPhoto { max-width:9.5vw; max-height:9.5vh; }
   /* Backlog item 1 Phase 3 (A6): the legend used to be one element that was
      either a single "Legend" header row or every one of ~20 rows at once -
      permanently expensive canvas space the moment it was expanded, the exact
@@ -8735,18 +8736,18 @@ const panelCustomPosition = new WeakMap();
 function setFlowSizeMode(large) {
   flowPanel.classList.toggle('modernPanelLarge', large);
   flowPanel.classList.toggle('flowClassicSize', !large);
-  // sizeModernPanel() only ever sets width/height for the large case - it
-  // never had a reason to clear them again, so once #flow had been opened
-  // large even once, its inline width/height stuck around afterwards. CSS
-  // max-width then merely capped that leftover value instead of the panel
-  // ever going back to shrink-wrapping its own content, so a narrow rule
-  // flowchart still rendered at the full 900px cap - most of it empty space
-  // - instead of the width its own boxes actually need. Clearing both here
-  // hands sizing back to .flowClassicSize's max-width/max-height and the
-  // content itself, exactly as if the panel had never been large at all.
+  // sizeModernPanel() only ever set width for the large case (height is now
+  // always set, both modes - see its own comment), and had no reason to
+  // clear it again, so once #flow had been opened large even once its
+  // inline width stuck around afterwards. CSS max-width then merely capped
+  // that leftover value instead of the panel ever going back to
+  // shrink-wrapping its own content, so a narrow rule flowchart still
+  // rendered at the full 900px cap - most of it empty space - instead of
+  // the width its own content actually needs. Clearing it here hands width
+  // back to .flowClassicSize's max-width and the content itself, exactly as
+  // if the panel had never been large at all.
   if (!large) {
     flowPanel.style.width = '';
-    flowPanel.style.height = '';
   }
 }
 function sizeModernPanel(panel) {
@@ -8769,16 +8770,23 @@ function sizeModernPanel(panel) {
   const top = Math.max(statusRect ? statusRect.bottom : 45, legendBottom) + gap;
   panel.style.left = left + 'px';
   panel.style.top = top + 'px';
-  // Width/height only for the large-area case (.modernPanelLarge) - #flow
-  // in its classic mode (a rule flowchart/inert app/unreferenced variable,
-  // .flowClassicSize instead) sizes itself from its own CSS max-width/
-  // max-height and its actual content, same as before backlog item 1's
-  // "unify all five panels" change gave it a forced pixel size it was
-  // never meant to have. Position only, in that case.
+  // Height is always set, in both modes - .panelBody is flex:1;overflow:auto
+  // so it can scroll a tall rule flowchart internally, but flex-grow has
+  // nothing to distribute against when its own container's height is auto
+  // (.flowClassicSize only caps height, it does not set one), so without an
+  // explicit height here classic mode grew to fit ALL of its content with
+  // no scrollbar at all, spilling silently past the bottom of the viewport
+  // instead - confirmed live, exactly what Gordon's screenshot showed.
+  panel.style.height = Math.max(200, window.innerHeight - top - 10) + 'px';
+  // Width stays classic mode's own business - only the large-area case
+  // (.modernPanelLarge) forces one. #flow in its classic mode (a rule
+  // flowchart/inert app/unreferenced variable, .flowClassicSize instead)
+  // sizes its width from its own CSS max-width and its actual content, same
+  // as before backlog item 1's "unify all five panels" change gave it a
+  // forced pixel size it was never meant to have.
   if (!panel.classList.contains('modernPanelLarge')) return;
   const rightEdge = controlsRect ? controlsRect.left : (window.innerWidth - 320);
   panel.style.width = Math.max(200, rightEdge - left - gap) + 'px';
-  panel.style.height = Math.max(200, window.innerHeight - top - 10) + 'px';
 }
 function makePanelDraggable(panel, header) {
   if (!header || !panel || typeof panel.getBoundingClientRect !== 'function') return;
