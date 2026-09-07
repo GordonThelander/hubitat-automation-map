@@ -8797,15 +8797,21 @@ function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 function syncLegendVisibility() {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
-  // allPanels() - every panel now hides the legend while open, flow
-  // included. flow was the one deliberate exception through two earlier
-  // rounds of this (it positioned itself below the legend instead), but
-  // now that every panel shares the same large modernPanel display area
-  // there is no longer a meaningful "stays out of the legend's way" case
-  // to preserve - Gordon's own live direction, once the panels all grew to
-  // this size the special case stopped making sense.
+  // Every panel hides the legend while open, EXCEPT #flow specifically
+  // when it is in its classic size mode (a rule flowchart, inert app, or
+  // unreferenced local variable - see setFlowSizeMode()). That mode is
+  // small and positioned to stay clear of the legend's own corner, same as
+  // it was before this session's "unify all five panels" change - Gordon
+  // caught this regression live: reverting #flow's classic mode back to
+  // its old size (a separate, earlier fix) left this function still
+  // hiding the legend for it anyway, because the comment this replaced
+  // was written when every #flow open was still the large case and had no
+  // reason to distinguish. #flow in its large mode (Insights) still hides
+  // the legend, same as every other panel.
   const panelOpen = allPanels().some(function (p) {
-    return p && getComputedStyle(p).display !== 'none';
+    if (!p || getComputedStyle(p).display === 'none') return false;
+    if (p === flowPanel && !flowPanel.classList.contains('modernPanelLarge')) return false;
+    return true;
   });
   if (lg) lg.style.visibility = panelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
