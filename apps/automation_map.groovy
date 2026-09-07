@@ -6798,6 +6798,21 @@ String buildMapHtml() {
      stays on its own dark background rather than that site's light one. */
   #controls button { margin-top:2px; cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; }
   #controls button:hover { background:#1a4d6b; }
+  /* Phase 1 workspace shell (backlog item 1): same handlers, same ids, just
+     grouped so the panel reads as three zones - find something, act on the
+     current view, open a secondary tool - instead of one long list. No
+     graph/filter/export/panel-content behaviour changes here. */
+  #focusSection { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; }
+  #focusSection summary { cursor:pointer; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; padding:2px; border-radius:4px; list-style:none; }
+  #focusSection summary::-webkit-details-marker { display:none; }
+  #focusSection summary::before { content:'▸'; display:inline-block; margin-right:6px; transition:transform 0.1s; }
+  #focusSection[open] summary::before { transform:rotate(90deg); }
+  #focusSection summary:hover { background:rgba(255,255,255,0.10); }
+  #focusSection label:first-of-type { margin-top:10px; }
+  #workspaceHeader { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; }
+  #workspaceHeader #showFilterLabel { margin-top:2px; }
+  #toolRail { display:flex; flex-direction:column; }
+  #toolRail #exitMapBtn { margin-top:16px; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
      harness verified in Bucket/combobox-harness/. Closed control is a plain
@@ -7192,31 +7207,39 @@ String buildMapHtml() {
   <p>Open this same link on a computer.</p>
 </div>
 <div id="controls">
-  <label>Focus app<span id="appComboMount"></span></label>
-  <label>Focus device<span id="deviceComboMount"></span></label>
-  <label>Focus hub variable<span id="hubVarComboMount"></span></label>
-  <label>Focus local variable<span id="localVarComboMount"></span></label>
-  <label id="showFilterLabel">Show<select id="kindFilter">
-    <option value="all">All relationships</option>
-    <option value="trigger">Triggers only</option>
-    <option value="constraint">Constraints only</option>
-    <option value="monitor">Monitored only</option>
-    <option value="action">Actions only</option>
-    <option value="exposed">Exposed only</option>
-    <option value="owns">Ownership only</option>
-    <option value="hasComponent">Has component only</option>
-    <option value="rulelinks">Rule to rule only</option>
-    <option value="depends">External systems only</option>
-  </select></label>
-  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
-  <button id="insightsBtn" type="button">Insights</button>
-  <button id="extBtn" type="button">External systems</button>
-  <button id="pivotBtn" type="button">Pivot tables</button>
-  <button id="iconsBtn" type="button">Device icons</button>
-  <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
-  <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
-  <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
+  <details id="focusSection" open>
+    <summary>Focus</summary>
+    <label>Focus app<span id="appComboMount"></span></label>
+    <label>Focus device<span id="deviceComboMount"></span></label>
+    <label>Focus hub variable<span id="hubVarComboMount"></span></label>
+    <label>Focus local variable<span id="localVarComboMount"></span></label>
+  </details>
+  <div id="workspaceHeader">
+    <label id="showFilterLabel">Show<select id="kindFilter">
+      <option value="all">All relationships</option>
+      <option value="trigger">Triggers only</option>
+      <option value="constraint">Constraints only</option>
+      <option value="monitor">Monitored only</option>
+      <option value="action">Actions only</option>
+      <option value="exposed">Exposed only</option>
+      <option value="owns">Ownership only</option>
+      <option value="hasComponent">Has component only</option>
+      <option value="rulelinks">Rule to rule only</option>
+      <option value="depends">External systems only</option>
+    </select></label>
+    <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
+    <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit map</button>
+  </div>
+  <div id="toolRail">
+    <button id="insightsBtn" type="button">Insights</button>
+    <button id="extBtn" type="button">External systems</button>
+    <button id="pivotBtn" type="button">Pivot tables</button>
+    <button id="iconsBtn" type="button">Device icons</button>
+    <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+    <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
+    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+    <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
+  </div>
 </div>
 <div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div>
 <div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
@@ -11937,6 +11960,12 @@ document.getElementById('resetBtn').addEventListener('click', function () {
   const fitPosition = network.getViewPosition();
   const fitScale = network.getScale();
   network.moveTo({ position: fitPosition, scale: fitScale * 0.6, animation: false });
+});
+// Re-fits whatever is currently shown (whole map or a focused view) without
+// changing what's focused - fitCurrentView() already knows which case it is
+// from the live DataSet, same path panel open/close and resize already use.
+document.getElementById('fitMapBtn').addEventListener('click', function () {
+  fitCurrentView();
 });
 // A separate site Automation Map does not control, so it opens in a new tab
 // rather than replacing this one - the map is mid-session state (whatever is
