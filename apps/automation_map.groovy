@@ -12016,7 +12016,7 @@ document.getElementById('legendPanelClose').addEventListener('click', function (
   const hint = document.createElement('div');
   hint.id = 'hint';
   hint.innerHTML = '<b>Start here</b><br>' +
-    'This is every app and device on your hub at once, so it looks busy - that is expected.<br><br>' +
+    'This is every app, device, variable and external system on your hub at once, so it looks busy - that is expected.<br><br>' +
     '<b>Click any node</b> to drill in, or use Quick Search or the dropdowns above to jump straight to an app, device or variable. Click a rule and you also get a flowchart of how it works. Click one of its devices to see everything else touching that device.<br><br>' +
     '<b>Other panels:</b> Insights (a health check for the whole map), External systems, Pivot tables, Device icons, Hubitat release activity.<br><br>' +
     'Take your time to explore.' +
