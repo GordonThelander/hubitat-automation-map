@@ -6786,7 +6786,22 @@ String buildMapHtml() {
      compact and full legend reading at two different sizes live. Both are
      now anchored to the same value rather than each picking its own. */
   #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
+  /* z-index:9000, not 10 - the .cb-popup fix (z-index:9000 on the popup
+     itself) turned out not to be the real fix. CSS stacking is
+     hierarchical: a child's z-index only wins WITHIN its own ancestor's
+     stacking context, never against a sibling context. #controls and any
+     .modernPanel are siblings, each establishing their own stacking
+     context (both position:absolute with a real z-index) - so
+     .cb-popup's 9000 was only ever competing against other children of
+     #controls, never against panels at all, and #controls' own old
+     z-index:10 lost to any panel (panelTopZ starts at 20+) regardless of
+     what number the popup inside it claimed. Confirmed live before this
+     was written: raising #controls itself, not the popup, is what
+     actually put the popup on top - sampled 12 points across the popup's
+     full width where a panel overlapped it, and only every element
+     inside the popup rendered topmost once #controls' own z-index was
+     raised. */
+  #controls { position:absolute; top:10px; right:10px; z-index:9000; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
   /* Small bold letter-spaced label above each control - the same "eyebrow"
      treatment gordonthelander.github.io/HPM_Manifest_Crawl/ uses above its
      own headings (e.g. "COMMUNITY TOOLS FOR HUBITAT"), borrowed for shape/
@@ -6847,6 +6862,13 @@ String buildMapHtml() {
   #toolRail { display:flex; flex-direction:column; gap:8px; }
   #toolRail button { margin-top:0; }
   #toolRail #exitMapBtn { margin-top:8px; }
+  /* Insights/External systems and Pivot tables/Device icons paired onto one
+     row each, per Gordon's own live mark - same flex:1-split pattern
+     #headerActions already uses for Show all/Fit map, factored into a
+     class since this now applies to two separate row wrappers rather than
+     one. */
+  .toolRailRow { display:flex; gap:8px; }
+  .toolRailRow button { flex:1; margin-top:0; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
      harness verified in Bucket/combobox-harness/. Closed control is a plain
@@ -7336,10 +7358,8 @@ String buildMapHtml() {
     </div>
   </div>
   <div id="toolRail">
-    <button id="insightsBtn" type="button">Insights</button>
-    <button id="extBtn" type="button">External systems</button>
-    <button id="pivotBtn" type="button">Pivot tables</button>
-    <button id="iconsBtn" type="button">Device icons</button>
+    <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External systems</button></div>
+    <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
     <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
     <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
