@@ -3160,6 +3160,23 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 out.endpoints = []
                 out.hubVarWrites = []
                 out.hubVarReads = []
+                // Captured here, not left to the shared inert-facts block
+                // below (this branch returns before ever reaching it) -
+                // this app's own real scheduled scan is a fact about it,
+                // not an absence, and the client's generic "no schedule, no
+                // subscriptions... looks abandoned" fallback does not know
+                // that (independent UI assessment, 2026-09-07): every OTHER
+                // app that block runs for genuinely has nothing, so it
+                // correctly infers abandonment - this one always has a real
+                // schedule and must not be told apart from one that does not.
+                List selfJobs = scheduledJobList(data.scheduledJobs)
+                out.inert = [
+                    kids  : (data.childAppCount ?: 0) as Integer,
+                    devs  : (data.childDeviceCount ?: 0) as Integer,
+                    sched : selfJobs.size(),
+                    schedJobs : selfJobs.collect { Map j -> [next: "${j.nextRunTime}", cron: "${j.schedule}"] },
+                    subs  : countOf(data.eventSubscriptions),
+                ]
                 return out
             }
 
@@ -7347,7 +7364,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub or Local Variable in its decoded logic</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
-  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's Private Boolean</div>
   <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses or resumes another rule (focus the rule to see which)</div>
   <div class="legend-row"><span class="line ln-pat ln-thick" style="border-color:#cfd8dc; background:repeating-linear-gradient(to right,#cfd8dc 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time</div>
   <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
@@ -12086,7 +12103,7 @@ const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All loc
 // the same object here would silently rewrite that dropdown's own display
 // text to this one's group-prefixed version. Copies only what a combobox
 // item needs, so the two can never collide.
-const SEARCH_ALL_GROUP_LABEL = { app: 'App', device: 'Device', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
+const SEARCH_ALL_GROUP_LABEL = { app: 'App', device: 'Device', hubVariable: 'Hub Variable', localVariable: 'Local Variable', external: 'External system' };
 const searchAllItems = ALL_NODES.filter(function (n) {
   return SEARCH_ALL_GROUP_LABEL.hasOwnProperty(n.group);
 }).map(function (n) {
@@ -12102,7 +12119,7 @@ const searchAllItems = ALL_NODES.filter(function (n) {
 });
 const searchAllSelect = createCombobox({
   mount: document.getElementById('searchAllComboMount'),
-  allLabel: 'Search apps, devices, hub & local variables',
+  allLabel: 'Search apps, devices, hub & local variables, external systems',
   placeholder: 'search everything...',
   items: searchAllItems,
   onChange: function (value, item) {
@@ -12111,6 +12128,12 @@ const searchAllSelect = createCombobox({
     else if (item.group === 'device') { deviceSelect.setValue(value); onDeviceFocusChange(value); }
     else if (item.group === 'hubVariable') { hubVarSelect.setValue(value); onHubVarFocusChange(value); }
     else if (item.group === 'localVariable') { localVarSelect.setValue(value); onLocalVarFocusChange(value, item); }
+    // External systems have no Focus dropdown of their own - focusNode() is
+    // the same path a click on the node directly already used (its generic
+    // else branch), so this reuses proven behaviour rather than inventing a
+    // fifth selection state (independent UI assessment, 2026-09-07: Quick
+    // Search claimed to "search everything" while silently excluding these).
+    else if (item.group === 'external') { focusNode(value); }
     // A jump tool, not a fifth persistent selection state alongside the other
     // four - resets to blank immediately after dispatching. The one matching
     // dropdown above already shows the real state (set two lines up).
