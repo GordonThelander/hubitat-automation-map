@@ -6889,16 +6889,28 @@ String buildMapHtml() {
   /* Hub photo specifically shown at half the Christmas tree's size, per
      Gordon's request - the tree's own dimensions (38vw/38vh) are unaffected. */
   #hubWatermark.hubPhoto { max-width:19vw; max-height:19vh; }
-  /* First shipped as a bare 1em glyph with no background - reported as "had to
-     go hunting for it". A visible pill with its own border and a hover state
-     reads as a button; a lone triangle in a wall of text does not. */
-  /* Matches the right-hand panel's own theme: blue accent border/background
-     on the toggle pill, letter-spaced accent-blue heading text. */
-  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:800; letter-spacing:0.4px; color:#7fb6d6; padding:2px; border-radius:4px; }
-  #legend-head:hover { background:rgba(255,255,255,0.10); }
-  #legend-toggle { background:#123a52; border:1px solid #1e5878; color:#cfe9fb; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:999px; padding:0; cursor:pointer; }
-  #legend.collapsed #legend-body { display:none; }
-  #legend.collapsed { padding:6px 10px; }
+  /* Backlog item 1 Phase 3 (A6): the legend used to be one element that was
+     either a single "Legend" header row or every one of ~20 rows at once -
+     permanently expensive canvas space the moment it was expanded, the exact
+     thing this replaces. #legend is now always just the 3 common roles plus
+     a button into the full reference, which lives in #legendPanel using the
+     same shared shell as every other panel (backlog item 1 Phase 2). Every
+     meaning/wording below is unchanged, just relocated - #legendPanel reuses
+     the global .legend-row/.swatch/.line/.note classes as-is. */
+  #legendMoreBtn { display:block; width:100%; margin-top:6px; text-align:center; }
+  /* Shared pill button for chrome living outside #controls (the compact
+     legend's "Full legend" button, the Resources panel's two relocated
+     buttons) - same look as #controls button, factored out because it is
+     no longer only #controls that needs it. */
+  .pillBtn { cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; font-family:inherit; font-size:14px; }
+  .pillBtn:hover { background:#1a4d6b; }
+  #legendPanel { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+                 max-width:min(60vw, 640px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #legendPanel h3 { margin:0 0 8px 0; font-size:0.95em; }
+  #resources { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+               max-width:min(60vw, 420px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #resources h3 { margin:0 0 4px 0; font-size:0.95em; }
+  #resources .panelBody { display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
   .legend-row { display:flex; align-items:center; margin:3px 0; }
   /* Shape is per row now. The old single .swatch rule forced border-radius 50%
      on every swatch, so the legend drew a circle for an app that the map draws
@@ -7178,8 +7190,12 @@ String buildMapHtml() {
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
 <div id="legend">
-  <div id="legend-head"><button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body">&#9662;</button><span>Legend</span></div>
-  <div id="legend-body">
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#9b59b6"></span><span class="line" style="border-color:#9b59b6"></span>Trigger</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#7fae42"></span><span class="line" style="border-color:#7fae42"></span>Action</div>
+  <div class="legend-row"><span class="swatch sw-dot" style="background:#3d7ea6"></span><span class="line" style="border-color:#3d7ea6"></span>Monitor</div>
+  <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
+</div>
+<div id="legendPanel"><button id="legendPanelClose" class="panelClose" type="button" title="Close">&times;</button><h3>Legend</h3><div id="legendPanelBody" class="panelBody">
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
@@ -7210,43 +7226,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
-  </div>
-</div>
-<script>
-  // Collapsible legend, asked for on the community thread: on a busy map it
-  // covers the bottom-left corner and there was no way to get it out of the
-  // way. The choice is remembered, because someone who folds it away once
-  // almost certainly wants it folded away next time.
-  //
-  // The handler sits on the whole header rather than the arrow, so the target
-  // is the full width rather than a 12px glyph. The button is inside the
-  // header, so it must NOT get its own listener or a click would toggle twice.
-  (function () {
-    var lg = document.getElementById('legend');
-    var tg = document.getElementById('legend-toggle');
-    var hd = document.getElementById('legend-head');
-    function apply(collapsed) {
-      if (collapsed) { lg.classList.add('collapsed'); } else { lg.classList.remove('collapsed'); }
-      tg.innerHTML = collapsed ? '&#9656;' : '&#9662;';
-      tg.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      try { localStorage.setItem('amLegendCollapsed', collapsed ? '1' : '0'); } catch (e) { }
-    }
-    var saved = '0';
-    try { saved = localStorage.getItem('amLegendCollapsed') || '0'; } catch (e) { }
-    apply(saved === '1');
-    // syncLegendVisibility is declared later in the file (with bringToFront)
-    // but this only runs on a later click, by which point it exists - same
-    // forward-reference as everywhere else in this file. Needed here because
-    // expanding the legend while a panel is open makes it tall enough to run
-    // behind that panel's content again, the same overlap collapsing this
-    // panel-open exemption was for in the first place - and collapsing it
-    // back while a panel is still open should bring it back into view.
-    hd.addEventListener('click', function () {
-      apply(!lg.classList.contains('collapsed'));
-      if (typeof syncLegendVisibility === 'function') syncLegendVisibility();
-    });
-  })();
-</script>
+</div></div>
 <div id="smallscreen">
   <h2>Best viewed on a desktop</h2>
   <p>Automation Map shows every app and device on your hub at once, with filter controls and rule flowcharts alongside. That needs a large screen and a mouse, so it is not made to work on a phone.</p>
@@ -7256,6 +7236,7 @@ String buildMapHtml() {
   <details id="focusSection" open>
     <summary>Focus${isDevBuild() ? "<span class='devBadge'>Dev ${APP_VERSION}</span>" : ''}</summary>
     <div id="focusList">
+      <label>Quick search<span id="searchAllComboMount"></span></label>
       <label>Focus app<span id="appComboMount"></span></label>
       <label>Focus device<span id="deviceComboMount"></span></label>
       <label>Focus hub variable<span id="hubVarComboMount"></span></label>
@@ -7286,8 +7267,8 @@ String buildMapHtml() {
     <button id="pivotBtn" type="button">Pivot tables</button>
     <button id="iconsBtn" type="button">Device icons</button>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
-    <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+    <button id="legendBtn" type="button">Legend</button>
+    <button id="resourcesBtn" type="button">Resources</button>
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
@@ -7296,6 +7277,11 @@ String buildMapHtml() {
 <div id="pivot"><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button><h3>Pivot tables</h3><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons"><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button><h3>Device icons</h3><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity"><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="resources"><button id="resourcesClose" class="panelClose" type="button" title="Close">&times;</button><h3>Resources</h3><div class="panelBody">
+  <p class="sub">External references and tools - not part of the map itself.</p>
+  <button id="releaseActivityBtn" class="pillBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
+  <button id="communityUtilitiesBtn" class="pillBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+</div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -8493,6 +8479,11 @@ function mermaidFor(steps) {
 // below must keep working regardless, so nothing here is allowed to throw.
 const flowPanel = document.getElementById('flow') || { style: {} };
 const flowChart = document.getElementById('flowChart') || document.createElement('div');
+// Legend and Resources are entirely static markup - no *Load() function,
+// nothing to fetch or rebuild on open - so declared here rather than beside
+// ext/pivot/icons's own dynamic-render code further down the file.
+const legendPanel = document.getElementById('legendPanel') || { style: {} };
+const resourcesPanel = document.getElementById('resources') || { style: {} };
 
 // The four floating panels (flow/Insights, External systems, Pivot tables,
 // Device icons) started with fixed CSS z-index values, so whichever one
@@ -8514,12 +8505,15 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // whole script has already finished its first pass and all of them exist -
 // same as every other forward reference in this file.
 //
-// The collapsed legend is one line sitting entirely above where these panels
-// start (top:100px, well below its own ~93px bottom edge), so it no longer
-// needs to hide for a panel the way it used to - only the expanded legend is
-// still tall enough to run behind panel content (the original "ghost text
-// across the table" problem this hiding was built for). Hint has no
-// collapsed form, so it keeps hiding for any open panel same as before.
+// The legend is one line sitting entirely above where these panels start
+// (top:100px, well below its own ~93px bottom edge), so it never needs to
+// hide for a panel - the original "ghost text across the table" problem
+// this hiding was built for only happened when the legend could still
+// expand to its full ~20-row form inline. Since backlog item 1 Phase 3,
+// that full form lives in #legendPanel instead (a panel like any other,
+// coordinated through secondaryPanels() below) - #legend itself is always
+// the compact 3-row version, so it has nothing left to hide from. Hint has
+// no compact form of its own, so it keeps hiding for any open panel.
 ${''}
 // Single source of truth for panel coordination - bringToFront,
 // syncLegendVisibility and closeSecondaryPanels all read it, so a new panel is
@@ -8528,16 +8522,14 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, resourcesPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
-  const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
   const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
-  if (lg) lg.style.visibility = (panelOpen && !lg.classList.contains('collapsed')) ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
@@ -11589,6 +11581,26 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   pivotPanel.style.display = 'none';
   syncLegendVisibility();
 });
+// Two openers for the same panel - the tool-rail button and the compact
+// legend's own "Full legend" link - same as everything else here, both just
+// go through bringToFront so z-index/one-panel-at-a-time stay coordinated.
+document.getElementById('legendBtn').addEventListener('click', function () {
+  bringToFront(legendPanel);
+});
+document.getElementById('legendMoreBtn').addEventListener('click', function () {
+  bringToFront(legendPanel);
+});
+document.getElementById('legendPanelClose').addEventListener('click', function () {
+  legendPanel.style.display = 'none';
+  syncLegendVisibility();
+});
+document.getElementById('resourcesBtn').addEventListener('click', function () {
+  bringToFront(resourcesPanel);
+});
+document.getElementById('resourcesClose').addEventListener('click', function () {
+  resourcesPanel.style.display = 'none';
+  syncLegendVisibility();
+});
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
 // dropping the user straight into a few hundred nodes with no starting point.
@@ -11620,7 +11632,17 @@ document.getElementById('pivotClose').addEventListener('click', function () {
 // one clears the other three) the same way the old <select> 'change'
 // listeners did - setValue() never fires onChange itself, so these resets
 // cannot recurse into each other.
-const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...', function (value) {
+//
+// Named (not inline) as of backlog item 1 Phase 3: the grouped entity search
+// prototype (searchAllSelect, below) needs to trigger the exact same focus
+// behaviour as picking directly from one of these four, and reusing these
+// functions by reference is how that is guaranteed identical rather than
+// reimplemented and risking drift. Every reference to appSelect/deviceSelect/
+// hubVarSelect/localVarSelect below still resolves correctly despite being
+// used before its own const line further down - none of these functions runs
+// until a later click, by which point all four consts exist, same as every
+// other forward reference already in this file.
+function onAppFocusChange(value) {
   if (value !== '__all__') {
     deviceSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -11634,8 +11656,8 @@ const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...'
   } else {
     showFlow(value);
   }
-});
-const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'search devices...', function (value) {
+}
+function onDeviceFocusChange(value) {
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -11645,8 +11667,8 @@ const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'sea
   flowPanel.style.display = 'none';
   syncLegendVisibility();
   applyFilters();
-});
-const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub variables', 'search hub variables...', function (value) {
+}
+function onHubVarFocusChange(value) {
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -11656,8 +11678,8 @@ const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub varia
   flowPanel.style.display = 'none';
   syncLegendVisibility();
   applyFilters();
-});
-const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All local variables', 'search local variables...', function (value, item) {
+}
+function onLocalVarFocusChange(value, item) {
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -11673,6 +11695,56 @@ const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All loc
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
+  }
+}
+const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...', onAppFocusChange);
+const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'search devices...', onDeviceFocusChange);
+const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub variables', 'search hub variables...', onHubVarFocusChange);
+const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All local variables', 'search local variables...', onLocalVarFocusChange);
+
+// Grouped entity search prototype (backlog item 1 Phase 3), sitting
+// alongside the four selectors above rather than replacing them - the doc's
+// own gate is that this has to reproduce identical results before the old
+// ones can go. It does not reimplement focus behaviour at all: on pick, it
+// forwards straight into the exact same onXFocusChange function the matching
+// dropdown itself uses, so any correctness the four selectors already have
+// is inherited rather than re-proven.
+//
+// Builds its own item objects rather than reusing the ALL_NODES entries the
+// four selectors above read directly - those objects get n.optionText
+// overwritten by initCombo() for their own dropdown's decoration, and reusing
+// the same object here would silently rewrite that dropdown's own display
+// text to this one's group-prefixed version. Copies only what a combobox
+// item needs, so the two can never collide.
+const SEARCH_ALL_GROUP_LABEL = { app: 'App', device: 'Device', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
+const searchAllItems = ALL_NODES.filter(function (n) {
+  return SEARCH_ALL_GROUP_LABEL.hasOwnProperty(n.group);
+}).map(function (n) {
+  return {
+    id: n.id,
+    title: n.title,
+    optionText: SEARCH_ALL_GROUP_LABEL[n.group] + ' · ' + pickOptionText(n, n.group),
+    disabled: n.disabled,
+    paused: n.paused,
+    unreferencedLocal: n.unreferencedLocal,
+    group: n.group
+  };
+});
+const searchAllSelect = createCombobox({
+  mount: document.getElementById('searchAllComboMount'),
+  allLabel: 'Search apps, devices, hub & local variables',
+  placeholder: 'search everything...',
+  items: searchAllItems,
+  onChange: function (value, item) {
+    if (value === '__all__' || !item) return;
+    if (item.group === 'app') { appSelect.setValue(value); onAppFocusChange(value); }
+    else if (item.group === 'device') { deviceSelect.setValue(value); onDeviceFocusChange(value); }
+    else if (item.group === 'hubVariable') { hubVarSelect.setValue(value); onHubVarFocusChange(value); }
+    else if (item.group === 'localVariable') { localVarSelect.setValue(value); onLocalVarFocusChange(value, item); }
+    // A jump tool, not a fifth persistent selection state alongside the other
+    // four - resets to blank immediately after dispatching. The one matching
+    // dropdown above already shows the real state (set two lines up).
+    searchAllSelect.setValue('__all__');
   }
 });
 
