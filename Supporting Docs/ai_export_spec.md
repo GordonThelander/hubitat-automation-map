@@ -1,7 +1,7 @@
 # Automation Map AI Export Specification
 
 **Status:** implemented contract  
-**Export schema:** 8 (see sections 18-22 for the schema 4/5/6/7/8 deltas; sections 1-17 describe
+**Export schema:** 9 (see sections 18-23 for the schema 4/5/6/7/8/9 deltas; sections 1-17 describe
 schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
@@ -74,7 +74,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `7` as of v2.1.7 (see sections 18-21). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `9` as of v2.2.5 (see sections 18-23). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
@@ -724,3 +724,72 @@ No new root field beyond `devices[].disabled`. Every other `apps[]` field, and e
 other node kind, is unchanged. The map's own paused/disabled visual treatment (grey fill, unchanged
 node shape and icon) is likewise unchanged - only the label text and this export's structured data
 gained the distinction.
+
+## 23. Schema 9 (v2.2.5) delta
+
+Automation Map now discovers statically saved Hub Variable references in webCoRE pistons. This is
+consumer-reference evidence only. It does not decode webCoRE execution flow and does not claim that
+the reference reads or writes the variable. `graphSchemaVersion` moved 10 -> 11 because the cached
+graph can now contain the new relationship and per-piston decoder status.
+
+### 23.1 `edges[]`: new `usesVar` relationship
+
+A `usesVar` edge runs from a webCoRE piston app to a Hub Variable that was independently confirmed
+against the authoritative Hub Variable inventory:
+
+```json
+{
+  "fromId": "a...",
+  "toId": "v...",
+  "relationship": "usesVar",
+  "direction": "unknown",
+  "stateful": null,
+  "usageRole": null,
+  "writeSource": null
+}
+```
+
+The edge is produced only for a statically stored typed webCoRE variable operand (`t: "x"`) whose
+name begins `@@`. Plain webCoRE globals (`@`) and ordinary text containing the same characters do
+not qualify. A name absent from the authoritative Hub Variable inventory creates no variable node.
+Dynamic variable names assembled at runtime cannot be discovered this way.
+
+Schema 9 adds nullable `direction` to every exported edge. Its value is `"unknown"` for `usesVar`
+and `null` for every earlier relationship kind, whose established direction semantics are unchanged.
+
+### 23.2 `apps[]`: webCoRE decoder status
+
+Every webCoRE piston has a `hubVariableDecode` object:
+
+```json
+{
+  "status": "complete",
+  "relationship": "usesVar",
+  "error": null
+}
+```
+
+`status` is `complete`, `not-present`, or `error`. `not-present` means the piston had no saved
+`chunk:N` configuration and is not itself a scan failure. On `error`, `error` is a fixed decoder
+code such as `missing-chunk` or `invalid-json`; raw saved configuration, exception text and variable
+values are never exported. Non-webCoRE apps have `hubVariableDecode: null`.
+
+### 23.3 Scan, summary and insights additions
+
+- `scan.webcoreVariableDecodeIssues` lists `{app,error}` records. A non-empty list makes
+  `scan.status` `complete-with-gaps`, while all other successfully mapped relationships remain valid.
+- `scan.hubVariableRelationships.supportedEngines` now distinguishes Rule Machine read/write
+  decoding from webCoRE saved-reference use.
+- `summary.webcoreHubVariableUseCount` counts `usesVar` edges.
+- `summary.webcoreVariableDecodeIssueCount` counts affected pistons.
+- `insights.hubVariables.directionUnknownUsage` contains `{variable,usedBy[]}` records.
+- `insights.hubVariables.webcoreDecodeIssues` repeats the structured decoder gaps for consumers that
+  work from insights.
+- `insights.hubVariables.noDecodedUsage` now means no decoded `read`, `write`, or `usesVar`
+  relationship. Absence still does not prove that a variable is unused.
+
+### 23.4 What did not change
+
+`ruleFlows[]` remains the decoded Rule Machine flow collection. webCoRE pistons do not gain a
+synthetic flow entry. Hub Variable values remain excluded. Earlier `read` and `write` meanings are
+unchanged, and consumers must not convert `usesVar` into either of them.
