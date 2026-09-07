@@ -6815,10 +6815,14 @@ String buildMapHtml() {
      10px gap after the summary and 0px between every label after that,
      since the labels were never the flex container's real children. */
   #focusSection { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; display:flex; flex-direction:column; gap:10px; }
-  #focusSection summary { cursor:pointer; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; padding:2px; border-radius:4px; list-style:none; }
+  #focusSection summary { cursor:pointer; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; padding:2px; border-radius:4px; list-style:none; display:flex; justify-content:space-between; align-items:center; }
   #focusSection summary::-webkit-details-marker { display:none; }
   #focusSection summary::before { content:'▸'; display:inline-block; margin-right:6px; transition:transform 0.1s; }
   #focusSection[open] summary::before { transform:rotate(90deg); }
+  /* Dev-build-only marker so testers can never mistake this build for
+     production at a glance - deliberately red (not the panel's usual blue
+     accent) and only ever rendered when isDevBuild() is true server-side. */
+  .devBadge { color:#ff5555; text-transform:none; letter-spacing:0.2px; }
   #focusSection summary:hover { background:rgba(255,255,255,0.10); }
   #focusList { display:flex; flex-direction:column; gap:10px; }
   #focusList label { margin-bottom:0; }
@@ -6945,7 +6949,7 @@ String buildMapHtml() {
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
   #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
-          max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+          max-width:min(62vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
   #flow ul { margin:4px 0 0 0; padding-left:18px; }
@@ -6963,7 +6967,6 @@ String buildMapHtml() {
   #flowExit:hover { text-decoration:underline; }
   #flow ul { margin:4px 0 10px 0; padding-left:18px; }
   #flow li { margin:2px 0; font-size:0.85em; }
-  #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Below whatever showFlow()/showInertPanel() put in #flowChart, not inside
      it - #flowChart gets fully overwritten on every re-render (a fresh
      mermaid SVG, or a fresh inert-app summary), which would wipe this out if
@@ -6995,7 +6998,7 @@ String buildMapHtml() {
      constant in two without changing anything rendered; needed again if this
      block grows much further. */
   #ext { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-         max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+         max-width:min(74vw, 1040px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
   #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #ext table { border-collapse:collapse; width:100%; font-size:0.8em; }
@@ -7016,13 +7019,16 @@ String buildMapHtml() {
   #ext .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:1px 6px; font-size:0.95em; }
   #ext .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #ext .msg { font-size:0.8em; margin-left:6px; }
-  #extClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
-  /* Its own panel rather than reusing #ext or #flow's markup - a table of
-     links and a small query builder is a different shape of content from
-     either (a settings form, a rule flowchart), and this file's convention
-     throughout is one panel's CSS per panel rather than a shared class. */
+  /* Its own panel rather than reusing #ext or #flow's markup for CONTENT - a
+     table of links and a small query builder is a different shape of content
+     from either (a settings form, a rule flowchart), so each panel still owns
+     its own table/tag/form CSS below. The outer chrome (position, background,
+     max-height, close button, header-fixed/content-scrolling behaviour) is
+     the one thing genuinely identical across all five panels - backlog item 1
+     Phase 2 pulls that into .panelBody/.panelClose (see those rules) instead
+     of five copies of the same shell rules. */
   #pivot { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+           max-width:min(80vw, 1100px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #pivot h3 { margin:0 0 4px 0; font-size:16px; }
   #pivot .sub { opacity:0.72; font-size:14px; margin:0 0 12px 0; line-height:1.4; }
   #pivot a { color:#7fb6d6; text-decoration:none; }
@@ -7034,12 +7040,11 @@ String buildMapHtml() {
   #pivot label { font-size:14px; display:flex; align-items:center; gap:4px; }
   #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:14px; margin:0 4px 4px 0; }
   #pivot .rowbtn:hover { border-color:#4a7a94; color:#cfe3ea; }
-  #pivotClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
-  /* Its own panel rather than reusing #ext's markup, same "one panel's CSS
-     per panel" convention, even though the table shape is similar - this one
-     needs a search box and can run to ~200 rows, #ext's does not. */
+  /* Its own panel rather than reusing #ext's markup for CONTENT, same as
+     above - this one needs a search box and can run to ~200 rows, #ext's
+     does not. */
   #icons { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(74vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+           max-width:min(74vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #icons h3 { margin:0 0 4px 0; font-size:0.95em; }
   #icons .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #icons input[type=search] { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:4px 7px; font-size:0.9em; font-family:inherit; width:240px; margin-bottom:10px; }
@@ -7054,7 +7059,6 @@ String buildMapHtml() {
   #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #icons .msg { font-size:0.8em; margin-left:6px; }
-  #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Insights. Rendered into #flowChart, so it inherits #flow typography and
      only what is specific to the dashboard layout lives here. */
   /* An explicit readable base in px, then sizes at or near 1em of it. The
@@ -7136,13 +7140,26 @@ String buildMapHtml() {
      what the chart itself was built and tested for would add empty space
      around it, not a bigger chart. */
   #releaseActivity { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           width:min(92vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+           width:min(92vw, 1100px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
   #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
   #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
   #releaseActivity a { color:#7fb6d6; text-decoration:none; }
   #releaseActivity a:hover { text-decoration:underline; }
-  #releaseActivityClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }${''}
+  /* Backlog item 1 Phase 2 - the shared shell for all five panels
+     (flow/Insights, ext, pivot, icons, releaseActivity). Each panel keeps its
+     own id rule above for position/background/max-width/max-height (those
+     genuinely differ - a centred iframe embed is not a corner-pinned table),
+     but the close button and the header-fixed/content-scrolling behaviour
+     were five copies of the same rule and the audit (A3) flagged the
+     scrolling half of that as a real defect: with overflow on the whole
+     panel, a tall Insights panel scrolled its own title out of view along
+     with the findings. Each panel id rule now sets flex-direction:column
+     (display stays none there - only bringToFront() flips it to flex) and
+     the panel's title/back-link stay outside .panelBody as ordinary static
+     children, so only .panelBody scrolls. */
+  .panelClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  .panelBody { flex:1; min-height:0; overflow:auto; }${''}
 </style>
 </head>
 <body>
@@ -7224,7 +7241,7 @@ String buildMapHtml() {
 </div>
 <div id="controls">
   <details id="focusSection" open>
-    <summary>Focus</summary>
+    <summary>Focus${isDevBuild() ? "<span class='devBadge'>Dev ${APP_VERSION}</span>" : ''}</summary>
     <div id="focusList">
       <label>Focus app<span id="appComboMount"></span></label>
       <label>Focus device<span id="deviceComboMount"></span></label>
@@ -7261,11 +7278,11 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div>
-<div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
-<div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
-<div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
-<div id="releaseActivity"><button id="releaseActivityClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody"></div></div>
+<div id="flow"><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
+<div id="ext"><button id="extClose" class="panelClose" type="button" title="Close">&times;</button><h3>External systems</h3><div id="extBody" class="panelBody"></div></div>
+<div id="pivot"><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button><h3>Pivot tables</h3><div id="pivotBody" class="panelBody"></div></div>
+<div id="icons"><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button><h3>Device icons</h3><div id="iconsBody" class="panelBody"></div></div>
+<div id="releaseActivity"><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -8523,7 +8540,12 @@ function bringToFront(panel) {
   });
   panelTopZ += 1;
   panel.style.zIndex = panelTopZ;
-  panel.style.display = 'block';
+  // flex, not block: every panel is now display:flex; flex-direction:column
+  // (backlog item 1 Phase 2) so its .panelBody can be the one child that
+  // scrolls while the title/close stay fixed - block would still render the
+  // panel, but the column layout and .panelBody's flex:1 sizing depend on
+  // the parent actually being a flex container.
+  panel.style.display = 'flex';
   syncLegendVisibility();
   // The panel now covers part of the canvas, so a narrowed view needs
   // re-framing into what is left. No-ops on the whole-hub map.
@@ -10244,7 +10266,6 @@ function pivotRunCustom() {
 // the shell was already there from a previous open this page load.
 function pivotOpen() {
   pivotBody.innerHTML =
-    '<h3>Pivot tables</h3>' +
     '<p class="sub">Cross-reference what is already on the map - presets on the left, or build your own on the right. Both read the same relationships already drawn, so nothing here re-scans the hub.</p>' +
     '<div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px; margin-bottom:14px">' +
     '<div>' + PIVOT_PRESETS.map(function (p, i) {
@@ -10284,7 +10305,7 @@ function extEsc(s) {
 }
 
 function extLoad() {
-  extBody.innerHTML = '<h3>External systems</h3><p class="sub">Loading...</p>';
+  extBody.innerHTML = '<p class="sub">Loading...</p>';
   fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -10298,7 +10319,7 @@ function extLoad() {
       });
     })
     .catch(function (e) {
-      extBody.innerHTML = '<h3>External systems</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
+      extBody.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
     });
 }
 
@@ -10419,8 +10440,7 @@ function extRender(message) {
   const suggested = groups.unknown.filter(function (t) { return !!extEvidenceBadge(t); });
   const bare = groups.unknown.filter(function (t) { return !extEvidenceBadge(t); });
 
-  let h = '<h3>External systems</h3>';
-  h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
+  let h = '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
        'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
 
   // Everything already answered, collapsed to a count rather than listed:
@@ -10831,12 +10851,12 @@ const iconsBody = document.getElementById('iconsBody');
 let ICONS = null;
 
 function iconsLoad() {
-  iconsBody.innerHTML = '<h3>Device icons</h3><p class="sub">Loading...</p>';
+  iconsBody.innerHTML = '<p class="sub">Loading...</p>';
   fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
     .then(function (d) { ICONS = d; iconsRender(''); })
     .catch(function (e) {
-      iconsBody.innerHTML = '<h3>Device icons</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
+      iconsBody.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
     });
 }
 
@@ -10855,8 +10875,7 @@ function iconsRender(message, filter) {
     return (labels[a] || a).localeCompare(labels[b] || b);
   });
 
-  let h = '<h3>Device icons</h3>';
-  h += '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
+  let h = '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
        'light, an unrecognised one gets a "?". Wrong for a particular device? Pick the right one below and Save. ' +
        'Left as "?"? Add a note so you remember what it actually is - it also appears in the tooltip for that ' +
        'device on the map. Reload the map page afterwards to see it redrawn.</p>';
