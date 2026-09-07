@@ -8688,15 +8688,20 @@ function syncLegendVisibility() {
   const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
-  // Narrower than the old "hide for any open panel" rule Gordon rejected -
-  // that one hid the compact legend for every panel, including ones (the
-  // flow panel) that do not actually overlap it any more. This only hides
-  // it while the FULL legend panel specifically is open, since showing both
-  // the compact and the complete legend at once is genuinely redundant, not
-  // just occasionally inconvenient - confirmed live, Gordon flagged the
-  // compact legend still visibly showing behind the full panel.
-  const legendPanelOpen = legendPanel && getComputedStyle(legendPanel).display !== 'none';
-  if (lg) lg.style.visibility = legendPanelOpen ? 'hidden' : '';
+  // secondaryPanels(), not allPanels() - every one of those (ext/pivot/
+  // icons/releaseActivity/legendPanel) still opens at the standard
+  // top:100px/left:10px corner, which genuinely overlaps the legend
+  // (top:55px/left:10px, up to 478px tall now it is contextual). flowPanel
+  // is the one panel deliberately excluded from secondaryPanels() (see its
+  // own comment above), and the one exception here: it positions itself
+  // below the legend and is user-draggable specifically so it does not
+  // need to share this hide behaviour - confirmed live both ways, Gordon
+  // flagged External systems and Pivot tables still overlapping the legend
+  // with two more screenshots after the flow panel's own fix landed.
+  const overlappingPanelOpen = secondaryPanels().some(function (p) {
+    return p && getComputedStyle(p).display !== 'none';
+  });
+  if (lg) lg.style.visibility = overlappingPanelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
