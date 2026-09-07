@@ -6762,7 +6762,18 @@ String buildMapHtml() {
     font-style: normal;
     font-display: swap;
   }
-  html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
+  /* overflow:hidden - the page itself must never scroll. Confirmed live as
+     the real cause of a panel overlapping the control rail: opening a
+     modernPanel could make the page tall/wide enough to grow its own
+     scrollbar, which shrinks documentElement.clientWidth by the scrollbar's
+     width and shifts #controls (positioned via right:10px) left by exactly
+     that amount - after sizeModernPanel() had already measured and sized
+     the panel against the wider, scrollbar-free layout. Every panel already
+     scrolls its own content internally via .panelBody, and #network fills
+     100vh on its own - nothing here is meant to make the page itself
+     taller than the viewport, so removing its ability to scroll at all
+     removes the instability rather than working around it. */
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
   #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:999px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
   /* Fixed width, matching #status exactly (was max-width, sized to
      content) - the two need to line up regardless of viewport width, not
@@ -6771,7 +6782,10 @@ String buildMapHtml() {
      off the bottom of the screen - smaller text plus a hard max-height/
      scroll safety net so it can never do that again regardless of viewport
      height or how much the legend itself grows later. */
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:12px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
+  /* 14px, matching #legendPanel's own explicit base - Gordon flagged the
+     compact and full legend reading at two different sizes live. Both are
+     now anchored to the same value rather than each picking its own. */
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
   #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
   /* Small bold letter-spaced label above each control - the same "eyebrow"
      treatment gordonthelander.github.io/HPM_Manifest_Crawl/ uses above its
@@ -6978,21 +6992,30 @@ String buildMapHtml() {
      standard for all five, not stay a one-off. One class each instead of
      five near-duplicate id rules - a future panel gets this for free by
      using the class, not by copying CSS.
-     Large by design, not just "bigger than before" - width/height are
-     computed against the viewport (minus the ~330px the right-hand
-     control rail plus margin needs) rather than sized to content, matching
-     Gordon's own live-annotated "use the full display area" mark rather
-     than a guessed number. Position/size only; each panel keeps its own
-     content CSS below (tables, forms, the flowchart, Insights) exactly as
-     the Phase 2 shared-shell comment already explained - that split was
-     already correct, this only extends what the shared half itself covers.
-     JS (positionPanelBelowLegend(), called from bringToFront() the first
-     time any given panel opens each page load, then never again once the
-     user has dragged that specific panel - see makePanelDraggable()) sets
-     the real left/top against the legend's own current bottom edge; this
-     rule's own top/left is only the pre-JS fallback. */
+     Large by design, matching Gordon's own live-annotated "use the full
+     display area" mark - but the width/height below are only the pre-JS
+     fallback, same as top/left already were. A guessed calc(100vw - Npx)
+     here overlapped the control rail live (Gordon's yellow-box screenshot,
+     same session) once the actual rail width/margins did not match the
+     number this guessed - sizeModernPanel(), called from bringToFront()
+     the first time any given panel opens each page load (then never again
+     once the user has dragged that panel - see makePanelDraggable()/
+     panelCustomPosition), measures the real #status and #controls elements
+     with getBoundingClientRect() and sets left/top/width/height from that,
+     the same "measure the real DOM, do not guess a number" approach
+     visibleRegion() already uses for the graph's own framing. Position/size
+     only; each panel keeps its own content CSS below (tables, forms, the
+     flowchart, Insights) exactly as the Phase 2 shared-shell comment
+     already explained - that split was already correct, this only extends
+     what the shared half itself covers. */
+  /* box-sizing:border-box - without it, sizeModernPanel()'s JS-set
+     width/height are content-box sizes, and the panel's own 16px/16px
+     horizontal padding renders 32px wider than that - confirmed live, JS
+     set width to exactly the space free before the control rail and the
+     panel still rendered 32px into it, right up against border-box's
+     absence rather than any error in the free-space arithmetic itself. */
   .modernPanel { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:0 16px 12px 16px; border-radius:6px;
-                 font-size:13px; width:calc(100vw - 340px); max-width:calc(100vw - 340px); height:calc(100vh - 70px); max-height:calc(100vh - 70px);
+                 box-sizing:border-box; font-size:13px; width:calc(100vw - 340px); height:calc(100vh - 70px);
                  display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
   /* The drag handle, and the visual cue that a panel can be dragged at all -
      solid, saturated green (the app's own established accent, same as
@@ -8584,12 +8607,29 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // new flag variable, just one more entry in the setup list near the bottom
 // of this script (after every panel's own const exists).
 const panelCustomPosition = new WeakMap();
-function positionPanelBelowLegend(panel) {
-  const legendEl = document.getElementById('legend');
-  const legendRect = legendEl ? legendEl.getBoundingClientRect() : null;
+// Measures the real #status pill and #controls rail rather than guessing a
+// viewport-relative number for any of left/top/width/height - the CSS
+// fallback that used to size this (calc(100vw - 340px)) overlapped the
+// control rail live once the actual numbers did not match what 340
+// assumed. left/top sit just clear of #status (top-left) rather than the
+// legend now that the legend hides for every panel including flow (no
+// legend visible to anchor against at open time in the common case); width
+// stops short of #controls' own left edge, height reaches the bottom of
+// the viewport - the same free-area idea visibleRegion() already applies
+// to the graph itself, applied here to a panel instead.
+function sizeModernPanel(panel) {
+  const statusEl = document.getElementById('status');
+  const controlsEl = document.getElementById('controls');
+  const statusRect = statusEl ? statusEl.getBoundingClientRect() : null;
+  const controlsRect = controlsEl ? controlsEl.getBoundingClientRect() : null;
   const gap = 14;
-  panel.style.left = (legendRect ? legendRect.left : 10) + 'px';
-  panel.style.top = (legendRect ? legendRect.bottom : 55) + gap + 'px';
+  const left = 10;
+  const top = (statusRect ? statusRect.bottom : 45) + gap;
+  const rightEdge = controlsRect ? controlsRect.left : (window.innerWidth - 320);
+  panel.style.left = left + 'px';
+  panel.style.top = top + 'px';
+  panel.style.width = Math.max(200, rightEdge - left - gap) + 'px';
+  panel.style.height = Math.max(200, window.innerHeight - top - 10) + 'px';
 }
 function makePanelDraggable(panel, header) {
   if (!header || !panel || typeof panel.getBoundingClientRect !== 'function') return;
@@ -8669,23 +8709,17 @@ function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 function syncLegendVisibility() {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
+  // allPanels() - every panel now hides the legend while open, flow
+  // included. flow was the one deliberate exception through two earlier
+  // rounds of this (it positioned itself below the legend instead), but
+  // now that every panel shares the same large modernPanel display area
+  // there is no longer a meaningful "stays out of the legend's way" case
+  // to preserve - Gordon's own live direction, once the panels all grew to
+  // this size the special case stopped making sense.
   const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
-  // secondaryPanels(), not allPanels() - every one of those (ext/pivot/
-  // icons/releaseActivity/legendPanel) still opens at the standard
-  // top:100px/left:10px corner, which genuinely overlaps the legend
-  // (top:55px/left:10px, up to 478px tall now it is contextual). flowPanel
-  // is the one panel deliberately excluded from secondaryPanels() (see its
-  // own comment above), and the one exception here: it positions itself
-  // below the legend and is user-draggable specifically so it does not
-  // need to share this hide behaviour - confirmed live both ways, Gordon
-  // flagged External systems and Pivot tables still overlapping the legend
-  // with two more screenshots after the flow panel's own fix landed.
-  const overlappingPanelOpen = secondaryPanels().some(function (p) {
-    return p && getComputedStyle(p).display !== 'none';
-  });
-  if (lg) lg.style.visibility = overlappingPanelOpen ? 'hidden' : '';
+  if (lg) lg.style.visibility = panelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
@@ -8701,10 +8735,11 @@ function bringToFront(panel) {
   });
   panelTopZ += 1;
   panel.style.zIndex = panelTopZ;
-  // Below the legend by default, first open only for each individual panel -
-  // see positionPanelBelowLegend()/panelCustomPosition's own comments for
-  // why this doesn't run again once the user has dragged that panel.
-  if (panel.classList && panel.classList.contains('modernPanel') && !panelCustomPosition.get(panel)) positionPanelBelowLegend(panel);
+  // Sized/positioned against the real status pill and control rail, first
+  // open only for each individual panel - see sizeModernPanel()/
+  // panelCustomPosition's own comments for why this doesn't run again once
+  // the user has dragged that panel.
+  if (panel.classList && panel.classList.contains('modernPanel') && !panelCustomPosition.get(panel)) sizeModernPanel(panel);
   // flex, not block: every panel is now display:flex; flex-direction:column
   // (backlog item 1 Phase 2) so its .panelBody can be the one child that
   // scrolls while the title/close stay fixed - block would still render the
