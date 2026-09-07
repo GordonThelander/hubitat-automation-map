@@ -7199,7 +7199,20 @@ String buildMapHtml() {
      and .modernPanel gives it one via its own explicit width, same as it
      did when this panel had that width set directly. */
   #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
-  #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
+  /* Gordon flagged a scrollbar live - a fixed 500px iframe plus the sub
+     line and the link row below it does not always fit .panelBody's own
+     available height, which now varies with the viewer's actual window
+     rather than the old ~90vh cap. .panelBody becomes a column flex
+     container for this one panel only, and the iframe (flex:1, min-height:0
+     so it can shrink rather than only grow) absorbs whatever vertical space
+     is actually left after the sub line and the link row below it - the
+     content now always exactly fits, rather than a fixed height sometimes
+     not. max-width+margin:auto also shrinks and centres it horizontally,
+     matching the 1100px bound this embed was actually designed/tested for
+     (see the comment above) rather than stretching it edge-to-edge across
+     a panel now far wider than that. */
+  #releaseActivity .panelBody { display:flex; flex-direction:column; }
+  #releaseActivity iframe { border:0; display:block; width:100%; max-width:1100px; flex:1; min-height:0; border-radius:4px; margin:0 auto; align-self:center; }
   #releaseActivity a { color:#7fb6d6; text-decoration:none; }
   #releaseActivity a:hover { text-decoration:underline; }
   /* Backlog item 1 Phase 2 - the shared shell for all five panels
