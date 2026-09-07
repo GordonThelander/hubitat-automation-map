@@ -8166,17 +8166,42 @@ function fitCurrentView() {
 // site and miss the next one, watch the overlays themselves and reframe
 // whenever their geometry changes. Debounced, because a panel rendering a long
 // table resizes many times in a row.
+// #hubWatermark is centred at a fixed 76% down the viewport, tracking
+// #controls horizontally but not vertically - #controls has grown taller
+// over this session's own additions (five focus combos, the show filter,
+// the full tool rail) and its z-index was raised to 9000 earlier this
+// session to fix combobox popups losing to panels, so once #controls' own
+// bottom edge reaches down as far as the watermark's top, that top sliver
+// of the image now genuinely paints hidden behind it rather than just
+// sitting under a lower z-index unnoticed. Clamp the image's centre down
+// so it never sits higher than #controls' own bottom, whatever height
+// #controls happens to be - the 76% figure stays the common case on a
+// tall enough viewport, this only pushes it down further when needed.
+function positionHubWatermark() {
+  const wm = document.getElementById('hubWatermark');
+  const controlsEl = document.getElementById('controls');
+  if (!wm || !controlsEl) return;
+  const gap = 20;
+  const naturalCenter = window.innerHeight * 0.76;
+  const halfHeight = wm.getBoundingClientRect().height / 2;
+  const minCenter = controlsEl.getBoundingClientRect().bottom + gap + halfHeight;
+  wm.style.top = Math.max(naturalCenter, minCenter) + 'px';
+}
 let panelResizeTimer = null;
 function watchOverlayGeometry() {
   if (typeof ResizeObserver === 'undefined') return;
   const observer = new ResizeObserver(function () {
     if (panelResizeTimer) clearTimeout(panelResizeTimer);
     panelResizeTimer = setTimeout(fitCurrentView, 120);
+    positionHubWatermark();
   });
   // moveTo() cannot change a panel's size, so this cannot feed itself.
   [document.getElementById('legend'), document.getElementById('controls')]
     .concat(allPanels())
     .forEach(function (el) { if (el && el.nodeType === 1) observer.observe(el); });
+  positionHubWatermark();
+  const wmEl = document.getElementById('hubWatermark');
+  if (wmEl) wmEl.addEventListener('load', positionHubWatermark);
 }
 // Deferred one tick: the panel consts are declared much further down this
 // script, so they do not exist yet at this point in the file.
@@ -8267,6 +8292,7 @@ let refitTimer = null;
 window.addEventListener('resize', function () {
   if (refitTimer) clearTimeout(refitTimer);
   refitTimer = setTimeout(fitCurrentView, 200);
+  positionHubWatermark();
 });
 
 // Three passes, not one, so a hasComponent (device-owned component) edge
@@ -8705,7 +8731,17 @@ function sizeModernPanel(panel) {
   const controlsRect = controlsEl ? controlsEl.getBoundingClientRect() : null;
   const gap = 14;
   const left = 10;
-  const top = (statusRect ? statusRect.bottom : 45) + gap;
+  // Classic-mode #flow is the one panel that opens with the legend still
+  // visible beside it (syncLegendVisibility), so status-bar-only positioning
+  // put it directly on top of the legend - same left:10px corner, same
+  // area, legend simply painted underneath. Give it the legend's actual
+  // bottom edge too (rect stays accurate even mid-transition, since
+  // visibility:hidden still lays the legend out) so it opens below the
+  // legend instead of over it, whatever the legend's current content height.
+  const legendEl = document.getElementById('legend');
+  const isFlowClassic = panel === flowPanel && !panel.classList.contains('modernPanelLarge');
+  const legendBottom = (isFlowClassic && legendEl) ? legendEl.getBoundingClientRect().bottom : 0;
+  const top = Math.max(statusRect ? statusRect.bottom : 45, legendBottom) + gap;
   panel.style.left = left + 'px';
   panel.style.top = top + 'px';
   // Width/height only for the large-area case (.modernPanelLarge) - #flow
