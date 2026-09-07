@@ -7019,35 +7019,53 @@ String buildMapHtml() {
   }
   /* Shared by every panel now (backlog item 1 follow-up, same day as the
      flow-only version above it): Gordon asked for the flow panel's own
-     draggable-green-header-plus-large-area treatment to become the
-     standard for all five, not stay a one-off. One class each instead of
-     five near-duplicate id rules - a future panel gets this for free by
-     using the class, not by copying CSS.
-     Large by design, matching Gordon's own live-annotated "use the full
-     display area" mark - but the width/height below are only the pre-JS
-     fallback, same as top/left already were. A guessed calc(100vw - Npx)
-     here overlapped the control rail live (Gordon's yellow-box screenshot,
-     same session) once the actual rail width/margins did not match the
-     number this guessed - sizeModernPanel(), called from bringToFront()
-     the first time any given panel opens each page load (then never again
-     once the user has dragged that panel - see makePanelDraggable()/
-     panelCustomPosition), measures the real #status and #controls elements
-     with getBoundingClientRect() and sets left/top/width/height from that,
-     the same "measure the real DOM, do not guess a number" approach
-     visibleRegion() already uses for the graph's own framing. Position/size
-     only; each panel keeps its own content CSS below (tables, forms, the
-     flowchart, Insights) exactly as the Phase 2 shared-shell comment
-     already explained - that split was already correct, this only extends
-     what the shared half itself covers. */
-  /* box-sizing:border-box - without it, sizeModernPanel()'s JS-set
+     draggable-green-header treatment to become the standard for all five,
+     not stay a one-off. One class each instead of five near-duplicate id
+     rules - a future panel gets this for free by using the class, not by
+     copying CSS. Deliberately has no width/height of its own - see
+     .modernPanelLarge below for why that half is separate.
+     box-sizing:border-box - without it, sizeModernPanel()'s JS-set
      width/height are content-box sizes, and the panel's own 16px/16px
      horizontal padding renders 32px wider than that - confirmed live, JS
      set width to exactly the space free before the control rail and the
      panel still rendered 32px into it, right up against border-box's
      absence rather than any error in the free-space arithmetic itself. */
   .modernPanel { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:0 16px 12px 16px; border-radius:6px;
-                 box-sizing:border-box; font-size:13px; width:calc(100vw - 340px); height:calc(100vh - 70px);
+                 box-sizing:border-box; font-size:13px;
                  display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+  /* Large by design, matching Gordon's own live-annotated "use the full
+     display area" mark - but only for panels that should actually fill it.
+     Split out from .modernPanel itself (backlog item 1 follow-up, later
+     the same day): Gordon flagged live that a rule flowchart opened inside
+     #flow had also grown to this same huge size, which he never asked for
+     - only the tool-rail panels (Insights included) were meant to. #flow
+     itself now always carries plain .modernPanel, and JS adds this class
+     on top only when it is about to show Insights specifically (see the
+     insightsBtn handler), removing it again for a rule flowchart/inert
+     app/unreferenced local variable in favour of .flowClassicSize instead
+     - #ext/#pivot/#icons/#releaseActivity carry this class permanently in
+     their own static markup, since they only ever have the one shape.
+     Width/height here are only the pre-JS fallback, same as top/left
+     already were. A guessed calc(100vw - Npx) here overlapped the control
+     rail live (Gordon's yellow-box screenshot, same session) once the
+     actual rail width/margins did not match the number this guessed -
+     sizeModernPanel(), called from bringToFront() the first time any given
+     panel opens each page load (then never again once the user has
+     dragged that panel - see makePanelDraggable()/panelCustomPosition),
+     measures the real #status and #controls elements with
+     getBoundingClientRect() and sets left/top/width/height from that, the
+     same "measure the real DOM, do not guess a number" approach
+     visibleRegion() already uses for the graph's own framing. */
+  .modernPanel.modernPanelLarge { width:calc(100vw - 340px); height:calc(100vh - 70px); }
+  /* #flow's own bounds from before backlog item 1's "unify all five
+     panels" change - restored for the rule-flowchart/inert-app/
+     unreferenced-variable case specifically, per Gordon's explicit "the
+     workflow panel must remain as it was". Sizes to its own content within
+     these bounds (no forced width/height, unlike .modernPanelLarge) -
+     sizeModernPanel() only sets left/top when this class is present
+     instead of .modernPanelLarge, leaving width/height to CSS exactly as
+     the original draggable-flow-panel commit did. */
+  .flowClassicSize { max-width:min(62vw, 900px); max-height:90vh; }
   /* The drag handle, and the visual cue that a panel can be dragged at all -
      solid, saturated green (the app's own established accent, same as
      Community utilities/the status pill) is deliberately not part of this
@@ -7366,11 +7384,11 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow" class="modernPanel"><div id="flowHeader" class="modernPanelHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
-<div id="ext" class="modernPanel"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
-<div id="pivot" class="modernPanel"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
-<div id="icons" class="modernPanel"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
-<div id="releaseActivity" class="modernPanel"><div class="modernPanelHeader"><h3>Hubitat releases over time</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
+<div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
+<div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
+<div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
+<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat releases over time</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -8669,6 +8687,17 @@ const panelCustomPosition = new WeakMap();
 // stops short of #controls' own left edge, height reaches the bottom of
 // the viewport - the same free-area idea visibleRegion() already applies
 // to the graph itself, applied here to a panel instead.
+// #flow is the one panel that shows genuinely different shapes of content
+// (Insights, a rule flowchart, an inert-app summary, an unreferenced local
+// variable) - only Insights should use the large shared display area, per
+// Gordon's explicit correction live ("the workflow panel must remain as it
+// was"). Called right before bringToFront(flowPanel) at every one of
+// #flow's four opening call sites, so sizeModernPanel() (which reads
+// modernPanelLarge) always sees the right mode for what is about to show.
+function setFlowSizeMode(large) {
+  flowPanel.classList.toggle('modernPanelLarge', large);
+  flowPanel.classList.toggle('flowClassicSize', !large);
+}
 function sizeModernPanel(panel) {
   const statusEl = document.getElementById('status');
   const controlsEl = document.getElementById('controls');
@@ -8677,9 +8706,16 @@ function sizeModernPanel(panel) {
   const gap = 14;
   const left = 10;
   const top = (statusRect ? statusRect.bottom : 45) + gap;
-  const rightEdge = controlsRect ? controlsRect.left : (window.innerWidth - 320);
   panel.style.left = left + 'px';
   panel.style.top = top + 'px';
+  // Width/height only for the large-area case (.modernPanelLarge) - #flow
+  // in its classic mode (a rule flowchart/inert app/unreferenced variable,
+  // .flowClassicSize instead) sizes itself from its own CSS max-width/
+  // max-height and its actual content, same as before backlog item 1's
+  // "unify all five panels" change gave it a forced pixel size it was
+  // never meant to have. Position only, in that case.
+  if (!panel.classList.contains('modernPanelLarge')) return;
+  const rightEdge = controlsRect ? controlsRect.left : (window.innerWidth - 320);
   panel.style.width = Math.max(200, rightEdge - left - gap) + 'px';
   panel.style.height = Math.max(200, window.innerHeight - top - 10) + 'px';
 }
@@ -8893,6 +8929,7 @@ function showInertPanel(node) {
   // own empty-state branch, not a separate ad hoc clear here.
   renderRuleVariablesCard(node.id);
   renderCommunityCard(node);
+  setFlowSizeMode(false);
   bringToFront(flowPanel);
 }
 
@@ -8914,6 +8951,7 @@ function showUnreferencedLocalPanel(node) {
   // the review 296 correction established for showInertPanel above.
   renderRuleVariablesCard(node.id);
   renderCommunityCard(node);
+  setFlowSizeMode(false);
   bringToFront(flowPanel);
 }
 
@@ -8938,6 +8976,7 @@ function showFlow(appId) {
     // regardless of which branch of this function is taken.
     renderRuleVariablesCard(appId);
     renderCommunityCard(node);
+    setFlowSizeMode(false);
     bringToFront(flowPanel);
     return;
   }
@@ -8957,12 +8996,14 @@ function showFlow(appId) {
     flowChart.innerHTML = res.svg;
     renderRuleVariablesCard(appId);
     renderCommunityCard(node);
+    setFlowSizeMode(false);
     bringToFront(flowPanel);
   }).catch(function (err) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
     renderRuleVariablesCard(appId);
     renderCommunityCard(node);
+    setFlowSizeMode(false);
     bringToFront(flowPanel);
   });
 }
@@ -10343,6 +10384,7 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   // Every other write to flowChart pairs it with this - Insights was the one
   // gap, leaving a previously-focused app's community card visible under it.
   renderCommunityCard(null);
+  setFlowSizeMode(true);
   bringToFront(flowPanel);
 });
 
