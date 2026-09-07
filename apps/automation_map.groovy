@@ -8574,15 +8574,19 @@ const resourcesPanel = document.getElementById('resources') || { style: {} };
 // whole script has already finished its first pass and all of them exist -
 // same as every other forward reference in this file.
 //
-// The legend is one line sitting entirely above where these panels start
-// (top:100px, well below its own ~93px bottom edge), so it never needs to
-// hide for a panel - the original "ghost text across the table" problem
-// this hiding was built for only happened when the legend could still
-// expand to its full ~20-row form inline. Since backlog item 1 Phase 3,
-// that full form lives in #legendPanel instead (a panel like any other,
-// coordinated through secondaryPanels() below) - #legend itself is always
-// the compact 3-row version, so it has nothing left to hide from. Hint has
-// no compact form of its own, so it keeps hiding for any open panel.
+// Wrong claim removed 2026-09-07: this comment used to say the legend is
+// always "one line... well below its own ~93px bottom edge" so it never
+// needs to hide for a panel. That was true of the ORIGINAL single-row
+// collapsed state, but not of the compact legend Phase 1 introduced (3 rows,
+// ~112px even before it became contextual) - both start at the same left
+// edge as every panel, and a panel starts at top:100px while the legend
+// starts at top:55px, so anything over ~45px tall already reaches into
+// where a panel sits. Confirmed live: Gordon reported the rule flowchart
+// panel visibly overlapping the legend, exactly this gap. Restored the
+// hide-while-a-panel-is-open behaviour below, now covering both #legend and
+// #hint - correct for a legend whose height can range from a few rows to
+// all 20 (contextual legend, same Phase 3 batch), not just the old fixed
+// single-line and full-expanded cases this comment was written against.
 ${''}
 // Single source of truth for panel coordination - bringToFront,
 // syncLegendVisibility and closeSecondaryPanels all read it, so a new panel is
@@ -8595,10 +8599,12 @@ function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseAc
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
+  const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
   const panelOpen = allPanels().some(function (p) {
     return p && getComputedStyle(p).display !== 'none';
   });
+  if (lg) lg.style.visibility = panelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
