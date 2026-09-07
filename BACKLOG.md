@@ -25,49 +25,23 @@ historical record, not an open gate.
 
 ## Now
 
-### 22. Fix two misleading/incorrect text bugs found by independent UI assessment
-
-An independent UI assessment (2026-09-07, `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`)
-verified against source on the dev branch at commit `9c1f9fc`. Two of its findings are plain content
-bugs with no design ambiguity - confirmed directly against current source, not yet fixed:
-
-- Focusing the Automation Map app itself on its own graph shows "Nothing at all: no children, no
-  schedule, no subscriptions. Either it is not configured yet, or it is left over from something
-  that has been removed." - even though the app runs a real, configured scheduled scan. The self-app
-  is a special "reads the whole hub, drives nothing" family (`apps/automation_map.groovy:5311`) with
-  no decoded facts of its own, so it falls into the generic abandoned-app fallback
-  (`apps/automation_map.groovy:8987`), which was never taught to exclude the one app that is always
-  legitimately schedule-only with no facts to decode.
-- The Full legend's Private Boolean row is a visibly truncated sentence: "Private Boolean - rule
-  sets another rule's" (`apps/automation_map.groovy:7350`), missing its object. The contextual
-  compact legend already has the correct wording elsewhere in the same file
-  (`apps/automation_map.groovy:7469`): "Private Boolean - rule sets the Private Boolean of another
-  rule."
-
-**Next action:** give the self-app family a truthful description (or otherwise exempt it from the
-no-schedule fallback), and fix the truncated legend sentence to match the compact legend's wording.
-Both are isolated, low-risk text/logic fixes.
+_Nothing open._
 
 ## Next
 
 ### 23. Remaining findings from the independent UI assessment (2026-09-07)
 
-Full report: `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`. The two purely
-textual bugs it found are item 22 above; everything below needs an actual design/implementation
+Full report: `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`. The three concrete
+bugs it found are item 22 in Hold/closed below; everything here needs an actual design/implementation
 decision, not just a wording fix. Spot-verified against source (line citations, opacity/stabilization
 timing, `#status`/`#legend` 375px and `#controls` 300px fixed widths, the 820px small-screen
-breakpoint, close buttons using generic `title="Close"` with no `aria-label`, Quick Search's group
-allowlist excluding `externalSystem`) - all checked claims matched current code.
+breakpoint, close buttons using generic `title="Close"` with no `aria-label`) - all checked claims
+matched current code.
 
 - Narrowing the relationship filter (e.g. "External systems only") blanks the graph for roughly
   1.5s with no busy indicator before the narrowed layout appears - the network's opacity is
   deliberately zeroed during physics stabilization (`apps/automation_map.groovy` `settle()`) with a
   1500ms fallback reveal, and nothing tells the user layout is still running during that window.
-- Quick Search excludes `externalSystem` nodes by construction (`SEARCH_ALL_GROUP_LABEL` only lists
-  app/device/hubVariable/localVariable) despite its placeholder reading "search everything..." -
-  and there is no existing Focus-dropdown mechanism for external systems to dispatch a match into
-  even if included, so this needs a real focus path decided first, not just a filter change.
-  Alternative: narrow the placeholder wording to match actual scope.
 - Duplicate visible labels in Quick Search results are indistinguishable - no room, parent, or ID
   discriminator shown when two nodes share a label, only a hidden internal id.
 - Panels (Insights, External systems, Pivot tables, Device icons, flow/details, release activity)
@@ -85,9 +59,7 @@ allowlist excluding `externalSystem`) - all checked claims matched current code.
 
 **Next action:** each bullet needs its own scoped design decision before implementation (matches
 item 1's review scope for the layout/styling ones) - not a batch to fix blind. Raise with Gordon
-which to schedule and in what order; the assessment's own suggested order was: self-app status (now
-item 22) -> busy-state feedback -> Quick Search coverage/disambiguation -> panel accessibility ->
-legend/button consistency (now item 22 for the legend text) -> 1024px layout and search guidance.
+which to schedule and in what order.
 
 ### 1. Desktop UI review and map workspace modernisation
 
@@ -238,6 +210,31 @@ Investigate a bounded cache that can restore a recent map quickly while clearly 
 never presenting stale data as a completed current scan.
 
 ## Hold / closed
+
+- **Fix the three real bugs found by independent UI assessment (item 22):** completed and verified
+  live on the Dev hub, 2026-09-07 (v2.2.5, local-only, not yet pushed). Full report:
+  `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`.
+  - Focusing the Automation Map app itself used to falsely claim "Nothing at all: no children, no
+    schedule, no subscriptions... it is not configured yet, or has been removed" despite genuinely
+    running a scheduled scan - `processAppRelationships()` returned early for every instance of this
+    app's own family (deliberately, to avoid drawing a second/orphaned instance as an app with
+    hundreds of meaningless whole-hub edges), and that early return also skipped the separate,
+    harmless schedule/subscription/child-count capture every other empty app gets from the same scan
+    response. Now captured before the early return, same shape the existing shared block already
+    builds for every other inert app. Verified after a real scan (117 apps): the self-app node now
+    carries `sched: 4` and its panel lists all four real scheduled jobs (including the daily 01:00
+    scan cron) instead of the false abandoned-app message.
+  - The Full legend's Private Boolean row was a truncated sentence ("...rule sets another rule's",
+    no object) - completed to match the correct wording the compact legend already had elsewhere in
+    the same file.
+  - Quick Search claimed to "search everything..." but excluded external-system nodes by
+    construction. Added `external` to the search group allowlist, dispatched through `focusNode()` -
+    the same generic path a direct click on an external-system node on the graph already used, so no
+    new focus mechanism was actually needed. Verified live: 22 external-system items now appear in
+    Quick Search; selecting one through the real combobox interaction correctly focused it.
+
+  Item 23 (Next) carries everything else the same assessment found, since those all need an actual
+  design decision rather than a wording/logic fix.
 
 - **Tell the user when a newer version has been published (item 21):** completed and shipped in
   production v2.2.3 (2026-09-05). The settings page title shows a blue, bracketed notice when the
