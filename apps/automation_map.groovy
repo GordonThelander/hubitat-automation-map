@@ -6960,20 +6960,38 @@ String buildMapHtml() {
     #controls, #legend, #hint, #network, #flow, #status, #hubWatermark { display:none !important; }
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
-  /* Floating/centred rather than the usual top:100px/left:10px corner
-     (same treatment as #releaseActivity below, for the same reason) -
-     Gordon reported this specific panel overlapping the legend live, and
-     wants the legend to stay put rather than hide itself. Centring moves
-     the conflict away entirely instead of trading it for a disappearing
-     legend. Smaller base font-size (was unset, inheriting the page's 16px)
-     shrinks every em-based rule below it in one place - #insRoot sets its
-     own explicit 15px and is unaffected, this only touches the flowchart's
-     surrounding chrome (title/back-link/notes); the flowchart's own
-     rendered text size is mermaid's own fontSize init option, set
+  /* Draggable and defaults to sitting below the legend rather than the
+     usual top:100px/left:10px corner or a fixed centred position - both
+     tried and rejected live, Gordon wants this panel out of the legend's
+     way AND moveable by hand, not auto-positioned only. JS (positionFlow
+     PanelDefault(), called from bringToFront() the first time this panel
+     opens each page load) sets the real left/top against the legend's own
+     current bottom edge; this rule's own top/left is only the pre-JS
+     fallback. Smaller base font-size (was unset, inheriting the page's
+     16px) shrinks every em-based rule below it in one place - #insRoot
+     sets its own explicit 15px and is unaffected, this only touches the
+     flowchart's surrounding chrome (title/back-link/notes); the
+     flowchart's own rendered text size is mermaid's own theme config, set
      separately where mermaid.initialize() is called. */
-  #flow { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
+  #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:0 16px 12px 16px; border-radius:6px;
           font-size:13px; max-width:min(62vw, 900px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
-  #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
+  /* The drag handle, and the visual cue that this panel can be dragged at
+     all - solid, saturated green (the app's own established accent, same
+     as Community utilities/the status pill) is deliberately not part of
+     this page's otherwise dark/blue palette, so it reads as "this bar
+     behaves differently" rather than blending in as ordinary chrome.
+     Negative side/top margins cancel #flow's own padding so the bar reaches
+     the panel's true edges instead of sitting inset within it, with a
+     matching border-radius on just the top two corners. */
+  #flowHeader { cursor:move; user-select:none; background:#81BC00; margin:0 -16px 10px -16px; padding:8px 12px 8px 16px;
+                border-radius:6px 6px 0 0; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  #flowHeader h3 { color:#121214; }
+  /* Back to a normal flex child instead of .panelClose's own
+     position:absolute - that rule is shared with every other panel's close
+     button, which still needs it; only this one moved into a header bar of
+     its own. */
+  #flowHeader .panelClose { position:static; color:#121214; }
+  #flow h3 { margin:0; font-size:0.95em; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
   #flow ul { margin:4px 0 0 0; padding-left:18px; }
   #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
@@ -6981,9 +6999,10 @@ String buildMapHtml() {
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
   #flow a { color:#7fb6d6; text-decoration:none; }
   #flow a:hover { text-decoration:underline; }
-  /* Above the title, where a back affordance is looked for, and clear of the
-     close button in the same corner. */
-  #flowBack { font-size:0.8em; margin:0 0 6px 0; padding-right:20px; display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  /* Above the flowchart, where a back affordance is looked for - now below
+     the green header bar rather than above the title, since the title
+     moved into that bar. */
+  #flowBack { font-size:0.8em; margin:8px 0 6px 0; display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
   /* A link, not a button, so it reads as part of the same breadcrumb line
      rather than a separate control competing for attention. */
   #flowExit { color:#7fb8d4; cursor:pointer; text-decoration:none; white-space:nowrap; }
@@ -7281,7 +7300,7 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow"><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
+<div id="flow"><div id="flowHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
 <div id="ext"><button id="extClose" class="panelClose" type="button" title="Close">&times;</button><h3>External systems</h3><div id="extBody" class="panelBody"></div></div>
 <div id="pivot"><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button><h3>Pivot tables</h3><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons"><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button><h3>Device icons</h3><div id="iconsBody" class="panelBody"></div></div>
@@ -8566,6 +8585,52 @@ function mermaidFor(steps) {
 // below must keep working regardless, so nothing here is allowed to throw.
 const flowPanel = document.getElementById('flow') || { style: {} };
 const flowChart = document.getElementById('flowChart') || document.createElement('div');
+
+// Draggable flow panel (Gordon's live request): defaults to sitting below
+// the legend on first open each page load, then stays wherever the user
+// drags it for every later open - repositioning it back to default on
+// every focus change would make dragging pointless, since this panel closes
+// and reopens on almost every click.
+let flowPositionCustomized = false;
+function positionFlowPanelDefault() {
+  const legendEl = document.getElementById('legend');
+  const legendRect = legendEl ? legendEl.getBoundingClientRect() : null;
+  const gap = 14;
+  flowPanel.style.left = (legendRect ? legendRect.left : 10) + 'px';
+  flowPanel.style.top = (legendRect ? legendRect.bottom : 55) + gap + 'px';
+}
+(function () {
+  const header = document.getElementById('flowHeader');
+  if (!header || typeof flowPanel.getBoundingClientRect !== 'function') return;
+  let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+  header.addEventListener('mousedown', function (e) {
+    // The close button lives inside this same bar now - a click there must
+    // close the panel, not start a drag.
+    if (e.target.closest('.panelClose')) return;
+    dragging = true;
+    flowPositionCustomized = true;
+    const rect = flowPanel.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    startLeft = rect.left; startTop = rect.top;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    flowPanel.style.left = (startLeft + (e.clientX - startX)) + 'px';
+    flowPanel.style.top = (startTop + (e.clientY - startY)) + 'px';
+  });
+  document.addEventListener('mouseup', function () {
+    if (!dragging) return;
+    dragging = false;
+    // Dragging only moves the panel, never resizes it, so the ResizeObserver
+    // watchOverlayGeometry() already relies on elsewhere never fires for
+    // this - but visibleRegion() decides free canvas space from every
+    // panel's own position too, not just its size, so a narrowed view can
+    // genuinely have more or less room after a drag. One fit once the drag
+    // actually ends, not on every mousemove.
+    fitCurrentView();
+  });
+})();
 // Legend and Resources are entirely static markup - no *Load() function,
 // nothing to fetch or rebuild on open - so declared here rather than beside
 // ext/pivot/icons's own dynamic-render code further down the file.
@@ -8630,6 +8695,10 @@ function bringToFront(panel) {
   });
   panelTopZ += 1;
   panel.style.zIndex = panelTopZ;
+  // Below the legend by default, first open only - see
+  // positionFlowPanelDefault()'s own comment for why this doesn't run again
+  // once the user has dragged the panel.
+  if (panel === flowPanel && !flowPositionCustomized) positionFlowPanelDefault();
   // flex, not block: every panel is now display:flex; flex-direction:column
   // (backlog item 1 Phase 2) so its .panelBody can be the one child that
   // scrolls while the title/close stay fixed - block would still render the
