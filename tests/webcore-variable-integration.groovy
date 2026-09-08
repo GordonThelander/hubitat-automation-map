@@ -202,6 +202,9 @@ check('webCoRE pistons are not called inert and UI and export disclose device co
     assert source.contains('#flowSub.webcoreNotice { color:#ff6b6b; font-weight:700; }')
     assert source.contains("n.appType === 'webCoRE Piston' ? 'not-decoded'")
     assert source.contains("n.appType === 'webCoRE' ? 'parent-permissions-omitted'")
+    assert source.contains('<b>Your map contains:</b>')
+    assert source.contains('including ${inert} freestanding apps')
+    assert source.contains('Flow decoding supports Rule Machine 5.1, Notifier and Visual Rule Builder 2.0 (in Beta). Hub Variable use is also decoded from webCoRE pistons, but webCoRE flows and device relationships are excluded.')
 }
 
 println ''
