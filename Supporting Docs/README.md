@@ -14,7 +14,8 @@ where the backlog referenced them and they would eventually have been lost.
 | `rule_machine_5_1_storage_format.md` | Rule Machine 5.1 documentation (**written**, ready to publish) |
 | `registry-pack-v0.3/` | Integration registry |
 | `rule_machine_execution_and_cross_rule_causality.md` | Rule Machine 5.1 documentation and rule-to-rule links (superseded source material, see below) |
-| `ai_export_spec.md` | AI-friendly Export JSON (implemented contract, export schema 3) |
+| `ai_export_spec.md` | AI-friendly Export JSON (implemented contract through export schema 11) |
+| `webcore_hub_variable_decoding.md` | How saved webCoRE pistons are decoded and how `@@` Hub Variable references become read/write relationships |
 | `hpm_scrape_spec.md` | Origin task spec for the package identity index now built and maintained in `GordonThelander/HPM_Manifest_Crawl` |
 | `async_scan_v205_technical_report.md` | v2.0.5 bounded-async scan architecture, failure model, harness evidence, dev-hub validation, and remaining release gates |
 | `hubitat_local_mcp_data_access_assessment.md` | Assessment of reusable Hubitat data-access methods evidenced by the Community Hubitat Local MCP server |

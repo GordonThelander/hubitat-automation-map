@@ -793,3 +793,90 @@ values are never exported. Non-webCoRE apps have `hubVariableDecode: null`.
 `ruleFlows[]` remains the decoded Rule Machine flow collection. webCoRE pistons do not gain a
 synthetic flow entry. Hub Variable values remain excluded. Earlier `read` and `write` meanings are
 unchanged, and consumers must not convert `usesVar` into either of them.
+
+## 24. Schema 10 (v2.2.6) delta
+
+Source-backed inspection of webCoRE's runtime paths now permits saved Hub Variable references to be
+classified as reads and writes. `graphSchemaVersion` moves 11 -> 12 because a cached schema-11 graph
+contains only the earlier direction-unknown `usesVar` relationship.
+
+The saved-piston format, `@@` Hub Variable namespace, classification rules, verification fixtures,
+and fail-closed boundaries are documented in `Supporting Docs/webcore_hub_variable_decoding.md`.
+
+### 24.1 `edges[]`: webCoRE `read` and `write`
+
+A structurally proven webCoRE read or write uses the existing variable relationship names:
+
+```json
+{
+  "fromId": "a...",
+  "toId": "v...",
+  "relationship": "read",
+  "direction": null,
+  "stateful": null,
+  "usageRole": "unknown-read",
+  "writeSource": null
+}
+```
+
+```json
+{
+  "fromId": "a...",
+  "toId": "v...",
+  "relationship": "write",
+  "direction": null,
+  "stateful": null,
+  "usageRole": null,
+  "writeSource": null
+}
+```
+
+webCoRE reads use `usageRole: "unknown-read"` because direction is proven without reconstructing a
+trigger, constraint, or monitor flow role. `writeSource` remains `null` because webCoRE assignment
+decoding does not identify a Rule Machine-style source device attribute.
+
+The `usesVar` relationship remains in the schema as a fail-safe for a recognized, inventory-confirmed
+reference whose direction cannot be proven. Consumers must not reinterpret it as a read or write.
+
+### 24.2 `apps[]`: decoder relationship capability
+
+The per-piston decoder object replaces singular `relationship` with the relationships the decoder
+can emit:
+
+```json
+{
+  "status": "complete",
+  "relationships": ["read", "write", "usesVar"],
+  "error": null
+}
+```
+
+The `status` and fixed-error semantics introduced in schema 9 are unchanged.
+
+### 24.3 Summary counts
+
+`summary.webcoreHubVariableUseCount` now counts every webCoRE variable edge across `read`, `write`,
+and `usesVar`. Schema 10 adds:
+
+- `webcoreHubVariableReadCount`;
+- `webcoreHubVariableWriteCount`; and
+- `webcoreHubVariableUnknownUseCount`.
+
+The existing scan-quality and decoder-error fields remain unchanged. webCoRE pistons still do not
+receive synthetic entries in `ruleFlows[]`.
+
+## 25. Schema 11 (v2.2.7) delta
+
+webCoRE parent device permissions and partial piston subscription snapshots are no longer exported
+as operational device relationships. They do not prove which piston reads or controls a device, so
+retaining them would give consumers a confidently misleading topology.
+
+Each webCoRE entry in `apps[]` now states the omitted coverage explicitly through
+`deviceRelationshipCoverage`:
+
+- `"not-decoded"` for a webCoRE piston; and
+- `"parent-permissions-omitted"` for the webCoRE container.
+
+The field is `null` for other app types. webCoRE Hub Variable `read`, `write`, and fail-safe
+`usesVar` relationships are unchanged and remain in `edges[]`. No piston-to-device relationship is
+inferred from the parent app's permissions or from a piston's current subscriptions.
