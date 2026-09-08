@@ -1,4 +1,4 @@
-// Regression suite for v2.2.6 webCoRE saved Hub Variable direction discovery.
+// Regression suite for v2.2.7 webCoRE variable discovery and device containment.
 // It executes the decoder methods extracted directly from the app source, so
 // the tests cannot silently pass against a separate helper that has drifted.
 // Run with: groovy tests/webcore-variable-integration.groovy
@@ -175,15 +175,33 @@ check('usesVar remains a distinct fail-safe visual and pivot relationship') {
     assert source.contains("n.appType === 'webCoRE Piston'")
 }
 check('schema, scan gaps and export semantics are explicit') {
-    assert source.contains("GRAPH_SCHEMA = '12'")
-    assert source.contains('exportSchemaVersion: 10')
+    assert source.contains("GRAPH_SCHEMA = '13'")
+    assert source.contains('exportSchemaVersion: 11')
     assert source.contains('webcoreVariableDecodeIssues: webcoreVariableDecodeIssues')
     assert source.contains("direction: e.kind === 'usesVar' ? 'unknown' : null")
     assert source.contains("relationships: ['read', 'write', 'usesVar']")
 }
 check('decoder failures do not mislabel a piston as inert') {
-    assert source.contains('!webcoreVariableDecodeFailed && !roles')
+    assert source.contains('!webcoreVariableDecodeFailed && !webcorePistonDeviceRelationshipsUndecoded && !roles')
     assert source.contains("webcoreVariableDecodeStatus == 'error'")
+}
+check('webCoRE device permissions and partial subscriptions are suppressed without removing variables') {
+    assert source.contains("if (normalizedAppType == 'webCoRE' || normalizedAppType == 'webCoRE Piston')")
+    assert source.contains('roles.clear()')
+    assert source.contains('stateful.clear()')
+    assert source.contains('out.webcoreDeviceRelationshipsSuppressed = true')
+    assert source.contains('out.webcoreHubVarReads = (decodedWebcore.reads ?: []) as List')
+    assert source.contains('out.webcoreHubVarWrites = (decodedWebcore.writes ?: []) as List')
+}
+check('webCoRE pistons are not called inert and UI and export disclose device coverage') {
+    assert source.contains("webcorePistonDeviceRelationshipsUndecoded = normalizedAppType == 'webCoRE Piston'")
+    assert source.contains("normalizedAppType == 'webCoRE' || normalizedAppType == 'webCoRE Piston'")
+    assert source.contains('Map roles = webcoreDeviceRelationshipsSuppressed ? [:]')
+    assert source.contains('webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device.')
+    assert source.contains('webCoRE piston-to-device relationships are not shown because this version does not yet decode the piston device instructions.')
+    assert source.contains('#flowSub.webcoreNotice { color:#ff6b6b; font-weight:700; }')
+    assert source.contains("n.appType === 'webCoRE Piston' ? 'not-decoded'")
+    assert source.contains("n.appType === 'webCoRE' ? 'parent-permissions-omitted'")
 }
 
 println ''
