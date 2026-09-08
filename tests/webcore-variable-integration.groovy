@@ -1,4 +1,4 @@
-// Regression suite for v2.2.5 webCoRE saved Hub Variable reference discovery.
+// Regression suite for v2.2.6 webCoRE saved Hub Variable direction discovery.
 // It executes the decoder methods extracted directly from the app source, so
 // the tests cannot silently pass against a separate helper that has drifted.
 // Run with: groovy tests/webcore-variable-integration.groovy
@@ -62,13 +62,58 @@ Map fixture = [
     ]]
 ]
 
-check('single chunk extracts only typed Hub Variable operands and deduplicates') {
+check('single chunk classifies typed Hub Variable operands as reads and deduplicates') {
     Map result = decoder.decodeWebcoreHubVariableUses(fixtureStatus(fixture)) as Map
-    assert result == [status: 'complete', hubVariables: ['HubList', 'HubShared']]
+    assert result == [status: 'complete', reads: ['HubList', 'HubShared'], writes: [], hubVariables: []]
 }
 check('arbitrary multi-chunk boundaries produce the same result') {
     Map result = decoder.decodeWebcoreHubVariableUses(fixtureStatus(fixture, [1, 7, 43, 101])) as Map
-    assert result == [status: 'complete', hubVariables: ['HubList', 'HubShared']]
+    assert result == [status: 'complete', reads: ['HubList', 'HubShared'], writes: [], hubVariables: []]
+}
+check('setVariable task target is a write while its value operand is a read') {
+    Map document = [s: [[t: 'action', k: [[c: 'setVariable', p: [
+        [t: 'x', x: '@@WriteTarget', vt: 'variable'],
+        [t: 'x', x: '@@ReadSource', vt: 'dynamic']
+    ]]]]]]
+    assert decoder.decodeWebcoreHubVariableUses(fixtureStatus(document)) ==
+        [status: 'complete', reads: ['ReadSource'], writes: ['WriteTarget'], hubVariables: []]
+}
+check('the same Hub Variable can carry both read and write roles') {
+    Map document = [s: [[t: 'action', k: [[c: 'setVariable', p: [
+        [t: 'x', x: '@@Both'], [t: 'x', x: '@@Both']
+    ]]]]]]
+    assert decoder.decodeWebcoreHubVariableUses(fixtureStatus(document)) ==
+        [status: 'complete', reads: ['Both'], writes: ['Both'], hubVariables: []]
+}
+check('expression variables and variable-backed device operands are reads') {
+    Map document = [s: [[
+        [t: 'expression', i: [[t: 'variable', x: '@@ExpressionRead']]],
+        [t: 'device', x: '@@DeviceRead'],
+        [t: 'action', d: ['@@DeviceListRead']]
+    ]]]
+    assert decoder.decodeWebcoreHubVariableUses(fixtureStatus(document)) ==
+        [status: 'complete', reads: ['DeviceListRead', 'DeviceRead', 'ExpressionRead'], writes: [], hubVariables: []]
+}
+check('loop counters and matching-device captures are writes') {
+    Map document = [s: [
+        [t: 'for', x: '@@LoopCounter'],
+        [t: 'each', x: '@@EachCounter'],
+        [t: 'condition', lo: [t: 'p', d: ['12'], dm: '@@Matched', dn: '@@Unmatched']]
+    ]]
+    assert decoder.decodeWebcoreHubVariableUses(fixtureStatus(document)) ==
+        [status: 'complete', reads: [], writes: ['EachCounter', 'LoopCounter', 'Matched', 'Unmatched'], hubVariables: []]
+}
+check('setVariable expression function accepts only a static literal target') {
+    Map staticCall = [t: 'function', n: 'setvariable', i: [
+        [t: 'expression', i: [[t: 'string', v: '@@LiteralTarget']]],
+        [t: 'expression', i: [[t: 'variable', x: '@@ReadValue']]]
+    ]]
+    Map dynamicCall = [t: 'function', n: 'setvariable', i: [
+        [t: 'expression', i: [[t: 'variable', x: '@@DynamicNameSource']]],
+        [t: 'expression', i: [[t: 'integer', v: 1]]]
+    ]]
+    Map result = decoder.decodeWebcoreHubVariableUses(fixtureStatus([s: [staticCall, dynamicCall]])) as Map
+    assert result == [status: 'complete', reads: ['DynamicNameSource', 'ReadValue'], writes: ['LiteralTarget'], hubVariables: []]
 }
 check('no chunks is a non-error absence of saved configuration') {
     assert decoder.decodeWebcoreHubVariableUses([appSettings: []]) == [status: 'not-present', hubVariables: []]
@@ -120,20 +165,21 @@ check('Hubitat source uses allowed UTF-8 string APIs') {
 check('webCoRE is detected by installed app name and reconciled before an edge is made') {
     assert source.contains('"${out.type}" == \'webCoRE Piston\'')
     assert source.contains('canonicalHubVariableName(originalName, hubVarInventoryVars)')
-    assert source.contains("edges << [from: appNodeId, to: varNodeId, kind: 'usesVar', direction: 'unknown']")
+    assert source.contains("edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']")
+    assert source.contains("edges << [from: appNodeId, to: varNodeId, kind: 'write']")
 }
-check('usesVar is a distinct non-directional visual and pivot relationship') {
+check('usesVar remains a distinct fail-safe visual and pivot relationship') {
     assert source.contains("usesVar: 'Uses (direction unknown)'")
     assert source.contains("arrows: directionUnknown ? ''")
     assert source.contains("kinds: ['write', 'read', 'usesVar']")
     assert source.contains("n.appType === 'webCoRE Piston'")
 }
 check('schema, scan gaps and export semantics are explicit') {
-    assert source.contains("GRAPH_SCHEMA = '11'")
-    assert source.contains('exportSchemaVersion: 9')
+    assert source.contains("GRAPH_SCHEMA = '12'")
+    assert source.contains('exportSchemaVersion: 10')
     assert source.contains('webcoreVariableDecodeIssues: webcoreVariableDecodeIssues')
     assert source.contains("direction: e.kind === 'usesVar' ? 'unknown' : null")
-    assert source.contains("relationship: 'usesVar'")
+    assert source.contains("relationships: ['read', 'write', 'usesVar']")
 }
 check('decoder failures do not mislabel a piston as inert') {
     assert source.contains('!webcoreVariableDecodeFailed && !roles')

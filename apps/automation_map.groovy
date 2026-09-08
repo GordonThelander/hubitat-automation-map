@@ -78,7 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.5'
+@Field static final String APP_VERSION = '2.2.6'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -145,7 +145,10 @@ boolean isDevBuild() {
 // Hub Variable uses relationship plus bounded decoder status. A cached
 // schema-10 graph has neither and must be rebuilt rather than silently
 // presenting webCoRE as still invisible to Hub Variable discovery.
-@Field static final String GRAPH_SCHEMA = '11'
+// Bumped 11->12 (v2.2.6): source-backed webCoRE decoding now separates
+// statically proven Hub Variable reads and writes. A schema-11 cache contains
+// only direction-unknown usesVar edges and must be rebuilt.
+@Field static final String GRAPH_SCHEMA = '12'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -3115,11 +3118,13 @@ Map fetchAppTypeNamespaces() {
 }
 
 // webCoRE stores one piston's compiled JSON as Base64-encoded UTF-8 split
-// across contiguous chunk:N text settings. This decoder is deliberately
-// narrow: it extracts only typed variable operands (t:'x') whose stored name
-// starts @@, the Hubitat webCoRE port's mapping for Hub Variables. It never
-// returns the decoded document or any variable value. Dynamic names assembled
-// at runtime are outside this saved-reference evidence and remain invisible.
+// across contiguous chunk:N text settings. Runtime source inspection gives a
+// bounded direction model without reconstructing the whole piston flow:
+// evaluated variable operands call getVariable(), while the setVariable task's
+// first parameter, loop counter x, condition dm/dn captures, and a statically
+// named setVariable() expression function call feed setVariable(). Dynamic
+// target names remain invisible rather than being guessed. The decoded document
+// and all values remain transient and are never returned, retained or logged.
 Map decodeWebcoreHubVariableUses(Map data) {
     Map<Integer, String> chunks = [:]
     Set<Integer> duplicates = [] as Set<Integer>
@@ -3176,22 +3181,103 @@ Map decodeWebcoreHubVariableUses(Map data) {
         return [status: 'error', error: 'unexpected-root', hubVariables: []]
     }
 
-    Set<String> hubVariables = [] as Set<String>
-    List pending = [document]
-    while (pending) {
-        Object value = pending.remove(pending.size() - 1)
-        if (value instanceof Map) {
-            Map item = value as Map
-            if (item.t == 'x' && item.x instanceof String) {
-                String name = webcoreBaseVariableName(item.x as String)
-                if (name.startsWith('@@') && name.length() > 2) hubVariables << name.substring(2)
-            }
-            pending.addAll(item.values().findAll { it instanceof Map || it instanceof List })
-        } else if (value instanceof List) {
-            pending.addAll((value as List).findAll { it instanceof Map || it instanceof List })
+    Map<String, Set<String>> roles = [:]
+    collectWebcoreHubVariableRoles(document, roles, false)
+    List<String> reads = roles.findAll { String name, Set<String> found -> found.contains('read') }.keySet().sort()
+    List<String> writes = roles.findAll { String name, Set<String> found -> found.contains('write') }.keySet().sort()
+    List<String> unknown = roles.findAll { String name, Set<String> found -> found.contains('unknown') }.keySet().sort()
+    return [status: 'complete', reads: reads, writes: writes, hubVariables: unknown]
+}
+
+void collectWebcoreHubVariableRoles(Object value, Map<String, Set<String>> roles, boolean suppressCurrentRead) {
+    if (value instanceof List) {
+        (value as List).each { Object child -> collectWebcoreHubVariableRoles(child, roles, false) }
+        return
+    }
+    if (!(value instanceof Map)) return
+
+    Map item = value as Map
+    Object writeTarget = null
+
+    // A virtual setVariable task stores its target as the first parameter.
+    // executeTask() deliberately passes that operand's name without evaluating
+    // it, then vcmd_setVariable() writes it. Every later parameter is evaluated
+    // normally and therefore remains eligible for read classification below.
+    if (item.c == 'setVariable' && item.p instanceof List && (item.p as List)) {
+        Object first = (item.p as List)[0]
+        if (first instanceof Map && (first as Map).t == 'x') {
+            writeTarget = first
+            addWebcoreHubVariableRole(roles, (first as Map).x, 'write')
         }
     }
-    return [status: 'complete', hubVariables: (hubVariables as List).sort()]
+
+    String itemType = item.t instanceof String ? item.t as String : null
+    if (itemType in ['for', 'each']) {
+        addWebcoreHubVariableRole(roles, item.x, 'write')
+    }
+    if (itemType == 'p') {
+        addWebcoreHubVariableRole(roles, item.dm, 'write')
+        addWebcoreHubVariableRole(roles, item.dn, 'write')
+    }
+    if (itemType == 'function' && "${item.n ?: ''}".equalsIgnoreCase('setVariable')) {
+        Object staticTarget = webcoreStaticStringArgument(item.i instanceof List && (item.i as List) ? (item.i as List)[0] : null)
+        addWebcoreHubVariableRole(roles, staticTarget, 'write')
+    }
+
+    // Compact picker operands, parsed expression variables, and expression
+    // device variables are all evaluated through getVariable(). A setVariable
+    // task target is the one source-proven exception and is suppressed only for
+    // that exact map object.
+    if (!suppressCurrentRead && item.x != null && itemType in ['x', 'variable', 'device']) {
+        addWebcoreHubVariableRole(roles, item.x, 'read')
+    }
+    // Device lists can contain a variable whose value supplies one or more
+    // devices. expandDeviceList() evaluates those names through getVariable().
+    if (item.d instanceof List && itemType in ['p', 'd', 'action']) {
+        (item.d as List).each { Object deviceOrVariable ->
+            addWebcoreHubVariableRole(roles, deviceOrVariable, 'read')
+        }
+    }
+
+    item.values().each { Object child ->
+        if (child instanceof List) {
+            (child as List).each { Object listChild ->
+                collectWebcoreHubVariableRoles(listChild, roles, listChild.is(writeTarget))
+            }
+        } else if (child instanceof Map) {
+            collectWebcoreHubVariableRoles(child, roles, child.is(writeTarget))
+        }
+    }
+}
+
+void addWebcoreHubVariableRole(Map<String, Set<String>> roles, Object rawName, String role) {
+    if (rawName instanceof List) {
+        (rawName as List).each { Object one -> addWebcoreHubVariableRole(roles, one, role) }
+        return
+    }
+    if (!(rawName instanceof String)) return
+    String name = webcoreBaseVariableName(rawName as String)
+    if (!name.startsWith('@@') || name.length() <= 2) return
+    String hubName = name.substring(2)
+    if (!roles[hubName]) roles[hubName] = [] as Set<String>
+    roles[hubName] << role
+}
+
+// setVariable() in an expression evaluates its first argument to obtain the
+// target name. Only an expression consisting of one literal string proves a
+// destination statically. A variable, concatenation or function call used to
+// construct the name is intentionally not promoted to a write target.
+Object webcoreStaticStringArgument(Object value) {
+    Object current = value
+    while (current instanceof Map && (current as Map).t == 'expression') {
+        Object items = (current as Map).i
+        if (!(items instanceof List) || (items as List).size() != 1) return null
+        current = (items as List)[0]
+    }
+    if (current instanceof Map && (current as Map).t == 'string' && (current as Map).v instanceof String) {
+        return (current as Map).v
+    }
+    return null
 }
 
 String decodeWebcoreEmoji(String value) {
@@ -3385,6 +3471,8 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             if ("${out.type}" == 'webCoRE Piston') {
                 Map decodedWebcore = decodeWebcoreHubVariableUses(data)
                 out.webcoreVariableDecodeStatus = decodedWebcore.status
+                out.webcoreHubVarReads = (decodedWebcore.reads ?: []) as List
+                out.webcoreHubVarWrites = (decodedWebcore.writes ?: []) as List
                 out.webcoreHubVarUses = (decodedWebcore.hubVariables ?: []) as List
                 if (decodedWebcore.error) out.webcoreVariableDecodeError = decodedWebcore.error
             }
@@ -5425,7 +5513,11 @@ Map buildGraph() {
         // wrongly called non-inert too.
         boolean hasRuleVarRelationship = ((ruleVariables["a${appId}"]?.variableReferences ?: []) as List)
             .any { Map r -> r.scope == 'hub' }
-        boolean hasWebcoreVarRelationship = ((appMap.webcoreHubVarUses ?: []) as List).any { Object rawName ->
+        List webcoreRelationshipNames = []
+        webcoreRelationshipNames.addAll((appMap.webcoreHubVarReads ?: []) as List)
+        webcoreRelationshipNames.addAll((appMap.webcoreHubVarWrites ?: []) as List)
+        webcoreRelationshipNames.addAll((appMap.webcoreHubVarUses ?: []) as List)
+        boolean hasWebcoreVarRelationship = webcoreRelationshipNames.any { Object rawName ->
             String canonical = canonicalHubVariableName("${rawName}", hubVarInventoryVars)
             canonical && hubVarInventoryVars.containsKey(canonical)
         }
@@ -5676,12 +5768,38 @@ Map buildGraph() {
             edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: usageRole]
         }
 
-        // webCoRE's saved configuration proves that the piston references the
-        // Hub Variable, but not whether every occurrence reads, writes, or can
-        // do either depending on runtime flow. Keep this relationship distinct
-        // from Rule Machine's proven read/write edges. Names absent from the
-        // authoritative inventory remain visible as unresolved evidence and
-        // never manufacture a weaker-guarantee variable node.
+        // webCoRE's saved configuration is classified against the engine's own
+        // runtime source: evaluated operands are reads and explicit assignment
+        // targets are writes. The existing usesVar relationship remains only
+        // as a fail-safe for a future recognized reference whose direction is
+        // not structurally provable. Every name is still reconciled against the
+        // authoritative inventory before an edge is created.
+        ((appMap.webcoreHubVarWrites ?: []) as List).each { Object rawName ->
+            String originalName = "${rawName}"
+            String canonicalName = canonicalHubVariableName(originalName, hubVarInventoryVars)
+            if (!canonicalName || !hubVarInventoryVars.containsKey(canonicalName)) {
+                unresolvedHubVarReferences << [name: originalName, appId: appNodeId, kind: 'write', engine: 'webCoRE']
+                return
+            }
+            String varNodeId = "v${canonicalName}"
+            String key = "${appNodeId}|${varNodeId}|write"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: varNodeId, kind: 'write']
+        }
+        ((appMap.webcoreHubVarReads ?: []) as List).each { Object rawName ->
+            String originalName = "${rawName}"
+            String canonicalName = canonicalHubVariableName(originalName, hubVarInventoryVars)
+            if (!canonicalName || !hubVarInventoryVars.containsKey(canonicalName)) {
+                unresolvedHubVarReferences << [name: originalName, appId: appNodeId, kind: 'read', engine: 'webCoRE']
+                return
+            }
+            String varNodeId = "v${canonicalName}"
+            String key = "${appNodeId}|${varNodeId}|read"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']
+        }
         ((appMap.webcoreHubVarUses ?: []) as List).each { Object rawName ->
             String originalName = "${rawName}"
             String canonicalName = canonicalHubVariableName(originalName, hubVarInventoryVars)
@@ -6843,9 +6961,11 @@ String buildMapHtml() {
     // v2.2.5: schema 9 - webCoRE saved configuration can add a usesVar
     // edge to an inventory-confirmed Hub Variable. Direction is deliberately
     // unknown, and each webCoRE app reports its bounded decoder outcome.
+    // v2.2.6: schema 10 - the bounded webCoRE decoder now separates source-
+    // proven reads and writes while retaining usesVar as a future fail-safe.
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 9,
+        exportSchemaVersion: 10,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -9289,14 +9409,15 @@ function renderRuleVariablesCard(appId) {
   const refs = (rv && rv.variableReferences) || [];
   const nonResolved = (rv && rv.nonResolvedVariableReferences) || [];
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
-  const webcoreUses = ALL_EDGES.filter(function (e) {
-    return e.from === appId && e.kind === 'usesVar';
+  const webcoreVariableEdges = ALL_EDGES.filter(function (e) {
+    return node && node.appType === 'webCoRE Piston' && e.from === appId &&
+      (e.kind === 'read' || e.kind === 'write' || e.kind === 'usesVar');
   }).map(function (e) {
     const target = ALL_NODES.filter(function (n) { return n.id === e.to; })[0];
-    return target ? target.title : e.to;
-  }).sort();
+    return { name: target ? target.title : e.to, operation: e.kind };
+  }).sort(function (a, b) { return a.name.localeCompare(b.name) || a.operation.localeCompare(b.operation); });
   const webcoreIssue = node && node.webcoreVariableDecodeError;
-  if (!refs.length && !nonResolved.length && !webcoreUses.length && !webcoreIssue) { box.innerHTML = ''; return; }
+  if (!refs.length && !nonResolved.length && !webcoreVariableEdges.length && !webcoreIssue) { box.innerHTML = ''; return; }
 
   // tag is the same [XXX] convention as the Focus dropdowns (queue 305/306) -
   // LOC/HVR reflect only the already-proven scope filter below, never guessed.
@@ -9316,14 +9437,16 @@ function renderRuleVariablesCard(appId) {
     return '<li>' + extEsc(r.name) + ' - ' + (r.operation === 'write' ? 'writes' : 'reads') + ', ' + reason + '</li>';
   });
 
-  if (!localItems.length && !hubItems.length && !reviewItems.length && !webcoreUses.length && !webcoreIssue) { box.innerHTML = ''; return; }
+  if (!localItems.length && !hubItems.length && !reviewItems.length && !webcoreVariableEdges.length && !webcoreIssue) { box.innerHTML = ''; return; }
 
   let html = '<h4>Variables used by this automation</h4>';
   if (localItems.length) html += '<p class="sub">Local</p><ul>' + localItems.join('') + '</ul>';
   if (hubItems.length) html += '<p class="sub">Hub</p><ul>' + hubItems.join('') + '</ul>';
-  if (webcoreUses.length) {
-    html += '<p class="sub">Hub, referenced by webCoRE</p><ul>' + webcoreUses.map(function (name) {
-      return '<li>[HVR] ' + extEsc(name) + ' - uses (direction unknown)</li>';
+  if (webcoreVariableEdges.length) {
+    html += '<p class="sub">Hub, decoded from webCoRE</p><ul>' + webcoreVariableEdges.map(function (entry) {
+      const operation = entry.operation === 'write' ? 'writes' :
+        entry.operation === 'read' ? 'reads' : 'uses (direction unknown)';
+      return '<li>[HVR] ' + extEsc(entry.name) + ' - ' + operation + '</li>';
     }).join('') + '</ul>';
   }
   if (reviewItems.length) html += '<p class="sub">Needs review</p><ul>' + reviewItems.join('') + '</ul>';
@@ -11845,7 +11968,7 @@ function buildExportPayload(ext, icons, failedFetches) {
       hasDecodedFlow: !!flowIds[n.id],
       hubVariableDecode: n.appType === 'webCoRE Piston' ? {
         status: n.webcoreVariableDecodeStatus || 'not-present',
-        relationship: 'usesVar',
+        relationships: ['read', 'write', 'usesVar'],
         error: n.webcoreVariableDecodeError || null
       } : null
     };
@@ -12010,6 +12133,12 @@ function buildExportPayload(ext, icons, failedFetches) {
   const scanStatus = SCAN_META.scanError ? 'failed'
     : (SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0 || webcoreVariableDecodeIssues.length > 0) ? 'complete-with-gaps'
     : 'complete';
+  const webcoreAppIds = {};
+  apps.forEach(function (a) { if (a.appType === 'webCoRE Piston') webcoreAppIds[a.id] = true; });
+  const webcoreVariableEdges = edges.filter(function (e) {
+    return webcoreAppIds[e.fromId] &&
+      (e.relationship === 'read' || e.relationship === 'write' || e.relationship === 'usesVar');
+  });
   const summary = {
     deviceCount: devices.length,
     appCount: apps.length,
@@ -12017,7 +12146,10 @@ function buildExportPayload(ext, icons, failedFetches) {
     hubVariableCount: hubVariables.length,
     hubVariablesWithConnectorCount: hubVariables.filter(function (v) { return !!v.connector; }).length,
     unresolvedHubVariableReferenceCount: unresolvedHubVarReferences.length,
-    webcoreHubVariableUseCount: edges.filter(function (e) { return e.relationship === 'usesVar'; }).length,
+    webcoreHubVariableUseCount: webcoreVariableEdges.length,
+    webcoreHubVariableReadCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'read'; }).length,
+    webcoreHubVariableWriteCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'write'; }).length,
+    webcoreHubVariableUnknownUseCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'usesVar'; }).length,
     webcoreVariableDecodeIssueCount: webcoreVariableDecodeIssues.length,
     edgeCount: edges.length,
     decodedRuleFlowCount: ruleFlows.length,
@@ -12037,12 +12169,12 @@ function buildExportPayload(ext, icons, failedFetches) {
   // English out of the schema block.
   const limitations = [
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
-    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub and Local Variable read/write edges are read from Rule Machine 5.1 only. webCoRE saved configuration can produce a Hub Variable usesVar edge, but it does not prove read/write direction or step-by-step flow.',
+    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding, but webCoRE step-by-step flow is not reconstructed.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
     'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
     'A Hub Variable with no decoded read, write or usesVar relationship (insights.hubVariables.noDecodedUsage) may still be used by an app or integration this export cannot decode - absence of a decoded edge is not proof the variable is unused.',
-    'webCoRE usesVar edges come only from statically stored typed variable operands whose names begin @@ and reconcile to the authoritative Hub Variable inventory. A dynamically constructed variable name is invisible, and a saved reference proves use but not whether it reads, writes, or can do either at runtime.',
+    'webCoRE Hub Variable edges come only from statically stored structures whose names begin @@ and reconcile to the authoritative Hub Variable inventory. Evaluated variable operands are reads; explicit setVariable targets, loop counters and matching/non-matching device captures are writes. A dynamically constructed target name is invisible and never guessed.',
     'Multiple writers on a Hub Variable (insights.hubVariables.multipleWriters) are not proof of a race condition - static configuration proves shared writers, not simultaneous execution.',
     'A Hub Variable connector is a synchronized projection of the same shared state (relationship: synchronizedWith), not an independent value - do not treat the variable and its connector device as two different things to reconcile.',
     'A Hub Variable write edge with a deviceAttribute writeSource means the rule copies or derives its write from that device attribute - it does not mean the device writes the Hub Variable directly.',
@@ -12116,8 +12248,8 @@ function buildExportPayload(ext, icons, failedFetches) {
       },
       hubVariableRelationships: {
         status: 'partial',
-        supportedEngines: ['Rule Machine 5.1 read/write', 'webCoRE saved-reference use'],
-        limitations: ['webCoRE relationships prove saved use but not read/write direction.', 'Other app engines may use Hub Variables without exposing a decoded edge.']
+        supportedEngines: ['Rule Machine 5.1 read/write', 'webCoRE saved-configuration read/write'],
+        limitations: ['webCoRE direction is classified only where its persisted structure maps to a source-proven runtime read or write; dynamically constructed target names remain invisible.', 'Other app engines may use Hub Variables without exposing a decoded edge.']
       }
     },
     summary: summary,
@@ -12127,10 +12259,10 @@ function buildExportPayload(ext, icons, failedFetches) {
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
-      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationship is usesVar; error is a fixed code or null. It reports only saved Hub Variable reference decoding, not webCoRE flow decoding.',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding.',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). usesVar (graph schema 11, export schema 9): a webCoRE piston has a statically stored typed reference to an inventory-confirmed Hub Variable; direction is "unknown", and no arrow or read/write role is inferred. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. direction is "unknown" only on usesVar edges and null otherwise. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes and usesVar. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable and usesVar edge and when a source detail exists but could not be resolved to an ID.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. direction is "unknown" only on usesVar edges and null otherwise. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read or webCoRE variable decode had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine read/write and webCoRE saved-reference usesVar coverage, plus their limitations, independently of inventory status.',
