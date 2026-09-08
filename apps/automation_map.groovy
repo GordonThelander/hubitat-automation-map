@@ -644,9 +644,7 @@ Map main() {
                         // as uncoloured edges rather than failing visibly.
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
-                        paragraph "Map contains: ${(state.appInfo ?: [:]).size()} apps, ${(state.deviceLabels ?: [:]).size()} devices, " +
-                            "${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
-                        paragraph compatibilitySummary()
+                        paragraph compatibilitySummary(g)
                         href(
                             name: 'mapLink', title: "<span style='color:#1976d2'>View Automation Map</span>",
                             description: 'Open the relationship graph',
@@ -1308,11 +1306,7 @@ void clearAbandonedScan() {
 // reason rather than an unexplained gap. Rule flows are decoded from Rule
 // Machine 5.1's private layout; other rule engines still appear in the graph
 // but have no flow.
-String compatibilitySummary() {
-    int decoded = (state.appsDecoded ?: 0) as Integer
-    int unreadable = (state.appsUnreadable ?: 0) as Integer
-    int rules = (state.rulesDecoded ?: 0) as Integer
-
+String compatibilitySummary(Map graph) {
     StringBuilder s = new StringBuilder()
     if (state.compatOk == false) {
         s << "<b style='color:#c0392b'>${state.compatDetail}</b><br>"
@@ -1321,25 +1315,12 @@ String compatibilitySummary() {
     if (devUnreadable > 0) {
         s << "<b style='color:#c0392b'>${devUnreadable} device(s) could not be read</b> and are missing from this map, along with any app only discoverable through them. "
     }
-    s << "Read ${decoded} app(s)"
-    if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
-    s << ". Decoded ${rules} flow(s)."
-
-    // The count above is apps READ. Until 1.8.1 the map drew fewer than it read
-    // and said nothing about the difference, so the summary, the Focus app list
-    // and the map itself disagreed with each other. They are reconciled here
-    // rather than by quietly reporting the smaller number.
+    int appCount = (state.appInfo ?: [:]).size()
+    int deviceCount = (state.deviceLabels ?: [:]).size()
+    int nodeCount = (graph.nodes ?: []).size()
+    int relationshipCount = (graph.edges ?: []).size()
     int inert = (state.appsInert ?: 0) as Integer
-    if (inert > 0) {
-        s << " ${inert} touch no device and link to no rule; they are drawn apart from the network, each labelled with why."
-    }
-
-    int links = (state.ruleLinks ?: 0) as Integer
-    if (links > 0) {
-        s << " Found ${links} rule-to-rule link(s)."
-    } else {
-        s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
-    }
+    s << "<b>Your map contains:</b> ${appCount} apps, ${deviceCount} devices, ${nodeCount} nodes"
 
     // v2.0.14: only shown when the authoritative inventory itself succeeded
     // (complete or complete-with-gaps) - a failed/not-supported inventory has
@@ -1350,17 +1331,14 @@ String compatibilitySummary() {
     if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
         int hubVarCount = (hubVarInv.count ?: 0) as Integer
         int hubVarConnCount = (state.hubVariableConnectorCount ?: 0) as Integer
-        s << " Found ${hubVarCount} Hub Variable(s)"
-        s << (hubVarConnCount > 0 ? ", ${hubVarConnCount} with a Connector." : ".")
+        String variableLabel = hubVarCount == 1 ? 'Hub Variable' : 'Hub Variables'
+        String connectorLabel = hubVarConnCount == 1 ? '1 with a Connector' : "${hubVarConnCount} with Connectors"
+        s << " and ${hubVarCount} ${variableLabel} (${connectorLabel})"
     }
-
-    int skipped = (state.rulesSkipped ?: 0) as Integer
-    if (skipped > 0) {
-        List engines = (state.otherEngines ?: []) as List
-        s << "<br><b style='color:#b9770e'>${skipped} rule(s) on ${engines.join(', ')} were not decoded</b> - flow decoding supports ${DECODED_ENGINES_TEXT} only. They still appear in the map with their device relationships."
-    } else {
-        s << "<br><span style='opacity:0.75'>Flow decoding supports ${DECODED_ENGINES_TEXT}. Apps that are not rules appear in the map with their device relationships.</span>"
-    }
+    s << ", resulting in ${relationshipCount} relationships"
+    if (inert > 0) s << ", including ${inert} freestanding apps"
+    s << "."
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier and Visual Rule Builder 2.0 (in Beta). Hub Variable use is also decoded from webCoRE pistons, but webCoRE flows and device relationships are excluded.</span>"
     return s.toString()
 }
 
