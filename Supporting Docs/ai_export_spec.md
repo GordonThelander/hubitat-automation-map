@@ -1,8 +1,8 @@
 # Automation Map AI Export Specification
 
 **Status:** implemented contract  
-**Export schema:** 9 (see sections 18-23 for the schema 4/5/6/7/8/9 deltas; sections 1-17 describe
-schema 3, the original baseline)  
+**Export schema:** 11 (see sections 18-25 for the schema 4/5/6/7/8/9/10/11 deltas; sections 1-17
+describe schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
 
@@ -74,7 +74,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `9` as of v2.2.5 (see sections 18-23). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `11` as of v2.2.7 (see sections 18-25). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
