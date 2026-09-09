@@ -1,7 +1,7 @@
 # Automation Map AI Export Specification
 
 **Status:** implemented contract  
-**Export schema:** 11 (see sections 18-25 for the schema 4/5/6/7/8/9/10/11 deltas; sections 1-17
+**Export schema:** 12 (see sections 18-26 for the schema 4/5/6/7/8/9/10/11/12 deltas; sections 1-17
 describe schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
@@ -74,7 +74,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `11` as of v2.2.7 (see sections 18-25). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `12` as of v2.2.8 (see sections 18-26). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
@@ -880,3 +880,66 @@ Each webCoRE entry in `apps[]` now states the omitted coverage explicitly throug
 The field is `null` for other app types. webCoRE Hub Variable `read`, `write`, and fail-safe
 `usesVar` relationships are unchanged and remain in `edges[]`. No piston-to-device relationship is
 inferred from the parent app's permissions or from a piston's current subscriptions.
+
+## 26. Schema 12 (v2.2.8) delta
+
+Two additions, both decoded from the same saved piston configuration schema 9-11 already read:
+owner-scoped webCoRE piston local variables, and direct physical-device reads/actions reconciled
+against the owning webCoRE parent's own permitted-device list. Neither reconstructs step-by-step
+webCoRE flow - `apps[].hasDecodedFlow` remains `false` for every webCoRE piston.
+
+**Local variables.** A new top-level `localVariables[]` array holds every owner-scoped Local
+Variable definition across every supported engine - the Rule Machine projection nested in
+`ruleFlows[].localVariables` is unchanged and still present, but a webCoRE piston never gets a
+`ruleFlows[]` entry at all, so this is the only place its own locals are enumerated. Each entry:
+
+```json
+{
+  "identity": "a123:Example",
+  "name": "Example",
+  "ownerAppId": "a123",
+  "ownerAppName": "Example piston",
+  "engine": "webCoRE",
+  "variableType": null,
+  "engineVariableType": "dynamic",
+  "unreferenced": true
+}
+```
+
+`variableType` is a friendly normalized display type when one is known, `null` rather than guessed
+otherwise. `engineVariableType` preserves webCoRE's own saved type string (`dynamic`, `integer`,
+etc.) and is only ever present for a webCoRE-owned entry. `unreferenced` mirrors the graph's own
+`unreferencedLocal` flag - declared with no proven decoded read or write anywhere. `summary.
+localVariableCount` is now counted directly from this array (every engine), not summed from
+`ruleFlows[].localVariables` alone as in schema 11 and earlier.
+
+**Direct device relationships.** `deviceRead` is a new edge relationship: a webCoRE piston has a
+direct, statically decoded physical-device attribute read. Its exact trigger/condition/monitor role
+is not decoded - only that a read happened, and on which attribute (see `attribute` below).
+`direction` is `"unknown"` on a `deviceRead` edge, same as `usesVar`. A direct device action from a
+webCoRE piston reuses the existing `action` relationship Rule Machine already produces; `stateful` on
+a webCoRE action edge is deliberately `null`, never inferred `false` - the command name is proven,
+whether it leaves a lasting state is not, and that is a different thing from Rule Machine's own
+confirmed-`false` (a device the app's own `STATEFUL_CAPABILITIES` catalogue proved momentary).
+
+Two new optional evidence fields on `edges[]`: `attribute` (the saved attribute a `deviceRead`
+decoded, `null` otherwise) and `commands` (the command names a webCoRE action decoded, `null`
+otherwise - task parameter values are never included). Both device relationship kinds are resolved
+only against the permitted-device list of the specific webCoRE parent app that piston belongs to -
+never a different parent's list, never the whole-hub device inventory - using webCoRE's own device
+hash construction (`":" + MD5("core." + deviceId) + ":"`, confirmed against current webCoRE source
+and by resolving a live piston's read and action tokens to their real devices).
+
+`apps[].deviceRelationshipCoverage` for a webCoRE piston is now real per-piston coverage rather than
+the fixed `"not-decoded"` schema 11 always reported: `"complete"` (every direct device operand
+resolved), `"partial"` (at least one resolved, at least one did not - see `edges[]` for what did),
+`"none"` (a clean decode found zero direct device operands), or `"error"` (the whole piston decode
+failed). The webCoRE container's own value is unchanged - always `"parent-permissions-omitted"`.
+
+**What stays unsupported.** A device reached through a variable-backed list, webCoRE's own
+current-triggering-device placeholder, or a location/virtual-device operand does not produce a
+`deviceRead` or `action` edge - none of these can be resolved from static saved configuration alone,
+and none are guessed at. `scan.webcoreDeviceReconciliationGaps` counts only genuine reconciliation
+failures (an unresolved or ambiguous device hash, or a missing parent index) toward
+`scan.status: "complete-with-gaps"` - the by-design coverage limits above are expected outcomes, not
+gaps, and do not affect scan status.
