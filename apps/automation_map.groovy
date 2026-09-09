@@ -9801,7 +9801,7 @@ function webcorePistonDeviceCoverageMessage(node) {
 }
 
 function showInertPanel(node) {
-  document.getElementById('flowTitle').textContent = node.title;
+  document.getElementById('flowTitle').textContent = appOptionText(node);
   // Two different findings that used to render identically: a fetch that
   // threw leaves the same empty roles/ruleLinks/endpoints as an app that
   // genuinely references nothing, but "the hub would not answer" and "this
@@ -9904,7 +9904,7 @@ function showInertPanel(node) {
 // growing app-shaped fields that make no sense on a variable.
 function showUnreferencedLocalPanel(node) {
   const owner = ALL_NODES.filter(function (n) { return n.id === node.ownerAppId; })[0];
-  document.getElementById('flowTitle').textContent = node.title + ' (Local Variable)';
+  document.getElementById('flowTitle').textContent = localVarOptionText(node) + ' (Local Variable)';
   setFlowSub('Declared in ' + (owner ? owner.title : 'a rule no longer on this map') + '.', false);
   flowChart.innerHTML = '<p class="sub">No proven decoded reference in this rule - not read in a trigger, condition or action, and not written.</p>';
   // Both correctly no-op on a non-rule/non-app node (their own group checks
@@ -9930,7 +9930,7 @@ function showFlow(appId) {
     // or not (this used to just hide the panel and show nothing at all,
     // which is exactly what selecting an app like LIFX Light Manager did
     // before the card existed).
-    document.getElementById('flowTitle').textContent = node ? node.title : 'App details';
+    document.getElementById('flowTitle').textContent = node ? appOptionText(node) : 'App details';
     const isPistonNotice = node && node.appType === 'webCoRE Piston';
     // v2.2.8: direct device reads/actions are now decoded per piston - only
     // the coverage gaps ('partial'/'error') still read as an attention-
@@ -9955,7 +9955,7 @@ function showFlow(appId) {
     bringToFront(flowPanel);
     return;
   }
-  document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
+  document.getElementById('flowTitle').textContent = node ? appOptionText(node) : 'Rule flow';
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
   // backslash-escaped quote is consumed by Groovy and ends the JS string early -
   // a syntax error that kills the entire page.
@@ -10019,7 +10019,7 @@ function renderRuleVariablesCard(appId) {
       (e.kind === 'deviceRead' || e.kind === 'action');
   }).map(function (e) {
     const target = ALL_NODES.filter(function (n) { return n.id === e.to; })[0];
-    return { name: target ? target.title : e.to, operation: e.kind, attribute: e.attribute, commands: e.commands };
+    return { name: target ? target.title : e.to, icon: target ? target.icon : null, operation: e.kind, attribute: e.attribute, commands: e.commands };
   }).sort(function (a, b) { return a.name.localeCompare(b.name) || a.operation.localeCompare(b.operation); });
   const webcoreIssue = node && node.webcoreVariableDecodeError;
   if (!refs.length && !nonResolved.length && !webcoreVariableEdges.length && !webcoreDeviceEdges.length && !webcoreIssue) { box.innerHTML = ''; return; }
@@ -10059,7 +10059,8 @@ function renderRuleVariablesCard(appId) {
       const detail = entry.operation === 'deviceRead'
         ? 'reads' + (entry.attribute ? ' (' + extEsc(entry.attribute) + ')' : '')
         : 'commands' + (entry.commands && entry.commands.length ? ' (' + entry.commands.map(extEsc).join(', ') + ')' : '');
-      return '<li>' + extEsc(entry.name) + ' - ' + detail + '</li>';
+      const devTag = '[' + (DEVICE_ICON_TAGS[entry.icon] || 'UNK') + '] ';
+      return '<li>' + devTag + extEsc(entry.name) + ' - ' + detail + '</li>';
     }).join('') + '</ul>';
   }
   if (reviewItems.length) html += '<p class="sub">Needs review</p><ul>' + reviewItems.join('') + '</ul>';
