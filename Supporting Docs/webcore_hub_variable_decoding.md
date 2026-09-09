@@ -271,14 +271,23 @@ attribute and command semantics.
 
 ## Automation Map implementation status
 
-Hub Variable discovery and direction classification are implemented in Automation Map Dev. webCoRE
-parent and piston device relationships are currently suppressed to prevent parent-level permissions
-from being mistaken for proven piston use.
+Automation Map Dev v2.2.8 implements everything described above: Hub Variable discovery and
+direction classification, piston-local variables as owner-scoped nodes, and direct piston-level
+device reads and actions resolved through webCoRE's own device hashing.
 
-The next Dev implementation is specified to add piston-local variables and replace that temporary
-device ringfence with the direct piston-level reads and actions described above. It must preserve the
-existing Hub Variable behaviour, keep the parent permission relationships suppressed, and expose the
-new evidence consistently across the map and export surfaces.
+The temporary device ringfence introduced in v2.2.7 has been removed and replaced by those
+piston-level relationships. What has not changed is the reason the ringfence existed: the webCoRE
+parent app still receives no device edges of its own, because its permission selections are a
+permission list and never evidence that any piston uses those devices.
 
-The detailed implementation and acceptance criteria are in
+Each piston reports its own device relationship coverage as complete, partial, none, or error. A
+reference the decoder cannot resolve is recorded as a counted coverage gap and never rendered as a
+guessed relationship, and a piston is only ever called inert when its decode was clean and genuinely
+found no device operands at all.
+
+Verified live on a Dev hub against a real piston whose saved configuration resolves to a switch
+attribute read and a setColor action on two different real devices, both appearing in the map, the
+pivots and the export. Graph schema 14, export schema 12.
+
+The implementation detail and acceptance criteria are in
 [`webcore_piston_devices_and_local_variables_spec.md`](webcore_piston_devices_and_local_variables_spec.md).
