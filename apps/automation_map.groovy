@@ -7926,7 +7926,12 @@ String buildMapHtml() {
      against #flow's own dark theme is the clearest way to say so at a glance.
      Overrides every #flow-inherited color (h4/.sub/a) that would otherwise
      stay light-on-light here. */
-  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:50%; }
+  /* A px cap, never 50%. #flow shrink-to-fits, so a percentage here is
+     circular: the browser sized the panel from this card's UNWRAPPED preferred
+     width and then drew the card at half of that, which is why a CUS or INT
+     panel rendered about 860px wide around a 440px card with the right half
+     empty. Same shrink-to-fit trap documented on #flowSub above. */
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:440px; }
   #communityCard h4 { color:#1a2733; margin-top:0; }
   #communityCard .sub { color:#4a5a63; }
   #communityCard a { color:#1565c0; }
@@ -9305,11 +9310,22 @@ function applyFilters() {
 // false)" lands squarely on top of one labelled "Master Bedroom Button".
 // Putting neighbouring sectors on different circles separates them regardless
 // of how long the labels are.
+// Every relationship kind that has a PROVEN direction belongs in a sector. A
+// kind missing here is not neutral: it falls through to fallbackSector(), which
+// sends anything that is not a rule or an external system to 'outputs'. That is
+// how variable reads and webCoRE device reads ended up drawn on the output side
+// with the actions, so a piston (which is almost entirely reads and writes)
+// collapsed into one fan on the right instead of splitting input/output the way
+// every Rule Machine and VRB panel does. Affects Rule Machine variable reads
+// and writes equally - it was never webCoRE-specific.
+//
+// usesVar is deliberately absent: its direction is explicitly unproven, and
+// placing it on either side would assert one. It keeps the fallback.
 const SECTORS = [
-  { name: 'external', kinds: ['depends'],                          from: 55,  to: 125, radius: 430 },
-  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 145, to: 215, radius: 300 },
-  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 235, to: 305, radius: 420 },
-  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: 325, to: 395, radius: 320 },
+  { name: 'external', kinds: ['depends'],                                             from: 55,  to: 125, radius: 430 },
+  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor', 'read', 'deviceRead'], from: 145, to: 215, radius: 300 },
+  { name: 'rules',    kinds: RULE_LINK_KINDS,                                         from: 235, to: 305, radius: 420 },
+  { name: 'outputs',  kinds: ['action', 'owns', 'exposed', 'write'],                  from: 325, to: 395, radius: 320 },
 ];
 
 function sectorIndex(name) {
