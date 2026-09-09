@@ -284,6 +284,41 @@ planned, no schema change proposed. The binding constraint is fixture diversity:
 pistons, which cannot establish real-world coverage, so any broad claim needs a sanitized opt-in
 corpus first. Related to item 24, which covers webCoRE variable usage specifically.
 
+### 26. Contested devices: compute the trigger overlap instead of asking the user to
+
+**The gap.** The contested-device finding lists every automation that can leave a device in a lasting
+state, then says: *"Check whether their triggers can overlap and which automation should win when
+they do."* The first half of that is work the app already holds the data to do. `trigger` edges
+(app to device) are on the graph for every app with decoded triggers, so shared trigger sources
+between the controlling apps are a straight derivation, not new information.
+
+**Evidence, from a real scan on the dev hub.** One device had 10 controlling automations. Nine
+distinct trigger sources across them, except that **four shared a single trigger device**, and those
+four were near-duplicates (an import, a second import, and a clone of the same rule) all firing from
+the same source onto the same light. That is the actionable signal, and it was invisible under a flat
+list of ten names that the user was asked to cross-reference by hand.
+
+**Proposed change.** Group the controlling apps by shared trigger source and surface the clusters,
+leaving "which should win" as the question it genuinely is.
+
+**The honesty constraint, which cuts both ways and shapes the wording:**
+
+- A shared trigger device is **positive evidence** that two automations can fire from the same event.
+  Safe to state.
+- Not sharing one **proves nothing**. Time, mode, variable and rule-invoked triggers produce no
+  device edge at all, so "these cannot overlap" would present a decoding gap as proven emptiness. The
+  finding must surface the positive signal and stay explicitly silent on the negative.
+- An app with no decoded trigger at all is a **third state**, undetermined, not absent. In the sample
+  above one Basic Rule fell in this category and must be reported as such rather than folded into
+  either group.
+
+**Scope.** A derivation over existing `trigger` edges plus a rewrite of the one guidance string. No
+new scan work, no new decoding, no schema change. Small and self-contained enough to be a **Now**
+candidate rather than Next, if prioritised.
+
+**Status.** Not started, not authorized. Behaviour confirmed against a real export before writing this
+entry; the underlying edges are already present and sufficient.
+
 ### 5. Add runtime activity and performance context
 
 Users want help finding automations that may contribute to hub load, but configuration structure is
