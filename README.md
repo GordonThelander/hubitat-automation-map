@@ -174,7 +174,7 @@ The map page is built inside a Groovy string, so a stray backslash can be consum
 
 **Steve (oldcomputerwiz)** - for large C5 hub testing and discovery-completeness user acceptance testing as well as for new functional requirement additions.
 
-**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
+**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all). Also flagged that webCoRE's own variable ecosystem was invisible to the map, leading to the v2.2.8 webCoRE local-variable and device-relationship decoding.
 
 **Hubitrep** - the bounded-async scan rewrite is built on the fix in their `HubDiagnostics` app (`github.com/hubitrep/hubitat`): concurrent `asynchttpGet` callbacks writing to `state` are subject to last-write-wins persistence, which can silently overwrite a correct result with a stale one. Their diagnosis and fix were the origin; this app extends it further since its scan results must survive a hub reboot, unlike theirs. 
 
