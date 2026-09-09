@@ -7704,15 +7704,14 @@ String buildMapHtml() {
      around the graph shows whatever is layered underneath it). Fixed, not
      absolute - pinned to a fixed point on the actual screen regardless of
      where physics settles the graph's own bounding box. Centre top per
-     Gordon's instruction (2026-09-09), replacing the earlier position
-     centred under the Exit map button. left:50% with translateX(-50%) is
-     correct here where a right-anchored offset was correct before: this
-     tracks the viewport's own centre rather than a control rail's width,
-     so nothing needs updating if #controls is resized again the way its
-     150px->300px widening once threw the watermark off centre.
+     Gordon's instruction (2026-09-09). Top left of the map area rather than
+     dead centre, which put it among the graph's own nodes: anchored just
+     right of the left column so it sits in the gap the narrowed column
+     opened up, and derived from --leftColWidth so it follows if that width
+     changes again rather than needing its own number kept in sync.
      top is an edge here, not a centre - there is no translateY, so
      positionHubWatermark() sets a top edge directly. */
-  #hubWatermark { position:fixed; top:14px; left:50%; transform:translateX(-50%);
+  #hubWatermark { position:fixed; top:14px; left:calc(10px + var(--leftColWidth) + 30px);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
   /* Hub photo specifically shown at a quarter of the Christmas tree's size
@@ -8709,7 +8708,13 @@ function styledNode(n, useFullLabel, roleByDevice) {
     id: n.id, label: useFullLabel ? (n.draw || n.title) : n.label, title: n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
-    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 },
+    // 12, not 13, and a 4px stroke rather than 5. At FOCUS_MAX_ZOOM (1.05) this
+    // renders at most 12.6 screen-px against #controls button text's fixed
+    // 14px, so it is unambiguously smaller rather than 13.65 and arguably
+    // equal. The stroke matters as much as the size: 5px around a 12px glyph
+    // fattens every letter, so the text reads heavier and therefore larger
+    // than its nominal size, which is what kept it looking oversized.
+    font: { color: '#fff', size: 12, strokeWidth: 4, strokeColor: '#062733', vadjust: -4 },
     // Wraps a long label over several lines instead of drawing one wide ribbon
     // of text. vis.js does no label collision avoidance at all, so width is the
     // only lever there is: on a crowded sector three long names were painting
@@ -8918,12 +8923,15 @@ network.on('afterDrawing', function (ctx) {
 // about the zoom of the same view.
 //
 // Capped at 1.05, not left at 2.0 (Gordon, 2026-09-09): node label font is
-// 13 world-px (see styledNode), which lives in this same zoomable canvas
-// space, not screen pixels - at 2.0x it was rendering around 26 screen-px,
+// 12 world-px (see styledNode), which lives in this same zoomable canvas
+// space, not screen pixels - at the old 2.0x it rendered around 26 screen-px,
 // nearly double #controls button text's fixed, non-zooming 14px. The rule is
 // that automatic framing must never make canvas text outshout the chrome
-// around it. 13 * 1.05 = 13.65, safely under 14 with margin for canvas
-// subpixel rounding. This governs only the app's OWN automatic zoom-to-fit;
+// around it. 12 * 1.05 = 12.6, clearly under 14. The first attempt at this
+// paired the cap with a 13px font for 13.65, which was under 14 arithmetically
+// but still read as larger once the 5px label stroke was accounted for - the
+// font and the stroke were reduced rather than the cap lowered further.
+// This governs only the app's OWN automatic zoom-to-fit;
 // the user's own manual scroll-zoom can still exceed it deliberately, the
 // same way zooming into any map image enlarges its own labels.
 const FOCUS_MAX_ZOOM = 1.05;
@@ -9052,7 +9060,7 @@ function positionHubWatermark() {
   const gap = 14;
   const rect = wm.getBoundingClientRect();
   let top = gap;
-  ['status', 'controls'].forEach(function (id) {
+  ['status', 'legend', 'controls'].forEach(function (id) {
     const el = document.getElementById(id);
     if (!el) return;
     const r = el.getBoundingClientRect();
