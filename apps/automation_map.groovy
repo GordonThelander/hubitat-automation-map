@@ -7552,7 +7552,15 @@ String buildMapHtml() {
   /* 6px, not a 999px pill. In this UI a pill means "clickable" - every other
      999px element is a button, select or combobox trigger - so a pill on an
      inert status readout borrowed a button's affordance and read as one. */
-  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:6px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
+  /* One width for the whole left column - status bar, legend and the classic
+     detail panel below them. Held in a variable so the three cannot drift
+     apart. 375px, matching at the NARROW end rather than the wide one: the
+     detail panel now narrows to the bars instead of the bars widening to it,
+     which keeps the map's own canvas as large as possible. #flowSub's cap
+     derives from this, and that cap is what drives the panel's shrink-to-fit
+     width, so changing this one number moves all three together. */
+  :root { --leftColWidth:375px; }
+  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:6px; font-size:0.85em; color:#121214; font-weight:600; width:var(--leftColWidth); box-sizing:border-box; text-align:center; }
   /* Fixed width, matching #status exactly (was max-width, sized to
      content) - the two need to line up regardless of viewport width, not
      just coincidentally happen to at one particular size. */
@@ -7563,7 +7571,7 @@ String buildMapHtml() {
   /* 14px, matching #legendPanel's own explicit base - Gordon flagged the
      compact and full legend reading at two different sizes live. Both are
      now anchored to the same value rather than each picking its own. */
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:var(--leftColWidth); box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
   /* z-index:9000, not 10 - the .cb-popup fix (z-index:9000 on the popup
      itself) turned out not to be the real fix. CSS stacking is
      hierarchical: a child's z-index only wins WITHIN its own ancestor's
@@ -7892,7 +7900,7 @@ String buildMapHtml() {
      width to the pixel. #flowSub specifically, not the shared .sub class -
      Insights reuses .sub for its own "Used by"/"Controlling apps" detail
      rows at the full large-panel width, which this must not narrow. */
-  #flowSub { max-width:420px; }
+  #flowSub { max-width:calc(var(--leftColWidth) - 32px); }
   /* A webCoRE panel draws no mermaid, so its content sat flush at the panel
      padding while an RM panel's flow cards start about 24px further in,
      shifting everything sideways as you switch between the two. Reserves that
@@ -7902,7 +7910,7 @@ String buildMapHtml() {
   #flow.wcIndent #flowSub,
   #flow.wcIndent #ruleVariablesCard,
   #flow.wcIndent #communityCard { margin-left:24px; }
-  #flow.wcIndent #flowSub { max-width:396px; }
+  #flow.wcIndent #flowSub { max-width:calc(var(--leftColWidth) - 56px); }
   #flowSub.webcoreNotice { color:#ff6b6b; font-weight:700; }
   #flow a { color:#7fb6d6; text-decoration:none; }
   #flow a:hover { text-decoration:underline; }
@@ -8108,12 +8116,14 @@ String buildMapHtml() {
      children, so only .panelBody scrolls. */
   .panelClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   .panelBody { flex:1; min-height:0; overflow:auto; }
-  /* Closes #flow's content off with a green edge matching its header, so a
-     short panel reads as finished instead of trailing into empty space. Scoped
-     to #flow, not the shared .panelBody, and inset rather than full-bleed: a
-     negative horizontal margin inside an overflow:auto container would widen
-     the content box and raise a horizontal scrollbar. */
-  #flow .panelBody::after { content:''; display:block; height:2px; margin-top:14px; background:#81BC00; }
+  /* The panel's own bottom edge, matching its green header, so classic #flow
+     terminates in a line rather than fading into dead space. A border rather
+     than a content ::after: now that classic mode shrinks to content
+     (sizeModernPanel), the panel edge IS where the content ends, and a border
+     cannot be pushed above the padding the way an in-flow line was. Classic
+     only - #flow also hosts Insights in large mode, which is a full-area
+     workspace and does not want a terminator. */
+  #flow.flowClassicSize { border-bottom:2px solid #81BC00; }
   /* Gordon flagged External systems/Pivot tables/Device icons's own table
      headers scrolling off with the rows above them - the panel's outer title
      (fixed by .panelBody above) was never the only header that could do
@@ -9633,14 +9643,27 @@ function sizeModernPanel(panel) {
   const top = Math.max(statusRect ? statusRect.bottom : 45, legendBottom) + gap;
   panel.style.left = left + 'px';
   panel.style.top = top + 'px';
-  // Height is always set, in both modes - .panelBody is flex:1;overflow:auto
-  // so it can scroll a tall rule flowchart internally, but flex-grow has
-  // nothing to distribute against when its own container's height is auto
-  // (.flowClassicSize only caps height, it does not set one), so without an
-  // explicit height here classic mode grew to fit ALL of its content with
-  // no scrollbar at all, spilling silently past the bottom of the viewport
-  // instead - confirmed live, exactly what Gordon's screenshot showed.
-  panel.style.height = Math.max(200, window.innerHeight - top - 10) + 'px';
+  // A large panel keeps a fixed height: it is a full-area workspace and should
+  // fill it. Classic #flow instead shrinks to its own content and caps, so a
+  // short panel ends where its content ends rather than trailing into dead
+  // space down to the viewport bottom.
+  //
+  // Why max-height works here when .flowClassicSize's own max-height:90vh did
+  // not: 90vh is measured against the viewport, not against where this panel
+  // starts, so a panel opening at top:300px could still be 90vh tall and spill
+  // past the bottom - which is the failure the always-set height was added to
+  // fix. This value is the actual space remaining below `top`, so the cap binds
+  // at the right place, the container height becomes definite once content
+  // exceeds it, and .panelBody's flex:1 + min-height:0 + overflow:auto scrolls
+  // exactly as before.
+  const available = Math.max(200, window.innerHeight - top - 10);
+  if (panel.classList.contains('modernPanelLarge')) {
+    panel.style.maxHeight = '';
+    panel.style.height = available + 'px';
+  } else {
+    panel.style.height = '';
+    panel.style.maxHeight = available + 'px';
+  }
   // Width stays classic mode's own business - only the large-area case
   // (.modernPanelLarge) forces one. #flow in its classic mode (a rule
   // flowchart/inert app/unreferenced variable, .flowClassicSize instead)
