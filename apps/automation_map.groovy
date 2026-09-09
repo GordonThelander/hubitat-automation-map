@@ -8899,7 +8899,17 @@ network.on('afterDrawing', function (ctx) {
 // applies to a narrowed view. Held as state rather than passed at each call
 // site so settle(), the resize refit and the focused-app path cannot disagree
 // about the zoom of the same view.
-const FOCUS_MAX_ZOOM = 2.0;
+//
+// Capped at 1.05, not left at 2.0 (Gordon, 2026-09-09): node label font is
+// 13 world-px (see styledNode), which lives in this same zoomable canvas
+// space, not screen pixels - at 2.0x it was rendering around 26 screen-px,
+// nearly double #controls button text's fixed, non-zooming 14px. The rule is
+// that automatic framing must never make canvas text outshout the chrome
+// around it. 13 * 1.05 = 13.65, safely under 14 with margin for canvas
+// subpixel rounding. This governs only the app's OWN automatic zoom-to-fit;
+// the user's own manual scroll-zoom can still exceed it deliberately, the
+// same way zooming into any map image enlarges its own labels.
+const FOCUS_MAX_ZOOM = 1.05;
 let currentFitOptions = { animation: false };
 
 // The area of the canvas actually free to draw in, in container pixels. Every
