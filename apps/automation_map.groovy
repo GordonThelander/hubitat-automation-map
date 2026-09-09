@@ -7872,8 +7872,12 @@ String buildMapHtml() {
      the five modernPanel panels. */
   .modernPanelHeader .panelClose { position:static; color:#121214; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
-  #flow ul { margin:4px 0 0 0; padding-left:18px; }
-  #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
+  /* One declaration only. These were previously duplicated 26 lines apart at
+     equal specificity, so the cascade merged them per-property into
+     margin/font-size from the later pair and line-height from the earlier -
+     a value neither rule stated, and unreadable from either one alone. */
+  #flow ul { margin:4px 0 10px 0; padding-left:18px; }
+  #flow li { margin:5px 0; font-size:0.85em; line-height:1.35; }
   #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
   /* #flow has no explicit width in classic mode (.flowClassicSize is a
@@ -7888,6 +7892,16 @@ String buildMapHtml() {
      Insights reuses .sub for its own "Used by"/"Controlling apps" detail
      rows at the full large-panel width, which this must not narrow. */
   #flowSub { max-width:420px; }
+  /* A webCoRE panel draws no mermaid, so its content sat flush at the panel
+     padding while an RM panel's flow cards start about 24px further in,
+     shifting everything sideways as you switch between the two. Reserves that
+     same gutter. #flowSub's own cap drops by the identical amount so the
+     panel's shrink-to-fit preferred width is unchanged - that cap is what
+     stops one caption line dragging the whole panel wide (see above). */
+  #flow.wcIndent #flowSub,
+  #flow.wcIndent #ruleVariablesCard,
+  #flow.wcIndent #communityCard { margin-left:24px; }
+  #flow.wcIndent #flowSub { max-width:396px; }
   #flowSub.webcoreNotice { color:#ff6b6b; font-weight:700; }
   #flow a { color:#7fb6d6; text-decoration:none; }
   #flow a:hover { text-decoration:underline; }
@@ -7899,8 +7913,6 @@ String buildMapHtml() {
      rather than a separate control competing for attention. */
   #flowExit { color:#7fb8d4; cursor:pointer; text-decoration:none; white-space:nowrap; }
   #flowExit:hover { text-decoration:underline; }
-  #flow ul { margin:4px 0 10px 0; padding-left:18px; }
-  #flow li { margin:2px 0; font-size:0.85em; }
   /* Below whatever showFlow()/showInertPanel() put in #flowChart, not inside
      it - #flowChart gets fully overwritten on every re-render (a fresh
      mermaid SVG, or a fresh inert-app summary), which would wipe this out if
@@ -9744,6 +9756,13 @@ function setFlowSub(text, isWebcoreNotice) {
   const el = document.getElementById('flowSub');
   el.textContent = text;
   el.classList.toggle('webcoreNotice', !!isWebcoreNotice);
+  flowPanel.classList.remove('wcIndent');
+}
+
+// Called after setFlowSub, which clears the class unconditionally.
+function setFlowWebcoreIndent(node) {
+  const t = node && node.appType;
+  flowPanel.classList.toggle('wcIndent', t === 'webCoRE' || t === 'webCoRE Piston');
 }
 
 // v2.2.8: one message per real device-decode coverage outcome, replacing the
@@ -9783,6 +9802,7 @@ function showInertPanel(node) {
       (node.appType === 'webCoRE Piston' ?
         'This piston has saved configuration that was fully decoded and genuinely references no device, Hub Variable or declared local variable.' :
         'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.')), isWebcoreNotice);
+  setFlowWebcoreIndent(node);
 
   let html = node.unreadable ?
     '<h3>Could not be read</h3><p class="sub">' + extEsc(node.errorDetail || 'No further detail was recorded.') + '</p>' :
@@ -9908,6 +9928,7 @@ function showFlow(appId) {
       : (node && node.appType === 'webCoRE' && node.webcoreDeviceRelationshipsSuppressed
         ? 'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.'
         : 'This app has no decoded rule flow to show.'), isWebcoreNotice);
+    setFlowWebcoreIndent(node);
     flowChart.innerHTML = '';
     // Gate C (v2.1.4): a rule can have variable evidence even when its step
     // sequence itself could not be decoded (or genuinely has none) - shown
@@ -10411,6 +10432,15 @@ const APP_TYPE_TAGS = {
   'Button Rule-5.1': 'BTN',
   'Button Controller-5.1': 'BTN',
   'Button Controllers': 'BTN',
+  // webCoRE gets real tags rather than the CUS catch-all: CUS means this app
+  // has not been recognised, and a piston is now the most deeply decoded
+  // non-Rule-Machine type here. WCE is the parent engine holding pistons, WCP
+  // one piston, mirroring how Rule Machine and Rule-5.1 are tagged separately.
+  // Not INT: every INT app declares an external system and a depends edge,
+  // and webCoRE declares neither, so it would be the only one that depends on
+  // nothing external.
+  'webCoRE': 'WCE',
+  'webCoRE Piston': 'WCP',
   'Chromecast Integration': 'INT',
   'CoCoHue - Hue Bridge Integration': 'INT',
   'Google Home': 'INT',
