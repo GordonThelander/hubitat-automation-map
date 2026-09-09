@@ -370,6 +370,25 @@ from Automation Map, compare against `location.hub.firmwareVersionString`, and l
 honestly as "latest known as of `releasedAt`" rather than "latest available" so the crawl lag stays
 visible. Report only - never trigger an install from within Automation Map itself.
 
+### 24. A dead constraint on a device that also has a live relationship
+
+Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression
+names any more, so those devices are drawn as constraints even though nothing evaluates them. The
+map now tags a device `UNUSED` when every relationship visible in the current view is one of these,
+which covers the case that prompted the work (Perimeter Open's orphaned illuminance condition on the
+two Back Garden lights).
+
+What it does not cover: a device holding both a dead constraint and a live relationship. Perimeter
+Closed is the example - its five door contacts are live triggers and also sit in an abandoned contact
+condition, so they keep an unexplained constraint line with no tag. A node tag cannot say this
+without falsely calling the device unused, since the device genuinely is in use.
+
+**Next action:** decide whether to mark the edge rather than the node (dimming or dashing a dead
+constraint line), and whether to add a matching neutral Insights finding alongside
+`disabledDevicesStillUsed`. Detection already exists and is exposed as `unused` on constraint edges;
+this is a presentation decision, not new analysis. Hub-wide there were 20 such edges across 6 rules
+when this was measured (2026-09-09).
+
 ## Later / v3
 
 ### 11. Move graph derivation into the browser

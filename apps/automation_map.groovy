@@ -3612,6 +3612,10 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 }
             }
 
+            // Which of the constraint roles just assigned are backed by a
+            // condition nothing evaluates. See unusedConstraintDeviceIds.
+            out.unusedConstraints = unusedConstraintDeviceIds(data)
+
             // A subscribed device with no setting of its own is still a trigger,
             // unless this app owns it (a child device it also listens to).
             //
@@ -4917,6 +4921,63 @@ boolean isStatefulCapability(String settingType) {
     return STATEFUL_CAPABILITIES.contains(settingType)
 }
 
+// Rule Machine never deletes a condition's rDev_<n> setting when the condition
+// stops being used. The setting is real, so roleForSetting() below correctly
+// calls it a constraint, but nothing evaluates it - it survives in Manage
+// Conditions and in no expression. Found on rule 1806 "Perimeter Open", where
+// an orphaned illuminance condition drew two garden lights as constraints on a
+// rule whose Required Expression names neither.
+//
+// A condition is live if it appears in the Required Expression (eval group '0',
+// and only when hasPredicate is set) or in an eval group some action in
+// actionList actually points at. Returns the device ids whose ONLY constraint
+// settings are dead ones, so a device also named by a live condition is never
+// marked.
+//
+// Fails closed: no actionList means no decodable rule structure (a non-rule
+// app, or an engine this does not decode), which proves nothing either way, so
+// it claims nothing.
+List unusedConstraintDeviceIds(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { e ->
+        if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
+    }
+    List actionList = (st.actionList ?: []) as List
+    if (!actionList) return []
+
+    Map actions = (st.actions ?: [:]) as Map
+    Map evalMap = (st.eval ?: [:]) as Map
+
+    Set<String> liveGroups = new LinkedHashSet<String>()
+    if (st.hasPredicate == true) liveGroups << '0'
+    actionList.each { a ->
+        Object r = ((actions["${a}"] ?: [:]) as Map).rule
+        if (r != null) liveGroups << "${r}"
+    }
+
+    Set<String> liveConditions = new LinkedHashSet<String>()
+    liveGroups.each { String g ->
+        (evalMap[g] instanceof List ? evalMap[g] as List : []).each { item ->
+            String c = "${item}"
+            if (!(c in ['AND', 'OR', 'NOT', '(', ')'])) liveConditions << c
+        }
+    }
+
+    Set<String> used = new LinkedHashSet<String>()
+    Set<String> idle = new LinkedHashSet<String>()
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map)) return
+        String n = "${s.name}"
+        if (!n.startsWith('rDev_')) return
+        Map dl = s.deviceList as Map
+        if (!dl) return
+        boolean live = liveConditions.contains(n.substring(5))
+        dl.keySet().each { if (live) used << "${it}" else idle << "${it}" }
+    }
+    idle.removeAll(used)
+    return idle.toList()
+}
+
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
     // Rule Machine's private naming: tDev<n> = trigger device, rDev_<n> =
     // condition device (both plain IF conditions and the required expression).
@@ -6048,12 +6109,16 @@ Map buildGraph() {
                 if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
             }
             List statefulDevices = (appMap.stateful ?: []) as List
+            List deadConstraints = (appMap.unusedConstraints ?: []) as List
             (devRoles as List).each { String role ->
                 String key = "${appNodeId}|${devNodeId}|${role}"
                 if (seen.contains(key)) return
                 seen << key
                 Map edge = [from: appNodeId, to: devNodeId, kind: role]
                 if (role == 'action' && statefulDevices.contains(devId)) edge.stateful = true
+                // Still a constraint edge - the setting is real. The flag only
+                // stops it claiming to gate anything.
+                if (role == 'constraint' && deadConstraints.contains(devId)) edge.unused = true
                 edges << edge
             }
         }
@@ -8630,6 +8695,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     // GRAPH.edges directly).
     usageRole: e.usageRole || null,
     writeSource: e.writeSource || null,
+    unused: e.unused === true,
     arrows: directionUnknown ? '' : (inbound ? 'from' : 'to'),
     dashes: dashes,
     color: roleColors[e.kind] || '#999',
@@ -8832,6 +8898,13 @@ document.fonts.ready.then(function () {
 // confusing rather than informative.
 let shelfDivider = null;
 
+// Device node id -> the tags to draw beside it on the next redraw, recomputed
+// by applyFilters because "unused" depends on what is currently on screen, not
+// on the node alone. focusNodeId is kept alongside it as the pivot the tags
+// mirror about.
+let nodeTags = {};
+let focusNodeId = null;
+
 function shelveInertNodes() {
   // n.unreferencedLocal (v2.1.6) shares this shelf on purpose - both flags
   // mean the same thing to this layout (no edges, physics would fling it to
@@ -8909,9 +8982,82 @@ function shelveInertNodes() {
 // counteracts the zoom the same way vis-network already does for its labels,
 // so this reads at a constant size next to them rather than shrinking when
 // the view zooms out to fit the whole graph.
+// Grey plate, black text, angled 45 degrees off the icon so it clears the
+// node's own label, which vis-network always draws horizontally underneath.
+//
+// Mirrored about the middle of the view: a node on the left carries its tags
+// up-LEFT, one on the right carries them up-RIGHT, so a tag always points away
+// from the crowd instead of back through it. Both halves stay readable
+// left-to-right - the left side rotates the other way and lays its plates
+// backwards from the icon's edge rather than flipping the letters over.
+//
+// Drawn here rather than baked into the node's icon image because it depends on
+// the current filter, and iconImageDataURL caches one bitmap per (icon, colour)
+// pair for the whole session. Sizes divide by scale for the same reason the
+// shelf label below does - this is graph space, so a fixed font size shrinks to
+// nothing when the view zooms out.
+const TAG_FONT_PX = 9;
+function drawNodeTags(ctx, scale) {
+  const ids = Object.keys(nodeTags);
+  if (!ids.length) return;
+  const pos = network.getPositions(focusNodeId ? ids.concat(focusNodeId) : ids);
+
+  // Which side of the view a node is on. The focused app is the natural pivot
+  // when there is one, because the sector layout arranges everything around it;
+  // otherwise the centre of the viewport. Both are O(1) - this runs on every
+  // redraw, so asking for the position of every node on the map each frame was
+  // enough to stall the renderer on the whole-hub view.
+  const pivot = (focusNodeId && pos[focusNodeId]) ? pos[focusNodeId].x
+                                                  : network.getViewPosition().x;
+
+  ctx.save();
+  // Uppercase, Segoe UI, letter-spaced. At 9px the letterforms are doing all
+  // the work: lowercase ascenders and descenders collide, generic sans-serif
+  // resolves to Arial which is not hinted for this size, and the 45 degree
+  // rotation throws away subpixel rendering, so every diagonal stroke aliases.
+  // Colour cannot fix any of that - black on this plate is already about 17:1.
+  ctx.font = 'bold ' + (TAG_FONT_PX / scale) + 'px "Segoe UI", system-ui, sans-serif';
+  // Chrome 99+; older engines ignore it rather than failing, and measureText
+  // accounts for it where it applies. Scaled like every other size here.
+  ctx.letterSpacing = (0.6 / scale) + 'px';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  const padX = 5 / scale;
+  const padY = 3 / scale;
+  const h = TAG_FONT_PX / scale;
+  const gap = 3 / scale;
+  ids.forEach(function (id) {
+    const p = pos[id];
+    if (!p) return;
+    const left = p.x < pivot;
+    ctx.save();
+    // 15 is the device node radius set in styledNode, in these same units.
+    ctx.translate(p.x + (left ? -15 : 15), p.y - 3);
+    ctx.rotate(left ? (Math.PI / 4) : (-Math.PI / 4));
+    let cursor = 0;
+    nodeTags[id].forEach(function (tag) {
+      const text = tag.toUpperCase();
+      const w = ctx.measureText(text).width + padX * 2;
+      const x = left ? -(cursor + w) : cursor;
+      ctx.fillStyle = '#eef0f3';
+      ctx.fillRect(x, -h / 2 - padY, w, h + padY * 2);
+      // A defined edge, so the plate does not bleed into the dark canvas.
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 1 / scale;
+      ctx.strokeRect(x, -h / 2 - padY, w, h + padY * 2);
+      ctx.fillStyle = '#0d0d0d';
+      ctx.fillText(text, x + padX, 0);
+      cursor += w + gap;
+    });
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
 network.on('afterDrawing', function (ctx) {
-  if (!shelfDivider) return;
   const scale = network.getScale() || 1;
+  drawNodeTags(ctx, scale);
+  if (!shelfDivider) return;
   ctx.save();
   ctx.strokeStyle = 'rgba(255,255,255,0.35)';
   ctx.lineWidth = 1 / scale;
@@ -9259,6 +9405,46 @@ function applyFilters() {
   }
 
   const shownNodes = ids ? ALL_NODES.filter(function (n) { return ids[n.id]; }) : ALL_NODES;
+
+  // Tags drawn beside a device icon. Two kinds:
+  //
+  //   disabled  the hub has the device switched off, so nothing reaches it
+  //   unused    every relationship visible in THIS view is a constraint that
+  //             nothing evaluates
+  //
+  // Scoping "unused" to the drawn edges is what keeps the claim honest in both
+  // views: with an app focused those edges are that app's own, which is the
+  // question being asked; on the whole map a device that is a live trigger for
+  // some other rule still has a live edge and so is never tagged, even though
+  // one rule holds a dead condition on it.
+  nodeTags = {};
+  focusNodeId = focusId || null;
+  // Focused views only. On the whole hub these read as free-floating labels -
+  // a handful of tags scattered across 350 nodes, one of them out in open space
+  // with no visible owner - and at fit-everything zoom the plate is bigger than
+  // the node it belongs to, so it dominates a view whose job is shape and
+  // density rather than per-device detail.
+  if (focusId) {
+    const deviceIds = {};
+    shownNodes.forEach(function (n) {
+      if (n.group !== 'device') return;
+      deviceIds[n.id] = true;
+      if (n.disabled) nodeTags[n.id] = ['disabled'];
+    });
+    const seenByNode = {};
+    shownEdges.forEach(function (e) {
+      [e.from, e.to].forEach(function (id) {
+        if (!deviceIds[id]) return;
+        if (!seenByNode[id]) seenByNode[id] = { total: 0, dead: 0 };
+        seenByNode[id].total++;
+        if (e.kind === 'constraint' && e.unused) seenByNode[id].dead++;
+      });
+    });
+    Object.keys(seenByNode).forEach(function (id) {
+      const c = seenByNode[id];
+      if (c.total > 0 && c.total === c.dead) nodeTags[id] = (nodeTags[id] || []).concat('unused');
+    });
+  }
   const styled = shownNodes.map(function (n) { return styledNode(n, !!focusId, roleByDevice); });
 
   // With one app focused the whole neighbourhood is known, so it can be laid
