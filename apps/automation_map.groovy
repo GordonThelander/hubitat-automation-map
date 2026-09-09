@@ -7865,7 +7865,16 @@ String buildMapHtml() {
      sizeModernPanel() only sets left/top when this class is present
      instead of .modernPanelLarge, leaving width/height to CSS exactly as
      the original draggable-flow-panel commit did. */
-  .flowClassicSize { max-width:min(62vw, 900px); max-height:90vh; }
+  /* Capped to the left column, not min(62vw,900px). Capping #flowSub alone was
+     not enough: the panel shrink-to-fits its WIDEST child, so the inert panel's
+     own prose, the community card and a wide mermaid box each pushed it out to
+     a different width, which is why the left column looked ragged as you moved
+     between apps. Everything text now wraps inside one fixed width instead. */
+  .flowClassicSize { max-width:var(--leftColWidth); max-height:90vh; }
+  /* A decoded flowchart is the one child that cannot wrap - it is an SVG with
+     its own intrinsic size. Scroll it inside the panel rather than letting it
+     set the panel's width, which is what the cap above exists to prevent. */
+  #flowChart { overflow-x:auto; }
   /* The drag handle, and the visual cue that a panel can be dragged at all -
      solid, saturated green (the app's own established accent, same as
      Community utilities/the status pill) is deliberately not part of this
@@ -7942,7 +7951,7 @@ String buildMapHtml() {
      width and then drew the card at half of that, which is why a CUS or INT
      panel rendered about 860px wide around a 440px card with the right half
      empty. Same shrink-to-fit trap documented on #flowSub above. */
-  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:440px; }
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:calc(var(--leftColWidth) - 32px); box-sizing:border-box; }
   #communityCard h4 { color:#1a2733; margin-top:0; }
   #communityCard .sub { color:#4a5a63; }
   #communityCard a { color:#1565c0; }
