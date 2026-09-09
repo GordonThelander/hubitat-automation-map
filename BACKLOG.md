@@ -240,6 +240,50 @@ schema 12 and the cached graph to schema 14; `Supporting Docs/webcore_piston_dev
 holds the full specification and acceptance detail. Dashboard's Hub and Local Variable usage remains
 the only open part of this item.
 
+### 25. webCoRE decode coverage: account for the whole piston, not just the parts we read
+
+**The gap.** The webCoRE decoder is a targeted extractor. It walks each piston's saved configuration
+hunting for three specific shapes (typed variable operands, physical-device reads, direct device
+actions) and silently discards everything else. That was the right scope for what v2.2.5 to v2.2.8
+set out to do, and it produced real relationships, but it means the app cannot answer a question
+users reasonably ask: *what else is in this piston, and how much of it can the map actually read?*
+
+Absence of a relationship currently has two indistinguishable causes: the piston genuinely does not
+have one, or the decoder never looked. The app should be able to tell those apart and say so.
+
+**Proposed Phase A, decode coverage.** A complete traversal that visits every node and field and
+accounts for all of it, reported per piston:
+
+- A hard accounting invariant. Traversal counters (objects, arrays, fields, array elements, scalars)
+  must balance against an independent oracle. Nothing may be dropped silently.
+- `visited` kept strictly separate from `identified`, so complete traversal never implies complete
+  understanding. Recognition is measured over construct candidates, never over every JSON value.
+- An in-source construct registry pinned to a webCoRE source commit, covering its statement types,
+  expression functions, virtual commands and execution policy flags. Version drift against the
+  installed webCoRE is reported and downgrades confidence rather than being assumed away.
+- Per-construct evidence levels rather than a recognised/not-recognised flag, so partial
+  understanding is visible and cannot silently regress.
+- Run per piston on demand from its panel, not on every scan. Most hubs do not run webCoRE and should
+  pay nothing for this.
+- Structure and paths only. No literal values, command parameters, messages, URLs or variable values
+  leave the decoder, preserving the existing export privacy commitment. Enforced by a path allowlist
+  and canary tests rather than asserted.
+
+**Explicitly not in scope.** No translation to Rule Machine or Visual Rule Builder, no destination
+recommendation, no judgement that a piston is simple or safe to convert, no write path of any kind.
+Automation Map continues to describe and never to change the hub.
+
+**Why it is worth doing on its own merits.** It closes the honesty gap above, it tells a user which
+parts of a piston the map is reading, and its output would establish whether fuller webCoRE flow
+decoding is practical at all or whether permanent partial coverage with explicit gaps is the truthful
+end state. That answer is currently unknown and is worth having either way.
+
+**Status.** Specified in detail and independently reviewed, with the specification and an
+implementation map reconciled across two review passes. Not authorized, not started, no version
+planned, no schema change proposed. The binding constraint is fixture diversity: the dev hub has six
+pistons, which cannot establish real-world coverage, so any broad claim needs a sanitized opt-in
+corpus first. Related to item 24, which covers webCoRE variable usage specifically.
+
 ### 5. Add runtime activity and performance context
 
 Users want help finding automations that may contribute to hub load, but configuration structure is
