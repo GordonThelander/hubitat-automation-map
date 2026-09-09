@@ -3409,12 +3409,6 @@ void addWebcoreLocalVariableRole(Map<String, Set<String>> roles, Set<String> dec
     roles[sanitized] << role
 }
 
-// A device token exactly as webCoRE's hashId2() constructs it:
-// ":" + 32 lowercase-hex MD5 chars + ":". Verified against current webCoRE
-// source and confirmed by resolving both a read and an action token to their
-// real devices on a live piston (Bucket/Queue 504/505) - not assumed.
-final String WEBCORE_DEVICE_TOKEN_PATTERN = /^:[0-9a-f]{32}:$/
-
 // Direct physical-device reads (t:'p') and direct device actions
 // (t:'action') from the decoded document (v2.2.8). Device references are
 // left as raw hash tokens here - reconciling a token to a real device
@@ -3479,7 +3473,10 @@ List<String> classifyWebcoreDeviceList(Object dList, Map<String, Integer> unsupp
             return
         }
         String s = entry as String
-        if (s ==~ WEBCORE_DEVICE_TOKEN_PATTERN) {
+        // A device token as webCoRE's hashId2() builds it: ":" + 32 hex + ":".
+        // Kept inline, never as a top-level script constant - one of those is a
+        // local of the script's run method and resolves empty inside a method.
+        if (s ==~ /^:[0-9a-f]{32}:$/) {
             tokens << s
         } else if (s == '$currentEventDevice') {
             unsupported['runtime-selected-device'] = (unsupported['runtime-selected-device'] ?: 0) + 1
@@ -6263,8 +6260,13 @@ Map buildGraph() {
                 // contested-device calculation for exactly that reason.
                 edges << [from: appNodeId, to: devNodeId, kind: 'action', stateful: null, commands: ref.commands]
             }
+            // Counted as operands, not just as issues: an unsupported form is
+            // still a device operand the piston has, so an all-unsupported
+            // piston is 'partial', never 'none' (which asserts genuine absence).
             ((appMap.webcoreUnsupportedDeviceRefs ?: [:]) as Map).each { String code, Object count ->
-                (1..((count ?: 0) as Integer)).each { deviceIssueCodes << code }
+                int howMany = (count ?: 0) as Integer
+                deviceOperandCount += howMany
+                howMany.times { deviceIssueCodes << code }
             }
             String coverage
             if (appMap.webcoreVariableDecodeStatus == 'error') {
@@ -8562,8 +8564,16 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
   const edge = {
-    id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
+    // stateful stays three-valued (v2.2.8): true, false, or null for a webCoRE
+    // action, where the command is proven but its lasting state is not. Every
+    // consumer tests `=== true` or truthiness, so null still reads as false.
+    id: i, from: e.from, to: e.to, kind: e.kind,
+    stateful: e.stateful === null ? null : (e.stateful === true),
     crit: e.crit || null,
+    // v2.2.8 decode evidence: a deviceRead's attribute, an action's command
+    // names. Never task parameter values.
+    attribute: e.attribute || null,
+    commands: e.commands || null,
     // v2.0.14, schema 4: carried through explicitly, same as every other
     // field here - this object is a fresh rendering-specific literal, not a
     // spread of `e`, so a field not listed here is silently dropped
@@ -12844,6 +12854,10 @@ function buildExportPayload(ext, icons, failedFetches) {
       appsUnreadable: SCAN_META.appsUnreadable || 0,
       devicesUnreadable: SCAN_META.devicesUnreadable || 0,
       webcoreVariableDecodeIssues: webcoreVariableDecodeIssues,
+      // v2.2.8, schema 12: genuine device-hash reconciliation failures only -
+      // an expected coverage limit (a variable-backed or runtime-selected
+      // device) is not counted here and does not affect status above.
+      webcoreDeviceReconciliationGaps: INS.scan.webcoreDeviceReconciliationGaps || 0,
       // v2.0.14, schema 4 (parent spec 6.1/11.2): inventory completeness kept
       // separate from relationship-decoder completeness - a consumer must not
       // assume one implies the other.
@@ -12889,12 +12903,15 @@ function buildExportPayload(ext, icons, failedFetches) {
     // the same gap summary.localVariableCount below has already been fixed
     // to read from graph nodes directly rather than repeating it here).
     localVariables: ALL_NODES.filter(function (n) { return n.group === 'localVariable'; }).map(function (n) {
+      // engine comes from the OWNING app node: a localVariable node has no
+      // appType of its own, so reading it here labels every local Rule Machine.
+      const owner = n.ownerAppId ? ALL_NODES.filter(function (o) { return o.id === n.ownerAppId; })[0] : null;
       return {
         identity: n.id,
         name: nameOf[n.id],
         ownerAppId: n.ownerAppId || null,
         ownerAppName: n.ownerAppId ? (nameOf[n.ownerAppId] || null) : null,
-        engine: n.appType === 'webCoRE Piston' ? 'webCoRE' : 'Rule Machine',
+        engine: (owner && owner.appType === 'webCoRE Piston') ? 'webCoRE' : 'Rule Machine',
         variableType: n.variableType || null,
         engineVariableType: n.engineVariableType || null,
         unreferenced: !!n.unreferencedLocal
