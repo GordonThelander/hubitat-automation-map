@@ -1,11 +1,9 @@
 # webCoRE piston devices and local variables, Dev implementation specification
 
-**Status:** Draft specification. No implementation, hub deployment, commit, or push is authorized by
-this document.
+**Status:** Implemented, Automation Map Dev v2.2.8. Both additions below are live and verified on the
+Dev hub instance. Production, `main`, and HPM publication remain a separate, not-yet-authorized step.
 
-**Target:** The next Automation Map Dev increment, proposed as v2.2.8. Production, `main`, and HPM
-publication are out of scope until the Dev implementation has been separately authorized, deployed,
-and verified.
+**Target:** Shipped as Automation Map Dev v2.2.8, graph schema 14, export schema 12.
 
 **Scope:** Two additions derived from the same saved webCoRE piston document:
 

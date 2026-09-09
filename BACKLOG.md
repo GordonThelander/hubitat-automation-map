@@ -226,6 +226,20 @@ Insights and export semantics. Dashboard and other community apps remain open. T
 page and webCoRE usage report stay manual corroboration, not production data sources. Absence from
 decoded configuration still cannot prove non-use where a reference is constructed dynamically.
 
+**v2.2.8 implementation reviewed and verified on Dev: the webCoRE portion of this item is now
+closed.** Two further additions, both decoded from the same saved piston configuration the v2.2.5
+work already reads: owner-scoped webCoRE piston local variables (declaration plus proven read/write,
+feeding the same generic Local Variable machinery Rule Machine's own locals already use), and direct
+physical-device reads and actions, resolved only against the specific webCoRE parent's own
+permitted-device list using webCoRE's own device hash construction - never guessed, never inferred
+from permissions alone. Each piston reports real per-piston device relationship coverage
+(complete/partial/none/error) rather than a fixed placeholder. A form the decoder cannot resolve (a
+variable-backed device list, webCoRE's own current-triggering-device placeholder, a location/virtual
+operand) produces a counted coverage gap, never a guessed relationship. The export contract moves to
+schema 12 and the cached graph to schema 14; `Supporting Docs/webcore_piston_devices_and_local_variables_spec.md`
+holds the full specification and acceptance detail. Dashboard's Hub and Local Variable usage remains
+the only open part of this item.
+
 ### 5. Add runtime activity and performance context
 
 Users want help finding automations that may contribute to hub load, but configuration structure is
