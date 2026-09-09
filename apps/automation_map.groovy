@@ -7549,7 +7549,10 @@ String buildMapHtml() {
      taller than the viewport, so removing its ability to scroll at all
      removes the instability rather than working around it. */
   html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
-  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:999px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
+  /* 6px, not a 999px pill. In this UI a pill means "clickable" - every other
+     999px element is a button, select or combobox trigger - so a pill on an
+     inert status readout borrowed a button's affordance and read as one. */
+  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:6px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
   /* Fixed width, matching #status exactly (was max-width, sized to
      content) - the two need to line up regardless of viewport width, not
      just coincidentally happen to at one particular size. */
