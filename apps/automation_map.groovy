@@ -7695,18 +7695,16 @@ String buildMapHtml() {
      own, and vis-network's own canvas has no background fill so empty space
      around the graph shows whatever is layered underneath it). Fixed, not
      absolute - pinned to a fixed point on the actual screen regardless of
-     where physics settles the graph's own bounding box. Moved off dead
-     centre (was 50/50) since a fully-populated graph's own node cluster
-     tends to sit left-of-centre; positioned below #controls specifically,
-     horizontally centred under the Exit map button, per Gordon's own
-     instruction, confirmed against a live screenshot rather than guessed.
-     right, not left: #controls itself is anchored right:10px and 300px
-     wide, so its own horizontal centre is a fixed distance from the
-     viewport's RIGHT edge (10px + 150px = 160px) regardless of viewport
-     width - a left:X% value has no way to track that reliably, which is
-     why the panel's own 150px->300px widening (item, live 2026-09-02) threw
-     the previous left:82% off centre under Exit map. */
-  #hubWatermark { position:fixed; top:76%; right:160px; transform:translate(50%, -50%);
+     where physics settles the graph's own bounding box. Centre top per
+     Gordon's instruction (2026-09-09), replacing the earlier position
+     centred under the Exit map button. left:50% with translateX(-50%) is
+     correct here where a right-anchored offset was correct before: this
+     tracks the viewport's own centre rather than a control rail's width,
+     so nothing needs updating if #controls is resized again the way its
+     150px->300px widening once threw the watermark off centre.
+     top is an edge here, not a centre - there is no translateY, so
+     positionHubWatermark() sets a top edge directly. */
+  #hubWatermark { position:fixed; top:14px; left:50%; transform:translateX(-50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
   /* Hub photo specifically shown at a quarter of the Christmas tree's size
@@ -8110,6 +8108,12 @@ String buildMapHtml() {
      children, so only .panelBody scrolls. */
   .panelClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   .panelBody { flex:1; min-height:0; overflow:auto; }
+  /* Closes #flow's content off with a green edge matching its header, so a
+     short panel reads as finished instead of trailing into empty space. Scoped
+     to #flow, not the shared .panelBody, and inset rather than full-bleed: a
+     negative horizontal margin inside an overflow:auto container would widen
+     the content box and raise a horizontal scrollbar. */
+  #flow .panelBody::after { content:''; display:block; height:2px; margin-top:14px; background:#81BC00; }
   /* Gordon flagged External systems/Pivot tables/Device icons's own table
      headers scrolling off with the rows above them - the panel's outer title
      (fixed by .panelBody above) was never the only header that could do
@@ -9026,26 +9030,27 @@ function fitCurrentView() {
 // site and miss the next one, watch the overlays themselves and reframe
 // whenever their geometry changes. Debounced, because a panel rendering a long
 // table resizes many times in a row.
-// #hubWatermark is centred at a fixed 76% down the viewport, tracking
-// #controls horizontally but not vertically - #controls has grown taller
-// over this session's own additions (five focus combos, the show filter,
-// the full tool rail) and its z-index was raised to 9000 earlier this
-// session to fix combobox popups losing to panels, so once #controls' own
-// bottom edge reaches down as far as the watermark's top, that top sliver
-// of the image now genuinely paints hidden behind it rather than just
-// sitting under a lower z-index unnoticed. Clamp the image's centre down
-// so it never sits higher than #controls' own bottom, whatever height
-// #controls happens to be - the 76% figure stays the common case on a
-// tall enough viewport, this only pushes it down further when needed.
+// Centre top (2026-09-09) sits the watermark between #status on the left and
+// #controls on the right rather than below either, so the old vertical clamp
+// against #controls' growing height no longer applies. The remaining hazard is
+// horizontal, not vertical: on a wide viewport a centred image clears both, but
+// a narrow one can put it under the status bar or the control rail. Push it
+// below whichever it actually overlaps, and only when it actually overlaps.
 function positionHubWatermark() {
   const wm = document.getElementById('hubWatermark');
-  const controlsEl = document.getElementById('controls');
-  if (!wm || !controlsEl) return;
-  const gap = 20;
-  const naturalCenter = window.innerHeight * 0.76;
-  const halfHeight = wm.getBoundingClientRect().height / 2;
-  const minCenter = controlsEl.getBoundingClientRect().bottom + gap + halfHeight;
-  wm.style.top = Math.max(naturalCenter, minCenter) + 'px';
+  if (!wm) return;
+  const gap = 14;
+  const rect = wm.getBoundingClientRect();
+  let top = gap;
+  ['status', 'controls'].forEach(function (id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Horizontal overlap only. Left/right are unaffected by the top this
+    // function then sets, so measuring against the current rect is stable.
+    if (r.right > rect.left && r.left < rect.right) top = Math.max(top, r.bottom + gap);
+  });
+  wm.style.top = top + 'px';
 }
 let panelResizeTimer = null;
 function watchOverlayGeometry() {
