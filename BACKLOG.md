@@ -264,7 +264,7 @@ accounts for all of it, reported per piston:
 - Per-construct evidence levels rather than a recognised/not-recognised flag, so partial
   understanding is visible and cannot silently regress.
 - Run per piston on demand from its panel, not on every scan. Most hubs do not run webCoRE and should
-  pay nothing for this.
+  bear no scan cost for this.
 - Structure and paths only. No literal values, command parameters, messages, URLs or variable values
   leave the decoder, preserving the existing export privacy commitment. Enforced by a path allowlist
   and canary tests rather than asserted.
@@ -273,7 +273,7 @@ accounts for all of it, reported per piston:
 recommendation, no judgement that a piston is simple or safe to convert, no write path of any kind.
 Automation Map continues to describe and never to change the hub.
 
-**Why it is worth doing on its own merits.** It closes the honesty gap above, it tells a user which
+**Why it is worth doing.** It closes the honesty gap above, it tells a user which
 parts of a piston the map is reading, and its output would establish whether fuller webCoRE flow
 decoding is practical at all or whether permanent partial coverage with explicit gaps is the truthful
 end state. That answer is currently unknown and is worth having either way.
