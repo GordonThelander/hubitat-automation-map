@@ -21,3 +21,6 @@ Bucket/
 .clasprc.json
 .clasp.json
 .apps-script-backups/
+
+# Local-only working material. Never pushed, never published.
+Private/
