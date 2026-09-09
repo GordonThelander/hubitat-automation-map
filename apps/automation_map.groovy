@@ -7704,20 +7704,23 @@ String buildMapHtml() {
      around the graph shows whatever is layered underneath it). Fixed, not
      absolute - pinned to a fixed point on the actual screen regardless of
      where physics settles the graph's own bounding box. Centre top per
-     Gordon's instruction (2026-09-09). Top left of the map area rather than
-     dead centre, which put it among the graph's own nodes: anchored just
-     right of the left column so it sits in the gap the narrowed column
-     opened up, and derived from --leftColWidth so it follows if that width
-     changes again rather than needing its own number kept in sync.
-     top is an edge here, not a centre - there is no translateY, so
-     positionHubWatermark() sets a top edge directly. */
-  #hubWatermark { position:fixed; top:14px; left:calc(10px + var(--leftColWidth) + 30px);
+     Gordon's instruction (2026-09-09). Dead centre, large and faint: a real
+     background watermark rather than a small opaque object competing with
+     the graph for a corner. Every previous position (under Exit map, centre
+     top, beside the left column) was an attempt to find somewhere it did not
+     collide with something - at this size and opacity there is nowhere to
+     collide with, because it reads as ground rather than figure.
+     No runtime positioning: a fixed 50/50 with translate(-50%,-50%) needs no
+     measurement, so positionHubWatermark() and its resize/load hooks are gone
+     rather than left as no-ops. */
+  #hubWatermark { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
-  /* Hub photo specifically shown at a quarter of the Christmas tree's size
-     (halved again per Gordon's live request) - the tree's own dimensions
-     (38vw/38vh) are unaffected. */
-  #hubWatermark.hubPhoto { max-width:9.5vw; max-height:9.5vh; }
+  /* Hub photo as the centre watermark: large, and much fainter than the tree.
+     The image is dark on transparent and sits on a dark canvas, so opacity has
+     a floor below which it vanishes entirely rather than reading as subtle -
+     0.18 is the starting point, tuned live rather than derived. */
+  #hubWatermark.hubPhoto { max-width:34vw; max-height:34vh; opacity:0.18; }
   /* Backlog item 1 Phase 3 (A6): the legend used to be one element that was
      either a single "Legend" header row or every one of ~20 rows at once -
      permanently expensive canvas space the moment it was expanded, the exact
@@ -9048,43 +9051,17 @@ function fitCurrentView() {
 // site and miss the next one, watch the overlays themselves and reframe
 // whenever their geometry changes. Debounced, because a panel rendering a long
 // table resizes many times in a row.
-// Centre top (2026-09-09) sits the watermark between #status on the left and
-// #controls on the right rather than below either, so the old vertical clamp
-// against #controls' growing height no longer applies. The remaining hazard is
-// horizontal, not vertical: on a wide viewport a centred image clears both, but
-// a narrow one can put it under the status bar or the control rail. Push it
-// below whichever it actually overlaps, and only when it actually overlaps.
-function positionHubWatermark() {
-  const wm = document.getElementById('hubWatermark');
-  if (!wm) return;
-  const gap = 14;
-  const rect = wm.getBoundingClientRect();
-  let top = gap;
-  ['status', 'legend', 'controls'].forEach(function (id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    // Horizontal overlap only. Left/right are unaffected by the top this
-    // function then sets, so measuring against the current rect is stable.
-    if (r.right > rect.left && r.left < rect.right) top = Math.max(top, r.bottom + gap);
-  });
-  wm.style.top = top + 'px';
-}
 let panelResizeTimer = null;
 function watchOverlayGeometry() {
   if (typeof ResizeObserver === 'undefined') return;
   const observer = new ResizeObserver(function () {
     if (panelResizeTimer) clearTimeout(panelResizeTimer);
     panelResizeTimer = setTimeout(fitCurrentView, 120);
-    positionHubWatermark();
   });
   // moveTo() cannot change a panel's size, so this cannot feed itself.
   [document.getElementById('legend'), document.getElementById('controls')]
     .concat(allPanels())
     .forEach(function (el) { if (el && el.nodeType === 1) observer.observe(el); });
-  positionHubWatermark();
-  const wmEl = document.getElementById('hubWatermark');
-  if (wmEl) wmEl.addEventListener('load', positionHubWatermark);
 }
 // Deferred one tick: the panel consts are declared much further down this
 // script, so they do not exist yet at this point in the file.
@@ -9175,7 +9152,6 @@ let refitTimer = null;
 window.addEventListener('resize', function () {
   if (refitTimer) clearTimeout(refitTimer);
   refitTimer = setTimeout(fitCurrentView, 200);
-  positionHubWatermark();
 });
 
 // Three passes, not one, so a hasComponent (device-owned component) edge
