@@ -5,7 +5,8 @@
 //
 // Covers the lifecycle rather than only the formatting: focusing does not fetch,
 // one press makes one request, a late response for a superseded selection is
-// discarded, busy and failure states stay retryable, the table is grouped with an
+// discarded, busy and transient failures stay retryable while validation failures
+// and failures that need different saved input are final, the table is grouped with an
 // evidence level on every row, and a truncated walk never shows a percentage.
 //
 // Usage: node tests/decode-coverage-card.js

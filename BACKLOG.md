@@ -353,8 +353,9 @@ end state. That answer is currently unknown and is worth having either way.
   an explicit allowlist at every level.
 - **Decode coverage card (v2.2.9, dev).** A card in the focused panel of a webCoRE piston. Nothing is
   fetched until its button is pressed. It leads with whether the whole saved piston was accounted
-  for, then the share of construct positions identified, the constructs found, and any gaps as
-  structural paths. Verified in a browser on the dev hub.
+  for, then the share of construct positions recognised at L2 or above, the constructs found with
+  their evidence level, and any gaps as structural paths. Verified in a browser on the dev hub in
+  every state it can show, and accepted in review.
 - **No cache, by measurement.** Results on the dev hub are under 1KB and return well within a second,
   so a cache would add hub state for no meaningful saving.
 - **Still to come.** The evidence work that raises constructs above identification, which is what
