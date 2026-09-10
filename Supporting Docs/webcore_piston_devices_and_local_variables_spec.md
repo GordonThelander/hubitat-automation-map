@@ -1,7 +1,9 @@
 # webCoRE piston devices and local variables, Dev implementation specification
 
-**Status:** Implemented, Automation Map Dev v2.2.8. Both additions below are live and verified on the
-Dev hub instance. Production, `main`, and HPM publication remain a separate, not-yet-authorized step.
+**Status:** Implemented, Automation Map v2.2.8. This document is kept as the implementation record:
+scope, required outcome, contracts, fixtures, acceptance test and release gates. Background on how
+pistons are stored and decoded now lives in the canonical reference,
+[`webcore_saved_piston_structure.md`](webcore_saved_piston_structure.md).
 
 **Target:** Shipped as Automation Map Dev v2.2.8, graph schema 14, export schema 12.
 
@@ -15,33 +17,23 @@ order, or runtime values.
 
 ## 1. Evidence basis
 
-The implementation must be based on the current Hubitat webCoRE source and the installed piston's
-saved configuration, not labels, subscriptions, cache entries, logs, or inferred behaviour.
+The implementation rests only on the pinned Hubitat webCoRE source and the installed piston's saved
+configuration. It never relies on labels, subscriptions, cache entries, logs or inferred behaviour.
 
-The existing Automation Map decoder already proves that a piston is stored as Base64-encoded UTF-8
-JSON split across contiguous `chunk:N` app settings. The same decoded document contains local-variable
-declarations and device operands.
+The saved-document facts it relies on are documented with source anchors in
+[`webcore_saved_piston_structure.md`](webcore_saved_piston_structure.md):
 
-The following device findings were verified against current webCoRE source and independently
-reproduced against a live test piston on Hubitat 2.5.1.181:
+- chunked Base64 storage;
+- the `t: "p"` physical-device operand;
+- the `t: "action"` statement;
+- webCoRE's device hash;
+- root `v` declarations.
 
-- `t: "p"` is the physical-device operand. Its `d` list supplies device references and its `a`
-  field supplies the attribute read. webCoRE expands the device list and calls
-  `getDeviceAttribute(...)` for each device.
-- `t: "action"` is a device-action statement. Its `d` list supplies target devices and its `k`
-  list supplies tasks. webCoRE expands the targets and passes every task to `executeTask(...)`.
-- A physical device is stored as `":" + MD5("core." + deviceId) + ":"`. The hash is not reversed.
-  It is resolved by applying the same function to the parent webCoRE app's permitted device IDs and
-  matching the result.
-- Both hashes in the live read-and-action fixture resolved to the correct devices, and the resolved
-  devices supported the stored attribute and command respectively.
-- A piston's local-variable declarations are stored in the decoded document's top-level `v` array.
-  Each declaration includes at least its name in `n` and webCoRE type in `t`. An unused `dynamic`
-  declaration was confirmed live, including while the piston was paused.
+They were verified against that source and reproduced on a live test piston on Hubitat 2.5.1.181:
 
-Source references are pinned in `webcore_hub_variable_decoding.md`. The relevant runtime paths are
-`evaluateOperand()`'s physical-device branch, `executeAction()`, `executeTask()`, `expandDeviceList()`,
-`hashD()`, and `hashId2()`.
+- both hashes in the read-and-action fixture resolved to the correct devices;
+- the resolved devices supported the stored attribute and command;
+- an unused `dynamic` declaration was confirmed, including while the piston was paused.
 
 ## 2. Required outcome
 
@@ -331,7 +323,8 @@ The implementation is expected to touch only the following bounded areas:
 3. `Supporting Docs/ai_export_spec.md`
    - schema 12 contract.
 4. `Supporting Docs/webcore_hub_variable_decoding.md`
-   - broaden the saved-piston documentation to include local variables and direct devices.
+   - broaden the saved-piston documentation to include local variables and direct devices. That
+     material has since been consolidated into `webcore_saved_piston_structure.md`.
 5. Dev package metadata and release notes, only after implementation and live verification.
 
 Do not add a second independent Base64/chunk decoder. The standalone investigation utility remains a

@@ -1,24 +1,104 @@
-# webCoRE saved piston structure: findings from decode coverage
+# webCoRE pistons in Automation Map: saved structure and decoding reference
 
-## Purpose
+## Purpose and position
 
-Automation Map's Decode coverage card walks every part of a saved webCoRE piston and reports what it
-recognises. Building that walker exposed facts about how webCoRE stores a piston that are not written
-down anywhere else. This document records them, so that any tool reading saved pistons can rely on
-evidence rather than on guesses.
+This is the reference for how Automation Map understands webCoRE pistons on Hubitat. It covers:
 
-All source references are to the webCoRE executor, `webcore-piston.groovy`, at
-`imnotbob/webCoRE`, branch `hubitat-patches`, commit `0a37eee2537accd706aaaeeed5a7b4bb0c82646e`. The
-key-by-key map with source anchors lives in
+- how a piston is stored;
+- which source the interpretation is pinned to;
+- the grammar of the saved document;
+- how Automation Map turns that document into relationships and coverage evidence;
+- what it renders;
+- where its boundaries are;
+- how it handles privacy;
+- what is implemented today.
+
+It is not a guide to writing pistons, and it does not document the complete webCoRE execution engine.
+
+webCoRE differs from Rule Machine from a discovery perspective. Hubitat exposes a webCoRE parent app
+and one child app per piston, but the piston logic is stored as an encoded compiled document inside the
+child app's settings. The parent's device selections are permissions. They show which devices webCoRE
+may access, not which piston uses a device or how.
+
+Automation Map therefore treats the saved piston document as the only authoritative source for
+piston-level evidence. It decodes the document in memory, recognises a deliberately bounded set of
+source-backed structures, emits only what those structures prove, and then discards the document. It
+does not run pistons, read variable values, infer relationships from labels, or treat parent
+permissions as use. It is a bounded structural decoder, not a webCoRE interpreter.
+
+Two related documents cover narrower ground:
+
+- [`webcore_hub_variable_decoding.md`](webcore_hub_variable_decoding.md), a focused explanation of Hub
+  Variables in webCoRE pistons;
+- [`webcore_piston_devices_and_local_variables_spec.md`](webcore_piston_devices_and_local_variables_spec.md),
+  the implementation record for piston-local variables and direct device relationships.
+
+## 1. Source lineage and pins
+
+Every interpretation here is pinned to the Hubitat webCoRE port at
+[`imnotbob/webCoRE@0a37eee2537accd706aaaeeed5a7b4bb0c82646e`](https://github.com/imnotbob/webCoRE/commit/0a37eee2537accd706aaaeeed5a7b4bb0c82646e),
+branch `hubitat-patches`, committed 2026-08-08. Three parts of that commit are used:
+
+- **Parent app:** [`webcore.groovy`](https://github.com/imnotbob/webCoRE/blob/0a37eee2537accd706aaaeeed5a7b4bb0c82646e/smartapps/ady624/webcore.src/webcore.groovy),
+  which publishes Hub Variables and holds the permitted devices.
+- **Piston executor:** [`webcore-piston.groovy`](https://github.com/imnotbob/webCoRE/blob/0a37eee2537accd706aaaeeed5a7b4bb0c82646e/smartapps/ady624/webcore-piston.src/webcore-piston.groovy),
+  which reads the saved document.
+- **Dashboard editor source:** [`dashboard/`](https://github.com/imnotbob/webCoRE/tree/0a37eee2537accd706aaaeeed5a7b4bb0c82646e/dashboard),
+  which writes it.
+
+The hosted editor at `dashboard.webcore.co` reported IDE version `v0.3.114.20220203` when the fixture
+pistons below were saved.
+
+Naive clones of the upstream repository land on SmartThings-era code from 2019. Always resolve the
+`hubitat-patches` branch and record the commit.
+
+The key-by-key map of saved positions, with source anchors, is in
 [`tools/webcore-investigation/saved-position-map.md`](../tools/webcore-investigation/saved-position-map.md).
-Findings from live pistons were measured on a Hubitat C-8 development hub in September 2026.
 
-## 1. The stored piston is not the in-memory piston
+## 2. The webCoRE model on Hubitat
 
-webCoRE's `cleanCode(item, inMem)` removes editor and default fields, but **only when `inMem` is
-true**, meaning from the copy it holds in memory to run the piston. The stored document keeps them.
+| Layer | Hubitat representation | What it proves |
+| --- | --- | --- |
+| webCoRE parent | Main installed app | webCoRE installation, shared configuration, and permitted devices |
+| Piston | Child installed app | Ownership, piston identity, status, and saved settings |
+| Compiled piston | Encoded JSON in the child app's `chunk:N` settings | The piston's declarations, operands, conditions, actions, and other compiled logic |
 
-A tool that reads the saved configuration therefore sees keys the executor never looks at:
+A device listed in the parent is available to webCoRE, but that does not prove any piston uses it.
+Piston-level evidence must come from the compiled piston.
+
+A paused piston keeps its saved configuration, so static discovery works the same for paused pistons.
+
+## 3. How a piston is stored
+
+The compiled configuration is saved as text settings named `chunk:0`, `chunk:1`, and so on. Hubitat
+exposes them through the read-only endpoint:
+
+```text
+GET /installedapp/statusJson/<installedAppId>
+```
+
+Together, the chunks in `appSettings` hold one Base64 representation of the compiled piston. Base64 is
+an encoding, not encryption. Decoding as UTF-8, applying webCoRE's emoji conversion, and parsing
+produces the JSON document the runtime uses.
+
+Automation Map accepts that document only within strict bounds:
+
+1. setting names must exactly match `chunk:<non-negative integer>`;
+2. `chunk:0` must be present, in one contiguous numerical sequence;
+3. duplicate, missing, empty, excessive, or oversized chunks are rejected;
+4. chunks are concatenated in numerical order;
+5. the result is Base64-decoded as UTF-8 and emoji-decoded;
+6. the JSON must parse to a map at the root;
+7. only supported evidence is retained, and the decoded document is discarded.
+
+The compiled JSON is an internal representation, not a stable interchange format. Automation Map only
+recognises structures verified against the pinned source and test data.
+
+### The stored piston is not the in-memory piston
+
+webCoRE's `cleanCode(item, inMem)` removes editor fields and defaults **only when `inMem` is true**,
+from the copy it keeps in memory to run the piston. The stored document keeps them, so a reader of the
+saved configuration sees keys the executor never uses:
 
 - `str` and `ok` on expressions;
 - a string `l` on operands;
@@ -27,13 +107,13 @@ A tool that reads the saved configuration therefore sees keys the executor never
 - default policies such as `ctp: 'i'`;
 - empty lists.
 
-Treat these as expected editor content, not as corruption.
+Treat these as expected editor content, not corruption.
 
-## 2. Statement grammar
+## 4. Statement grammar
 
-Keys each statement type uses, from `executeStatement`, `subscribeAll` and `cleanCode`.
+These are the keys each statement type uses, from `executeStatement`, `subscribeAll` and `cleanCode`.
 
-**Keys any statement may carry:**
+Any statement may carry:
 
 | Key | Meaning |
 | --- | --- |
@@ -47,15 +127,13 @@ Keys each statement type uses, from `executeStatement`, `subscribeAll` and `clea
 | `rn` | restriction negation |
 | `z`, `zc` | description and comments |
 
-**Keys specific to one statement type:**
-
 | Statement | Keys |
 | --- | --- |
 | `action` | `d` devices; `k` tasks, each with `c` command, `p` parameters and optional `m` mode restriction |
 | `if` | `c` conditions, `o` operator, `n` negation, `s` then-statements, `ei` else-ifs (each with `c` and `s`), `e` else-statements |
 | `while` | `c` conditions, `s` statements |
 | `repeat` | `s` statements, `c` until-conditions evaluated after the body |
-| `every` | `lo` timer operand, `lo2` and `lo3` for units of a day or longer, `s` statements |
+| `every` | `lo` timer operand, `lo2` and `lo3` timer operands, `s` statements |
 | `on` | `c` **events**, each with `lo`; `s` statements |
 | `each` | `lo` device list operand, `x` variable, `s` statements |
 | `for` | `lo` start, `lo2` end, `lo3` step (default 1), `x` counter variable, `s` statements |
@@ -64,84 +142,229 @@ Keys each statement type uses, from `executeStatement`, `subscribeAll` and `clea
 | `break` | no keys of its own |
 | `exit` | `lo` operand giving the piston state to set |
 
-Conditions can carry `wt` (followed-by wait type: loose, strict or negated) and `wd` (followed-by
-wait delay).
+For conditions and tasks:
 
-## 3. Keys whose meaning depends on position
+- A **condition** has `t` (`condition` or `group`), `co`, `lo`, `ro`, `ro2`, `to`, `to2`, `c`
+  subconditions, `ts`, `fs`, `sm` and `ct`.
+- A **step of a followed-by list** also carries `wt`, the wait type (loose, strict or negated), and
+  `wd`, the wait delay.
+- A **task parameter** is evaluated as an operand, plus `vt`.
 
-- **A statement's `c` holds events under `on`, and conditions everywhere else.** `statementTraverser`
-  routes `on` through `traverseEvents` and `if`, `while` and `repeat` through `traverseConditions`.
+### Keys whose meaning depends on position
+
+- **`c` on a statement** holds **events** under `on`, and conditions everywhere else.
+  `statementTraverser` routes `on` through `traverseEvents` and `if`, `while` and `repeat` through
+  `traverseConditions`.
+- **Followed-by steps.** A node whose operator `o` is `followed by` turns its `c` list into ladder
+  steps. Only those steps have a `wd` wait delay that the executor evaluates as an operand.
+- **`lo2` and `lo3`** are operands only under `for`, via `evalDecimalOperand`, and under `every`,
+  where `scheduleTimer` passes them to `evalRO1`.
+- **A task's `m`** is a list of mode ids checked by `executeTask`. It is not a device list.
 - **A root variable declaration's `v` is an operand.** `getLocalVariables` and `getVariable` evaluate
   it, so constructs inside an initializer are part of the piston.
-- **A task parameter with no `t` is the unselected state of an optional parameter**, not an error.
+- **A task parameter with no `t`** is the unselected state of an optional parameter, not an error.
   `cmd_setColor` and `vcmd_toggleRandom` both tolerate it.
-- **A preset name `s` is meaningful only when the operand's `vt` is `time` or `datetime`.**
-- **Condition `to` and `to2` are operands.**
+- **A preset name `s`** is meaningful only when the operand's `vt` is `time` or `datetime`.
+- **Condition `to` and `to2`** are operands.
 - **Legacy SmartThings attribute names** are renamed by `fixAttr()` before dispatch.
 
-## 4. What the subscription pass misses
+### The subscription pass is not the whole grammar
 
-`subscribeAll` is the fullest saved-tree traversal in the source, but it is a subscription pass, not
-an execution pass. The executor also reads positions it never visits:
+`subscribeAll` is the fullest saved-tree traversal in the source, but it is a subscription pass. The
+executor also reads positions it never visits:
 
-- `lo2` and `lo3` of `for` loops and of `every` timers;
-- `ctp` on `switch`;
-- `rn` on restrictions;
-- `wt` and `wd` on followed-by conditions;
-- `m` on tasks.
+- `lo2` and `lo3`;
+- `ctp`;
+- `rn`;
+- `wt` and `wd`;
+- a task's `m`.
 
-A structural reader built only from `subscribeAll` will mis-report pistons that use those
-statements. Automation Map's walker currently has this gap, and pistons using these constructs show
-unrecognised fields until the fix lands.
+A reader built only from `subscribeAll` would mis-report pistons that use those constructs. Automation
+Map's coverage walker initially had that gap; it now reads each of these keys in the position the
+executor does.
 
-## 5. Expressions, and what the editor saves for an unknown function
+### Expressions, and what the editor saves for an unknown function
 
-An expression is stored as `exp` with `t` (result type) and `i` (items). A function call is an item
-with `t: 'function'` and `n` (the function name).
+An expression is stored as `exp` with `t` (result type) and `i` (items). A function call is an item with
+`t: 'function'` and `n` (the name).
 
 **The editor never saves an unknown function call as a function node.** Typing a call to a function
-webCoRE does not have, then saving, stores:
+webCoRE does not have, and saving, stores:
 
 - the expression with `t`, `i`, `str`, `ok`, `err`, `errVar` and `loc`;
 - the call as an item with `t: 'variable'`, `x` holding the attempted name, `ok: false` and an `err`
   saying the identifier was not found as a variable.
 
-No item has `t: 'function'`. The editor shows a warning but saves the piston. A reader must not
-expect an "unknown function" record from editor-saved pistons: it will see an invalid variable
-wrapped in parser diagnostics.
+No item has `t: 'function'`. The editor warns but saves.
 
-## 6. How Automation Map uses this
+## 5. How Automation Map classifies evidence
 
-The Decode coverage card, fetched only when its button is pressed, reports:
+### 5.1 Variables
 
-1. **Accounting.** Whether every object, array, field and value of the saved piston was visited.
+| Form | Meaning on Hubitat webCoRE | Automation Map treatment |
+| --- | --- | --- |
+| `name` | Piston-local variable when declared by that piston | Owner-scoped Local Variable |
+| `@name` | webCoRE global variable | Not currently mapped |
+| `@@name` | Hubitat Hub Variable exposed through webCoRE | Shared Hub Variable, see the focused Hub Variable paper |
+
+Local declarations live in the root `v` array, each with a name in `n` and a webCoRE type in `t`. They
+belong to one piston, so the same name declared in two pistons is two Local Variables. A declared local
+that is never read or written still appears, as unreferenced. Variable operands use `t: "x"`.
+
+Direction comes from structural position, never from names or values:
+
+| Saved context | Classification | Runtime basis |
+| --- | --- | --- |
+| Variable evaluated in a condition, calculation, expression, assigned value, or variable-backed device selection | Read | `getVariable()` |
+| First variable parameter of a `setVariable` task | Write | the destination passed to `setVariable()` |
+| Variable used as the value assigned to another variable | Read | evaluated before assignment |
+| `for` or `each` loop counter | Write | the loop updates it |
+| Matching or non-matching device capture variable on a physical condition | Write | webCoRE stores the condition result there |
+| Static destination of an expression-form `setVariable()` call | Write | the first argument resolves to one literal target |
+
+Classifications accumulate, so a variable in both positions gets both a read and a write. A
+destination constructed dynamically at runtime names no definite target and is omitted.
+
+### 5.2 Direct device evidence
+
+- **Physical-device reads.** A map with `t: "p"` is a physical-device operand: `d` holds device
+  references and `a` the attribute. `evaluateOperand()` expands the list and calls
+  `getDeviceAttribute(...)`. This proves a read, but not whether it serves as a trigger, condition,
+  constraint or monitor, so Automation Map uses a neutral device-read relationship.
+- **Device actions.** A map with `t: "action"` is an action statement: `d` holds targets, `k` holds
+  tasks, and each task's `c` is its command. `executeAction()` expands the targets and passes each task
+  to `executeTask()`. Command names may be kept as bounded evidence; parameter values never are.
+
+### 5.3 Resolving device references
+
+Direct device nodes hold a colon-wrapped hash, not a Hubitat device ID:
+
+```text
+":" + lowercaseHex(MD5(UTF8("core." + deviceId))) + ":"
+```
+
+The hash is not reversed. Automation Map applies the same function to the parent webCoRE app's
+permitted device IDs and matches. A reference is accepted only when all of these hold:
+
+1. the token is the exact colon-wrapped 32-character hexadecimal form;
+2. exactly one permitted device ID produces it;
+3. that candidate belongs to the piston's own parent webCoRE instance;
+4. the device is in Automation Map's scanned device inventory.
+
+A missing or ambiguous match creates no relationship. Automation Map never resolves by label and never
+creates a device node from an unmatched hash.
+
+### 5.4 Decode coverage
+
+The Decode coverage card walks the whole saved piston when its button is pressed, and reports three
+things.
+
+1. **Accounting.** Whether every object, array, field and value was visited.
 2. **Recognition.** Construct positions recognised at evidence level L2 or above.
-   - L1 means present in the webCoRE source vocabulary.
-   - L2 means identified with a registry entry.
-   - Higher levels need further evidence.
-   - L0, constructs never seen in any test fixture, is never shown for a piston.
-3. **Gaps.** Unrecognised positions, each as a structural path with a fixed reason. For example
-   `$.s[0].k[0].p[1].exp.<unknown-key#0>` reports an unrecognised field without revealing its name
-   or value.
+   - L1 means present in the source vocabulary.
+   - L2 means identified by a registry entry.
+   - L3 and above need further evidence.
+   - L0, never seen in any test fixture, is never shown for a piston.
+3. **Unidentified positions.** Each is a structural path with a fixed reason, and never reveals a
+   field name or value from the piston:
+   - an unrecognised field is shown as a placeholder such as
+     `$.s[0].k[0].p[1].exp.<unknown-key#0>`;
+   - a source-known editor or data field (`zc` comments, `data`) is reported once as "Opaque field,
+     not interpreted", and nothing beneath it is examined or reported.
 
 **The percentage rule.** Unrecognised fields are not construct positions, so a piston can have every
 construct recognised and still contain fields the walker does not understand.
 
 - The percentage is shown only for a complete walk with nothing unidentified.
 - Otherwise the card reads, for example, "Coverage incomplete. 13 construct positions recognised at
-  L2 or above; 4 positions not identified."
+  L2 or above; 4 positions not identified".
 
-**Measured cost.** On the development hub a coverage result is under 1KB and returns well within a
-second, so results are not cached. The card never shows piston values, and nothing decoded is
-written to the logs or the AI-friendly export.
+Editor diagnostics (`err`, `errVar`, `loc`) are deliberately left as unrecognised fields, because they
+mark saved structure outside the runtime grammar.
 
-## 7. Evidence base
+## 6. What Automation Map renders
 
-- **Pinned executor source,** at the commit named above: `executeStatement`, `subscribeAll`,
-  `cleanCode`, `scheduleTimer`, `executeAction`, `evaluateOperand` and `evaluateExpression`.
-- **Six development pistons.** Their coverage matched expectations: every walk complete and every
-  construct recognised.
-- **One deliberately unrecognised fixture piston**, saved through the supported editor, which
-  produced the stored shape described in section 5.
-- **A relationship scan before and after the fixture work.** The export was unchanged apart from the
-  added fixture app.
+Each piston is the automation owner. The webCoRE parent is visible as the owning application, but its
+permissions are never rendered as device use.
+
+| Evidence | Map relationship | Arrow direction |
+| --- | --- | --- |
+| Evaluated Hub or Local Variable | Read | Variable to piston |
+| Hub or Local Variable destination | Write | Piston to variable |
+| `t: "p"` physical-device operand | Device read | Device to piston |
+| `t: "action"` direct target | Action | Piston to device |
+
+When one piston both reads and acts on a device, or both reads and writes a variable, both
+relationships are kept.
+
+The same evidence is reflected in focus, search, pivot tables, Insights and the AI-friendly export.
+Complete webCoRE flow is not implied by these relationships.
+
+## 7. Boundaries
+
+Automation Map does not create a fixed relationship for:
+
+- a variable-backed or otherwise runtime-selected device list;
+- the device that generated the current event;
+- a webCoRE virtual device or location operand;
+- an unrecognised or malformed node;
+- a hash that cannot be reconciled uniquely with the correct parent inventory.
+
+It does not infer complete IF/ELSE flow, evaluation order, schedules, delays, cancellation behaviour, or
+the exact role of a physical read.
+
+Unsupported static forms produce bounded coverage information. Malformed encoding or JSON produces a
+fixed decoder error and a `complete-with-gaps` scan. One malformed piston never stops other apps being
+discovered. These omissions keep the picture incomplete rather than wrong.
+
+## 8. Privacy and data handling
+
+The decoder needs structure, not values. Automation Map does not log, cache, render or export:
+
+- the decoded piston document;
+- raw Base64 chunks;
+- unmatched device hashes;
+- Hub, global or local variable values;
+- action parameter values;
+- local network details.
+
+The decoded document exists only in memory during classification. Discovery uses read-only Hubitat
+data and adds no state-changing endpoint. Coverage results carry no piston values, and nothing decoded
+reaches the logs or the export.
+
+## 9. Evidence base
+
+- **Pinned source.** The functions named throughout: `evaluateOperand`, `evaluateExpression`,
+  `executeStatement`, `executeAction`, `executeTask`, `scheduleTimer`, `evaluateConditions`,
+  `subscribeAll`, `cleanCode`, `expandDeviceList`, `getVariable` and `setVariable`.
+- **Hub Variable direction pistons.** Read-only, write-only, read-one/write-another and
+  read-and-write-the-same-variable pistons, with classifications unchanged while paused.
+- **Device evidence.** The physical-read, direct-action and device-hash interpretations were
+  reproduced on a live piston. The resolved devices matched the stored attribute and command.
+- **Coverage.** Six development pistons all walked completely with every construct recognised. A
+  deliberately unrecognised fixture piston saved through the supported editor produced the stored
+  shape in section 4.
+- **Scans.** Relationship scans before and after the fixture work left the export unchanged apart from
+  the added fixture app.
+
+Measured on a Hubitat C-8 development hub, 2026-09.
+
+## 10. Implementation status
+
+- **Automation Map v2.2.8:**
+  - Hub Variable discovery and direction;
+  - piston-local variables as owner-scoped nodes;
+  - direct device reads and actions resolved through webCoRE's own hashing;
+  - per-piston device relationship coverage (complete, partial, none or error).
+
+  The v2.2.7 device ringfence was removed, and the parent still receives no device edges. Graph schema
+  14, export schema 12.
+- **Automation Map Dev v2.2.9:**
+  - the Decode coverage card, with its accounting, recognition at L2 and above, fixed-reason gaps and
+    the percentage rule;
+  - reading of `lo2`, `lo3`, `ctp`, `rn`, `wt`, `wd` and `m` in the positions the executor uses;
+  - opaque-field reporting.
+
+  No coverage result is cached: results are under 1KB and return well within a second.
+- **In progress:** raising statement constructs from L2 to L3, meaning structural grammar and child
+  positions proven against the pinned executor and editor source and against editor-saved fixtures.
