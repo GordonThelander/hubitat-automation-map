@@ -499,8 +499,8 @@ check('the shared drag helper and the other panels are untouched', function () {
         'reaches other panels');
 });
 check('a new item is recognised by the item shown, not by the focusNode counter', function () {
-    // The four Focus dropdowns open the panel through showFlow without calling
-    // focusNode, so focusGenerationSeq never moves for them. Found on the Dev hub.
+    // The selection generation also moves when the panel is closed or replaced,
+    // so it cannot tell a new item from a reopened one.
     assert(extractFunction('startFlowItemIfNew').indexOf('focusGenerationSeq') < 0, 'still keyed on focusGenerationSeq');
 });
 check('every item-open site records the item before the panel is sized', function () {

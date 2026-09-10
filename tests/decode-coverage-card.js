@@ -53,7 +53,7 @@ const functionNames = ['extEsc', 'coverageHubAppId', 'coverageConstructParts', '
     'decodeCoverageIdleHtml', 'decodeCoverageMessageHtml', 'decodeCoverageResultHtml', 'decodeCoverageOutcomeHtml',
     'renderDecodeCoverageCard', 'requestDecodeCoverage'];
 const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
-    'COVERAGE_FAMILY_LABELS', 'COVERAGE_OPERAND_NAMES', 'COVERAGE_LEVEL_NAMES'];
+    'COVERAGE_FAMILY_LABELS', 'COVERAGE_OPERAND_NAMES', 'COVERAGE_LEVEL_NAMES', 'COVERAGE_RECOGNISED_LEVELS'];
 
 const cardBlock = source.slice(source.indexOf('// Decode coverage card (v2.2.9).'),
                                source.indexOf('function renderCommunityCard(node) {'));
@@ -114,7 +114,7 @@ const completeBody = {
     status: 'complete', appId: '3095', registryVersion: '1',
     provenance: { observedWebcoreVersion: null, referenceSourceCommit: 'abc', compatibilityStatus: 'unknown' },
     accounting: { objectsVisited: 41, arraysVisited: 45, fieldsVisited: 192, arrayElementsVisited: 30,
-                  scalarsVisited: 137, constructCandidates: 40, constructsIdentified: 40, defaultBranchOccurrences: 15 },
+                  scalarsVisited: 137, constructCandidates: 4, constructsIdentified: 4, defaultBranchOccurrences: 15 },
     constructCounts: { 'wc.statement.if': 1, 'wc.operand.p': 2, 'wc.task-parameter.unselected': 1 },
     constructLevels: { 'wc.statement.if': 'L2', 'wc.operand.p': 'L2', 'wc.task-parameter.unselected': 'L2' },
     levelCounts: { L0: 0, L1: 0, L2: 3, L3: 0, L4: 0, L5: 0 },
@@ -178,7 +178,9 @@ async function main() {
             const h = sb.box.innerHTML;
             assert(h.indexOf('visited and accounted for') >= 0, 'no accounting line');
             assert(h.indexOf('223 values across 192 fields') >= 0, 'accounting figures wrong');
-            assert(h.indexOf('100%') >= 0 && h.indexOf('40 of 40') >= 0, 'rate wrong');
+            assert(h.indexOf('100%') >= 0 && h.indexOf('4 of 4 construct positions recognised at L2 or above') >= 0, 'rate wrong');
+            assert(h.indexOf('positions identified') < 0, 'still labelled as identified rather than recognised');
+            assert(h.indexOf('below L2') < 0, 'below-L2 line shown when nothing is below L2');
             assert(h.indexOf('0 unrecognised positions.') >= 0, 'zero unknowns not stated');
             assert(h.indexOf('3 identified (L2)') >= 0, 'evidence line missing');
             assert(h.indexOf('15 values took a documented default path') >= 0, 'default path line missing');
@@ -226,12 +228,62 @@ async function main() {
         assert(h.indexOf('<th colspan') < 0, 'family label rendered as th');
     });
 
-    check('a level outside L0 to L5 is not rendered', function () {
+    check('a construct without a listable level is not rendered as a row', function () {
         const body = JSON.parse(JSON.stringify(completeBody));
         body.constructLevels['wc.statement.if'] = 'L9<script>';
         const h = rendered(body);
         assert(h.indexOf('L9') < 0 && h.indexOf('<script>') < 0, 'untrusted level rendered');
-        assert(h.indexOf('<tr><td>if</td><td class="n">1</td><td class="n">-</td></tr>') >= 0, 'no placeholder for a missing level');
+        assert(h.indexOf('<td>if</td>') < 0, 'row listed without a listable level');
+        assert(h.indexOf('3 of 4 construct positions recognised at L2 or above') >= 0, 'unlisted construct counted as recognised');
+    });
+
+    // ---- the evidence ladder ----------------------------------------------------------
+
+    const ladderBody = {
+        status: 'complete', appId: '3095', registryVersion: '1',
+        provenance: { observedWebcoreVersion: null, referenceSourceCommit: 'abc', compatibilityStatus: 'unknown' },
+        accounting: { objectsVisited: 20, arraysVisited: 10, fieldsVisited: 40, arrayElementsVisited: 10,
+                      scalarsVisited: 30, constructCandidates: 4, constructsIdentified: 3, defaultBranchOccurrences: 0 },
+        constructCounts: { 'wc.function.ladderzero': 1, 'wc.function.ladderone': 1, 'wc.statement.if': 1 },
+        constructLevels: { 'wc.function.ladderzero': 'L0', 'wc.function.ladderone': 'L1', 'wc.statement.if': 'L2' },
+        levelCounts: { L0: 1, L1: 1, L2: 1, L3: 0, L4: 0, L5: 0 },
+        unrecognised: [{ path: '$.s[2].t', reason: 'unknown-statement-type', nodeKind: 'scalar' }],
+        unrecognisedOverflow: 0, truncation: null
+    };
+
+    check('only an occurrence at L2 or above counts as recognised', function () {
+        const h = rendered(ladderBody);
+        assert(h.indexOf('25% ') >= 0, 'percentage is not L2-or-above occurrences over candidates');
+        assert(h.indexOf('1 of 4 construct positions recognised at L2 or above') >= 0, 'recognised figure wrong');
+    });
+
+    check('an L1 construct is listed as present and holds the result below complete', function () {
+        const h = rendered(ladderBody);
+        assert(h.indexOf('<tr><td>ladderone</td><td class="n">1</td><td class="n"><span class="dcLevel" title="present">L1</span></td></tr>') >= 0,
+            'L1 row missing or mislabelled');
+        assert(h.indexOf('dcRateGap') >= 0 && h.indexOf('100%') < 0, 'L1 allowed a complete result');
+    });
+
+    check('L0 is not listed or named anywhere in the panel', function () {
+        const h = rendered(ladderBody);
+        assert(h.indexOf('ladderzero') < 0, 'L0 construct listed');
+        assert(h.indexOf('L0') < 0 && h.indexOf('unseen') < 0, 'L0 named');
+    });
+
+    check('matches below L2 are reported apart from the unrecognised paths', function () {
+        const h = rendered(ladderBody);
+        assert(h.indexOf('2 matched positions are below L2 and not counted as recognised.') >= 0, 'below-L2 count missing or wrong');
+        assert(h.indexOf('1 unrecognised position, listed below.') >= 0, 'unrecognised count not kept distinct');
+    });
+
+    check('a single match below L2 is stated in the singular', function () {
+        const body = JSON.parse(JSON.stringify(ladderBody));
+        delete body.constructCounts['wc.function.ladderzero'];
+        assert(rendered(body).indexOf('1 matched position is below L2') >= 0, 'singular wording wrong');
+    });
+
+    check('a response where every construct is at L2 still reads 100 percent', function () {
+        assert(rendered(completeBody).indexOf('100% ') >= 0, 'all-L2 response no longer complete');
     });
 
     // ---- truncated walks ----------------------------------------------------------
@@ -240,9 +292,9 @@ async function main() {
         const body = JSON.parse(JSON.stringify(completeBody));
         body.status = 'truncated';
         body.truncation = { reason: 'depth-limit' };
-        body.accounting.constructsIdentified = 12;
+        body.accounting.constructCandidates = 12;
         const h = rendered(body);
-        assert(h.indexOf('12 of 40 visited construct positions identified') >= 0, 'partial count missing');
+        assert(h.indexOf('4 of 12 visited construct positions recognised at L2 or above') >= 0, 'partial count missing');
         assert(h.indexOf('%') < 0 && h.indexOf('dcRate') < 0, 'percentage shown for a truncated walk');
         assert(h.indexOf('A safety bound was reached') >= 0, 'safety warning missing');
     });
@@ -257,7 +309,7 @@ async function main() {
         await respond(sb, 0, completeBody);
         check('a response for a piston no longer shown is discarded', function () {
             assert(sb.box.innerHTML.indexOf('Check decode coverage') >= 0, 'stale result rendered');
-            assert(sb.box.innerHTML.indexOf('40 of 40') < 0, 'stale figures shown');
+            assert(sb.box.innerHTML.indexOf('4 of 4') < 0, 'stale figures shown');
         });
     })();
 
@@ -268,7 +320,7 @@ async function main() {
         sb.bumpSelection();
         await respond(sb, 0, completeBody);
         check('a response arriving after any newer selection is discarded', function () {
-            assert(sb.box.innerHTML.indexOf('40 of 40') < 0, 'stale figures shown');
+            assert(sb.box.innerHTML.indexOf('4 of 4') < 0, 'stale figures shown');
         });
     })();
 
@@ -279,7 +331,7 @@ async function main() {
         sb.renderDecodeCoverageCard(piston);
         sb.requestDecodeCoverage();
         const withGaps = JSON.parse(JSON.stringify(completeBody));
-        withGaps.accounting.constructsIdentified = 38;
+        withGaps.accounting.constructCandidates = 6;
         withGaps.unrecognised = [{ path: '$.s[4].t', reason: 'unknown-statement-type', nodeKind: 'scalar' },
                                  { path: '$.s[0].<script>', reason: 'unknown-key', nodeKind: 'scalar' }];
         withGaps.unrecognisedOverflow = 3;
