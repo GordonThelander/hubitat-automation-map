@@ -387,6 +387,14 @@ async function main() {
         });
     })();
 
+    check('a known opaque field has its own fixed label', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.unrecognised = [{ path: '$.s[0].zc', reason: 'known-opaque-field', nodeKind: 'scalar' }];
+        const h = rendered(body);
+        assert(h.indexOf('Opaque field, not interpreted') >= 0 && h.indexOf('$.s[0].zc') >= 0, 'opaque field label or path missing');
+        assert(h.indexOf('Coverage incomplete.') >= 0, 'an opaque field did not count as unidentified');
+    });
+
     check('a single unrecognised position is stated in the singular', function () {
         const body = JSON.parse(JSON.stringify(completeBody));
         body.unrecognised = [{ path: '$.s[1].t', reason: 'unknown-statement-type', nodeKind: 'scalar' }];

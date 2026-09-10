@@ -3813,10 +3813,16 @@ String webcoreCensusBoundPath(String path, int limit) {
 // Keys read at reviewed traversal and dispatch sites in the pinned source. The
 // list fails safe: an omitted key costs path legibility, never a leaked value.
 List<String> webcoreCensusSchemaKeys() {
-    return ['$', 'a', 'c', 'ced', 'co', 'cs', 'ct', 'cto', 'd', 'di', 'e', 'ei', 'exp', 'f',
-            'fs', 'g', 'i', 'id', 'k', 'l', 'lo', 'n', 'o', 'ok', 'p', 'r', 'ro', 'ro2',
-            'rop', 's', 'sm', 'str', 't', 'tcp', 'tep', 'to', 'to2', 'ts', 'tsp', 'v', 'vt',
-            'w', 'x', 'xi', 'z']
+    return ['$', 'a', 'c', 'ced', 'co', 'cs', 'ct', 'ctp', 'cto', 'd', 'di', 'e', 'ei', 'exp',
+            'f', 'fs', 'g', 'i', 'id', 'k', 'l', 'lo', 'lo2', 'lo3', 'm', 'n', 'o', 'ok', 'p',
+            'r', 'rn', 'ro', 'ro2', 'rop', 's', 'sm', 'str', 't', 'tcp', 'tep', 'to', 'to2',
+            'ts', 'tsp', 'v', 'vt', 'w', 'wd', 'wt', 'x', 'xi', 'z']
+}
+
+// Source-known editor and data fields that are never interpreted. Reported with
+// their own fixed reason so they are counted as unidentified, not mistaken for gaps.
+List<String> webcoreCensusOpaqueKeys() {
+    return ['data', 'zc']
 }
 
 // Mirrors fixAttr() in the pinned source: legacy SmartThings attribute names are
@@ -3881,6 +3887,7 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
         counts: [:], unrecognised: [], seen: [] as Set, overflow: 0, truncated: null,
         expired: expired, sinceDeadlineCheck: 0,
         schemaKeys: webcoreCensusSchemaKeys() as Set,
+        opaqueKeys: webcoreCensusOpaqueKeys() as Set,
         constructs: constructs,
         functionIndex: webcoreCensusFunctionIndex(constructs),
         limits: limits
@@ -3964,11 +3971,20 @@ void webcoreCensusWalk(Object value, String context, String path, int depth, Map
         for (int i = 0; i < entryKeys.size(); i++) {
             acc.fieldsVisited = (acc.fieldsVisited as Integer) + 1
             String key = "${entryKeys[i]}"
-            boolean known = (acc.schemaKeys as Set).contains(key)
-            String childPath = known ? "${path}.${key}" : "${path}.<unknown-key#${i}>"
             Object child = node[entryKeys[i]]
-            if (!known) webcoreCensusRecord(acc, childPath, 'unknown-key', webcoreCensusNodeKind(child))
-            String childContext = known ? webcoreCensusChildContext(node, context, key) : null
+            // Beneath an opaque field only the accounting and bounds run: no finding,
+            // no classification, and no source key name even in the internal path.
+            if (context == 'opaque') {
+                webcoreCensusWalk(child, 'opaque', "${path}.<opaque#${i}>", depth + 1, acc)
+                if (acc.truncated != null) return
+                continue
+            }
+            boolean known = (acc.schemaKeys as Set).contains(key)
+            boolean opaque = !known && (acc.opaqueKeys as Set).contains(key)
+            String childPath = (known || opaque) ? "${path}.${key}" : "${path}.<unknown-key#${i}>"
+            if (opaque) webcoreCensusRecord(acc, childPath, 'known-opaque-field', webcoreCensusNodeKind(child))
+            else if (!known) webcoreCensusRecord(acc, childPath, 'unknown-key', webcoreCensusNodeKind(child))
+            String childContext = opaque ? 'opaque' : (known ? webcoreCensusChildContext(node, context, key) : null)
             webcoreCensusWalk(child, childContext, childPath, depth + 1, acc)
             if (acc.truncated != null) return
         }
@@ -4011,24 +4027,31 @@ String webcoreCensusChildContext(Map node, String context, String key) {
             if (key == 'cs') return 'case'
             if (key == 'k') return 'task'
             if (key == 'lo') return 'operand'
+            // for reads its end and step with evalDecimalOperand, and scheduleTimer
+            // passes an every timer's lo2 and lo3 to evalRO1, so both are operands there only.
+            if ((key == 'lo2' || key == 'lo3') && (t == 'for' || t == 'every')) return 'operand'
             if (key == 'd') return 'device-list'
             // An `on` statement's c holds events; every other statement's c holds
             // conditions (statementTraverser in the pinned source).
-            if (key == 'c') return (t == 'on') ? 'event' : 'condition'
+            if (key == 'c') return (t == 'on') ? 'event' : webcoreCensusConditionListContext(node)
             return null
         case 'elseif':
-            if (key == 'c') return 'condition'
+            if (key == 'c') return webcoreCensusConditionListContext(node)
             if (key == 's') return 'statement'
             return null
         case 'case':
             if (key == 'ro' || key == 'ro2') return 'operand'
             if (key == 's') return 'statement'
             return null
+        // A step of a followed-by list is an ordinary condition whose wait delay the
+        // ladder also evaluates (mevaluateOperand on cndtn.wd); nothing else reads wd.
+        case 'followed-by-step':
+            if (key == 'wd' && t == 'condition') return 'operand'
         case 'condition':
             // to and to2 are the comparison's offset operands: evalRO1 passes
             // cndtn.to straight to mevaluateOperand.
             if (key == 'lo' || key == 'ro' || key == 'ro2' || key == 'to' || key == 'to2') return 'operand'
-            if (key == 'c') return 'condition'
+            if (key == 'c') return webcoreCensusConditionListContext(node)
             if (key == 'ts' || key == 'fs') return 'statement'
             if (key == 'd') return 'device-list'
             return null
@@ -4059,8 +4082,13 @@ String webcoreCensusChildContext(Map node, String context, String key) {
     return null
 }
 
+// The conditions under a node whose operator is followed by (sFLWBY) are ladder steps.
+String webcoreCensusConditionListContext(Map node) {
+    return (node.o instanceof String && (node.o as String) == 'followed by') ? 'followed-by-step' : 'condition'
+}
+
 void webcoreCensusClassify(Map node, String context, String path, Map acc) {
-    if (context == null) return
+    if (context == null || context == 'opaque') return
     if (context == 'statement') {
         webcoreCensusCandidate(acc, "${path}.t", node.t, 'wc.statement.', 'unknown-statement-type')
         ['tep', 'tsp', 'tcp'].each { String key ->
@@ -11950,6 +11978,7 @@ const COVERAGE_REASON_LABELS = {
   'unknown-policy-value': 'Unrecognised policy value',
   'unknown-device-selector': 'Device selector not statically resolvable',
   'unknown-key': 'Unrecognised field',
+  'known-opaque-field': 'Opaque field, not interpreted',
   'malformed-node': 'Could not be classified'
 };
 

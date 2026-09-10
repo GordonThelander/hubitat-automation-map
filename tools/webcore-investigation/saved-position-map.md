@@ -22,17 +22,30 @@ loaded, before any evaluation. Its closures name every structural key.
 | --- | --- | --- |
 | root | `r` restrictions, `s` statements, `v` variable declarations | `r9p[sR]`, `r9p[sS]`, `oMv(r9p)` |
 | variable declaration | `n` name, `t` variable data type, `v` initializer operand | `getLocalVariables`, `getVariable`, `subscribeAll` |
-| statement | `t`, `d`, `a`, `r`, `c`, `s`, `e`, `ei`, `cs`, `lo`, `k`, `o`, `w`, `ct`, `di`, `tep`, `tsp`, `tcp` | `statementTraverser`, `traverseStatements` |
+| statement | `t`, `d`, `a`, `r`, `rn`, `c`, `s`, `e`, `ei`, `cs`, `lo`, `lo2`, `lo3`, `ctp`, `k`, `o`, `w`, `ct`, `di`, `tep`, `tsp`, `tcp` | `statementTraverser`, `traverseStatements`, `executeStatement`, `scheduleTimer`, `cleanCode` |
 | else-if | `c` conditions, `s` statements | `for(Map ei in liMs(node,sEI))` |
 | switch case | `ro`, `ro2` when the case type is `r`, `s` statements | `for(Map c in liMs(node,sCS))` |
-| condition | `t` (`condition` or `group`), `co`, `lo`, `ro`, `ro2`, `to`, `to2`, `c` subconditions, `ts`, `fs`, `sm`, `ct` | `traverseConditions`, `conditionTraverser`, `evalRO1` |
+| condition | `t` (`condition` or `group`), `co`, `lo`, `ro`, `ro2`, `to`, `to2`, `c` subconditions, `ts`, `fs`, `sm`, `ct`, `wt`, `wd` | `traverseConditions`, `conditionTraverser`, `evalRO1`, followed-by ladder |
 | event | `lo` | `eventTraverser` |
 | restriction | `t` (`restriction`), `co`, `lo`, `ro`, `ro2`, `r` | `traverseRestrictions`, `restrictionTraverser` |
-| task | `c` command, `p` parameters | `for(Map k in liMs(node,sK))` |
+| task | `c` command, `p` parameters, `m` mode restriction | `for(Map k in liMs(node,sK))`, `executeTask` |
 | parameter | evaluated as an operand, plus `vt` | `executeTask`, `mevaluateOperand(r9,prm)` |
 | operand | `t`, then `d`/`a`/`p` for `p`, `v` for `v`, `s`+`vt` for `s`, `c`+`vt` for `c`, `x`/`xi` for `x`, `exp` for `e` | `evaluateOperand` |
 | expression | `t` result type, `i` items | `evaluateExpression`, `case sEXPR` |
 | expression item | `t`; `n` when `t` is `function`; `i` for nested items | `case sFUNC`, `case sEXPR` |
+
+**`subscribeAll` is not the whole grammar.** It is a subscription pass, and the executor reads
+positions it never visits:
+
+- `lo2` and `lo3` are operands for `for` (`evalDecimalOperand` in `executeStatement`) and for `every`
+  (`scheduleTimer` passes them to `evalRO1`), and nowhere else;
+- `ctp` is `switch`'s case traversal policy (`i` breaks after a case by default, `e` falls through);
+- `rn` negates a statement's restrictions;
+- `wt` is a followed-by step's wait type, a scalar, and `wd` is its wait delay, evaluated with
+  `mevaluateOperand` on a condition node;
+- `m` is a task's mode restriction list, checked in `executeTask`, and is not a device list.
+
+`cleanCode` removes editor fields only when `inMem` is true, so the stored document keeps them.
 
 **A root variable declaration's `v` is an operand.** Three anchors, and the general rule rests on
 the first two rather than the third:
@@ -141,9 +154,15 @@ is therefore recorded as `unknown-device-selector` rather than assigned to one o
 The walker's allowlist is exactly the keys named above:
 
 ```
-$ a c ced co cs ct cto d di e ei exp f fs g i id k l lo n o ok p r ro ro2 rop s sm str t tcp tep
-to to2 ts tsp v vt w x xi z
+$ a c ced co cs ct ctp cto d di e ei exp f fs g i id k l lo lo2 lo3 m n o ok p r rn ro ro2 rop s
+sm str t tcp tep to to2 ts tsp v vt w wd wt x xi z
 ```
+
+`ctp`, `lo2`, `lo3`, `m`, `rn`, `wd` and `wt` were added after tracing them to the executor, as set out
+in section 1. `zc` (comments) and `data` are source-known but never interpreted. They are reported with
+the fixed reason `known-opaque-field`, so they count as unidentified without being mistaken for
+unknown structure. `u`, `pr` and `os` are not added until a saved position and a runtime consumer are
+traced. Editor diagnostics (`err`, `errVar`, `loc`) stay unknown fields.
 
 Nine of these were added after the first Dev-hub run, which produced 91 `unknown-key` records across
 six real pistons and no user-derived key at all. Each was traced to a named site before being added:
