@@ -622,22 +622,3 @@ never presenting stale data as a completed current scan.
 
 The Rule Machine storage-format write-up remains useful, but it is documentation work for the
 developer utilities repository rather than an Automation Map product backlog item.
-
-### 27. Resize for every floating panel, not only the flow view
-
-**The gap.** v2.2.9 lets the normal flow view (rule flowcharts and piston details) be resized from a
-corner grip, with the size kept for the page session and a double-click on the header to reset it.
-The other floating panels (Insights, External systems, Pivot tables, Device icons and Hubitat release
-activity) can still only be dragged. They open at a size measured from the page, which suits a wide
-screen but not every screen or every amount of content.
-
-**Proposed.** Extend the corner grip to every floating panel, with one size remembered per panel and
-the same double-click reset. Each panel needs its own layout checked once resized: the pivot and icon
-tables have sticky headers, and the release activity chart sizes itself to its container.
-
-**Why it was not done with the flow view.** The flow view was the one asked for, and it is the panel
-with a mode switch to get right, since it also hosts Insights. Extending the grip to five more panels
-means checking each one when shrunk and when grown, which is a separate piece of work rather than a
-small addition.
-
-**Status.** Not started.
