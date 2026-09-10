@@ -9288,7 +9288,7 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size and position."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
@@ -10802,6 +10802,7 @@ function setFlowSizeMode(large) {
     clearFlowInlineSize();
     sizeModernPanel(flowPanel);
   }
+  if (large) clearFlowZoomStyle(); else applyFlowZoom();
 }
 function sizeModernPanel(panel) {
   const statusEl = document.getElementById('status');
@@ -11013,6 +11014,8 @@ function startFlowItemIfNew() {
 function resetFlowPanelLayout() {
   flowUserSize = null;
   flowUserPosition = null;
+  flowZoom = 1;
+  clearFlowZoomStyle();
   panelCustomPosition.delete(flowPanel);
   clearFlowInlineSize();
   sizeModernPanel(flowPanel);
@@ -11056,6 +11059,57 @@ window.addEventListener('resize', function () {
   flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
   applyFlowUserSize();
 });
+// Panel zoom. Ctrl with the mouse wheel over the normal flow view zooms its
+// content instead of the whole page, which a large flowchart needs. Held for the
+// page session like a chosen size, reset by the header double-click, and not
+// applied to the full-area Insights view. The zoom sits on a wrapper inside the
+// scrolling body: zooming the body itself would grow the panel, not its content.
+var flowZoom = 1;
+const FLOW_ZOOM_MIN = 0.5;
+const FLOW_ZOOM_MAX = 2.5;
+
+function applyFlowZoom() {
+  const inner = document.getElementById('flowZoom');
+  if (!inner) return;
+  inner.style.zoom = flowZoom === 1 ? '' : String(flowZoom);
+}
+
+function clearFlowZoomStyle() {
+  const inner = document.getElementById('flowZoom');
+  if (inner) inner.style.zoom = '';
+}
+
+function nextFlowZoom(current, deltaY) {
+  // One mouse wheel notch is about 100; a trackpad pinch sends many small steps.
+  const step = Math.max(-200, Math.min(200, deltaY));
+  const next = current * Math.pow(1.0015, -step);
+  return Math.round(Math.min(FLOW_ZOOM_MAX, Math.max(FLOW_ZOOM_MIN, next)) * 100) / 100;
+}
+
+function handleFlowWheel(e) {
+  if (!e.ctrlKey || flowPanel.classList.contains('modernPanelLarge')) return;
+  e.preventDefault();
+  const previous = flowZoom;
+  flowZoom = nextFlowZoom(flowZoom, e.deltaY);
+  if (flowZoom === previous) return;
+  const body = document.getElementById('flowBody');
+  if (!body) { applyFlowZoom(); return; }
+  // Keep the content under the pointer in place as it grows or shrinks.
+  const box = body.getBoundingClientRect();
+  const offsetX = e.clientX - box.left;
+  const offsetY = e.clientY - box.top;
+  const contentX = body.scrollLeft + offsetX;
+  const contentY = body.scrollTop + offsetY;
+  applyFlowZoom();
+  const ratio = flowZoom / previous;
+  body.scrollLeft = contentX * ratio - offsetX;
+  body.scrollTop = contentY * ratio - offsetY;
+}
+
+// Non-passive, or the browser ignores preventDefault and zooms the page anyway.
+if (typeof flowPanel.addEventListener === 'function') {
+  flowPanel.addEventListener('wheel', handleFlowWheel, { passive: false });
+}
 // End flow panel resize.
 // Legend is entirely static markup - no *Load() function, nothing to fetch
 // or rebuild on open - so declared here rather than beside ext/pivot/icons's
