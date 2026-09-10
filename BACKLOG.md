@@ -52,10 +52,12 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 
 - **G.** An external system picked from Quick Search was written into the Focus Device dropdown. It
   now has its own transient focus, used by currentFocus, the map filter, history, Back and Forward and
-  Show all, with every Focus dropdown left at All. Framing to be confirmed on the dev hub.
+  Show all, with every Focus dropdown left at All. Its framing was wrong because inert nodes kept their
+  whole-map shelf pins in narrowed views; those pins are now released. Framing to be seen on the dev hub.
 - **H.** A Hub Variable and its connector device draw their labels on top of each other.
-- **I.** The webCoRE parent panel draws an informational sentence in the red attention style, and
-  its "holds 6 apps" heading repeats the title.
+- **I.** The webCoRE parent panel drew an informational sentence in the red attention style, and its
+  "holds 6 apps" heading repeated the title. Now ordinary text, and a heading already in the title is
+  not repeated. Red stays for a partial or failed piston coverage.
 
 **Waiting on Gordon:**
 
