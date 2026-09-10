@@ -3802,9 +3802,10 @@ String webcoreCensusBoundPath(String path, int limit) {
 // Keys read at reviewed traversal and dispatch sites in the pinned source. The
 // list fails safe: an omitted key costs path legibility, never a leaked value.
 List<String> webcoreCensusSchemaKeys() {
-    return ['a', 'c', 'co', 'cs', 'ct', 'd', 'di', 'e', 'ei', 'exp', 'f', 'fs', 'g', 'i',
-            'id', 'k', 'lo', 'n', 'o', 'p', 'r', 'ro', 'ro2', 's', 'sm', 't', 'tcp', 'tep',
-            'ts', 'tsp', 'v', 'vt', 'w', 'x', 'xi', 'z']
+    return ['$', 'a', 'c', 'ced', 'co', 'cs', 'ct', 'cto', 'd', 'di', 'e', 'ei', 'exp', 'f',
+            'fs', 'g', 'i', 'id', 'k', 'l', 'lo', 'n', 'o', 'ok', 'p', 'r', 'ro', 'ro2',
+            'rop', 's', 'sm', 'str', 't', 'tcp', 'tep', 'to', 'to2', 'ts', 'tsp', 'v', 'vt',
+            'w', 'x', 'xi', 'z']
 }
 
 // Mirrors fixAttr() in the pinned source: legacy SmartThings attribute names are
@@ -3985,7 +3986,9 @@ String webcoreCensusChildContext(Map node, String context, String key) {
             if (key == 's') return 'statement'
             return null
         case 'condition':
-            if (key == 'lo' || key == 'ro' || key == 'ro2') return 'operand'
+            // to and to2 are the comparison's offset operands: evalRO1 passes
+            // cndtn.to straight to mevaluateOperand.
+            if (key == 'lo' || key == 'ro' || key == 'ro2' || key == 'to' || key == 'to2') return 'operand'
             if (key == 'c') return 'condition'
             if (key == 'ts' || key == 'fs') return 'statement'
             if (key == 'd') return 'device-list'
@@ -4041,7 +4044,14 @@ void webcoreCensusClassify(Map node, String context, String path, Map acc) {
             Object name = (node.v instanceof String) ? webcoreCensusFixAttr(node.v as String) : node.v
             webcoreCensusCandidate(acc, "${path}.v", name, 'wc.virtual-device.', 'unknown-operand-type')
         } else if (spelling == 's') {
-            webcoreCensusCandidate(acc, "${path}.s", node.s, 'wc.preset.', 'unknown-operand-type')
+            // The preset-name dispatch sits inside the time/datetime branch of the
+            // value-type switch. Any other value type takes that switch's default
+            // and uses s as a raw value, so the name site is never reached and a
+            // colour or enum parameter is not a missing preset.
+            String presetType = (node.vt instanceof String) ? (node.vt as String) : null
+            if (presetType != null && (acc.constructs as Map).containsKey('wc.preset.value-type.' + presetType)) {
+                webcoreCensusCandidate(acc, "${path}.s", node.s, 'wc.preset.', 'unknown-operand-type')
+            }
             webcoreCensusDefaultSite(acc, node.vt, 'wc.preset.value-type.')
         } else if (spelling == 'c') {
             webcoreCensusDefaultSite(acc, node.vt, 'wc.constant.value-type.')

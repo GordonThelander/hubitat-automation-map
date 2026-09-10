@@ -25,7 +25,7 @@ loaded, before any evaluation. Its closures name every structural key.
 | statement | `t`, `d`, `a`, `r`, `c`, `s`, `e`, `ei`, `cs`, `lo`, `k`, `o`, `w`, `ct`, `di`, `tep`, `tsp`, `tcp` | `statementTraverser`, `traverseStatements` |
 | else-if | `c` conditions, `s` statements | `for(Map ei in liMs(node,sEI))` |
 | switch case | `ro`, `ro2` when the case type is `r`, `s` statements | `for(Map c in liMs(node,sCS))` |
-| condition | `t` (`condition` or `group`), `co`, `lo`, `ro`, `ro2`, `c` subconditions, `ts`, `fs`, `sm`, `ct` | `traverseConditions`, `conditionTraverser` |
+| condition | `t` (`condition` or `group`), `co`, `lo`, `ro`, `ro2`, `to`, `to2`, `c` subconditions, `ts`, `fs`, `sm`, `ct` | `traverseConditions`, `conditionTraverser`, `evalRO1` |
 | event | `lo` | `eventTraverser` |
 | restriction | `t` (`restriction`), `co`, `lo`, `ro`, `ro2`, `r` | `traverseRestrictions`, `restrictionTraverser` |
 | task | `c` command, `p` parameters | `for(Map k in liMs(node,sK))` |
@@ -96,6 +96,14 @@ transform. A *missing* `t` is a different thing and is reported as `malformed-no
 **Function names.** The registry generator matched case-insensitively on both sides, so the lookup
 does too.
 
+**A preset name is gated by the value type.** `case sS:` dispatches on `ovt` first, and only the
+`time` and `datetime` branches reach the preset-name switch. Every other value type takes that
+switch's `default:` and uses `s` as a raw value, so a `setColor` parameter saved as
+`{t:'s', vt:'color', s:<colour>}` is not a missing preset. Found on a real piston, not in a fixture.
+
+**A condition's `to` and `to2` are operands.** `evalRO1` passes `mMs(cndtn,sTO)` straight to
+`mevaluateOperand`, so a comparison offset carries constructs like any other operand.
+
 **Defaulted sites.** `preset.evaluate.value-type`, `constant.evaluate.value-type` and
 `task.variable.value-type` each carry a default branch. Only an explicit member is a distinct
 construct; every other invocation, including a missing, null or non-String value, still reaches the
@@ -121,8 +129,16 @@ is therefore recorded as `unknown-device-selector` rather than assigned to one o
 The walker's allowlist is exactly the keys named above:
 
 ```
-a c co cs ct d di e ei exp f fs g i id k lo n o p r ro ro2 s sm t tcp tep ts tsp v vt w x xi z
+$ a c ced co cs ct cto d di e ei exp f fs g i id k l lo n o ok p r ro ro2 rop s sm str t tcp tep
+to to2 ts tsp v vt w x xi z
 ```
+
+Nine of these were added after the first Dev-hub run, which produced 91 `unknown-key` records across
+six real pistons and no user-derived key at all. Each was traced to a named site before being added:
+`$` a saved node id (`node[sDLR]`), `cto` and `ced` piston options read through `gtPOpt`, `to` and
+`to2` comparison offset operands (`evalRO1`), `rop` a restriction grouping, and `l`, `ok` and `str`
+saved item fields stripped at load. The allowlist failing safe is what made that investigation
+possible without a single value leaving the hub.
 
 It fails safe. An omitted key costs path legibility and can never leak a value, because any key not
 on the list is rendered as `<unknown-key#N>` where N is the sibling ordinal.

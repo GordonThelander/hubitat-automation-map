@@ -342,6 +342,43 @@ assertThat(elidedRecords.every { "${it.path}".startsWith('$.s[0]') && "${it.path
 assertThat(elidedRecords.collect { it.path }.unique().size() == 2,
     'two distinct deep gaps stay two distinguishable records')
 
+// ---- preset names are gated by the value type -------------------------------
+
+// The preset-name dispatch sits inside the time/datetime branch of the value-type
+// switch, so a setColor parameter carrying t:'s' with a colour name is not a
+// missing preset. Found on a real piston, not in a hand-built fixture.
+Map presets = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', k: [[c: 'setColor', p: [
+    [t: 's', vt: 'color', s: 'Soft White'],
+    [t: 's', vt: 'time', s: 'sunset'],
+    [t: 's', vt: 'time', s: 'not-a-preset']
+]]]]]], registry) as Map
+assertThat((presets.constructCounts as Map)['wc.preset.sunset'] == 1,
+    'a preset name under a time value type is identified')
+assertThat(!JsonOutput.toJson(presets).contains('Soft White'),
+    'a colour parameter value never reaches the result')
+assertThat((presets.unrecognised as List).count { it.reason == 'unknown-operand-type' } == 1,
+    "only the genuine unregistered preset is reported (${(presets.unrecognised as List).count { it.reason == 'unknown-operand-type' }})")
+// Four: the colour value type at the preset site, plus all three parameters at
+// the task value-type site, whose only registered member is 'variable'.
+assertThat((presets.accounting as Map).defaultBranchOccurrences == 4,
+    "every defaulted-site invocation is counted (${(presets.accounting as Map).defaultBranchOccurrences})")
+
+// A condition's to and to2 are the comparison's offset operands, so constructs
+// inside them are classified rather than walked past.
+Map offsets = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', c: [[t: 'condition', co: 'is',
+    lo: [t: 'v', v: 'time'], to: [t: 'c', vt: 'time', c: 5], to2: [t: 'x', x: 'offset']]]]]], registry) as Map
+assertThat((offsets.constructCounts as Map).containsKey('wc.operand.c') &&
+           (offsets.constructCounts as Map).containsKey('wc.operand.x'),
+    'a comparison offset operand is classified')
+
+// Keys taken from named sites in the pinned source are legible rather than
+// placeholders, which is what keeps the retained list about real gaps.
+Map schemaKeys = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', '$': 1, str: 'x', ok: true,
+    l: 'x', rop: 'and', k: [[c: 'log', p: [[t: 'c', c: 1, g: 'all', f: 'l']]]]]],
+    o: [cto: false, ced: 0]], registry) as Map
+assertThat(!(schemaKeys.unrecognised as List).any { it.reason == 'unknown-key' },
+    "reviewed schema keys are not reported as unknown (${(schemaKeys.unrecognised as List).findAll { it.reason == 'unknown-key' }*.path})")
+
 // ---- summary ---------------------------------------------------------------
 
 int total = results.size()
