@@ -31,7 +31,7 @@ check(text.contains("'wc.device-selector.variable-device-map'") && text.contains
 passed += 6
 
 int ids = (text =~ /(?m)^\s+'wc\./).count
-check(ids == 316, "registry holds the reviewed population (${ids} of 316)")
+check(ids == 279, "registry holds the reviewed population (${ids} of 279)")
 passed++
 
 if (!srcRoot.isDirectory()) {
@@ -69,5 +69,49 @@ if (fresh == null) {
 check(rc == 0, 'generator runs clean against the pinned source')
 check(fresh == text, 'checked-in registry is byte-identical to the freshly generated candidate')
 passed += 2
+
+// Negative tests for region boundaries (Codex 539). The previous fixed-window
+// hashing could return the SHA-256 of an empty string when an anchor was
+// missing, producing a stable hash for no evidence at all. These prove the
+// generator now fails instead.
+File tmpRoot = new File(System.getProperty('java.io.tmpdir'), 'wc-region-neg')
+void rmrf(File f) { if (f.isDirectory()) f.listFiles().each { rmrf(it) }; f.delete() }
+
+Closure runGen = { File root ->
+    List<String> env = System.getenv().collect { k, v -> "${k}=${v}" as String }
+        .findAll { !it.startsWith('JAVA_HOME=') }
+    env << ("JAVA_HOME=" + new File(System.getProperty('java.home')).canonicalPath)
+    def proc = ['groovy.bat', 'tools/webcore-investigation/generate-construct-registry.groovy',
+                root.path, '--emit'].execute(env as String[], new File('.'))
+    StringWriter o = new StringWriter(); StringWriter e = new StringWriter()
+    proc.consumeProcessOutput(o, e); proc.waitFor()
+    return [rc: proc.exitValue(), out: o.toString() + e.toString()]
+}
+
+rmrf(tmpRoot)
+tmpRoot.mkdirs()
+Closure copyTree
+copyTree = { File src, File dst ->
+    dst.mkdirs()
+    src.listFiles().each { File f -> f.isDirectory() ? copyTree(f, new File(dst, f.name)) : (new File(dst, f.name).bytes = f.bytes) }
+}
+copyTree(srcRoot, tmpRoot)
+
+// Missing anchor: remove the expandDeviceList definition entirely.
+File pistonCopy = new File(tmpRoot, 'smartapps/ady624/webcore-piston.src/webcore-piston.groovy')
+String orig = pistonCopy.getText('UTF-8')
+pistonCopy.setText(orig.replace('private List<String> expandDeviceList(', 'private List<String> REMOVED_expandDeviceList('), 'UTF-8')
+def missing = runGen(tmpRoot)
+check(missing.rc != 0, 'missing region anchor fails the generator')
+check(missing.out.contains('anchor not found'), 'missing anchor is reported as such, not hashed as empty')
+passed += 2
+
+// Truncated region: unbalance the braces of a named region.
+pistonCopy.setText(orig.replace('private List<String> expandDeviceList(Map r9,List<String> devs,Boolean localVarsOnly=false){',
+                                'private List<String> expandDeviceList(Map r9,List<String> devs,Boolean localVarsOnly=false){ /* unbalanced'), 'UTF-8')
+def trunc = runGen(tmpRoot)
+check(trunc.rc != 0, 'unbalanced region boundary fails the generator')
+passed++
+rmrf(tmpRoot)
 
 println "${passed} passed, 0 failed"

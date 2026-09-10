@@ -8,19 +8,19 @@
       "file": "ordinary-members.json",
       "proves": "one ordinary member per dispatch site, all thirteen sites",
       "expectConstructs": [
-        "wc.operand.event-match.type.x",
-        "wc.operand.evaluate.type.d",
-        "wc.operand.subscribe.type.c",
-        "wc.expression.item.type.integer",
-        "wc.virtual-device.evaluate.name.mode",
-        "wc.virtual-device.subscribe.name.tile",
-        "wc.preset.evaluate.value-type.time",
-        "wc.preset.evaluate.name.sunset",
-        "wc.constant.evaluate.value-type.date",
-        "wc.expression.evaluate.result-type.string",
-        "wc.task.variable.value-type.variable",
-        "wc.statement.subscribe.timer-type.every",
-        "wc.statement.subscribe.type.action"
+        "wc.constant.value-type.date",
+        "wc.expression.item.integer",
+        "wc.expression.result-type.string",
+        "wc.operand.c",
+        "wc.operand.d",
+        "wc.operand.event-match.x",
+        "wc.preset.sunset",
+        "wc.preset.value-type.time",
+        "wc.statement.action",
+        "wc.statement.every",
+        "wc.task.value-type.variable",
+        "wc.virtual-device.mode",
+        "wc.virtual-device.tile"
       ],
       "siteCoverage": {
         "operand.event-match.type": "x",
@@ -42,7 +42,7 @@
       "file": "empty-operand.json",
       "proves": "t:'' recognised and distinct from missing t",
       "expectConstructs": [
-        "wc.operand.evaluate.type.empty"
+        "wc.operand.empty"
       ],
       "expectDistinct": [
         "present-empty",
@@ -53,11 +53,11 @@
       "file": "shared-branch-numeric.json",
       "proves": "five members survive one shared branch",
       "expectConstructs": [
-        "wc.expression.item.type.integer",
-        "wc.expression.item.type.float",
-        "wc.expression.item.type.double",
-        "wc.expression.item.type.decimal",
-        "wc.expression.item.type.number"
+        "wc.expression.item.decimal",
+        "wc.expression.item.double",
+        "wc.expression.item.float",
+        "wc.expression.item.integer",
+        "wc.expression.item.number"
       ],
       "expectCount": 5,
       "note": "must NOT collapse to one construct; sharedBranchGroup is provenance only"
@@ -72,21 +72,21 @@
       "file": "nested-switch-trap.json",
       "proves": "event matcher not confused with statement switch",
       "expectConstructs": [
-        "wc.operand.event-match.type.p",
-        "wc.operand.event-match.type.v",
-        "wc.operand.event-match.type.x"
+        "wc.operand.event-match.p",
+        "wc.operand.event-match.v",
+        "wc.operand.event-match.x"
       ]
     },
     {
       "file": "same-spelling-multisite.json",
       "proves": "context-qualified lookup, not flat union",
       "expectConstructs": [
-        "wc.operand.event-match.type.p",
-        "wc.operand.evaluate.type.p"
+        "wc.operand.event-match.p",
+        "wc.operand.p"
       ],
       "expectDistinct": [
-        "wc.operand.event-match.type.p",
-        "wc.operand.evaluate.type.p"
+        "wc.operand.event-match.p",
+        "wc.operand.p"
       ]
     }
   ],
@@ -105,5 +105,6 @@
     "task.variable.value-type",
     "statement.subscribe.timer-type",
     "statement.subscribe.type"
-  ]
+  ],
+  "canonicalNote": "expectConstructs are canonical saved-document identities. siteCoverage remains generator evidence about which dispatch sites are exercised, which is a different question from what the walker will find in the tree."
 }
