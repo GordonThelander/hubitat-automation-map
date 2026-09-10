@@ -101,15 +101,15 @@ function makeSandbox(options) {
         }
     };
     const script =
-        'var flowUserSize = null;\nvar flowUserPosition = null;\nvar flowItemSeq = null;\n' +
-        'var focusGenerationSeq = 0;\nconst FLOW_MIN_WIDTH = 280;\nconst FLOW_MIN_HEIGHT = 160;\n' +
+        'var flowUserSize = null;\nvar flowUserPosition = null;\nvar flowItemId = null;\nvar flowShownItemId = null;\n' +
+        'const FLOW_MIN_WIDTH = 280;\nconst FLOW_MIN_HEIGHT = 160;\n' +
         'var flowZoom = 1;\nconst FLOW_ZOOM_MIN = 0.5;\nconst FLOW_ZOOM_MAX = 2.5;\n' +
         ['clampFlowSize', 'applyFlowUserSize', 'clearFlowInlineSize', 'makeFlowResizable',
-         'restoreFlowUserPosition', 'flowStylePosition', 'clampFlowPosition', 'startFlowItemIfNew',
+         'restoreFlowUserPosition', 'noteFlowItem', 'flowStylePosition', 'clampFlowPosition', 'startFlowItemIfNew',
          'resetFlowPanelLayout', 'setFlowSizeMode', 'applyFlowZoom', 'clearFlowZoomStyle', 'nextFlowZoom',
          'handleFlowWheel'].map(extractFunction).join('\n') + '\n' +
         'makeFlowResizable(flowPanel, grip);\n' +
-        'function select() { focusGenerationSeq++; }\n' +
+        'var nextItemId = 0;\nfunction select(id) { noteFlowItem({ id: id === undefined ? ++nextItemId : id }); }\n' +
         'function userSize() { return flowUserSize; }\n' +
         'function userPosition() { return flowUserPosition; }\n' +
         'function zoom() { return flowZoom; }\n';
@@ -118,7 +118,7 @@ function makeSandbox(options) {
     return sandbox;
 }
 
-// What the page does when an item is picked: a new selection, then the normal
+// What the page does when an item is picked: the item is recorded, the normal
 // view opens, then bringToFront places it only if it is not user-positioned.
 function openItem(sb) {
     sb.select();
@@ -235,6 +235,29 @@ check('reopening the same item does not reset the position', function () {
     moveTo(sb, 377, 221);
     sb.setFlowSizeMode(false);
     assert(sb.flowPanel.style.left === '377px' && sb.flowPanel.style.top === '221px', 'position reset');
+});
+
+check('two different items with the same label are still two items', function () {
+    // The Dev hub has two Rule Machine rules both named _Testy import.
+    const sb = makeSandbox();
+    sb.select('a3007');
+    sb.setFlowSizeMode(false);
+    moveTo(sb, 377, 221);
+    sb.select('a3009');
+    sb.setFlowSizeMode(false);
+    if (!sb.panelCustomPosition.get(sb.flowPanel)) sb.sizeModernPanel(sb.flowPanel);
+    assert(sb.flowPanel.style.left === DEFAULT_LEFT && sb.flowPanel.style.top === DEFAULT_TOP,
+        'treated as the same item');
+});
+
+check('reselecting the item already shown keeps its position', function () {
+    const sb = makeSandbox();
+    sb.select('a2279');
+    sb.setFlowSizeMode(false);
+    moveTo(sb, 377, 221);
+    sb.select('a2279');
+    sb.setFlowSizeMode(false);
+    assert(sb.flowPanel.style.left === '377px' && sb.flowPanel.style.top === '221px', 'reset for the same item');
 });
 
 // ---- Insights ---------------------------------------------------------------------
@@ -470,10 +493,19 @@ check('the shared drag helper and the other panels are untouched', function () {
     // Its own comment already mentions resizing, so look for what this change
     // would introduce rather than for the word.
     const drag = extractFunction('makePanelDraggable');
-    ['flowUserSize', 'clampFlowSize', 'clampFlowPosition', 'flowItemSeq', 'flowUserSized', 'flowResize']
+    ['flowUserSize', 'clampFlowSize', 'clampFlowPosition', 'flowItemId', 'flowUserSized', 'flowResize']
         .forEach(function (n) { assert(drag.indexOf(n) < 0, 'drag helper references ' + n); });
     assert(block.indexOf('allPanels') < 0 && block.indexOf('extPanel') < 0 && block.indexOf('pivotPanel') < 0,
         'reaches other panels');
+});
+check('a new item is recognised by the item shown, not by the focusNode counter', function () {
+    // The four Focus dropdowns open the panel through showFlow without calling
+    // focusNode, so focusGenerationSeq never moves for them. Found on the Dev hub.
+    assert(extractFunction('startFlowItemIfNew').indexOf('focusGenerationSeq') < 0, 'still keyed on focusGenerationSeq');
+});
+check('every item-open site records the item before the panel is sized', function () {
+    const pairs = (source.match(/noteFlowItem\(node\);\r?\n[ \t]*renderDecodeCoverageCard\(node\);\r?\n[ \t]*renderCommunityCard\(node\);\r?\n[ \t]*setFlowSizeMode\(false\);/g) || []).length;
+    assert(pairs === 5, 'recorded before sizing at ' + pairs + ' of 5 sites');
 });
 check('the header clamp is registered after the shared drag helper', function () {
     const helper = source.indexOf("makePanelDraggable(flowPanel, document.getElementById('flowHeader'));");

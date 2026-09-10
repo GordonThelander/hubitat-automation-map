@@ -10898,9 +10898,11 @@ var flowUserSize = null;
 // Where the normal view was when Insights re-placed the panel, so returning
 // from Insights puts it back rather than leaving it at the Insights position.
 var flowUserPosition = null;
-// The selection the normal view was last opened for. A different one means a
-// new item, which starts again from the default position.
-var flowItemSeq = null;
+// The item the normal view was last placed for, and the item now being shown.
+// When they differ a new item was picked, and the panel starts again from the
+// default position.
+var flowItemId = null;
+var flowShownItemId = null;
 const FLOW_MIN_WIDTH = 280;
 const FLOW_MIN_HEIGHT = 160;
 
@@ -10969,6 +10971,11 @@ function restoreFlowUserPosition() {
   if (flowUserSize) flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
 }
 
+// Called wherever an item opens in the flow panel, before the panel is sized.
+function noteFlowItem(node) {
+  flowShownItemId = node && node.id !== undefined && node.id !== null ? String(node.id) : null;
+}
+
 function flowStylePosition() {
   return { left: parseFloat(flowPanel.style.left) || 0, top: parseFloat(flowPanel.style.top) || 0 };
 }
@@ -10989,13 +10996,14 @@ function clampFlowPosition() {
   return changed;
 }
 
-// Every new selection starts the normal view from its default position.
-// focusGenerationSeq goes up once per focusNode() call, whatever was selected;
-// reopening the same item, such as returning from Insights, leaves it alone.
-// Returns true when it has placed the panel for a new item.
+// Every newly picked item starts the normal view from its default position.
+// Keyed on the item actually shown, not on focusGenerationSeq: the four Focus
+// dropdowns open the panel through showFlow without calling focusNode, so that
+// counter never moves for them. Reopening the same item, such as returning from
+// Insights, leaves the position alone. Returns true when it placed the panel.
 function startFlowItemIfNew() {
-  if (flowItemSeq === focusGenerationSeq) return false;
-  flowItemSeq = focusGenerationSeq;
+  if (flowItemId === flowShownItemId) return false;
+  flowItemId = flowShownItemId;
   flowUserPosition = null;
   if (!flowUserSize) {
     // No chosen size, so bringToFront can place it exactly as on a first open.
@@ -11336,6 +11344,7 @@ function showInertPanel(node) {
   // evidence included) correctly clears the container via that function's
   // own empty-state branch, not a separate ad hoc clear here.
   renderRuleVariablesCard(node.id);
+  noteFlowItem(node);
   renderDecodeCoverageCard(node);
   renderCommunityCard(node);
   setFlowSizeMode(false);
@@ -11359,6 +11368,7 @@ function showUnreferencedLocalPanel(node) {
   // stale content in either card actually clears it, the same discipline
   // the review 296 correction established for showInertPanel above.
   renderRuleVariablesCard(node.id);
+  noteFlowItem(node);
   renderDecodeCoverageCard(node);
   renderCommunityCard(node);
   setFlowSizeMode(false);
@@ -11398,6 +11408,7 @@ function showFlow(appId) {
     // sequence itself could not be decoded (or genuinely has none) - shown
     // regardless of which branch of this function is taken.
     renderRuleVariablesCard(appId);
+    noteFlowItem(node);
     renderDecodeCoverageCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
@@ -11419,6 +11430,7 @@ function showFlow(appId) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
     renderRuleVariablesCard(appId);
+    noteFlowItem(node);
     renderDecodeCoverageCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
@@ -11427,6 +11439,7 @@ function showFlow(appId) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
     renderRuleVariablesCard(appId);
+    noteFlowItem(node);
     renderDecodeCoverageCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
