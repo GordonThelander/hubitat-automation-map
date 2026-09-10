@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.8'
+@Field static final String APP_VERSION = '2.2.9'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -3783,7 +3783,20 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
 // --- webcore census walker: begin ---
 
 Map webcoreCensusLimits() {
-    return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50]
+    return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50, maxPathLength: 200]
+}
+
+// A path grows two segments per nesting level, so the traversal depth bound does
+// not bound the retained string: measured at 248 characters by depth 45. Keep the
+// head for context and the tail for the leaf, with a fixed marker between them.
+// Deduplication still uses the full path, so two distinct gaps that share a head
+// and tail stay two records rather than collapsing into one.
+String webcoreCensusBoundPath(String path, int limit) {
+    if (path == null || path.length() <= limit) return path
+    String marker = '<path-elided>'
+    int head = (limit - marker.length()) / 2 as int
+    int tail = limit - marker.length() - head
+    return path.substring(0, head) + marker + path.substring(path.length() - tail)
 }
 
 // Keys read at reviewed traversal and dispatch sites in the pinned source. The
@@ -4125,9 +4138,500 @@ void webcoreCensusRecord(Map acc, String path, String reason, String nodeKind) {
         acc.overflow = (acc.overflow as Integer) + 1
         return
     }
-    records << [path: path, reason: reason, nodeKind: nodeKind]
+    records << [path: webcoreCensusBoundPath(path, (acc.limits as Map).maxPathLength as Integer),
+                reason: reason, nodeKind: nodeKind]
 }
 // --- webcore census walker: end ---
+
+// --- webcore runtime registry: begin ---
+// GENERATED from tools/webcore-investigation/generated/webcore_construct_registry.groovy
+// by tools/webcore-investigation/generate-runtime-registry.groovy. Do not hand-edit.
+// Projection only: construct identity, evidence level and provenance. The reviewed
+// registry keeps the source evidence and stays out of the shipped app.
+Map webcoreCensusRegistry() {
+    return [provenance: [commit: '0a37eee2537accd706aaaeeed5a7b4bb0c82646e', registryVersion: '1'],
+            constructs: [
+        'wc.constant.value-type.date': [level: 'L2'],
+        'wc.constant.value-type.datetime': [level: 'L2'],
+        'wc.constant.value-type.time': [level: 'L2'],
+        'wc.device-selector.direct-identifier': [level: 'L2'],
+        'wc.device-selector.empty': [level: 'L2'],
+        'wc.device-selector.variable-device-list': [level: 'L2'],
+        'wc.device-selector.variable-device-map': [level: 'L2'],
+        'wc.device-selector.variable-name-cast': [level: 'L2'],
+        'wc.expression.item.decimal': [level: 'L2'],
+        'wc.expression.item.double': [level: 'L2'],
+        'wc.expression.item.float': [level: 'L2'],
+        'wc.expression.item.integer': [level: 'L2'],
+        'wc.expression.item.number': [level: 'L2'],
+        'wc.expression.result-type.bool': [level: 'L2'],
+        'wc.expression.result-type.boolean': [level: 'L2'],
+        'wc.expression.result-type.date': [level: 'L2'],
+        'wc.expression.result-type.datetime': [level: 'L2'],
+        'wc.expression.result-type.decimal': [level: 'L2'],
+        'wc.expression.result-type.device': [level: 'L2'],
+        'wc.expression.result-type.double': [level: 'L2'],
+        'wc.expression.result-type.duration': [level: 'L2'],
+        'wc.expression.result-type.dynamic': [level: 'L2'],
+        'wc.expression.result-type.enum': [level: 'L2'],
+        'wc.expression.result-type.error': [level: 'L2'],
+        'wc.expression.result-type.expression': [level: 'L2'],
+        'wc.expression.result-type.float': [level: 'L2'],
+        'wc.expression.result-type.function': [level: 'L2'],
+        'wc.expression.result-type.int32': [level: 'L2'],
+        'wc.expression.result-type.int64': [level: 'L2'],
+        'wc.expression.result-type.integer': [level: 'L2'],
+        'wc.expression.result-type.long': [level: 'L2'],
+        'wc.expression.result-type.number': [level: 'L2'],
+        'wc.expression.result-type.operand': [level: 'L2'],
+        'wc.expression.result-type.phone': [level: 'L2'],
+        'wc.expression.result-type.string': [level: 'L2'],
+        'wc.expression.result-type.text': [level: 'L2'],
+        'wc.expression.result-type.time': [level: 'L2'],
+        'wc.expression.result-type.uri': [level: 'L2'],
+        'wc.expression.result-type.variable': [level: 'L2'],
+        'wc.function.abs': [level: 'L2'],
+        'wc.function.adddays': [level: 'L2'],
+        'wc.function.addhours': [level: 'L2'],
+        'wc.function.addminutes': [level: 'L2'],
+        'wc.function.addseconds': [level: 'L2'],
+        'wc.function.addweeks': [level: 'L2'],
+        'wc.function.age': [level: 'L2'],
+        'wc.function.arrayitem': [level: 'L2'],
+        'wc.function.asin': [level: 'L2'],
+        'wc.function.atan2': [level: 'L2'],
+        'wc.function.avg': [level: 'L2'],
+        'wc.function.bool': [level: 'L2'],
+        'wc.function.boolean': [level: 'L2'],
+        'wc.function.ceil': [level: 'L2'],
+        'wc.function.ceiling': [level: 'L2'],
+        'wc.function.celsius': [level: 'L2'],
+        'wc.function.coalesce': [level: 'L2'],
+        'wc.function.concat': [level: 'L2'],
+        'wc.function.contains': [level: 'L2'],
+        'wc.function.converttemperatureifneeded': [level: 'L2'],
+        'wc.function.cos': [level: 'L2'],
+        'wc.function.count': [level: 'L2'],
+        'wc.function.date': [level: 'L2'],
+        'wc.function.dateAdd': [level: 'L2'],
+        'wc.function.datetime': [level: 'L2'],
+        'wc.function.decimal': [level: 'L2'],
+        'wc.function.dewpoint': [level: 'L2'],
+        'wc.function.distance': [level: 'L2'],
+        'wc.function.encodeuricomponent': [level: 'L2'],
+        'wc.function.endswith': [level: 'L2'],
+        'wc.function.eq': [level: 'L2'],
+        'wc.function.exists': [level: 'L2'],
+        'wc.function.fahrenheit': [level: 'L2'],
+        'wc.function.float': [level: 'L2'],
+        'wc.function.floor': [level: 'L2'],
+        'wc.function.format': [level: 'L2'],
+        'wc.function.formatdatetime': [level: 'L2'],
+        'wc.function.formatduration': [level: 'L2'],
+        'wc.function.ge': [level: 'L2'],
+        'wc.function.gt': [level: 'L2'],
+        'wc.function.hsltohex': [level: 'L2'],
+        'wc.function.if': [level: 'L2'],
+        'wc.function.indexof': [level: 'L2'],
+        'wc.function.int': [level: 'L2'],
+        'wc.function.integer': [level: 'L2'],
+        'wc.function.isbetween': [level: 'L2'],
+        'wc.function.isempty': [level: 'L2'],
+        'wc.function.ispistonpaused': [level: 'L2'],
+        'wc.function.json': [level: 'L2'],
+        'wc.function.lastindexof': [level: 'L2'],
+        'wc.function.le': [level: 'L2'],
+        'wc.function.least': [level: 'L2'],
+        'wc.function.left': [level: 'L2'],
+        'wc.function.length': [level: 'L2'],
+        'wc.function.log': [level: 'L2'],
+        'wc.function.lower': [level: 'L2'],
+        'wc.function.lt': [level: 'L2'],
+        'wc.function.ltrim': [level: 'L2'],
+        'wc.function.matches': [level: 'L2'],
+        'wc.function.max': [level: 'L2'],
+        'wc.function.median': [level: 'L2'],
+        'wc.function.mid': [level: 'L2'],
+        'wc.function.min': [level: 'L2'],
+        'wc.function.monthname': [level: 'L2'],
+        'wc.function.most': [level: 'L2'],
+        'wc.function.newer': [level: 'L2'],
+        'wc.function.not': [level: 'L2'],
+        'wc.function.number': [level: 'L2'],
+        'wc.function.older': [level: 'L2'],
+        'wc.function.parsedatetime': [level: 'L2'],
+        'wc.function.pow': [level: 'L2'],
+        'wc.function.power': [level: 'L2'],
+        'wc.function.previousage': [level: 'L2'],
+        'wc.function.previousvalue': [level: 'L2'],
+        'wc.function.rainbowvalue': [level: 'L2'],
+        'wc.function.random': [level: 'L2'],
+        'wc.function.rangevalue': [level: 'L2'],
+        'wc.function.replace': [level: 'L2'],
+        'wc.function.right': [level: 'L2'],
+        'wc.function.round': [level: 'L2'],
+        'wc.function.roundtimetominutes': [level: 'L2'],
+        'wc.function.rtrim': [level: 'L2'],
+        'wc.function.settzid': [level: 'L2'],
+        'wc.function.setvariable': [level: 'L2'],
+        'wc.function.sin': [level: 'L2'],
+        'wc.function.size': [level: 'L2'],
+        'wc.function.sort': [level: 'L2'],
+        'wc.function.sprintf': [level: 'L2'],
+        'wc.function.sqr': [level: 'L2'],
+        'wc.function.sqrt': [level: 'L2'],
+        'wc.function.startswith': [level: 'L2'],
+        'wc.function.stdev': [level: 'L2'],
+        'wc.function.string': [level: 'L2'],
+        'wc.function.strlen': [level: 'L2'],
+        'wc.function.substr': [level: 'L2'],
+        'wc.function.substring': [level: 'L2'],
+        'wc.function.sum': [level: 'L2'],
+        'wc.function.tan': [level: 'L2'],
+        'wc.function.text': [level: 'L2'],
+        'wc.function.time': [level: 'L2'],
+        'wc.function.title': [level: 'L2'],
+        'wc.function.todegrees': [level: 'L2'],
+        'wc.function.toradians': [level: 'L2'],
+        'wc.function.trim': [level: 'L2'],
+        'wc.function.trimleft': [level: 'L2'],
+        'wc.function.trimright': [level: 'L2'],
+        'wc.function.upper': [level: 'L2'],
+        'wc.function.urlencode': [level: 'L2'],
+        'wc.function.variance': [level: 'L2'],
+        'wc.function.weekdayname': [level: 'L2'],
+        'wc.operand.c': [level: 'L2'],
+        'wc.operand.d': [level: 'L2'],
+        'wc.operand.e': [level: 'L2'],
+        'wc.operand.empty': [level: 'L2'],
+        'wc.operand.event-match.p': [level: 'L2'],
+        'wc.operand.event-match.v': [level: 'L2'],
+        'wc.operand.event-match.x': [level: 'L2'],
+        'wc.operand.p': [level: 'L2'],
+        'wc.operand.s': [level: 'L2'],
+        'wc.operand.u': [level: 'L2'],
+        'wc.operand.v': [level: 'L2'],
+        'wc.operand.x': [level: 'L2'],
+        'wc.policy.tcp': [level: 'L2'],
+        'wc.policy.tep': [level: 'L2'],
+        'wc.policy.tsp': [level: 'L2'],
+        'wc.preset.midnight': [level: 'L2'],
+        'wc.preset.noon': [level: 'L2'],
+        'wc.preset.sunrise': [level: 'L2'],
+        'wc.preset.sunset': [level: 'L2'],
+        'wc.preset.value-type.datetime': [level: 'L2'],
+        'wc.preset.value-type.time': [level: 'L2'],
+        'wc.statement.action': [level: 'L2'],
+        'wc.statement.break': [level: 'L2'],
+        'wc.statement.do': [level: 'L2'],
+        'wc.statement.each': [level: 'L2'],
+        'wc.statement.every': [level: 'L2'],
+        'wc.statement.exit': [level: 'L2'],
+        'wc.statement.for': [level: 'L2'],
+        'wc.statement.if': [level: 'L2'],
+        'wc.statement.on': [level: 'L2'],
+        'wc.statement.repeat': [level: 'L2'],
+        'wc.statement.switch': [level: 'L2'],
+        'wc.statement.while': [level: 'L2'],
+        'wc.task.value-type.variable': [level: 'L2'],
+        'wc.vcmd.adjustColorTemperature': [level: 'L2'],
+        'wc.vcmd.adjustHue': [level: 'L2'],
+        'wc.vcmd.adjustInfraredLevel': [level: 'L2'],
+        'wc.vcmd.adjustLevel': [level: 'L2'],
+        'wc.vcmd.adjustSaturation': [level: 'L2'],
+        'wc.vcmd.appendFile': [level: 'L2'],
+        'wc.vcmd.cancelTasks': [level: 'L2'],
+        'wc.vcmd.clearFuelStream': [level: 'L2'],
+        'wc.vcmd.clearTile': [level: 'L2'],
+        'wc.vcmd.deleteFile': [level: 'L2'],
+        'wc.vcmd.emulatedFlash': [level: 'L2'],
+        'wc.vcmd.executePiston': [level: 'L2'],
+        'wc.vcmd.executeRoutine': [level: 'L2'],
+        'wc.vcmd.executeRule': [level: 'L2'],
+        'wc.vcmd.fadeColorTemperature': [level: 'L2'],
+        'wc.vcmd.fadeHue': [level: 'L2'],
+        'wc.vcmd.fadeInfraredLevel': [level: 'L2'],
+        'wc.vcmd.fadeLevel': [level: 'L2'],
+        'wc.vcmd.fadeSaturation': [level: 'L2'],
+        'wc.vcmd.flash': [level: 'L2'],
+        'wc.vcmd.flashColor': [level: 'L2'],
+        'wc.vcmd.flashLevel': [level: 'L2'],
+        'wc.vcmd.httpRequest': [level: 'L2'],
+        'wc.vcmd.iftttMaker': [level: 'L2'],
+        'wc.vcmd.internal_fade': [level: 'L2'],
+        'wc.vcmd.lifxBreathe': [level: 'L2'],
+        'wc.vcmd.lifxPulse': [level: 'L2'],
+        'wc.vcmd.lifxScene': [level: 'L2'],
+        'wc.vcmd.lifxState': [level: 'L2'],
+        'wc.vcmd.lifxToggle': [level: 'L2'],
+        'wc.vcmd.loadStateGlobally': [level: 'L2'],
+        'wc.vcmd.loadStateLocally': [level: 'L2'],
+        'wc.vcmd.log': [level: 'L2'],
+        'wc.vcmd.noop': [level: 'L2'],
+        'wc.vcmd.parseJson': [level: 'L2'],
+        'wc.vcmd.pausePiston': [level: 'L2'],
+        'wc.vcmd.readFile': [level: 'L2'],
+        'wc.vcmd.readFuelStream': [level: 'L2'],
+        'wc.vcmd.resumePiston': [level: 'L2'],
+        'wc.vcmd.saveStateGlobally': [level: 'L2'],
+        'wc.vcmd.saveStateLocally': [level: 'L2'],
+        'wc.vcmd.sendEmail': [level: 'L2'],
+        'wc.vcmd.sendNotification': [level: 'L2'],
+        'wc.vcmd.sendNotificationToContacts': [level: 'L2'],
+        'wc.vcmd.sendPushNotification': [level: 'L2'],
+        'wc.vcmd.sendSMSNotification': [level: 'L2'],
+        'wc.vcmd.setAlarmSystemStatus': [level: 'L2'],
+        'wc.vcmd.setHSLColor': [level: 'L2'],
+        'wc.vcmd.setLocationMode': [level: 'L2'],
+        'wc.vcmd.setState': [level: 'L2'],
+        'wc.vcmd.setSwitch': [level: 'L2'],
+        'wc.vcmd.setTile': [level: 'L2'],
+        'wc.vcmd.setTileColor': [level: 'L2'],
+        'wc.vcmd.setTileFooter': [level: 'L2'],
+        'wc.vcmd.setTileOTitle': [level: 'L2'],
+        'wc.vcmd.setTileText': [level: 'L2'],
+        'wc.vcmd.setTileTitle': [level: 'L2'],
+        'wc.vcmd.setVariable': [level: 'L2'],
+        'wc.vcmd.storeMedia': [level: 'L2'],
+        'wc.vcmd.toggle': [level: 'L2'],
+        'wc.vcmd.toggleLevel': [level: 'L2'],
+        'wc.vcmd.toggleRandom': [level: 'L2'],
+        'wc.vcmd.wait': [level: 'L2'],
+        'wc.vcmd.waitForDateTime': [level: 'L2'],
+        'wc.vcmd.waitForTime': [level: 'L2'],
+        'wc.vcmd.waitRandom': [level: 'L2'],
+        'wc.vcmd.wolRequest': [level: 'L2'],
+        'wc.vcmd.writeFile': [level: 'L2'],
+        'wc.vcmd.writeFuelStream': [level: 'L2'],
+        'wc.vcmd.writeToFuelStream': [level: 'L2'],
+        'wc.virtual-device.cloudBackup': [level: 'L2'],
+        'wc.virtual-device.date': [level: 'L2'],
+        'wc.virtual-device.datetime': [level: 'L2'],
+        'wc.virtual-device.email': [level: 'L2'],
+        'wc.virtual-device.hsmAlert': [level: 'L2'],
+        'wc.virtual-device.hsmRule': [level: 'L2'],
+        'wc.virtual-device.hsmRules': [level: 'L2'],
+        'wc.virtual-device.hsmSetArm': [level: 'L2'],
+        'wc.virtual-device.hsmStatus': [level: 'L2'],
+        'wc.virtual-device.ifttt': [level: 'L2'],
+        'wc.virtual-device.lowMemory': [level: 'L2'],
+        'wc.virtual-device.manualReboot': [level: 'L2'],
+        'wc.virtual-device.mode': [level: 'L2'],
+        'wc.virtual-device.pistonResume': [level: 'L2'],
+        'wc.virtual-device.powerSource': [level: 'L2'],
+        'wc.virtual-device.routine': [level: 'L2'],
+        'wc.virtual-device.severeLoad': [level: 'L2'],
+        'wc.virtual-device.sunriseTime': [level: 'L2'],
+        'wc.virtual-device.sunsetTime': [level: 'L2'],
+        'wc.virtual-device.systemStart': [level: 'L2'],
+        'wc.virtual-device.tile': [level: 'L2'],
+        'wc.virtual-device.time': [level: 'L2'],
+        'wc.virtual-device.update': [level: 'L2'],
+        'wc.virtual-device.zigbeeOff': [level: 'L2'],
+        'wc.virtual-device.zigbeeOn': [level: 'L2'],
+        'wc.virtual-device.zwaveCrashed': [level: 'L2'],
+    ]]
+}
+// --- webcore runtime registry: end ---
+
+// ===================================================================================================================
+// webCoRE decode coverage endpoint (v2.2.9)
+//
+// One read-only route that runs the pure census walker for a single webCoRE
+// piston on request. Nothing here runs during a relationship scan, nothing is
+// written to a device or an app, and no piston value leaves the handler: the
+// decoded document is local to one call and only the bounded, value-free census
+// result is serialized.
+// --- webcore coverage endpoint: begin ---
+
+// Bumped whenever the walker's output shape or classification changes, so a
+// cached entry from an older decoder can never be served as current.
+@Field static final String WEBCORE_COVERAGE_SCHEMA = '1'
+
+// One in-flight coverage operation per piston. Static, so it is per app-instance
+// and cleared by an app-code reload, and claims carry a stamp so an interrupted
+// request cannot lock a piston indefinitely.
+@Field static final ConcurrentHashMap<String, Long> WEBCORE_COVERAGE_CLAIMS = new ConcurrentHashMap<>()
+
+Map webcoreCoverageLimits() {
+    return [maxAppIdLength: 12, claimTtlMs: 60000L, loopbackTimeoutSec: 20]
+}
+
+// SHA-256 over a length-delimited sequence of ordered chunk names and exact
+// encoded contents. Length-delimited rather than concatenated, so two different
+// chunk boundaries cannot produce the same input by construction. MD5 through
+// this same class is already proven on the hub by webcoreDeviceHashToken().
+String webcoreChunkFingerprint(Map data) {
+    List settings = (data?.appSettings instanceof List) ? (data.appSettings as List) : []
+    Map<Integer, String> chunks = [:]
+    settings.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map setting = raw as Map
+        def match = ("${setting.name ?: ''}" =~ /^chunk:([0-9]+)$/)
+        if (!match.matches()) return
+        chunks[match[0][1] as int] = setting.value == null ? '' : "${setting.value}"
+    }
+    if (!chunks) return null
+    StringBuilder input = new StringBuilder()
+    chunks.keySet().sort().each { Integer index ->
+        String name = "chunk:${index}"
+        String value = chunks[index]
+        input << name.length() << ':' << name << value.length() << ':' << value
+    }
+    try {
+        MessageDigest md = MessageDigest.getInstance('SHA-256')
+        byte[] digest = md.digest(input.toString().getBytes('UTF-8'))
+        StringBuilder hex = new StringBuilder()
+        digest.each { byte b -> hex << String.format('%02x', b & 0xFF) }
+        return hex.toString()
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+// The response allowlist. Built field by field from the walker result rather
+// than by copying it, so a future walker field cannot reach the browser without
+// someone adding it here.
+String webcoreCoverageJson(Map body) {
+    Map out = [
+        status: body.status,
+        appId: body.appId,
+        registryVersion: body.registryVersion,
+        provenance: [
+            observedWebcoreVersion: (body.provenance as Map)?.observedWebcoreVersion,
+            referenceSourceCommit: (body.provenance as Map)?.referenceSourceCommit,
+            compatibilityStatus: (body.provenance as Map)?.compatibilityStatus
+        ],
+        accounting: body.accounting,
+        constructCounts: body.constructCounts,
+        levelCounts: body.levelCounts,
+        unrecognised: body.unrecognised,
+        unrecognisedOverflow: body.unrecognisedOverflow,
+        truncation: body.truncation,
+        meta: body.meta
+    ]
+    if (body.error != null) out.error = body.error
+    return JsonOutput.toJson(out)
+}
+
+Map webcoreCoverageEmpty(String status, String appId) {
+    return [http: 200, body: [
+        status: status, appId: appId,
+        registryVersion: null,
+        provenance: [observedWebcoreVersion: null, referenceSourceCommit: null, compatibilityStatus: 'unknown'],
+        accounting: null, constructCounts: [:], levelCounts: [:],
+        unrecognised: [], unrecognisedOverflow: 0, truncation: null, meta: [:]
+    ]]
+}
+
+Map webcoreCoverageError(String status, String code, int http, String appId) {
+    return [http: http, body: [
+        status: status, error: code, appId: appId,
+        registryVersion: null,
+        provenance: [observedWebcoreVersion: null, referenceSourceCommit: null, compatibilityStatus: 'unknown'],
+        accounting: null, constructCounts: [:], levelCounts: [:],
+        unrecognised: [], unrecognisedOverflow: 0, truncation: null, meta: [:]
+    ]]
+}
+
+Map webcoreDecodeCoverageMapping() {
+    Map result = webcoreDecodeCoverageResult("${params?.appId ?: ''}")
+    return render(status: result.http as Integer, contentType: 'application/json',
+                  data: webcoreCoverageJson(result.body as Map))
+}
+
+// Split from the mapping so the whole sequence is testable without a request.
+Map webcoreDecodeCoverageResult(String rawAppId) {
+    Map limits = webcoreCoverageLimits()
+
+    // Same recovery the status poll runs, so a stale running flag cannot make
+    // coverage permanently unavailable.
+    clearAbandonedScan()
+    if (scanEffectivelyActive()) return webcoreCoverageError('busy', 'scan-active', 409, null)
+
+    String appId = rawAppId == null ? '' : rawAppId.trim()
+    if (!appId || appId.length() > (limits.maxAppIdLength as Integer) || !(appId ==~ /^[0-9]+$/)) {
+        return webcoreCoverageError('invalid-request', 'invalid-app-id', 400, null)
+    }
+
+    // The ID must be one this app already scanned AND a piston, so the route
+    // cannot become an arbitrary installed-app status reader.
+    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Object entry = appInfo[appId]
+    if (!(entry instanceof Map)) return webcoreCoverageError('invalid-request', 'unknown-app-id', 400, appId)
+    if ("${(entry as Map).type ?: ''}".trim() != 'webCoRE Piston') {
+        return webcoreCoverageError('invalid-request', 'not-a-piston', 400, appId)
+    }
+
+    // Atomic claim. A stale claim can be taken over, but only by the one caller
+    // whose compare-and-set wins, so an interrupted request cannot lock a piston
+    // and two concurrent callers cannot both proceed.
+    Long stamp = now()
+    Long held = WEBCORE_COVERAGE_CLAIMS.putIfAbsent(appId, stamp)
+    if (held != null) {
+        if ((stamp - held) < (limits.claimTtlMs as Long)) {
+            return webcoreCoverageError('busy', 'coverage-in-flight', 409, appId)
+        }
+        if (!WEBCORE_COVERAGE_CLAIMS.replace(appId, held, stamp)) {
+            return webcoreCoverageError('busy', 'coverage-in-flight', 409, appId)
+        }
+    }
+
+    try {
+        Long started = now()
+        Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
+                                limits.loopbackTimeoutSec as Integer,
+                                [contentType: 'application/json'])
+        if (!fetched.ok) return webcoreCoverageError('error', 'source-unavailable', 422, appId)
+        if (!(fetched.data instanceof Map)) return webcoreCoverageError('error', 'source-malformed', 422, appId)
+
+        Map data = fetched.data as Map
+        // Computed before the document is decoded, while the ordered chunks are
+        // still the thing being identified.
+        String fingerprint = webcoreChunkFingerprint(data)
+
+        Map decoded = decodeWebcorePistonDocument(data)
+        // A piston that has never been saved has no configuration to account
+        // for. That is absence of evidence, not a failure.
+        if (decoded.status == 'not-present') return webcoreCoverageEmpty('not-present', appId)
+        if (decoded.status != 'complete') return webcoreCoverageError('error', 'decode-failed', 422, appId)
+
+        Map registry = webcoreCensusRegistry()
+        Map census = collectWebcoreDecodeCoverage(decoded.document, registry)
+        decoded = null
+
+        Map body = [
+            status: census.status,
+            appId: appId,
+            registryVersion: census.registryVersion,
+            provenance: census.provenance,
+            accounting: census.accounting,
+            constructCounts: census.constructCounts,
+            levelCounts: census.levelCounts,
+            unrecognised: census.unrecognised,
+            unrecognisedOverflow: census.unrecognisedOverflow,
+            truncation: census.truncation
+        ]
+        // Instrumentation is counts and timings only. The fingerprint is internal
+        // cache identity and is reported as present or absent, never as a value.
+        body.meta = [
+            elapsedMs: (now() - started),
+            // Serialized size of the body without meta, which is the denominator
+            // that matters: the cache stores the census result, not the envelope.
+            resultBytes: webcoreCoverageJson(body + [meta: [:]]).getBytes('UTF-8').length,
+            fingerprinted: fingerprint != null,
+            decoderSchema: WEBCORE_COVERAGE_SCHEMA,
+            cached: false
+        ]
+        return [http: 200, body: body]
+    } catch (Exception ignored) {
+        return webcoreCoverageError('error', 'coverage-failed', 422, appId)
+    } finally {
+        WEBCORE_COVERAGE_CLAIMS.remove(appId)
+    }
+}
+// --- webcore coverage endpoint: end ---
+
 
 // ===================================================================================================================
 // Rule Machine flow decoding
@@ -7445,6 +7949,7 @@ mappings {
     path('/scan-status') { action: [ GET: 'scanStatusMapping' ] }
     path('/externals') { action: [ GET: 'externalsGetMapping', POST: 'externalsSaveMapping' ] }
     path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
+    path('/webcore-decode-coverage') { action: [ GET: 'webcoreDecodeCoverageMapping' ] }
 }
 
 // The map page was read-only until this. It now accepts one write: the user's

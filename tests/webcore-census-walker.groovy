@@ -320,6 +320,28 @@ assertThat(!(defaulted.unrecognised as List).any { "${it.path}".endsWith('.vt') 
 assertThat(!defaultedJson.contains('not-a-registered-value-type') && !defaultedJson.contains('4242'),
     'no value from a defaulted site reaches the result')
 
+// ---- retained path length --------------------------------------------------
+
+// Depth bounds traversal, not the retained string: a path grows two segments per
+// nesting level and was measured at 248 characters by depth 45.
+Map deepPath = [:]
+Map pathCursor = deepPath
+(1..40).each { pathCursor.s = [[t: 'do']]; pathCursor = (pathCursor.s as List)[0] as Map }
+pathCursor.s = [[t: 'first-unknown-statement'], [t: 'second-unknown-statement']]
+Map elided = walker.collectWebcoreDecodeCoverage(deepPath, registry) as Map
+List elidedRecords = elided.unrecognised as List
+assertThat(elidedRecords.size() == 2, "both deep gaps are retained (${elidedRecords.size()})")
+assertThat(elidedRecords.every { "${it.path}".length() <= 200 },
+    "every retained path is within the cap (max ${elidedRecords.collect { "${it.path}".length() }.max()})")
+assertThat(elidedRecords.every { "${it.path}".contains('<path-elided>') },
+    'a path over the cap carries the fixed elision marker')
+assertThat(elidedRecords.every { "${it.path}".startsWith('$.s[0]') && "${it.path}".endsWith('.t') },
+    'the elided path keeps both its root context and its leaf')
+// Two sibling gaps share a head and a tail, so this also proves deduplication
+// still runs on the full path rather than the shortened one.
+assertThat(elidedRecords.collect { it.path }.unique().size() == 2,
+    'two distinct deep gaps stay two distinguishable records')
+
 // ---- summary ---------------------------------------------------------------
 
 int total = results.size()
