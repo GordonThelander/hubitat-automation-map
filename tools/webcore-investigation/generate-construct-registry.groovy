@@ -543,25 +543,103 @@ String availability(String bare, boolean implemented, Set<String> declaredLower)
     return 'unknown'
 }
 
-// Per-region evidence hashes, required by the spec's drift model. A whole-repo
-// SHA only says something changed somewhere; a region hash says WHICH reviewed
-// claims need re-verification when hubitat-patches moves.
+// ------------------------------------------------- claim-scoped region hashes
+
+// Evidence hashes must cover exactly the code a claim rests on. The earlier
+// version hashed fixed character windows (2k/12k/20k/40k), which could truncate
+// a method, swallow unrelated following code, or - worst - hash the SHA-256 of
+// an empty string when an anchor was missing, silently producing a stable hash
+// for no evidence at all (Codex 539).
+//
+// Every region below is brace- or bracket-matched from a named anchor, and a
+// missing or unbalanced boundary FAILS rather than degrading.
+
+/** Balanced region from `anchor`, matching on `open`/`close`, skipping strings and comments. */
+String balancedRegion(String src, String anchor, char open, char close, List<String> f, String label) {
+    int start = src.indexOf(anchor)
+    if (start < 0) { fail(f, "region ${label}: anchor not found"); return null }
+    int i = src.indexOf(open as String, start)
+    if (i < 0) { fail(f, "region ${label}: no opening ${open} after anchor"); return null }
+    int depth = 0
+    for (int p = i; p < src.length(); p++) {
+        char ch = src.charAt(p)
+        if (ch == '/' && p + 1 < src.length()) {
+            char n = src.charAt(p + 1)
+            if (n == '/') { int e = src.indexOf('\n', p); if (e < 0) break; p = e; continue }
+            if (n == '*') { int e = src.indexOf('*/', p); if (e < 0) break; p = e + 1; continue }
+        }
+        if (ch == '"' || ch == '\'') {
+            char q = ch; p++
+            while (p < src.length() && src.charAt(p) != q) { if (src.charAt(p) == ('\\' as char)) p++; p++ }
+            continue
+        }
+        if (ch == open) depth++
+        else if (ch == close) { depth--; if (depth == 0) return src.substring(start, p + 1) }
+    }
+    fail(f, "region ${label}: unbalanced ${open}${close} - boundary ambiguous")
+    return null
+}
+
+/**
+ * Deterministic normalized collection of every definition matching a prefix.
+ * Used for the func_/vcmd_ populations, which have no single enclosing region
+ * but are emitted as constructs and therefore need evidence of their own.
+ * Sorted by name so the hash cannot depend on source ordering.
+ */
+String definitionCorpus(String src, String prefix, List<String> f, String label) {
+    String rx = '(?m)^\\s*(?:private\\s+|static\\s+|public\\s+)*[A-Za-z<>,\\[\\]\\s]*\\b(' +
+                java.util.regex.Pattern.quote(prefix) + '[a-zA-Z0-9_]+)\\s*\\('
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile(rx).matcher(src)
+    Map<String, String> bodies = new TreeMap<>()
+    while (m.find()) {
+        String name = m.group(1)
+        String body = balancedRegion(src.substring(m.start()), name, '{' as char, '}' as char, f,
+                                     "${label}:${name}")
+        if (body == null) return null
+        bodies[name] = body
+    }
+    if (bodies.isEmpty()) { fail(f, "region ${label}: no definitions matched ${prefix}"); return null }
+    return bodies.collect { k, v -> k + ' ' + v }.join('')
+}
+
 String sha256(String text) {
     java.security.MessageDigest.getInstance('SHA-256')
         .digest(text.getBytes('UTF-8')).collect { String.format('%02x', it & 0xFF) }.join().take(16)
 }
-String regionOf(String src, String anchor, int span) {
-    int i = src.indexOf(anchor)
-    return i < 0 ? '' : src.substring(i, Math.min(i + span, src.length()))
+
+Map<String, String> regionSource = [:]
+regionSource['executor.statement-dispatch'] = balancedRegion(piston, 'private Boolean executeStatement(', '{' as char, '}' as char, failures, 'executor.statement-dispatch')
+regionSource['executor.evaluate-operand']   = balancedRegion(piston, 'private evaluateOperand(', '{' as char, '}' as char, failures, 'executor.evaluate-operand')
+regionSource['executor.subscribe-all']      = balancedRegion(piston, 'private void subscribeAll(', '{' as char, '}' as char, failures, 'executor.subscribe-all')
+regionSource['executor.evaluate-expression']= balancedRegion(piston, 'private Map evaluateExpression(', '{' as char, '}' as char, failures, 'executor.evaluate-expression')
+regionSource['executor.execute-task']       = balancedRegion(piston, 'private Boolean executeTask(', '{' as char, '}' as char, failures, 'executor.execute-task')
+regionSource['executor.expand-device-list'] = balancedRegion(piston, 'private List<String> expandDeviceList(', '{' as char, '}' as char, failures, 'executor.expand-device-list')
+regionSource['catalogue.virtual-commands']  = balancedRegion(app, 'private static Map<String,Map> virtualCommands(){', '{' as char, '}' as char, failures, 'catalogue.virtual-commands')
+regionSource['catalogue.functions-fld']     = balancedRegion(app, '@Field final Map<String,Map> functionsFLD=[', '[' as char, ']' as char, failures, 'catalogue.functions-fld')
+regionSource['executor.functions']          = definitionCorpus(piston, 'func_', failures, 'executor.functions')
+regionSource['executor.virtual-commands']   = definitionCorpus(piston, 'vcmd_', failures, 'executor.virtual-commands')
+
+// An empty or null region can never be hashed into the registry: that is how a
+// missing anchor previously became a stable hash of nothing.
+Map<String, String> REGION_HASHES = [:]
+regionSource.each { String k, String v ->
+    if (v == null || v.trim().isEmpty()) fail(failures, "region ${k}: empty, refusing to hash")
+    else REGION_HASHES[k] = sha256(v)
 }
-Map<String, String> REGION_HASHES = [
-    'executor.statement-dispatch': sha256(regionOf(piston, 'private Boolean executeStatement(', 20000)),
-    'executor.evaluate-operand'  : sha256(regionOf(piston, 'private evaluateOperand(', 20000)),
-    'executor.subscribe-all'     : sha256(regionOf(piston, 'private void subscribeAll(', 20000)),
-    'executor.expand-device-list': sha256(regionOf(piston, 'private List<String> expandDeviceList(', 2000)),
-    'catalogue.virtual-commands' : sha256(regionOf(app, 'private static Map<String,Map> virtualCommands(){', 40000)),
-    'catalogue.functions-fld'     : sha256(regionOf(app, '@Field final Map<String,Map> functionsFLD=[', 12000)),
-]
+
+// Region hashing runs in the emit path, AFTER the main gate check, so failures
+// recorded above would otherwise be written to a list nobody reads. A missing
+// anchor produced "All gates passed" and a registry with one fewer hash. Caught
+// by the negative test Codex asked for in 539, which is the entire argument for
+// having written it.
+if (failures) {
+    System.setOut(realOut)
+    println 'GATE FAILURES (evidence regions):'
+    failures.each { println "  - ${it}" }
+    println ''
+    println 'No registry emitted. Evidence boundaries must be exact.'
+    System.exit 1
+}
 
 // One helper so every population emits the same schema. sourceRef may be null
 // at L2 but the field exists, because this is the static runtime shape being
@@ -580,6 +658,7 @@ entry = { String id, Map f ->
     String canon = f.canonicalTarget ? "'${f.canonicalTarget}'" : 'null'
     String sref = f.sourceRef ? "'${f.sourceRef}'" : 'null'
     String extra = ''
+    if (f.consumedBy) extra += ", consumedBy:'${f.consumedBy}'"
     if (f.sharedBranchGroup) extra += ", sharedBranchGroup:'${f.sharedBranchGroup}'"
     if (f.dispatchSite) extra += ", dispatchSite:'${f.dispatchSite}'"
     if (f.status) extra += ", status:'${f.status}'"
@@ -587,6 +666,87 @@ entry = { String id, Map f ->
     return "    '${id}': [kind:'${f.kind}', name:'${f.name}', declared:${f.declared}, " +
            "implemented:${f.implemented}, canonicalTarget:${canon}, availability:'${f.availability}', " +
            "level:'${f.level}', sinceRegistryVersion:'${REGISTRY_VERSION}', sourceRef:${sref}${extra}],\n"
+}
+
+// ------------------------------------------------- source evidence vs identity
+
+// A source dispatch membership is NOT automatically a saved construct identity
+// (Codex 539). The thirteen sites are evidence about which runtime paths consume
+// a serialized value; the saved document contains one node regardless of how
+// many passes inspect it. A saved {t:'p'} operand is ONE persisted operand that
+// evaluateOperand evaluates and subscribeAll inspects - not two constructs.
+//
+// This table is the reviewed normalization. It is deliberately many-to-one, and
+// a distinct canonical ID is retained ONLY where the SAVED PARENT POSITION
+// changes meaning (the event matcher inside an `on` statement), never merely
+// because a different runtime method reads the same node.
+//
+//   (dispatchSite, serializedMember) -> canonical saved-construct ID
+//
+Map<String, Map> SITE_NORMALIZATION = [
+  // Base operand types. The evaluate site defines identity; the subscribe site
+  // is the same saved nodes seen by a different pass.
+  'operand.evaluate.type':            [prefix: 'operand.',              consumer: 'evaluateOperand'],
+  'operand.subscribe.type':           [prefix: 'operand.',              consumer: 'subscribeAll'],
+  // Retained as distinct: an operand inside an `on` statement's event matcher
+  // occupies a different saved parent position from an ordinary value operand.
+  'operand.event-match.type':         [prefix: 'operand.event-match.',  consumer: 'executeStatement.on'],
+  // Virtual-device names are saved as {t:'v', v:<name>}. Evaluate defines the
+  // population; subscribe is a strict subset seen by the subscription pass.
+  'virtual-device.evaluate.name':     [prefix: 'virtual-device.',       consumer: 'evaluateOperand'],
+  'virtual-device.subscribe.name':    [prefix: 'virtual-device.',       consumer: 'subscribeAll'],
+  // Statement identities already exist as wc.statement.*; these two sites add
+  // consumer provenance only and create nothing new.
+  'statement.subscribe.type':         [prefix: 'statement.',            consumer: 'subscribeAll'],
+  'statement.subscribe.timer-type':   [prefix: 'statement.',            consumer: 'subscribeAll.timer'],
+  // Saved attributes in their own right, each a distinct document position.
+  'expression.item.type':             [prefix: 'expression.item.',      consumer: 'evaluateExpression'],
+  'expression.evaluate.result-type':  [prefix: 'expression.result-type.', consumer: 'evaluateExpression'],
+  'preset.evaluate.name':             [prefix: 'preset.',               consumer: 'evaluateOperand'],
+  'preset.evaluate.value-type':       [prefix: 'preset.value-type.',    consumer: 'evaluateOperand'],
+  'constant.evaluate.value-type':     [prefix: 'constant.value-type.',  consumer: 'evaluateOperand'],
+  'task.variable.value-type':         [prefix: 'task.value-type.',      consumer: 'executeTask'],
+]
+
+// Build canonical identities from the frozen sites. Membership stays gated at
+// the site level; identity is what the walker will look up.
+Map<String, Map> canonical = [:]
+int siteMemberships = 0
+FROZEN_SITES.each { String siteId, Map site ->
+    Map norm = SITE_NORMALIZATION[siteId]
+    if (norm == null) { fail(failures, "site ${siteId} has no reviewed normalization"); return }
+    Map<String, String> groupOf = [:]
+    (site.shared as List).each { List g -> (g as List).each { groupOf[it as String] = (g as List).join('+') } }
+    (site.members as List).each { String m ->
+        siteMemberships++
+        String label = (m == '') ? 'empty' : m
+        String id = NS + norm.prefix + label
+        Map c = canonical[id]
+        if (c == null) {
+            canonical[id] = [kind: 'operand', name: label, consumedBy: [norm.consumer] as TreeSet,
+                             sites: [siteId] as TreeSet, sharedBranchGroup: groupOf[m]]
+        } else {
+            (c.consumedBy as Set) << norm.consumer
+            (c.sites as Set) << siteId
+            // A shared-branch group seen at one site but not another is site
+            // provenance; keep the first non-null rather than merging strings.
+            if (!c.sharedBranchGroup && groupOf[m]) c.sharedBranchGroup = groupOf[m]
+        }
+    }
+}
+
+// Statement consumer provenance folds into the existing statement entries
+// rather than creating wc.statement.subscribe.type.* duplicates.
+Map<String, Set<String>> statementConsumers = [:]
+statements.each { String st -> statementConsumers[st] = ['executeStatement'] as TreeSet }
+canonical.keySet().findAll { it.startsWith(NS + 'statement.') }.each { String id ->
+    String st = id.substring((NS + 'statement.').length())
+    if (statementConsumers.containsKey(st)) {
+        statementConsumers[st].addAll(canonical[id].consumedBy as Set)
+    } else {
+        fail(failures, "statement consumer site references unknown statement '${st}'")
+    }
+    canonical.remove(id)
 }
 
 StringBuilder sb = new StringBuilder()
@@ -605,7 +765,8 @@ sb << "  constructs: [\n"
 statements.each { String st ->
     sb << entry("${NS}statement.${st}", [kind: 'statement', name: st, declared: true, implemented: true,
         canonicalTarget: null, availability: 'current', level: 'L2',
-        sourceRef: 'executor.statement-dispatch'])
+        sourceRef: 'executor.statement-dispatch',
+        consumedBy: (statementConsumers[st] as List).join(',')])
 }
 // execution policy flags - part of the agreed population and previously omitted
 ['tep', 'tsp', 'tcp'].each { String pf ->
@@ -617,19 +778,23 @@ statements.each { String st ->
 functions.sort().each { String f ->
     String bare = f.substring('func_'.length())
     String canon = REVIEWED_ALIASES[bare.toLowerCase()]
+    boolean decl = isDeclared(bare, declFuncSet)
+    // Evidence must contain the entry: an executor-only function cannot cite
+    // the catalogue it is absent from (Codex 539).
     sb << entry("${NS}function.${bare}", [kind: 'function', name: bare,
-        declared: isDeclared(bare, declFuncSet), implemented: true,
+        declared: decl, implemented: true,
         canonicalTarget: canon ? "${NS}function.${canon}" : null,
         availability: availability(bare, true, declFuncSet), level: 'L2',
-        sourceRef: 'catalogue.functions-fld'])
+        sourceRef: decl ? 'executor.functions,catalogue.functions-fld' : 'executor.functions'])
 }
 // virtual commands
 vcmds.sort().each { String v ->
     String bare = v.substring('vcmd_'.length())
+    boolean vdecl = isDeclared(bare, declVcmdSet)
     sb << entry("${NS}vcmd.${bare}", [kind: 'vcmd', name: bare,
-        declared: isDeclared(bare, declVcmdSet), implemented: true,
+        declared: vdecl, implemented: true,
         canonicalTarget: null, availability: availability(bare, true, declVcmdSet), level: 'L2',
-        sourceRef: 'catalogue.virtual-commands'])
+        sourceRef: vdecl ? 'executor.virtual-commands,catalogue.virtual-commands' : 'executor.virtual-commands'])
 }
 // catalogue-only reconciliation, now case-normalized on both sides like the
 // availability lookup already was
@@ -651,16 +816,13 @@ sb << entry("${NS}vcmd.executeRoutine", [kind: 'vcmd', name: 'executeRoutine', d
 // Dispatch-site members, context-qualified. Previously validated only and never
 // emitted, which would have left the Increment 2 walker unable to resolve
 // wc.operand.evaluate.type.d from the registry it is supposed to consult.
-FROZEN_SITES.each { String siteId, Map site ->
-    Map<String, String> groupOf = [:]
-    (site.shared as List).each { List g -> (g as List).each { groupOf[it as String] = (g as List).join('+') } }
-    (site.members as List).each { String m ->
-        String label = (m == '') ? 'empty' : m
-        sb << entry("${NS}${siteId}.${label}", [kind: 'operand', name: label,
-            declared: false, implemented: true, canonicalTarget: null, availability: 'current',
-            level: 'L2', sourceRef: siteId, dispatchSite: siteId,
-            sharedBranchGroup: groupOf[m]])
-    }
+canonical.sort().each { String id, Map c ->
+    sb << entry(id, [kind: 'operand', name: c.name,
+        declared: false, implemented: true, canonicalTarget: null, availability: 'current',
+        level: 'L2', sourceRef: (c.sites as List).join(','),
+        dispatchSite: (c.sites as List).join(','),
+        consumedBy: (c.consumedBy as List).join(','),
+        sharedBranchGroup: c.sharedBranchGroup])
 }
 
 // Device-selector grammar. Value-shape metadata, deliberately kept distinct
@@ -695,12 +857,18 @@ if (candidateOnly) { System.setOut(realOut); print sb.toString(); System.exit 0 
 
 println ''
 println "Emitted ${emittedIds.size()} constructs:"
-printf('  statements %d, policy %d, functions %d, vcmds %d, operand members %d, selectors %d%n',
+printf('  statements %d, policy %d, functions %d, vcmds %d, canonical operand-family %d, selectors %d%n',
     statements.size(), 3,
     emittedIds.count { it.startsWith(NS + 'function.') },
     emittedIds.count { it.startsWith(NS + 'vcmd.') },
-    emittedIds.count { it.contains('.type.') || it.contains('.name.') || it.contains('.value-type.') || it.contains('.timer-type.') || it.contains('.result-type.') },
+    canonical.size(),
     DEVICE_SELECTOR_GRAMMAR.size())
+// The two numbers Codex 539 asked to be reported separately, because conflating
+// them is precisely the error this rework corrects.
+printf('  source-site memberships %d  ->  unique canonical saved constructs %d%n',
+    siteMemberships, canonical.size())
+printf('  %d memberships merged as consumer provenance rather than new identities%n',
+    siteMemberships - canonical.size())
 println "  aliases with canonicalTarget: ${REVIEWED_ALIASES.size()}"
 println "  region hashes: ${REGION_HASHES.size()}"
 println ''
