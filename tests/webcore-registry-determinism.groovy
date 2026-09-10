@@ -45,7 +45,7 @@ check(everyLine != null, 'wc.statement.every is present')
 passed += 7
 
 int ids = (text =~ /(?m)^\s+'wc\./).count
-check(ids == 279, "registry holds the reviewed population (${ids} of 279)")
+check(ids == 280, "registry holds the reviewed population (${ids} of 280)")
 passed++
 
 if (!srcRoot.isDirectory()) {

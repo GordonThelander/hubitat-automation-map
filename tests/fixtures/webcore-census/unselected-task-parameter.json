@@ -1,0 +1,45 @@
+{
+  "s": [
+    {
+      "t": "action",
+      "k": [
+        {
+          "c": "setColor",
+          "p": [
+            {
+              "d": [
+                ":0123456789abcdef0123456789abcdef:"
+              ],
+              "g": "all",
+              "f": "l",
+              "t": "s",
+              "vt": "color",
+              "s": "placeholder"
+            },
+            {
+              "d": [
+                ":0123456789abcdef0123456789abcdef:"
+              ],
+              "g": "all",
+              "f": "l",
+              "vt": "enum"
+            }
+          ]
+        },
+        {
+          "c": "toggleRandom",
+          "p": [
+            {
+              "d": [
+                ":0123456789abcdef0123456789abcdef:"
+              ],
+              "g": "all",
+              "f": "l",
+              "vt": "integer"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
