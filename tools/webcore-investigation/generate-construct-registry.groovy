@@ -195,6 +195,114 @@ List<String> vcmds = extractDefs(piston, 'vcmd_')
 List<String> declaredVcmds = extractCatalogue(app, 'private static Map<String,Map> virtualCommands(){', 'a=[', failures)
 List<String> declaredFuncs = extractCatalogue(app, '@Field final Map<String,Map> functionsFLD=[', 'functionsFLD=[', failures)
 
+// ----------------------------------------------------- dispatch site freeze
+
+// Thirteen dispatch sites, frozen 2026-09-10 after review in queue 532/533/534
+// and approval in 535. EXACT MEMBER SETS ARE THE PRIMARY GATE, counts are a
+// secondary sanity check: a count-only gate cannot see a substitution where one
+// member disappears and a phantom appears in the same run.
+//
+// sharedBranch records members that fall through to a common body. It is
+// PROVENANCE ONLY and never collapses members (Codex 533): sunriseTime and
+// sunsetTime are semantically different values even where execution shares a
+// path, and the five numeric labels at expression.item.type are five recognised
+// serialized forms handled by one conversion branch.
+//
+// Sites are keyed by method + switch subject + ordinal within that method, so a
+// line shift is reported as informational drift rather than failing the gate.
+Map<String, Map> FROZEN_SITES = [
+  'operand.event-match.type': [
+    method: 'executeStatement', subject: 'sMt(operand)', ordinal: 0, line: 4117, hasDefault: false,
+    members: ['p', 'v', 'x'], shared: []],
+  'operand.evaluate.type': [
+    method: 'evaluateOperand', subject: 'sMt(operand)', ordinal: 0, line: 7532, hasDefault: false,
+    members: ['', 'p', 'd', 'v', 's', 'x', 'c', 'e', 'u'], shared: []],
+  'operand.subscribe.type': [
+    method: 'subscribeAll', subject: 'sMt(operand)', ordinal: 0, line: 8855, hasDefault: false,
+    members: ['p', 'v', 'x', 'c', 'e'], shared: [['c', 'e']]],
+  'expression.item.type': [
+    method: 'evaluateExpression', subject: 'sMt(item)', ordinal: 0, line: 10718, hasDefault: true,
+    members: ['integer', 'float', 'double', 'decimal', 'number'],
+    shared: [['integer', 'float', 'double', 'decimal', 'number']]],
+  'virtual-device.evaluate.name': [
+    method: 'evaluateOperand', subject: 'oV', ordinal: 0, line: 7570, hasDefault: false,
+    members: ['time', 'date', 'datetime', 'mode', 'powerSource', 'hsmStatus', 'hsmAlert',
+              'hsmSetArm', 'hsmRule', 'hsmRules', 'pistonResume', 'cloudBackup', 'lowMemory',
+              'manualReboot', 'update', 'systemStart', 'severeLoad', 'zigbeeOff', 'zigbeeOn',
+              'zwaveCrashed', 'sunriseTime', 'sunsetTime', 'tile', 'ifttt', 'email', 'routine'],
+    shared: [['time', 'date', 'datetime'], ['mode', 'powerSource', 'hsmStatus'],
+             ['hsmSetArm', 'hsmRule', 'hsmRules', 'pistonResume', 'cloudBackup', 'lowMemory',
+              'manualReboot', 'update', 'systemStart', 'severeLoad', 'zigbeeOff', 'zigbeeOn',
+              'zwaveCrashed', 'sunriseTime', 'sunsetTime', 'tile'], ['ifttt', 'email']]],
+  'virtual-device.subscribe.name': [
+    method: 'subscribeAll', subject: 'operV', ordinal: 0, line: 8917, hasDefault: false,
+    members: ['pistonResume', 'time', 'date', 'datetime', 'mode', 'tile', 'powerSource',
+              'cloudBackup', 'lowMemory', 'systemStart', 'severeLoad', 'zigbeeOff', 'zigbeeOn',
+              'zwaveCrashed', 'sunriseTime', 'sunsetTime', 'hsmStatus', 'hsmAlert', 'hsmSetArm',
+              'hsmRule', 'hsmRules', 'email', 'ifttt'],
+    shared: [['time', 'date', 'datetime', 'mode', 'tile', 'powerSource', 'cloudBackup', 'lowMemory',
+              'systemStart', 'severeLoad', 'zigbeeOff', 'zigbeeOn', 'zwaveCrashed', 'sunriseTime',
+              'sunsetTime', 'hsmStatus', 'hsmAlert', 'hsmSetArm', 'hsmRule', 'hsmRules']]],
+  'preset.evaluate.value-type': [
+    method: 'evaluateOperand', subject: 'ovt', ordinal: 0, line: 7617, hasDefault: true,
+    members: ['time', 'datetime'], shared: [['time', 'datetime']]],
+  'preset.evaluate.name': [
+    method: 'evaluateOperand', subject: 'sMs(operand,sS)', ordinal: 0, line: 7621, hasDefault: false,
+    members: ['sunset', 'sunrise', 'midnight', 'noon'], shared: []],
+  'constant.evaluate.value-type': [
+    method: 'evaluateOperand', subject: 'ovt', ordinal: 1, line: 7662, hasDefault: true,
+    members: ['time', 'date', 'datetime'], shared: [['date', 'datetime']]],
+  'expression.evaluate.result-type': [
+    method: 'evaluateExpression', subject: 'exprType', ordinal: 0, line: 10523, hasDefault: false,
+    members: ['integer', 'long', 'decimal', 'time', 'datetime', 'int32', 'int64', 'date', 'bool',
+              'boolean', 'dynamic', 'string', 'enum', 'error', 'phone', 'uri', 'text', 'number',
+              'float', 'double', 'duration', 'variable', 'device', 'operand', 'function',
+              'expression'],
+    shared: [['integer', 'long', 'decimal'], ['time', 'datetime'], ['int32', 'int64', 'date'],
+             ['bool', 'boolean'], ['string', 'enum', 'error', 'phone', 'uri', 'text'],
+             ['number', 'float', 'double']]],
+  'task.variable.value-type': [
+    method: 'executeTask', subject: 'vt', ordinal: 0, line: 4502, hasDefault: true,
+    members: ['variable'], shared: []],
+  'statement.subscribe.timer-type': [
+    method: 'subscribeAll', subject: 't', ordinal: 0, line: 9135, hasDefault: false,
+    members: ['every', 'on'], shared: []],
+  'statement.subscribe.type': [
+    method: 'subscribeAll', subject: 't', ordinal: 1, line: 9143, hasDefault: false,
+    members: ['action', 'if', 'while', 'repeat', 'on', 'switch', 'every'],
+    shared: [['while', 'repeat']]],
+]
+
+// Device-selector grammar. NOT a numeric vocabulary gate (Codex 533/535):
+// selectors are not switch-dispatched, so there is no discriminator population
+// to count. Source basis is expandDeviceList (line 9435), which serves both
+// physical operands and action targets.
+Map<String, Map> DEVICE_SELECTOR_GRAMMAR = [
+  'device-selector.direct-identifier': [
+    status: 'active', staticallyResolvable: true,
+    recognition: 'isWcDev(entry): length 34, colon-delimited. Automation Map additionally requires ' +
+                 '32 lowercase hex, which is deliberately STRICTER than the source. A 34-character ' +
+                 'colon-delimited non-hex value stays unknown-device-selector rather than being ' +
+                 'resolved (Codex 535).'],
+  'device-selector.variable-device-list': [
+    status: 'active', staticallyResolvable: false,
+    recognition: 'variable of type device whose value is a List'],
+  'device-selector.variable-name-cast': [
+    status: 'active', staticallyResolvable: false,
+    recognition: 'any other variable; value cast to string, resolved via getDevice, then hashed'],
+  'device-selector.empty': [
+    status: 'active', staticallyResolvable: true,
+    recognition: 'falsy entry, skipped silently, recognised as no selector'],
+  'device-selector.variable-device-map': [
+    status: 'unreachable', staticallyResolvable: false,
+    recognition: 'Intended branch, DEAD in the pinned source. expandDeviceList sets ' +
+                 'Boolean mlocalVars=false and never assigns its own localVarsOnly parameter, so ' +
+                 'the map branch cannot execute. Three call sites (4119, 8858, 9145) pass true ' +
+                 'expecting the restriction. Recorded as a known compatibility/dead-path form, not ' +
+                 'an active selector claim. Automation Map does not emulate the defect and does ' +
+                 'not evaluate live variable state during a structural census.'],
+]
+
 // --------------------------------------------------------------------- gates
 
 // Reviewed expectations. A mismatch is drift requiring review, never a value
@@ -232,6 +340,141 @@ println "generated  : ${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.g
 println ''
 actual.each { String k, List<String> v -> printf('%-22s %4d  (expected %d)%n', k, v.size(), EXPECTED[k]) }
 println ''
+
+
+/** Enclosing method name for a character offset. */
+String enclosingMethodName(String text, int off) {
+    int best = -1; String name = '(top-level)'
+    def pat = java.util.regex.Pattern.compile(
+        '(?m)^\\s*(?:private|public|protected|static|def|@Field)[^\\n]*?\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\([^\\n]*\\)\\s*\\{')
+    def mm = pat.matcher(text)
+    while (mm.find()) { if (mm.start() < off && mm.start() > best) { best = mm.start(); name = mm.group(1) } }
+    return name
+}
+
+/**
+ * Depth-1 case members of the switch opening at `off`, plus shared-branch
+ * groups. Comments and string literals are skipped so a bracket or a key-like
+ * token inside either cannot corrupt the walk - the same trap that produced a
+ * phantom construct in the catalogue parser.
+ */
+Map switchDetail(String text, int off, Map<String, String> consts) {
+    int open = text.indexOf('{', off)
+    int depth = 0
+    List<Map> labels = []
+    for (int p = open; p < text.length(); p++) {
+        char ch = text.charAt(p)
+        if (ch == '/' && p + 1 < text.length()) {
+            char n = text.charAt(p + 1)
+            if (n == '/') { int e = text.indexOf('\n', p); if (e < 0) break; p = e; continue }
+            if (n == '*') { int e = text.indexOf('*/', p); if (e < 0) break; p = e + 1; continue }
+        }
+        if (ch == '"' || ch == '\'') {
+            char q = ch; p++
+            while (p < text.length() && text.charAt(p) != q) { if (text.charAt(p) == ('\\' as char)) p++; p++ }
+            continue
+        }
+        if (ch == '{') { depth++; continue }
+        if (ch == '}') { depth--; if (depth == 0) break; continue }
+        if (depth == 1 && text.startsWith('case ', p)) {
+            String tail = text.substring(p, Math.min(p + 80, text.length()))
+            def m = (tail =~ /^case\s+([A-Za-z_][A-Za-z0-9_]*|'[^']*')\s*:/)
+            if (m) labels << [raw: m[0][1] as String, end: p + ((m[0][0] as String).length())]
+        }
+        if (depth == 1 && text.startsWith('default', p)) labels << [raw: 'default', end: p + 8]
+    }
+    List<String> members = []
+    List<List<String>> shared = []
+    List<String> run = []
+    for (int k = 0; k < labels.size(); k++) {
+        Map c = labels[k]
+        String raw = c.raw as String
+        if (raw == 'default') { if (run.size() > 1) shared << new ArrayList<String>(run); run = []; continue }
+        String lit = raw.startsWith("'") ? raw[1..-2] : (consts.containsKey(raw) ? consts[raw] : ('?' + raw))
+        members << lit
+        run << lit
+        boolean sharesNext = false
+        if (k + 1 < labels.size()) {
+            String between = text.substring(c.end as int, labels[k + 1].end as int)
+            between = between.replaceAll(/case\s+[A-Za-z_'][^:]*:\s*$/, '').replaceAll(/default\s*:\s*$/, '')
+            between = between.replaceAll(/(?s)\/\*.*?\*\//, '').replaceAll(/(?m)\/\/[^\n]*/, '')
+            sharesNext = between.trim().isEmpty()
+        }
+        if (!sharesNext) { if (run.size() > 1) shared << new ArrayList<String>(run); run = [] }
+    }
+    return [members: members, shared: shared, hasDefault: labels.any { it.raw == 'default' }]
+}
+
+/** Every switch in the file, keyed method + subject + ordinal within method. */
+Map<String, Map> extractSites(String text, Map<String, String> consts) {
+    // One level of nested parens: switch(sMt(operand)){ is the important shape
+    // and a flat [^)]* cannot span it. Missing that form is how the thirteenth
+    // site stayed invisible through the first review pass.
+    def pat = java.util.regex.Pattern.compile('(?m)^\\s*switch\\s*\\(((?:[^()]|\\([^()]*\\))*)\\)\\s*\\{')
+    def mm = pat.matcher(text)
+    Map<String, Integer> seen = [:]
+    Map<String, Map> out = [:]
+    while (mm.find()) {
+        String subject = mm.group(1).trim()
+        String method = enclosingMethodName(text, mm.start())
+        String base = method + '|' + subject
+        int ord = seen.containsKey(base) ? seen[base] : 0
+        seen[base] = ord + 1
+        Map d = switchDetail(text, mm.start(), consts)
+        d.method = method; d.subject = subject; d.ordinal = ord
+        d.line = text.substring(0, mm.start()).count('\n') + 1
+        out[base + '|' + ord] = d
+    }
+    return out
+}
+
+Map<String, Map> observedSites = extractSites(piston, constants)
+
+println ''
+println 'Dispatch sites (membership is the gate, count is a sanity check):'
+int siteOk = 0
+FROZEN_SITES.each { String id, Map want ->
+    String key = "${want.method}|${want.subject}|${want.ordinal}"
+    Map got = observedSites[key]
+    if (got == null) {
+        // Fail closed: a configured site that cannot be located is drift, never
+        // an absence to shrug at (Codex 531).
+        fail(failures, "${id}: dispatch site not found (${key})")
+        printf('  %-32s NOT FOUND%n', id)
+        return
+    }
+    List<String> wantM = want.members as List
+    List<String> gotM = got.members as List
+    List<String> missing = wantM - gotM
+    List<String> extra = gotM - wantM
+    boolean membersOk = missing.isEmpty() && extra.isEmpty()
+    boolean countOk = wantM.size() == gotM.size()
+    boolean defaultOk = want.hasDefault == got.hasDefault
+    Set<String> wantShared = (want.shared as List).collect { (it as List).join('+') } as Set
+    Set<String> gotShared = (got.shared as List).collect { (it as List).join('+') } as Set
+    boolean sharedOk = wantShared == gotShared
+
+    if (!membersOk) {
+        if (missing) fail(failures, "${id}: members missing from source ${missing}")
+        if (extra) fail(failures, "${id}: unreviewed members present in source ${extra}")
+    }
+    if (!countOk) fail(failures, "${id}: count ${gotM.size()}, frozen expectation ${wantM.size()}")
+    if (!defaultOk) fail(failures, "${id}: default branch ${got.hasDefault}, frozen ${want.hasDefault}")
+    if (!sharedOk) fail(failures, "${id}: shared-branch groups changed, frozen ${wantShared} observed ${gotShared}")
+    if (got.line != want.line) {
+        // Informational only: the sites are keyed by method and ordinal, so a
+        // line shift is provenance drift rather than a vocabulary change.
+        printf('  %-32s ok (%2d)  [line %d, frozen %d]%n', id, gotM.size(), got.line, want.line)
+    } else if (membersOk && countOk && defaultOk && sharedOk) {
+        printf('  %-32s ok (%2d)%n', id, gotM.size())
+    }
+    if (membersOk && countOk && defaultOk && sharedOk) siteOk++
+}
+printf('%n  %d of %d sites match their frozen sets.%n', siteOk, FROZEN_SITES.size())
+printf('  device-selector grammar: %d forms (%d active, %d unreachable), no numeric gate.%n',
+       DEVICE_SELECTOR_GRAMMAR.size(),
+       DEVICE_SELECTOR_GRAMMAR.count { it.value.status == 'active' },
+       DEVICE_SELECTOR_GRAMMAR.count { it.value.status == 'unreachable' })
 
 if (failures) {
     println 'GATE FAILURES:'
