@@ -54,7 +54,16 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   now has its own transient focus, used by currentFocus, the map filter, history, Back and Forward and
   Show all, with every Focus dropdown left at All. Its framing was wrong because inert nodes kept their
   whole-map shelf pins in narrowed views; those pins are now released. Framing to be seen on the dev hub.
-- **H.** A Hub Variable and its connector device draw their labels on top of each other.
+- **H.** A Hub Variable and its connector device drew their labels on top of each other. A narrowed
+  view's 1.5 second fallback switched physics off before the layout spread (measured 41px apart). The
+  narrowed view now runs the layout to rest first (measured 362px), and each settle ignores listeners
+  left by an older one, so a stale whole-map settle cannot shelve inert nodes into a focused view.
+- **Shelf line in narrowed views.** The "Inert Nodes" divider was drawn in every view, so it could
+  cross a focused map. It is now drawn for the whole map only. The start-up Show all also no longer
+  resets a focus picked before the first settle.
+- **Zoomed flowchart, open.** When the flow panel is zoomed in, the chart's horizontal scrollbar sits
+  at the bottom of the chart rather than the bottom of the panel, so wide content can only be
+  scrolled sideways after scrolling to the end of the chart.
 - **I.** The webCoRE parent panel drew an informational sentence in the red attention style, and its
   "holds 6 apps" heading repeated the title. Now ordinary text, and a heading already in the title is
   not repeated. Red stays for a partial or failed piston coverage.
@@ -66,8 +75,8 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **Indented font size:** no change until the exact text is identified, since the webCoRE text
   measures the same as Rule Machine's.
 
-**Not yet covered:** the Back link and history trail, panel zoom rendering, narrow windows, and device
-focus.
+**Covered since:** Back and Forward through canvas, dropdown and Quick Search focus; panel zoom (see
+above). **Not yet covered:** narrow windows and device focus framing.
 
 ## Next
 
