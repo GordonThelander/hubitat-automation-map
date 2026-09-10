@@ -30,7 +30,7 @@ historical record, not an open gate.
 Found by stepping through every Focus entry type, Insights, the large panels, the full legend and all
 twelve Show filters on dev hub revision 136, measured in the browser.
 
-**Batch 1, in progress:**
+**Closed.** Accepted in review and verified on dev hub revision 143 (commits `c7b6aaa` to `ce97021`):
 
 - **A.** A size chosen with the resize grip was kept for every later item, so the panel's right edge
   overhung the legend. A new item now starts at the default size and position.
@@ -48,12 +48,10 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **F.** App labels repeated the app type when the label is exactly the type name, for example
   "Tapo Integration (Tapo Integration)". Stripped only on an exact repeat.
 
-**Batch 2, not started:**
-
 - **G.** An external system picked from Quick Search was written into the Focus Device dropdown. It
   now has its own transient focus, used by currentFocus, the map filter, history, Back and Forward and
   Show all, with every Focus dropdown left at All. Its framing was wrong because inert nodes kept their
-  whole-map shelf pins in narrowed views; those pins are now released. Framing to be seen on the dev hub.
+  whole-map shelf pins in narrowed views; those pins are now released.
 - **H.** A Hub Variable and its connector device drew their labels on top of each other. A narrowed
   view's 1.5 second fallback switched physics off before the layout spread (measured 41px apart). The
   narrowed view now runs the layout to rest first (measured 362px). Every drawn view, including an app
@@ -67,19 +65,20 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   sideways after scrolling to the end of the chart. While zoomed, the panel body now scrolls both ways.
 - **Connector legend.** A Hub Variable focus drew the connector line with no legend row. It now has
   one in both the compact and the Full legend, in the colour the line is drawn.
+- **Side panels over a pending flowchart.** Opening External systems, Device icons, Hubitat release
+  activity, Pivot tables or the Full legend while a flowchart was still drawing let the old drawing land
+  afterwards and reopen the flow panel. Opening any other panel now makes a pending drawing stale.
 - **I.** The webCoRE parent panel drew an informational sentence in the red attention style, and its
   "holds 6 apps" heading repeated the title. Now ordinary text, and a heading already in the title is
   not repeated. Red stays for a partial or failed piston coverage.
 
-**Waiting on Gordon:**
+**Still open, waiting on Gordon:**
 
-- **webCoRE piston locals:** the recommendation is to keep [LOC] for them, because the tag marks
-  scope, not engine.
+- **Narrow windows:** not yet checked. It needs the browser window resized or the viewport overridden.
 - **Indented font size:** no change until the exact text is identified, since the webCoRE text
   measures the same as Rule Machine's.
-
-**Covered since:** Back and Forward through canvas, dropdown and Quick Search focus; panel zoom (see
-above). **Not yet covered:** narrow windows and device focus framing.
+- **webCoRE piston locals:** they keep [LOC], the recommendation because the tag marks scope, not
+  engine, until Gordon decides.
 
 ## Next
 
