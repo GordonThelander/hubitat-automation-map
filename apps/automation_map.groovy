@@ -12058,14 +12058,17 @@ function decodeCoverageResultHtml(body) {
     : 'Every part of the saved piston was visited and accounted for: ' + extEsc(values) + ' values across ' + extEsc(acc.fieldsVisited || 0) + ' fields.') + '</p>';
 
   const notIdentified = unknownTotal ? '; ' + extEsc(unknownTotal) + ' ' + (unknownTotal === 1 ? 'position' : 'positions') + ' not identified' : '';
-  // A percentage reads as whole-piston coverage, so only a complete walk gets one.
+  // A percentage reads as whole-piston coverage, so it is shown only for a complete walk with
+  // nothing unidentified. Unrecognised fields are not construct positions.
   if (truncated) {
     html += '<p class="dcPartial">' + extEsc(recognised) + ' of ' + extEsc(cand) + ' visited construct positions recognised at L2 or above' + notIdentified + '</p>';
+  } else if (unknownTotal > 0) {
+    html += '<p class="dcPartial">Coverage incomplete. ' + extEsc(recognised) + ' construct ' + (recognised === 1 ? 'position' : 'positions') +
+      ' recognised at L2 or above' + notIdentified + '.</p>';
   } else {
     const pct = cand ? Math.round((recognised / cand) * 1000) / 10 : 100;
-    // Unrecognised fields are not construct positions, so 100% of constructs is still a gap while any remain.
-    html += '<p class="dcRate' + (recognised < cand || unknownTotal > 0 ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
-      '<span class="sub">' + extEsc(recognised) + ' of ' + extEsc(cand) + ' construct positions recognised at L2 or above' + notIdentified + '</span></p>';
+    html += '<p class="dcRate' + (recognised < cand ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
+      '<span class="sub">' + extEsc(recognised) + ' of ' + extEsc(cand) + ' construct positions recognised at L2 or above</span></p>';
   }
   if (belowL2) {
     html += '<p class="sub">' + extEsc(belowL2) + ' matched ' + (belowL2 === 1 ? 'position is' : 'positions are') +

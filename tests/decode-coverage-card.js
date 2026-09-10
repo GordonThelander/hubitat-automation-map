@@ -252,14 +252,21 @@ async function main() {
         unrecognisedOverflow: 0, truncation: null
     };
 
+    function withoutGaps(body) {
+        const b = JSON.parse(JSON.stringify(body));
+        b.unrecognised = [];
+        b.unrecognisedOverflow = 0;
+        return b;
+    }
+
     check('only an occurrence at L2 or above counts as recognised', function () {
-        const h = rendered(ladderBody);
+        const h = rendered(withoutGaps(ladderBody));
         assert(h.indexOf('25% ') >= 0, 'percentage is not L2-or-above occurrences over candidates');
         assert(h.indexOf('1 of 4 construct positions recognised at L2 or above') >= 0, 'recognised figure wrong');
     });
 
     check('an L1 construct is listed as present and holds the result below complete', function () {
-        const h = rendered(ladderBody);
+        const h = rendered(withoutGaps(ladderBody));
         assert(h.indexOf('<tr><td>ladderone</td><td class="n">1</td><td class="n"><span class="dcLevel" title="present">L1</span></td></tr>') >= 0,
             'L1 row missing or mislabelled');
         assert(h.indexOf('dcRateGap') >= 0 && h.indexOf('100%') < 0, 'L1 allowed a complete result');
@@ -283,13 +290,20 @@ async function main() {
         assert(rendered(body).indexOf('1 matched position is below L2') >= 0, 'singular wording wrong');
     });
 
-    check('100 percent of constructs with unrecognised fields is still shown as a gap, with the count beside it', function () {
+    check('every construct recognised but fields unidentified withholds the percentage (fixture 3097)', function () {
         const body = JSON.parse(JSON.stringify(completeBody));
-        body.unrecognised = [{ path: '$.s[0].<unknown-key#1>', reason: 'unknown-key', nodeKind: 'scalar' },
-                             { path: '$.s[0].<unknown-key#2>', reason: 'unknown-key', nodeKind: 'scalar' }];
+        body.unrecognised = [{ path: '$.s[0].k[0].p[1].exp.<unknown-key#0>', reason: 'unknown-key', nodeKind: 'scalar' },
+                             { path: '$.s[0].k[0].p[1].exp.<unknown-key#1>', reason: 'unknown-key', nodeKind: 'scalar' }];
         const h = rendered(body);
-        assert(h.indexOf('dcRateGap') >= 0, 'a 100 percent rate with unrecognised fields reads as a pass');
-        assert(h.indexOf('4 of 4 construct positions recognised at L2 or above; 2 positions not identified') >= 0, 'not-identified count missing from the rate line');
+        assert(h.indexOf('%') < 0 && h.indexOf('dcRate') < 0, 'a percentage is shown beside unidentified positions');
+        assert(h.indexOf('Coverage incomplete. 4 construct positions recognised at L2 or above; 2 positions not identified.') >= 0, 'incomplete line wrong');
+    });
+
+    check('unrecognised positions withhold the percentage even when constructs sit below L2', function () {
+        const h = rendered(ladderBody);
+        assert(h.indexOf('%') < 0, 'percentage shown');
+        assert(h.indexOf('Coverage incomplete. 1 construct position recognised at L2 or above; 1 position not identified.') >= 0, 'incomplete line wrong');
+        assert(h.indexOf('2 matched positions are below L2 and not counted as recognised.') >= 0, 'below-L2 line lost');
     });
 
     check('a truncated walk states unrecognised fields on its partial count line too', function () {
@@ -358,7 +372,7 @@ async function main() {
         const h = sb.box.innerHTML;
         check('gaps are listed by fixed reason and path', function () {
             assert(h.indexOf('Unrecognised statement') >= 0 && h.indexOf('$.s[4].t') >= 0, 'gap missing');
-            assert(h.indexOf('dcRateGap') >= 0, 'rate not marked partial');
+            assert(h.indexOf('Coverage incomplete.') >= 0 && h.indexOf('%') < 0, 'percentage shown beside unidentified positions');
         });
         check('the unknown count includes positions past the listing cap', function () {
             assert(h.indexOf('5 unrecognised positions, the first 2 listed below.') >= 0, 'total or listing note wrong');
