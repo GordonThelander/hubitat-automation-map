@@ -6,7 +6,7 @@
 // declared in the manifest, none drifts out of the set silently, and the
 // manifest does not claim a fixture that is missing.
 //
-// Deliberately not asserting per-member semantics - Codex 533/535 scoped these
+// Deliberately not asserting per-member semantics - review 533/535 scoped these
 // fixtures to proving the extractor and lookup model.
 
 import groovy.json.JsonSlurper
@@ -79,7 +79,7 @@ check(conds.any { (it.lo as Map).containsKey('t') && (it.lo as Map).t == '' }, '
 check(conds.any { !(it.lo as Map).containsKey('t') }, 'empty fixture has an absent t for contrast')
 passed += 2
 
-// Site coverage. Codex 537 item 4: the README claimed one ordinary member per
+// Site coverage. review 537 item 4: the README claimed one ordinary member per
 // dispatch site while the manifest named only three site families. Increment 2
 // narrowed the claim again: four sites are consumer-only and one is not
 // reachable from a saved document at all, so the corpus is compared against the

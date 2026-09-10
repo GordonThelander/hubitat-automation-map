@@ -84,7 +84,7 @@ check(rc == 0, 'generator runs clean against the pinned source')
 check(fresh == text, 'checked-in registry is byte-identical to the freshly generated candidate')
 passed += 2
 
-// Negative tests for region boundaries (Codex 539). The previous fixed-window
+// Negative tests for region boundaries (review 539). The previous fixed-window
 // hashing could return the SHA-256 of an empty string when an anchor was
 // missing, producing a stable hash for no evidence at all. These prove the
 // generator now fails instead.

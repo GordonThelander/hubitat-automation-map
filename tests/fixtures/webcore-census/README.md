@@ -1,6 +1,6 @@
 # webCoRE census fixtures
 
-Fixtures selected to Codex's revised list in queue 533/535. They prove the **extractor and lookup
+Fixtures selected to the revised list from review 533/535. They prove the **extractor and lookup
 model**, not per-member semantics: a fixture is deliberately NOT required for every member of a
 large shared branch merely because it falls through. Broader per-member semantic fixtures belong to
 later L3/L4 work.
