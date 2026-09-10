@@ -69,12 +69,16 @@ function makeSandbox(options) {
         get offsetWidth() { return parseFloat(panel.style.width) || 375; }
     };
     const header = { offsetHeight: 46 };
+    const zoomEl = { style: {} };
+    const bodyEl = { scrollLeft: 0, scrollTop: 0, getBoundingClientRect: function () { return { left: 10, top: 400 }; } };
     const grip = { addEventListener: function (type, fn) { gripListeners[type] = fn; } };
     const sizeCalls = [];
     const sandbox = {
         Math: Math,
         parseFloat: parseFloat,
         rect: rect,
+        zoomEl: zoomEl,
+        bodyEl: bodyEl,
         flowPanel: panel,
         grip: grip,
         gripListeners: gripListeners,
@@ -91,19 +95,24 @@ function makeSandbox(options) {
         window: { innerWidth: opts.innerWidth || 1600, innerHeight: opts.innerHeight || 1000 },
         document: {
             addEventListener: function (type, fn) { if (listeners[type]) listeners[type].push(fn); },
-            getElementById: function (id) { return id === 'flowHeader' ? header : null; }
+            getElementById: function (id) {
+                return id === 'flowHeader' ? header : (id === 'flowZoom' ? zoomEl : (id === 'flowBody' ? bodyEl : null));
+            }
         }
     };
     const script =
         'var flowUserSize = null;\nvar flowUserPosition = null;\nvar flowItemSeq = null;\n' +
         'var focusGenerationSeq = 0;\nconst FLOW_MIN_WIDTH = 280;\nconst FLOW_MIN_HEIGHT = 160;\n' +
+        'var flowZoom = 1;\nconst FLOW_ZOOM_MIN = 0.5;\nconst FLOW_ZOOM_MAX = 2.5;\n' +
         ['clampFlowSize', 'applyFlowUserSize', 'clearFlowInlineSize', 'makeFlowResizable',
          'restoreFlowUserPosition', 'flowStylePosition', 'clampFlowPosition', 'startFlowItemIfNew',
-         'resetFlowPanelLayout', 'setFlowSizeMode'].map(extractFunction).join('\n') + '\n' +
+         'resetFlowPanelLayout', 'setFlowSizeMode', 'applyFlowZoom', 'clearFlowZoomStyle', 'nextFlowZoom',
+         'handleFlowWheel'].map(extractFunction).join('\n') + '\n' +
         'makeFlowResizable(flowPanel, grip);\n' +
         'function select() { focusGenerationSeq++; }\n' +
         'function userSize() { return flowUserSize; }\n' +
-        'function userPosition() { return flowUserPosition; }\n';
+        'function userPosition() { return flowUserPosition; }\n' +
+        'function zoom() { return flowZoom; }\n';
     vm.createContext(sandbox);
     vm.runInContext(script, sandbox);
     return sandbox;
@@ -343,6 +352,105 @@ check('resetting clears the size, the kept position and re-measures the panel', 
     assert(sb.sizeCalls.length === calls + 1, 'not re-measured');
 });
 
+// ---- zoom -----------------------------------------------------------------------------
+
+function wheel(sb, deltaY, ctrl, x, y) {
+    let prevented = false;
+    sb.handleFlowWheel({ ctrlKey: ctrl, deltaY: deltaY,
+        clientX: x === undefined ? 100 : x, clientY: y === undefined ? 100 : y,
+        preventDefault: function () { prevented = true; } });
+    return prevented;
+}
+
+check('ctrl with the wheel zooms the panel content in and stops the page zooming', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    const prevented = wheel(sb, -100, true);
+    assert(prevented, 'page zoom not stopped');
+    assert(sb.zoom() > 1 && sb.zoomEl.style.zoom === String(sb.zoom()),
+        'zoom ' + sb.zoom() + ', style ' + sb.zoomEl.style.zoom);
+});
+
+check('ctrl with the wheel the other way zooms out', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    wheel(sb, 100, true);
+    assert(sb.zoom() < 1, 'zoom ' + sb.zoom());
+});
+
+check('the wheel without ctrl scrolls as normal and is not intercepted', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    const prevented = wheel(sb, -100, false);
+    assert(!prevented && sb.zoom() === 1 && !sb.zoomEl.style.zoom, 'intercepted a plain scroll');
+});
+
+check('in the full-area Insights view ctrl with the wheel is left to the page', function () {
+    const sb = makeSandbox({ large: true });
+    const prevented = wheel(sb, -100, true);
+    assert(!prevented && sb.zoom() === 1, 'intercepted in Insights');
+});
+
+check('zoom stops at 50 and 250 percent', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    for (let i = 0; i < 40; i++) wheel(sb, -200, true);
+    assert(sb.zoom() === 2.5, 'max ' + sb.zoom());
+    for (let i = 0; i < 80; i++) wheel(sb, 200, true);
+    assert(sb.zoom() === 0.5, 'min ' + sb.zoom());
+});
+
+check('the content under the pointer stays in place as it zooms', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    sb.bodyEl.scrollLeft = 50;
+    sb.bodyEl.scrollTop = 80;
+    // The body corner is at (10, 400), so this pointer is 120 across and 200 down.
+    wheel(sb, -100, true, 130, 600);
+    const r = sb.zoom();
+    const expectedLeft = (50 + 120) * r - 120;
+    const expectedTop = (80 + 200) * r - 200;
+    assert(Math.abs(sb.bodyEl.scrollLeft - expectedLeft) < 0.01 && Math.abs(sb.bodyEl.scrollTop - expectedTop) < 0.01,
+        'scroll ' + sb.bodyEl.scrollLeft + ', ' + sb.bodyEl.scrollTop);
+});
+
+check('Insights drops the zoom and the normal view gets it back', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    wheel(sb, -100, true);
+    const z = sb.zoomEl.style.zoom;
+    sb.setFlowSizeMode(true);
+    assert(sb.zoomEl.style.zoom === '', 'zoom leaked into Insights');
+    sb.setFlowSizeMode(false);
+    assert(sb.zoomEl.style.zoom === z, 'zoom not restored');
+});
+
+check('the zoom is kept when a new item is picked', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    wheel(sb, -100, true);
+    const z = sb.zoom();
+    openItem(sb);
+    assert(sb.zoom() === z && sb.zoomEl.style.zoom === String(z), 'zoom lost on a new item');
+});
+
+check('resetting puts the zoom back to 100 percent', function () {
+    const sb = makeSandbox();
+    openItem(sb);
+    wheel(sb, -100, true);
+    sb.resetFlowPanelLayout();
+    assert(sb.zoom() === 1 && sb.zoomEl.style.zoom === '', 'zoom ' + sb.zoom());
+});
+
+check('the wheel listener is non-passive, or preventDefault would be ignored', function () {
+    assert(block.indexOf("addEventListener('wheel', handleFlowWheel, { passive: false })") >= 0, 'not non-passive');
+});
+
+check('the zoom wrapper sits inside the scrolling body, around all four sections', function () {
+    assert(source.indexOf('<div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div></div>') >= 0,
+        'wrapper markup missing or misplaced');
+});
+
 // ---- source and markup ------------------------------------------------------------
 
 check('the resize block is present and delimited', function () {
@@ -373,7 +481,7 @@ check('the header clamp is registered after the shared drag helper', function ()
     assert(helper >= 0 && clamp > helper, 'clamp listeners would run before the helper moves the panel');
 });
 check('the grip sits outside the scrolling body, as the last child of the panel', function () {
-    assert(source.indexOf('<div id="communityCard"></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>') >= 0,
+    assert(source.indexOf('<div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>') >= 0,
         'grip markup missing or misplaced');
 });
 check('the grip is hidden for Insights and the release rule wins over the column caps', function () {
