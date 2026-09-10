@@ -402,6 +402,56 @@ assertThat((missingElsewhere.unrecognised as List).count { it.reason == 'malform
 assertThat(!(missingElsewhere.constructCounts as Map).containsKey('wc.task-parameter.unselected'),
     'the unselected construct never appears outside a task parameter')
 
+// ---- the deadline is enforced at both boundaries ----------------------------
+
+// The periodic check only keeps the clock cheap. On its own it would never fire
+// for a document smaller than one check interval, so the boundaries carry the
+// contract and these fixtures are deliberately far under 2000 values.
+Map smallDoc = [s: [[t: 'action', k: [[c: 'setVariable', p: [[t: 'x', x: 'counter', vt: 'variable']]]]]]]
+
+Map alreadyExpired = walker.collectWebcoreDecodeCoverage(smallDoc, registry, { -> true }) as Map
+assertThat(alreadyExpired.status == 'truncated' &&
+           (alreadyExpired.truncation as Map).reason == 'analysis-deadline',
+    'a deadline already passed before traversal is reported, not ignored')
+assertThat((alreadyExpired.accounting as Map).objectsVisited == 0 &&
+           (alreadyExpired.accounting as Map).scalarsVisited == 0,
+    'nothing is walked once the deadline has already passed')
+assertThat(alreadyExpired.constructCounts == [:] && alreadyExpired.unrecognised == [],
+    'a deadline before traversal exposes no partial counts')
+
+// False on the entry check, true on the exit check: the walk runs to completion
+// and is then refused, which is the case the periodic check alone cannot catch.
+int deadlineCalls = 0
+Map expiredAfter = walker.collectWebcoreDecodeCoverage(smallDoc, registry,
+    { -> deadlineCalls++; deadlineCalls > 1 }) as Map
+assertThat(deadlineCalls == 2,
+    "a walk shorter than the check interval consults the clock exactly twice (${deadlineCalls})")
+assertThat(expiredAfter.status == 'truncated' &&
+           (expiredAfter.truncation as Map).reason == 'analysis-deadline',
+    'a deadline that passes during a short walk is caught on the way out')
+assertThat((expiredAfter.accounting as Map).objectsVisited > 0,
+    'the walk did happen, so the exit check is what refused it')
+
+Map insideBudget = walker.collectWebcoreDecodeCoverage(smallDoc, registry, { -> false }) as Map
+assertThat(insideBudget.status == 'complete',
+    'the same document completes while inside budget')
+assertThat((insideBudget.accounting as Map).objectsVisited ==
+           (expiredAfter.accounting as Map).objectsVisited,
+    'the refused walk and the accepted walk covered the same document')
+
+// A document long enough to reach the periodic check keeps that behaviour, so
+// the boundary checks are an addition rather than a replacement.
+Map longDoc = [s: (1..1200).collect { [t: 'do'] }]
+int periodicCalls = 0
+Map periodic = walker.collectWebcoreDecodeCoverage(longDoc, registry,
+    { -> periodicCalls++; periodicCalls > 1 }) as Map
+assertThat(periodic.status == 'truncated' &&
+           (periodic.accounting as Map).objectsVisited > 0 &&
+           (periodic.accounting as Map).objectsVisited < 1201,
+    "the periodic check still stops a long walk part way through (${(periodic.accounting as Map).objectsVisited} of 1201 objects)")
+assertThat(periodicCalls == 2,
+    "the entry check and one periodic check are what ran, not an exit check (${periodicCalls})")
+
 // ---- summary ---------------------------------------------------------------
 
 int total = results.size()
