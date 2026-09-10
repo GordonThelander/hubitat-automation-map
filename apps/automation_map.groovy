@@ -9178,6 +9178,18 @@ String buildMapHtml() {
      only - #flow also hosts Insights in large mode, which is a full-area
      workspace and does not want a terminator. */
   #flow.flowClassicSize { border-bottom:2px solid #81BC00; }
+  /* Corner grip for resizing the normal flow view (v2.2.9). Hidden in the
+     full-area Insights view, which sizes itself. */
+  .panelResizeGrip { position:absolute; right:3px; bottom:3px; width:12px; height:12px; box-sizing:border-box; cursor:nwse-resize; border-right:2px solid #81BC00; border-bottom:2px solid #81BC00; opacity:0.7; }
+  .panelResizeGrip:hover { opacity:1; }
+  #flow.modernPanelLarge .panelResizeGrip { display:none; }
+  /* Once the user has chosen a size, the text sections use the width they
+     were given instead of staying capped to the left column. Placed after
+     the wcIndent caps, which share this specificity, so it wins by order. */
+  #flow.flowUserSized #flowSub,
+  #flow.flowUserSized #ruleVariablesCard,
+  #flow.flowUserSized #decodeCoverageCard,
+  #flow.flowUserSized #communityCard { max-width:none; }
   /* Gordon flagged External systems/Pivot tables/Device icons's own table
      headers scrolling off with the rows above them - the panel's outer title
      (fixed by .panelBody above) was never the only header that could do
@@ -9276,7 +9288,7 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size and position."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
@@ -10778,6 +10790,13 @@ function setFlowSizeMode(large) {
   // if the panel had never been large at all.
   if (!large) {
     flowPanel.style.width = '';
+    applyFlowUserSize();
+  } else if (flowUserSize) {
+    // Insights sizes itself to the full work area. A size chosen for the
+    // normal view is not carried into it, so give the panel back the same
+    // measured sizing it gets on a first open.
+    clearFlowInlineSize();
+    sizeModernPanel(flowPanel);
   }
 }
 function sizeModernPanel(panel) {
@@ -10863,6 +10882,96 @@ function makePanelDraggable(panel, header) {
   });
 }
 makePanelDraggable(flowPanel, document.getElementById('flowHeader'));
+// Flow panel resize (v2.2.9). The normal flow view can carry a lot of data, so
+// it can be resized from its corner grip as well as dragged by its header. A
+// user size lasts for the page session, the same as a dragged position, and is
+// never carried into the full-area Insights view, which sizes itself.
+// Double-clicking the header puts size and position back to their defaults.
+// var rather than let: setFlowSizeMode reads this, and a let would throw if a
+// panel ever opened before this line had run.
+var flowUserSize = null;
+const FLOW_MIN_WIDTH = 280;
+const FLOW_MIN_HEIGHT = 160;
+
+function clampFlowSize(width, height, rect) {
+  const maxWidth = Math.max(FLOW_MIN_WIDTH, window.innerWidth - rect.left - 10);
+  const maxHeight = Math.max(FLOW_MIN_HEIGHT, window.innerHeight - rect.top - 10);
+  return {
+    width: Math.round(Math.min(Math.max(width, FLOW_MIN_WIDTH), maxWidth)),
+    height: Math.round(Math.min(Math.max(height, FLOW_MIN_HEIGHT), maxHeight))
+  };
+}
+
+function applyFlowUserSize() {
+  if (!flowUserSize) return;
+  // The normal view caps its width to the left column and its height to the
+  // space below it. A size the user chose deliberately replaces both caps, and
+  // the text sections follow it instead of staying column-narrow.
+  flowPanel.classList.add('flowUserSized');
+  flowPanel.style.maxWidth = 'none';
+  flowPanel.style.maxHeight = 'none';
+  flowPanel.style.width = flowUserSize.width + 'px';
+  flowPanel.style.height = flowUserSize.height + 'px';
+}
+
+function clearFlowInlineSize() {
+  flowPanel.classList.remove('flowUserSized');
+  flowPanel.style.maxWidth = '';
+  flowPanel.style.maxHeight = '';
+  flowPanel.style.width = '';
+  flowPanel.style.height = '';
+}
+
+function makeFlowResizable(panel, grip) {
+  if (!grip || !panel || typeof panel.getBoundingClientRect !== 'function') return;
+  let resizing = false, startX = 0, startY = 0, startWidth = 0, startHeight = 0;
+  grip.addEventListener('mousedown', function (e) {
+    if (panel.classList.contains('modernPanelLarge')) return;
+    resizing = true;
+    const rect = panel.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    startWidth = rect.width; startHeight = rect.height;
+    // Keep the panel where it is on its next open, as a drag does. Without
+    // this the first-open sizing would cap the new height straight back.
+    panelCustomPosition.set(panel, true);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!resizing) return;
+    flowUserSize = clampFlowSize(startWidth + (e.clientX - startX), startHeight + (e.clientY - startY),
+      panel.getBoundingClientRect());
+    applyFlowUserSize();
+  });
+  document.addEventListener('mouseup', function () {
+    resizing = false;
+  });
+}
+
+function resetFlowPanelLayout() {
+  flowUserSize = null;
+  panelCustomPosition.delete(flowPanel);
+  clearFlowInlineSize();
+  sizeModernPanel(flowPanel);
+}
+
+makeFlowResizable(flowPanel, document.getElementById('flowResize'));
+
+const flowResizeHeader = document.getElementById('flowHeader');
+if (flowResizeHeader) {
+  flowResizeHeader.addEventListener('dblclick', function (e) {
+    if (e.target.closest('.panelClose')) return;
+    resetFlowPanelLayout();
+  });
+}
+
+// A smaller window could otherwise leave the grip out of reach.
+window.addEventListener('resize', function () {
+  if (!flowUserSize || flowPanel.classList.contains('modernPanelLarge')) return;
+  flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
+  applyFlowUserSize();
+});
+// End flow panel resize.
 // Legend is entirely static markup - no *Load() function, nothing to fetch
 // or rebuild on open - so declared here rather than beside ext/pivot/icons's
 // own dynamic-render code further down the file.
