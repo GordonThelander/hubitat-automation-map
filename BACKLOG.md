@@ -622,3 +622,25 @@ never presenting stale data as a completed current scan.
 
 The Rule Machine storage-format write-up remains useful, but it is documentation work for the
 developer utilities repository rather than an Automation Map product backlog item.
+
+### 28. Rule flowchart render guard does not cover the Focus dropdowns
+
+**The gap.** showFlow draws a Rule Machine or Visual Rule Builder flowchart asynchronously, and
+discards a finished render when focusGenerationSeq has moved on, so a slow render cannot land over a
+newer selection. That counter only increments inside focusNode(). The four Focus dropdowns (Apps,
+Devices, Hub Variables and Local Variables) open the panel through onAppFocusChange and its siblings,
+which call showFlow directly and never call focusNode, so for a pick made from a dropdown the guard
+never trips. A slow render from one dropdown pick could replace the panel for a later one.
+
+Found on the dev hub on 2026-09-10 while fixing the flow panel position reset, which had relied on the
+same counter and failed for exactly this reason. Numbered 28 rather than 27, which was used and
+withdrawn the same day.
+
+**Not affected.** The Decode coverage card keeps its own request counter, bumped on every item render,
+so its late responses are discarded correctly for dropdown picks as well.
+
+**Proposed.** Give the dropdown paths the same generation step focusNode() already takes, or key the
+render guard on the item being rendered rather than on the counter.
+
+**Status.** Not started. Not yet seen as a visible fault; flowchart renders on the dev hub complete
+well within a second.
