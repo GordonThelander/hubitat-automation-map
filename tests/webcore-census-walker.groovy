@@ -68,6 +68,8 @@ assertThat(oracleAcc.scalarsVisited == 4, "oracle scalarsVisited is 4 (${oracleA
 assertThat(oracleAcc.constructCandidates == 2, "oracle constructCandidates is 2 (${oracleAcc.constructCandidates})")
 assertThat(oracleAcc.constructsIdentified == 2, "oracle constructsIdentified is 2 (${oracleAcc.constructsIdentified})")
 assertThat(oracle.unrecognised == [], 'oracle records nothing unrecognised')
+assertThat(oracleAcc.defaultBranchOccurrences == 1,
+    "oracle counts the parameter's missing vt as one default-branch occurrence (${oracleAcc.defaultBranchOccurrences})")
 
 // A deliberately naive second counter, so the balance check does not depend on
 // the walker's own bookkeeping.
@@ -268,6 +270,44 @@ assertThat(oracle.registryVersion == '1', 'the result carries the registry versi
 Map wrongRoot = walker.collectWebcoreDecodeCoverage('not a document', registry) as Map
 assertThat(wrongRoot.status == 'error' && wrongRoot.error == 'unexpected-root',
     'a non-map document returns the fixed unexpected-root code')
+
+// ---- root variable declarations --------------------------------------------
+
+// subscribeAll hands a root variable's v to operandTraverser, so constructs used
+// inside a saved initializer are part of the document and must be accounted for.
+Map varDecl = walked['variable-declaration.json']
+String varDeclJson = JsonOutput.toJson(varDecl)
+assertThat((varDecl.constructCounts as Map).containsKey('wc.function.celsius'),
+    'a function inside a variable declaration initializer is identified')
+assertThat((varDecl.unrecognised as List).any { it.reason == 'unknown-operand-type' },
+    'a gap inside a variable declaration initializer is still reported')
+assertThat(!(varDecl.constructCounts as Map).containsKey('wc.operand.device') &&
+           !(varDecl.constructCounts as Map).containsKey('wc.operand.dynamic'),
+    "a declaration's own t is not treated as an operand discriminator")
+assertThat(!varDeclJson.contains('deviceRef') && !varDeclJson.contains('computed') &&
+           !varDeclJson.contains('not-a-real-item-type'),
+    'nothing from a variable declaration reaches the result')
+
+// ---- defaulted sites -------------------------------------------------------
+
+// A missing, null or non-String value still reaches the source default branch,
+// so every invocation that does not resolve to a registered member is counted.
+Map defaultedDoc = [s: [[t: 'action', k: [[c: 'setVariable', p: [
+    [t: 'x', x: 'a', vt: 'variable'],
+    [t: 'x', x: 'b', vt: 'not-a-registered-value-type'],
+    [t: 'x', x: 'c'],
+    [t: 'x', x: 'd', vt: 4242]
+]]]]]]
+Map defaulted = walker.collectWebcoreDecodeCoverage(defaultedDoc, registry) as Map
+String defaultedJson = JsonOutput.toJson(defaulted)
+assertThat((defaulted.constructCounts as Map)['wc.task.value-type.variable'] == 1,
+    'a registered member at a defaulted site is identified')
+assertThat((defaulted.accounting as Map).defaultBranchOccurrences == 3,
+    "an unregistered, a missing and a non-String value each count once (${(defaulted.accounting as Map).defaultBranchOccurrences})")
+assertThat(!(defaulted.unrecognised as List).any { "${it.path}".endsWith('.vt') },
+    'a defaulted site never produces an unrecognised record')
+assertThat(!defaultedJson.contains('not-a-registered-value-type') && !defaultedJson.contains('4242'),
+    'no value from a defaulted site reaches the result')
 
 // ---- summary ---------------------------------------------------------------
 

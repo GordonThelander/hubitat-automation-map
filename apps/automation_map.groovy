@@ -3943,6 +3943,13 @@ String webcoreCensusChildContext(Map node, String context, String key) {
         case 'root':
             if (key == 's') return 'statement'
             if (key == 'r') return 'restriction'
+            if (key == 'v') return 'variable-declaration'
+            return null
+        // subscribeAll hands a root variable's v to operandTraverser, so a
+        // declaration's initializer is an operand. The declaration's own t is a
+        // variable data type and is deliberately not treated as one.
+        case 'variable-declaration':
+            if (key == 'v') return 'operand'
             return null
         case 'statement':
             if (key == 's' || key == 'e') return 'statement'
@@ -4054,15 +4061,17 @@ void webcoreCensusCandidate(Map acc, String path, Object member, String prefix, 
 }
 
 // Sites whose pinned dispatch carries a default branch: only an explicit member
-// is a distinct construct. Anything else took the documented default path, so it
-// is counted separately rather than reported as a gap.
+// is a distinct construct. Every other invocation took the documented default
+// path, including a missing, null or non-String value, all of which still reach
+// it, so it is counted separately rather than reported as a gap.
 void webcoreCensusDefaultSite(Map acc, Object member, String prefix) {
-    if (!(member instanceof String)) return
-    String id = prefix + (member as String)
-    if ((acc.constructs as Map).containsKey(id)) {
-        acc.constructCandidates = (acc.constructCandidates as Integer) + 1
-        webcoreCensusIdentify(acc, id)
-        return
+    if (member instanceof String) {
+        String id = prefix + (member as String)
+        if ((acc.constructs as Map).containsKey(id)) {
+            acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+            webcoreCensusIdentify(acc, id)
+            return
+        }
     }
     acc.defaultBranchOccurrences = (acc.defaultBranchOccurrences as Integer) + 1
 }

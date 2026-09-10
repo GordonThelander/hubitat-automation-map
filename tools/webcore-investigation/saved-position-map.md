@@ -21,6 +21,7 @@ loaded, before any evaluation. Its closures name every structural key.
 | Node | Keys | Anchor |
 | --- | --- | --- |
 | root | `r` restrictions, `s` statements, `v` variable declarations | `r9p[sR]`, `r9p[sS]`, `oMv(r9p)` |
+| variable declaration | `n` name, `t` variable data type, `v` initializer operand | `operandTraverser(variable, mMv(variable), ...)` |
 | statement | `t`, `d`, `a`, `r`, `c`, `s`, `e`, `ei`, `cs`, `lo`, `k`, `o`, `w`, `ct`, `di`, `tep`, `tsp`, `tcp` | `statementTraverser`, `traverseStatements` |
 | else-if | `c` conditions, `s` statements | `for(Map ei in liMs(node,sEI))` |
 | switch case | `ro`, `ro2` when the case type is `r`, `s` statements | `for(Map c in liMs(node,sCS))` |
@@ -32,6 +33,12 @@ loaded, before any evaluation. Its closures name every structural key.
 | operand | `t`, then `d`/`a`/`p` for `p`, `v` for `v`, `s`+`vt` for `s`, `c`+`vt` for `c`, `x`/`xi` for `x`, `exp` for `e` | `evaluateOperand` |
 | expression | `t` result type, `i` items | `evaluateExpression`, `case sEXPR` |
 | expression item | `t`; `n` when `t` is `function`; `i` for nested items | `case sFUNC`, `case sEXPR` |
+
+**A root variable declaration's `v` is an operand.** `subscribeAll` hands `mMv(variable)` to
+`operandTraverser`, so constructs used inside a saved initializer are part of the document and are
+classified. The declaration's own `t` is a variable data type rather than an operand discriminator
+and is deliberately not classified: no frozen site dispatches on it, and several of its spellings
+collide with `expression.evaluate.result-type` members.
 
 **A statement's `c` is context-dependent.** `statementTraverser` routes `case sON` through
 `traverseEvents` and `case sIF`/`sWHILE`/`sREPEAT` through `traverseConditions`. So the same key
@@ -78,6 +85,11 @@ transform. A *missing* `t` is a different thing and is reported as `malformed-no
 
 **Function names.** The registry generator matched case-insensitively on both sides, so the lookup
 does too.
+
+**Defaulted sites.** `preset.evaluate.value-type`, `constant.evaluate.value-type` and
+`task.variable.value-type` each carry a default branch. Only an explicit member is a distinct
+construct; every other invocation, including a missing, null or non-String value, still reaches the
+source default and is counted as a default-branch occurrence rather than reported as a gap.
 
 ## 4. Positions deliberately not claimed
 
