@@ -56,8 +56,9 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   whole-map shelf pins in narrowed views; those pins are now released. Framing to be seen on the dev hub.
 - **H.** A Hub Variable and its connector device drew their labels on top of each other. A narrowed
   view's 1.5 second fallback switched physics off before the layout spread (measured 41px apart). The
-  narrowed view now runs the layout to rest first (measured 362px), and each settle ignores listeners
-  left by an older one, so a stale whole-map settle cannot shelve inert nodes into a focused view.
+  narrowed view now runs the layout to rest first (measured 362px). Every drawn view, including an app
+  view laid out without physics, takes ownership of the canvas, so an older settle's listener or timer
+  cannot shelve inert nodes into, reframe, or reveal a newer view.
 - **Shelf line in narrowed views.** The "Inert Nodes" divider was drawn in every view, so it could
   cross a focused map. It is now drawn for the whole map only. The start-up Show all also no longer
   resets a focus picked before the first settle.
@@ -65,7 +66,7 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   the bottom of the chart rather than the bottom of the panel, so wide content could only be scrolled
   sideways after scrolling to the end of the chart. While zoomed, the panel body now scrolls both ways.
 - **Connector legend.** A Hub Variable focus drew the connector line with no legend row. It now has
-  one, in the colour the line is drawn.
+  one in both the compact and the Full legend, in the colour the line is drawn.
 - **I.** The webCoRE parent panel drew an informational sentence in the red attention style, and its
   "holds 6 apps" heading repeated the title. Now ordinary text, and a heading already in the title is
   not repeated. Red stays for a partial or failed piston coverage.

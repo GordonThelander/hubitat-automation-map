@@ -1,8 +1,9 @@
-// Narrowed-view layout (backlog 29 H), against the REAL settle() and the drawing
-// and start-up hooks in apps/automation_map.groovy. On the Dev hub a Hub Variable
-// froze 41px from its connector device because the 1.5s fallback switched physics
-// off before the layout spread, and an older settle's pending listener could shelve
-// inert nodes into a focused view.
+// Narrowed-view layout and view ownership (backlog 29 H), against the REAL
+// layoutView(), settle() and revealNetwork() and the drawing and start-up hooks in
+// apps/automation_map.groovy. On the Dev hub a Hub Variable froze 41px from its
+// connector device because the 1.5s fallback switched physics off before the layout
+// spread, and an older settle's pending listener could shelve inert nodes into,
+// reframe, or reveal a newer view, including a placed app view that never settles.
 //
 // Usage: node tests/narrow-view-settle.js
 'use strict';
@@ -10,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const SRC = path.join(__dirname, '..', 'apps', 'automation_map.groovy');
+const SRC = process.env.AM_SOURCE || path.join(__dirname, '..', 'apps', 'automation_map.groovy');
 const source = fs.readFileSync(SRC, 'utf8');
 
 function extractFunction(name) {
@@ -35,10 +36,16 @@ function makeSandbox() {
     const log = [];
     const pending = [];
     const timers = [];
+    const canvas = { style: {} };
+    const styleProxy = new Proxy(canvas.style, {
+        set: function (target, key, value) { if (key === 'opacity') log.push(value === '' ? 'reveal' : 'hide'); target[key] = value; return true; }
+    });
+    const canvasEl = { style: styleProxy };
     const sandbox = {
         log: log,
         timers: timers,
-        document: { getElementById: function () { return { style: {} }; } },
+        canvas: canvas,
+        document: { getElementById: function (id) { return id === 'network' ? canvasEl : null; } },
         network: {
             once: function (event, fn) { if (event === 'stabilizationIterationsDone') pending.push(fn); },
             stabilize: function (n) { log.push('stabilize:' + n); },
@@ -50,53 +57,103 @@ function makeSandbox() {
         fitCurrentView: function () { log.push('fit'); }
     };
     vm.createContext(sandbox);
-    vm.runInContext('var settleSeq = 0;\n' + extractFunction('settle'), sandbox);
+    vm.runInContext('var settleSeq = 0;\n' + ['revealNetwork', 'layoutView', 'settle'].map(extractFunction).join('\n'), sandbox);
+    sandbox.runTimers = function (list) { list.forEach(function (t) { t.fn(); }); };
     return sandbox;
 }
-function count(sb, entry) { return sb.log.filter(function (x) { return x === entry; }).length; }
+function count(sb, entry, from) { return sb.log.slice(from || 0).filter(function (x) { return x === entry; }).length; }
 
-check('a narrowed view runs the layout to rest before it is framed', function () {
+// ---- the current view -----------------------------------------------------------
+
+check('a narrowed view runs the layout to rest, then frames and reveals', function () {
     const sb = makeSandbox();
-    sb.settle(false);
-    assert(sb.log[0] === 'stabilize:200', 'no stabilize for a narrowed view: ' + sb.log.join(','));
+    sb.layoutView(false, false);
+    assert(sb.log.indexOf('stabilize:200') >= 0 && count(sb, 'hide') === 1, 'no stabilize or hide: ' + sb.log.join(','));
     sb.network.emitDone();
-    assert(count(sb, 'fit') === 1 && count(sb, 'shelve') === 0, sb.log.join(','));
+    assert(count(sb, 'fit') === 1 && count(sb, 'reveal') === 1 && count(sb, 'shelve') === 0, sb.log.join(','));
+    assert(sb.canvas.style.opacity === '', 'canvas left hidden');
 });
 
-check('the whole map keeps its original start-up path, with no forced stabilize', function () {
+check('a narrowed view that never receives its event is still framed and revealed by its own timers', function () {
     const sb = makeSandbox();
-    sb.settle(true);
+    sb.layoutView(false, false);
+    sb.runTimers(sb.timers);
+    assert(count(sb, 'fit') === 1 && count(sb, 'reveal') >= 1 && sb.canvas.style.opacity === '', sb.log.join(','));
+});
+
+check('a placed app view is framed and revealed once, with no settle', function () {
+    const sb = makeSandbox();
+    sb.layoutView(true, false);
+    assert(count(sb, 'fit') === 1 && count(sb, 'reveal') === 1 && count(sb, 'stabilize:200') === 0 && sb.timers.length === 0, sb.log.join(','));
+});
+
+check('the whole map keeps its original path, with no forced stabilize', function () {
+    const sb = makeSandbox();
+    sb.layoutView(false, true);
     assert(count(sb, 'stabilize:200') === 0 && sb.timers.length === 0, 'whole-map settle changed: ' + sb.log.join(','));
     sb.network.emitDone();
     assert(count(sb, 'shelve') === 1 && count(sb, 'fit') === 1, sb.log.join(','));
 });
 
+check('the event and the fallback timers together still frame only once', function () {
+    const sb = makeSandbox();
+    sb.layoutView(false, false);
+    sb.network.emitDone();
+    sb.runTimers(sb.timers);
+    assert(count(sb, 'fit') === 1, 'framed ' + count(sb, 'fit') + ' times');
+});
+
+// ---- stale owners ------------------------------------------------------------------
+
+check('pending whole-map settle, then a placed app view: the old event shelves, frames and reveals nothing', function () {
+    const sb = makeSandbox();
+    sb.layoutView(false, true);
+    sb.layoutView(true, false);
+    const mark = sb.log.length;
+    sb.network.emitDone();
+    assert(count(sb, 'shelve', mark) === 0, 'stale whole-map settle shelved the placed view');
+    assert(count(sb, 'fit', mark) === 0, 'stale whole-map settle reframed the placed view');
+    assert(count(sb, 'reveal', mark) === 0 && count(sb, 'hide', mark) === 0, 'stale whole-map settle changed visibility');
+});
+
+check('pending narrowed settle, then a placed app view: the old event and both old timers do nothing', function () {
+    const sb = makeSandbox();
+    sb.layoutView(false, false);
+    const oldTimers = sb.timers.slice();
+    sb.layoutView(true, false);
+    const mark = sb.log.length;
+    sb.network.emitDone();
+    sb.runTimers(oldTimers);
+    assert(count(sb, 'fit', mark) === 0, 'stale narrowed settle reframed the placed view');
+    assert(count(sb, 'reveal', mark) === 0 && count(sb, 'hide', mark) === 0, 'stale timer changed visibility');
+});
+
+check('an old safety timer cannot reveal a newer narrowed view while it is still laying out', function () {
+    const sb = makeSandbox();
+    sb.layoutView(false, false);
+    const oldTimers = sb.timers.slice();
+    sb.layoutView(false, false);
+    assert(sb.canvas.style.opacity === '0', 'newer view not hidden');
+    sb.runTimers(oldTimers);
+    assert(sb.canvas.style.opacity === '0' && count(sb, 'fit') === 0, 'stale timer revealed or framed the newer view');
+    sb.network.emitDone();
+    assert(count(sb, 'fit') === 1 && sb.canvas.style.opacity === '', 'current view did not settle');
+});
+
 check('an older whole-map settle cannot shelve inert nodes into a newer focused view', function () {
     const sb = makeSandbox();
-    sb.settle(true);
-    sb.settle(false);
+    sb.layoutView(false, true);
+    sb.layoutView(false, false);
     sb.network.emitDone();
-    assert(count(sb, 'shelve') === 0, 'stale settle shelved the focused view');
-    assert(count(sb, 'fit') === 1, 'framed ' + count(sb, 'fit') + ' times');
+    assert(count(sb, 'shelve') === 0 && count(sb, 'fit') === 1, sb.log.join(','));
 });
 
-check('an older focused settle cannot re-frame a newer one', function () {
-    const sb = makeSandbox();
-    sb.settle(false);
-    const staleTimer = sb.timers[0];
-    sb.settle(false);
-    staleTimer.fn();
-    assert(count(sb, 'fit') === 0, 'stale timer framed the newer view');
-    sb.network.emitDone();
-    assert(count(sb, 'fit') === 1, 'current settle did not frame');
-});
+// ---- wiring in the page ---------------------------------------------------------------
 
-check('the event and the fallback timer together still frame only once', function () {
-    const sb = makeSandbox();
-    sb.settle(false);
-    sb.network.emitDone();
-    sb.timers.forEach(function (t) { t.fn(); });
-    assert(count(sb, 'fit') === 1, 'framed ' + count(sb, 'fit') + ' times');
+check('applyFilters hands every drawn view to layoutView', function () {
+    const body = extractFunction('applyFilters');
+    assert(body.indexOf('layoutView(placed, wholeMap);') >= 0, 'applyFilters does not use layoutView');
+    assert(body.indexOf('settle(') < 0 && body.indexOf('fitCurrentView()') < 0, 'applyFilters still settles or frames directly');
 });
 
 check('the shelf divider is drawn only for the whole map', function () {
@@ -106,10 +163,10 @@ check('the shelf divider is drawn only for the whole map', function () {
 });
 
 check('the start-up Show all does not reset a focus picked before the first settle', function () {
-    const at = source.indexOf("network.once('stabilizationIterationsDone', function () {\n  setTimeout(function () {");
-    const at2 = at >= 0 ? at : source.indexOf("network.once('stabilizationIterationsDone', function () {\r\n  setTimeout(function () {");
-    assert(at2 >= 0, 'start-up listener not found');
-    const block = source.slice(at2, source.indexOf('exitToWholeMap();', at2));
+    let at = source.indexOf("network.once('stabilizationIterationsDone', function () {\n  setTimeout(function () {");
+    if (at < 0) at = source.indexOf("network.once('stabilizationIterationsDone', function () {\r\n  setTimeout(function () {");
+    assert(at >= 0, 'start-up listener not found');
+    const block = source.slice(at, source.indexOf('exitToWholeMap();', at));
     assert(block.indexOf('if (currentFocus()) return;') >= 0, 'start-up listener resets an existing focus');
 });
 

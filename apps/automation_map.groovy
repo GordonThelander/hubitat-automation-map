@@ -9248,6 +9248,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5c6bc0"></span><span class="line" style="border-color:#5c6bc0"></span>Has component - device-owned component of a parent device (e.g. Shelly, Bond, a Matter bridge)</div>
+  <div class="legend-row"><span class="line" style="border-color:#999"></span>Connector - a Hub Variable and its connector device hold the same value</div>
   <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub or Local Variable's value</div>
   <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub or Local Variable in its decoded logic</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
@@ -10237,11 +10238,26 @@ setTimeout(watchOverlayGeometry, 0);
 // map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
 // which is an upsert, so running it against a focused dataset silently added
 // every inert node back and collapsed the fit to a fraction of its scale.
-// Each settle owns the view until the next one starts. vis delivers
-// stabilizationIterationsDone to every pending listener, so an older settle's
-// listener would otherwise shelve or frame a view it no longer owns.
+// Each drawn view owns the canvas until the next one is drawn, whether or not it
+// settles. vis delivers stabilizationIterationsDone to every pending listener, so
+// an older settle's listener or timer would otherwise shelve, frame or reveal a
+// view it no longer owns.
 var settleSeq = 0;
-function settle(shelve) {
+function revealNetwork() {
+  const el = document.getElementById('network');
+  if (el) el.style.opacity = '';
+}
+function layoutView(placed, wholeMap) {
+  const owner = ++settleSeq;
+  if (placed) {
+    fitCurrentView();
+    revealNetwork();
+  } else {
+    network.setOptions({ physics: { enabled: true } });
+    settle(wholeMap, owner);
+  }
+}
+function settle(shelve, owner) {
   // A narrowed view rebuilds the DataSet with physics live, so the nodes are
   // watched flying apart and the framing then snaps the view back. The page's
   // own first settle never shows that because it happens before anything is
@@ -10252,9 +10268,8 @@ function settle(shelve) {
   // zero width, and fitCurrentView() measures that container to decide the
   // scale. It would frame against nothing and bail out.
   const canvasEl = document.getElementById('network');
-  const reveal = function () { if (canvasEl) canvasEl.style.opacity = ''; };
   if (!shelve && canvasEl) canvasEl.style.opacity = '0';
-  const mySettle = ++settleSeq;
+  const mySettle = owner === undefined ? ++settleSeq : owner;
   let finished = false;
   const finish = function () {
     if (finished || mySettle !== settleSeq) return;
@@ -10262,7 +10277,7 @@ function settle(shelve) {
     network.setOptions({ physics: { enabled: false } });
     if (shelve) shelveInertNodes();
     fitCurrentView();
-    reveal();
+    revealNetwork();
   };
   network.once('stabilizationIterationsDone', finish);
   // vis does not always emit that event, and when it does not the fit never
@@ -10279,7 +10294,7 @@ function settle(shelve) {
     setTimeout(finish, 1500);
     // Last resort. finish() already reveals and is guarded, but the canvas must
     // never be left invisible if anything above throws.
-    setTimeout(reveal, 4000);
+    setTimeout(function () { if (mySettle === settleSeq) revealNetwork(); }, 4000);
   }
 }
 settle(true);
@@ -10513,12 +10528,7 @@ function applyFilters() {
   currentFitOptions = wholeMap ? { animation: false }
                                : { animation: false, maxZoomLevel: FOCUS_MAX_ZOOM };
 
-  if (placed) {
-    fitCurrentView();
-  } else {
-    network.setOptions({ physics: { enabled: true } });
-    settle(wholeMap);
-  }
+  layoutView(placed, wholeMap);
 }
 
 // ---------------------------------------------------------------------------
