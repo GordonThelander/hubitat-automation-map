@@ -233,7 +233,7 @@ assertThat((canaryOut.unrecognised as List).size() > 0, 'the canary document doe
 assertThat((canaryOut.unrecognised as List).every {
         it.reason in ['unknown-statement-type', 'unknown-operand-type', 'unknown-function',
                       'unknown-virtual-command', 'unknown-policy-value', 'unknown-device-selector',
-                      'unknown-key', 'malformed-node'] },
+                      'unknown-key', 'known-opaque-field', 'malformed-node'] },
     'every reason comes from the closed walker enumeration')
 assertThat((canaryOut.unrecognised as List).every { it.nodeKind in ['object', 'array', 'scalar'] },
     'every nodeKind comes from the closed enumeration')
@@ -378,6 +378,95 @@ Map schemaKeys = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', '$': 1, 
     o: [cto: false, ced: 0]], registry) as Map
 assertThat(!(schemaKeys.unrecognised as List).any { it.reason == 'unknown-key' },
     "reviewed schema keys are not reported as unknown (${(schemaKeys.unrecognised as List).findAll { it.reason == 'unknown-key' }*.path})")
+
+// ---- A0: saved keys the executor reads that subscribeAll does not ----------
+
+def unknownKeys = { Map out -> (out.unrecognised as List).findAll { it.reason == 'unknown-key' }*.path }
+def count = { Map out, String id -> ((out.constructCounts as Map)[id] ?: 0) as Integer }
+
+Map forLoop = walker.collectWebcoreDecodeCoverage([s: [[t: 'for', x: 'i', lo: [t: 'c', vt: 'integer', c: 1],
+    lo2: [t: 'c', vt: 'integer', c: 5], lo3: [t: 'c', vt: 'integer', c: 1], s: []]]], registry) as Map
+assertThat(unknownKeys(forLoop).isEmpty(), "a for loop's lo2 and lo3 are not unknown fields (${unknownKeys(forLoop)})")
+assertThat(count(forLoop, 'wc.operand.c') == 3, "a for loop's start, end and step are all classified as operands (${count(forLoop, 'wc.operand.c')})")
+
+Map everyTimer = walker.collectWebcoreDecodeCoverage([s: [[t: 'every', lo: [t: 'c', vt: 'd', c: 1],
+    lo2: [t: 'c', vt: 'time', c: 3600000], lo3: [t: 'c', vt: 'integer', c: 0], s: []]]], registry) as Map
+assertThat(unknownKeys(everyTimer).isEmpty(), "an every timer's lo2 and lo3 are not unknown fields (${unknownKeys(everyTimer)})")
+assertThat(count(everyTimer, 'wc.operand.c') == 3, "an every timer's lo2 and lo3 are classified as operands (${count(everyTimer, 'wc.operand.c')})")
+
+Map loWrongPlace = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', c: [],
+    lo2: [t: 'c', vt: 'integer', c: 5], lo3: [t: 'c', vt: 'integer', c: 1], s: []]]], registry) as Map
+assertThat(unknownKeys(loWrongPlace).isEmpty() && count(loWrongPlace, 'wc.operand.c') == 0,
+    'lo2 and lo3 under a statement that does not read them are not given the operand route')
+
+Map fallThrough = walker.collectWebcoreDecodeCoverage([s: [[t: 'switch', ctp: 'e', lo: [t: 'c', vt: 'integer', c: 1],
+    cs: [[t: 's', ro: [t: 'c', vt: 'integer', c: 1], s: []]]]]], registry) as Map
+assertThat(unknownKeys(fallThrough).isEmpty(), "a fall-through switch's ctp is not an unknown field (${unknownKeys(fallThrough)})")
+
+Map negatedRestriction = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', rn: true, rop: 'and',
+    r: [[t: 'restriction', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', vt: 'string', c: 'x']]], k: []]]], registry) as Map
+assertThat(unknownKeys(negatedRestriction).isEmpty(), "a negated restriction's rn is not an unknown field (${unknownKeys(negatedRestriction)})")
+
+Map followedBy = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', s: [], c: [[t: 'group', o: 'followed by', c: [
+    [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode']],
+    [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], wt: 'l', wd: [t: 'c', vt: 'm', c: 5]]]]]]]], registry) as Map
+assertThat(unknownKeys(followedBy).isEmpty(), "a followed-by step's wt and wd are not unknown fields (${unknownKeys(followedBy)})")
+assertThat(count(followedBy, 'wc.operand.c') == 1, "a followed-by step's wait delay is classified as an operand (${count(followedBy, 'wc.operand.c')})")
+
+Map wdWrongPlace = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', s: [], c: [[t: 'group', o: 'followed by',
+    wd: [t: 'c', vt: 'm', c: 5], c: [[t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode']]]]]]]], registry) as Map
+assertThat(unknownKeys(wdWrongPlace).isEmpty() && count(wdWrongPlace, 'wc.operand.c') == 0,
+    'wd on a condition group rather than a followed-by step is not given the operand route')
+
+Map wdOrdinary = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', s: [], c: [
+    [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], wd: [t: 'c', vt: 'm', c: 5]]]]]], registry) as Map
+assertThat(unknownKeys(wdOrdinary).isEmpty() && count(wdOrdinary, 'wc.operand.c') == 0,
+    'wd on an ordinary condition outside a followed-by list is not given the operand route')
+
+Map wdAndGroup = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', s: [], c: [[t: 'group', o: 'and', c: [
+    [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], wd: [t: 'c', vt: 'm', c: 5]]]]]]]], registry) as Map
+assertThat(count(wdAndGroup, 'wc.operand.c') == 0, 'wd on a condition inside an and group is not given the operand route')
+
+Map statementFollowedBy = walker.collectWebcoreDecodeCoverage([s: [[t: 'if', o: 'followed by', s: [], c: [
+    [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode']],
+    [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], wd: [t: 'c', vt: 'm', c: 5]]]]]], registry) as Map
+assertThat(count(statementFollowedBy, 'wc.operand.c') == 1,
+    "wd on a step of a statement-level followed-by list is one operand (${count(statementFollowedBy, 'wc.operand.c')})")
+
+Map taskModes = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', k: [[c: 'on', m: ['mode-one', 'mode-two'], p: []]]]]], registry) as Map
+assertThat(unknownKeys(taskModes).isEmpty(), "a task's mode restriction m is not an unknown field (${unknownKeys(taskModes)})")
+assertThat(!(taskModes.unrecognised as List).any { it.reason == 'unknown-device-selector' } &&
+           (taskModes.constructCounts as Map).keySet().every { !"${it}".startsWith('wc.device-selector.') },
+    "a task's mode list is not read as a device list")
+
+Map opaque = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', zc: 'a comment', data: [t: 'c', vt: 'integer', c: 1], k: []]]], registry) as Map
+List opaqueRecords = (opaque.unrecognised as List).findAll { it.reason == 'known-opaque-field' }
+assertThat(opaqueRecords*.path.sort() == ['$.s[0].data', '$.s[0].zc'], "zc and data are reported as known opaque fields with legible paths (${opaqueRecords*.path})")
+assertThat(unknownKeys(opaque).isEmpty() && count(opaque, 'wc.operand.c') == 0, 'nothing inside an opaque field is interpreted')
+assertThat(!JsonOutput.toJson(opaque).contains('a comment'), 'an opaque field value never reaches the result')
+assertThat((opaque.accounting as Map).objectsVisited >= 3, 'an opaque field is still counted by the traversal accounting')
+
+String opaqueCanary = 'CANARYd4a1c9'
+Map deepOpaque = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', k: [], data: [
+    (opaqueCanary + 'Key'): [t: 'c', vt: 'integer', c: 1, data: [inner: opaqueCanary]],
+    'arbitrary nested key': [[t: 'p', d: ['a1b2c3d4'], x: opaqueCanary]]]]]], registry) as Map
+String deepOpaqueJson = JsonOutput.toJson(deepOpaque)
+assertThat((deepOpaque.unrecognised as List).size() == 1 &&
+           (deepOpaque.unrecognised as List)[0].path == '$.s[0].data' &&
+           (deepOpaque.unrecognised as List)[0].reason == 'known-opaque-field',
+    "an opaque field with nested structure yields exactly one finding at its root (${deepOpaque.unrecognised})")
+assertThat((deepOpaque.constructCounts as Map).keySet() == (['wc.statement.action'] as Set),
+    "nothing nested inside an opaque field is classified (${(deepOpaque.constructCounts as Map).keySet()})")
+assertThat(!deepOpaqueJson.contains(opaqueCanary) && !deepOpaqueJson.contains('arbitrary nested key') &&
+           !deepOpaqueJson.contains('a1b2c3d4') && !deepOpaqueJson.contains('inner'),
+    'no nested opaque key name or value reaches the result')
+assertThat((deepOpaque.accounting as Map).objectsVisited >= 5 && (deepOpaque.accounting as Map).arraysVisited >= 3,
+    'opaque descendants are still counted by the traversal accounting')
+
+Map editorDiagnostics = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', k: [[c: 'log', p: [[t: 'e',
+    exp: [t: 'expression', err: 'x', errVar: 'y', loc: 1, i: [[t: 'variable', x: 'z', ok: false, err: 'w']]]]]]]]]], registry) as Map
+assertThat(unknownKeys(editorDiagnostics).size() == 4 && !(editorDiagnostics.unrecognised as List).any { it.reason == 'known-opaque-field' },
+    'editor diagnostics err, errVar and loc stay unknown fields, as the live fixture recorded')
 
 // ---- the unselected task parameter -----------------------------------------
 
