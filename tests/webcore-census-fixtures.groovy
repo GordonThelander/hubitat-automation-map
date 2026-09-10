@@ -72,4 +72,28 @@ check(conds.any { (it.lo as Map).containsKey('t') && (it.lo as Map).t == '' }, '
 check(conds.any { !(it.lo as Map).containsKey('t') }, 'empty fixture has an absent t for contrast')
 passed += 2
 
+// Site coverage. Codex 537 item 4: the README claimed one ordinary member per
+// dispatch site while the manifest named only three site families. Compare the
+// frozen site list against what the manifest actually expects, so the claim
+// cannot drift ahead of the corpus again.
+List<String> frozenSites = manifest.frozenSites as List
+check(frozenSites != null && frozenSites.size() == 13, 'manifest declares all thirteen frozen sites')
+passed++
+
+Map<String, Object> ordinary = declared.find { it.file == 'ordinary-members.json' } as Map
+Map cov = ordinary.siteCoverage as Map
+check(cov != null, 'ordinary-members declares per-site coverage')
+check((cov.keySet() as Set) == (frozenSites as Set),
+    "every frozen site has an ordinary member (covered ${cov?.size()}, frozen ${frozenSites.size()})")
+passed += 2
+
+// Every expected construct id must carry the wc. namespace from the
+// implementation map's fixed contract.
+declared.each { Map f ->
+    List ids = (f.expectConstructs ?: []) as List
+    List bad = ids.findAll { !(it as String).startsWith('wc.') }
+    check(bad.isEmpty(), "${f.file} expectations use the wc. namespace${bad ? ' (offenders: ' + bad + ')' : ''}")
+    passed++
+}
+
 println "${passed} passed, 0 failed"
