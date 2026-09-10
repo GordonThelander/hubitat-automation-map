@@ -3879,7 +3879,19 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
         functionIndex: webcoreCensusFunctionIndex(constructs),
         limits: limits
     ]
-    webcoreCensusWalk(document, 'root', '$', 0, acc)
+    // The deadline is enforced at both boundaries as well as periodically. The
+    // interval only keeps the clock cheap: a document smaller than one interval
+    // would otherwise never be checked at all, and a walk that finishes just
+    // before its next checkpoint would be accepted as complete after the
+    // deadline had already passed.
+    if (expired != null && expired.call()) {
+        acc.truncated = 'analysis-deadline'
+    } else {
+        webcoreCensusWalk(document, 'root', '$', 0, acc)
+        if (acc.truncated == null && expired != null && expired.call()) {
+            acc.truncated = 'analysis-deadline'
+        }
+    }
 
     Map counts = [:]
     (acc.counts as Map).keySet().sort().each { Object id -> counts[id] = (acc.counts as Map)[id] }
