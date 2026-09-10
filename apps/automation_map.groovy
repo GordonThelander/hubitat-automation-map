@@ -8907,6 +8907,9 @@ String buildMapHtml() {
      its own intrinsic size. Scroll it inside the panel rather than letting it
      set the panel's width, which is what the cap above exists to prevent. */
   #flowChart { overflow-x:auto; }
+  /* Zoomed in, the chart is wider than the panel on purpose. The panel body
+     scrolls it instead, so the sideways scrollbar stays at the panel's edge. */
+  #flow.flowZoomed #flowChart { overflow-x:visible; }
   /* The drag handle, and the visual cue that a panel can be dragged at all -
      solid, saturated green (the app's own established accent, same as
      Community utilities/the status pill) is deliberately not part of this
@@ -9336,7 +9339,7 @@ const GRAPH = ${jsonStr};
 const SCAN_META = ${scanMetaJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
-                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0' };
+                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0', synchronizedWith: '#999' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9', localVariable: '#7986cb' };
 
 // Contextual compact legend (Gordon's live feedback on backlog item 1 Phase
@@ -9367,6 +9370,7 @@ const LEGEND_EDGE_ROWS = [
   { key: 'exposed', html: '<span class="swatch sw-dot" style="background:' + roleColors.exposed + '"></span><span class="line" style="border-color:' + roleColors.exposed + '; border-top-style:dotted"></span>Exposed - published to an external system' },
   { key: 'owns', html: '<span class="swatch sw-dot" style="background:' + roleColors.owns + '"></span><span class="line" style="border-color:' + roleColors.owns + '; border-top-style:dashed"></span>Owns - app created this device' },
   { key: 'hasComponent', html: '<span class="swatch sw-dot" style="background:' + roleColors.hasComponent + '"></span><span class="line" style="border-color:' + roleColors.hasComponent + '"></span>Has component - device-owned component of a parent device' },
+  { key: 'synchronizedWith', html: '<span class="line" style="border-color:' + roleColors.synchronizedWith + '"></span>Connector - a Hub Variable and its connector device hold the same value' },
   { key: 'write', html: '<span class="line" style="border-color:' + roleColors.write + '"></span>Write - rule sets the value of a Hub or Local Variable' },
   { key: 'read', html: '<span class="line" style="border-color:' + roleColors.read + '"></span>Read - rule uses a Hub or Local Variable in its decoded logic' },
   { key: 'usesVar', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.usesVar + ' 0 5px,transparent 5px 9px)"></span>Uses - webCoRE piston references a Hub Variable; direction is unknown' },
@@ -11115,11 +11119,13 @@ function applyFlowZoom() {
   const inner = document.getElementById('flowZoom');
   if (!inner) return;
   inner.style.zoom = flowZoom === 1 ? '' : String(flowZoom);
+  flowPanel.classList.toggle('flowZoomed', flowZoom !== 1);
 }
 
 function clearFlowZoomStyle() {
   const inner = document.getElementById('flowZoom');
   if (inner) inner.style.zoom = '';
+  flowPanel.classList.remove('flowZoomed');
 }
 
 function nextFlowZoom(current, deltaY) {

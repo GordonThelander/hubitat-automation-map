@@ -61,9 +61,11 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **Shelf line in narrowed views.** The "Inert Nodes" divider was drawn in every view, so it could
   cross a focused map. It is now drawn for the whole map only. The start-up Show all also no longer
   resets a focus picked before the first settle.
-- **Zoomed flowchart, open.** When the flow panel is zoomed in, the chart's horizontal scrollbar sits
-  at the bottom of the chart rather than the bottom of the panel, so wide content can only be
-  scrolled sideways after scrolling to the end of the chart.
+- **Zoomed flowchart.** When the flow panel was zoomed in, the chart's horizontal scrollbar sat at
+  the bottom of the chart rather than the bottom of the panel, so wide content could only be scrolled
+  sideways after scrolling to the end of the chart. While zoomed, the panel body now scrolls both ways.
+- **Connector legend.** A Hub Variable focus drew the connector line with no legend row. It now has
+  one, in the colour the line is drawn.
 - **I.** The webCoRE parent panel drew an informational sentence in the red attention style, and its
   "holds 6 apps" heading repeated the title. Now ordinary text, and a heading already in the title is
   not repeated. Red stays for a partial or failed piston coverage.
