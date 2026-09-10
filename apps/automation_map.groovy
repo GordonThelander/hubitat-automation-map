@@ -4560,13 +4560,21 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
     Map meta = (body.meta instanceof Map) ? (body.meta as Map) : [:]
 
     // Bounded by the registry's own finite population and emitted in a fixed
-    // order, so an id the registry does not define cannot be reported.
+    // order, so an id the registry does not define cannot be reported. Each
+    // reported id carries its evidence level from the runtime registry, never
+    // from the response body, and an id whose registered level falls outside the
+    // closed L0 to L5 set is left out of both maps, so their keys always match.
     Map counts = [:]
+    Map constructLevels = [:]
     if (body.constructCounts instanceof Map) {
         (body.constructCounts as Map).keySet().collect { "${it}" }.sort().each { String id ->
             if (!constructs.containsKey(id)) return
             Integer n = webcoreCoverageCount((body.constructCounts as Map)[id])
-            if (n != null) counts[id] = n
+            Object entry = constructs[id]
+            String level = (entry instanceof Map) ? webcoreCoverageText((entry as Map).level) : null
+            if (n == null || !(level in ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'])) return
+            counts[id] = n
+            constructLevels[id] = level
         }
     }
 
@@ -4601,6 +4609,7 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
             defaultBranchOccurrences: webcoreCoverageCount(acc.defaultBranchOccurrences)
         ],
         constructCounts: counts,
+        constructLevels: constructLevels,
         levelCounts: [L0: webcoreCoverageCount(levels.L0), L1: webcoreCoverageCount(levels.L1),
                       L2: webcoreCoverageCount(levels.L2), L3: webcoreCoverageCount(levels.L3),
                       L4: webcoreCoverageCount(levels.L4), L5: webcoreCoverageCount(levels.L5)],
@@ -9001,6 +9010,9 @@ String buildMapHtml() {
   #decodeCoverageCard .dcBusy { color:#9fb4bc; }
   #decodeCoverageCard .dcError { color:#ff6b6b; }
   #decodeCoverageCard .dcFoot { margin:10px 0 0; font-size:0.8em; opacity:0.75; }
+  #decodeCoverageCard .dcFamily td { padding-top:8px; font-size:0.78em; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; opacity:0.7; border-bottom:none; }
+  #decodeCoverageCard .dcLevel { font-size:0.85em; opacity:0.85; }
+  #decodeCoverageCard .dcPartial { font-weight:700; margin:4px 0; }
   #communityCard.ccClickable { cursor:pointer; }
   #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
@@ -9288,7 +9300,7 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
@@ -11920,7 +11932,7 @@ const COVERAGE_OPERAND_NAMES = {
   'p': 'physical device', 'v': 'virtual device', 's': 'preset', 'c': 'constant', 'x': 'variable', 'empty': 'nothing selected'
 };
 
-const COVERAGE_LEVEL_NAMES = { 'L1': 'present', 'L2': 'identified', 'L3': 'structural', 'L4': 'semantic', 'L5': 'renderable' };
+const COVERAGE_LEVEL_NAMES = { 'L0': 'unseen', 'L1': 'present', 'L2': 'identified', 'L3': 'structural', 'L4': 'semantic', 'L5': 'renderable' };
 
 // Page app nodes carry the scan id with a leading a, the endpoint wants the hub id.
 function coverageHubAppId(nodeId) {
@@ -11928,23 +11940,28 @@ function coverageHubAppId(nodeId) {
   return s.charAt(0) === 'a' ? s.slice(1) : s;
 }
 
-function coverageConstructLabel(id) {
+// Family and display name from a construct id the endpoint has already checked
+// against the registry, so neither comes from free response text.
+function coverageConstructParts(id) {
   const s = String(id);
-  if (s.indexOf('wc.') !== 0) return s;
-  const rest = s.slice(3);
+  const rest = s.indexOf('wc.') === 0 ? s.slice(3) : s;
   const cut = rest.lastIndexOf('.');
-  if (cut < 0) return rest;
+  if (cut < 0) return { family: '', name: rest };
   const family = rest.slice(0, cut);
   let name = rest.slice(cut + 1);
   if ((family === 'operand' || family === 'operand.event-match') && COVERAGE_OPERAND_NAMES[name]) {
     name = COVERAGE_OPERAND_NAMES[name];
   }
-  return (COVERAGE_FAMILY_LABELS[family] || family) + ': ' + name;
+  return { family: family, name: name };
+}
+
+function coverageFamilyLabel(family) {
+  return family ? (COVERAGE_FAMILY_LABELS[family] || family) : 'Other';
 }
 
 function decodeCoverageIdleHtml() {
   return '<h4>Decode coverage</h4>' +
-    '<p class="sub">Checks how much of the saved configuration of this piston Automation Map can identify. It reads structure only, never values.</p>' +
+    '<p class="sub">Checks how much of the saved configuration of this piston Automation Map can identify. It examines the saved piston structure and does not expose piston values.</p>' +
     '<button type="button" class="dcBtn" onclick="requestDecodeCoverage()">Check decode coverage</button>';
 }
 
@@ -11960,9 +11977,10 @@ function decodeCoverageResultHtml(body) {
   const acc = body.accounting || {};
   const cand = acc.constructCandidates || 0;
   const ident = acc.constructsIdentified || 0;
-  const pct = cand ? Math.round((ident / cand) * 1000) / 10 : 100;
   const values = (acc.objectsVisited || 0) + (acc.arraysVisited || 0) + (acc.scalarsVisited || 0);
   const truncated = body.status === 'truncated';
+  const gaps = body.unrecognised || [];
+  const unknownTotal = gaps.length + (body.unrecognisedOverflow || 0);
 
   // Accounting first. Traversal being complete is a separate claim from
   // understanding being complete, and the card says which one it is making.
@@ -11970,8 +11988,18 @@ function decodeCoverageResultHtml(body) {
   html += '<p class="sub">' + (truncated
     ? 'A safety bound was reached before the whole piston was walked, so these counts are incomplete.'
     : 'Every part of the saved piston was visited and accounted for: ' + extEsc(values) + ' values across ' + extEsc(acc.fieldsVisited || 0) + ' fields.') + '</p>';
-  html += '<p class="dcRate' + (ident < cand ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
-    '<span class="sub">' + extEsc(ident) + ' of ' + extEsc(cand) + ' construct positions identified</span></p>';
+
+  // A percentage reads as whole-piston coverage, so only a complete walk gets one.
+  if (truncated) {
+    html += '<p class="dcPartial">' + extEsc(ident) + ' of ' + extEsc(cand) + ' visited construct positions identified</p>';
+  } else {
+    const pct = cand ? Math.round((ident / cand) * 1000) / 10 : 100;
+    html += '<p class="dcRate' + (ident < cand ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
+      '<span class="sub">' + extEsc(ident) + ' of ' + extEsc(cand) + ' construct positions identified</span></p>';
+  }
+  // Stated even when it is zero. Retained records plus those past the cap.
+  html += '<p class="sub">' + extEsc(unknownTotal) + ' unrecognised ' + (unknownTotal === 1 ? 'position' : 'positions') +
+    (gaps.length ? (body.unrecognisedOverflow ? ', the first ' + extEsc(gaps.length) + ' listed below' : ', listed below') : '') + '.</p>';
 
   const provenance = body.provenance || {};
   if (provenance.compatibilityStatus === 'version-drift') {
@@ -11983,17 +12011,35 @@ function decodeCoverageResultHtml(body) {
     .map(function (k) { return extEsc(levels[k]) + ' ' + COVERAGE_LEVEL_NAMES[k] + ' (' + k + ')'; });
   if (levelParts.length) html += '<p class="sub">Evidence: ' + levelParts.join(', ') + '.</p>';
 
+  // Grouped by the family in each construct id, one table body per family, with
+  // the occurrence count and the registry evidence level on every row. The family
+  // label is a td, not a th: every th in the panel body is made sticky.
   const counts = body.constructCounts || {};
-  const ids = Object.keys(counts).sort();
-  if (ids.length) {
-    html += '<table class="dcTable"><thead><tr><th>Construct</th><th class="n">Seen</th></tr></thead><tbody>';
-    ids.forEach(function (id) {
-      html += '<tr><td>' + extEsc(coverageConstructLabel(id)) + '</td><td class="n">' + extEsc(counts[id]) + '</td></tr>';
+  const constructLevels = body.constructLevels || {};
+  const groups = {};
+  Object.keys(counts).sort().forEach(function (id) {
+    const parts = coverageConstructParts(id);
+    if (!groups[parts.family]) groups[parts.family] = [];
+    groups[parts.family].push({ id: id, name: parts.name });
+  });
+  const families = Object.keys(groups).sort(function (a, b) {
+    return coverageFamilyLabel(a).localeCompare(coverageFamilyLabel(b));
+  });
+  if (families.length) {
+    html += '<table class="dcTable"><thead><tr><th>Construct</th><th class="n">Seen</th><th class="n">Evidence</th></tr></thead>';
+    families.forEach(function (family) {
+      html += '<tbody><tr class="dcFamily"><td colspan="3">' + extEsc(coverageFamilyLabel(family)) + '</td></tr>';
+      groups[family].forEach(function (row) {
+        const level = constructLevels[row.id];
+        const known = Object.prototype.hasOwnProperty.call(COVERAGE_LEVEL_NAMES, level);
+        html += '<tr><td>' + extEsc(row.name) + '</td><td class="n">' + extEsc(counts[row.id]) + '</td>' +
+          '<td class="n">' + (known ? '<span class="dcLevel" title="' + COVERAGE_LEVEL_NAMES[level] + '">' + level + '</span>' : '-') + '</td></tr>';
+      });
+      html += '</tbody>';
     });
-    html += '</tbody></table>';
+    html += '</table>';
   }
 
-  const gaps = body.unrecognised || [];
   if (gaps.length) {
     html += '<h5>Not identified</h5><ul class="dcGaps">';
     gaps.forEach(function (g) {
@@ -12001,7 +12047,6 @@ function decodeCoverageResultHtml(body) {
         '<code>' + extEsc(g.path) + '</code></li>';
     });
     html += '</ul>';
-    if (body.unrecognisedOverflow) html += '<p class="sub">' + extEsc(body.unrecognisedOverflow) + ' more not listed.</p>';
   }
 
   if (acc.defaultBranchOccurrences) {
