@@ -10382,7 +10382,7 @@ function applyFilters() {
 
   let ids = null;
   let shownEdges = pool;
-  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : (localVarVal !== '__all__' ? localVarVal : null)));
+  const focusId = currentFocus();
   if (focusId) {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
@@ -14851,6 +14851,7 @@ document.getElementById('legendPanelClose').addEventListener('click', function (
 // other forward reference already in this file.
 function onAppFocusChange(value) {
   beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     deviceSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -14867,6 +14868,7 @@ function onAppFocusChange(value) {
 }
 function onDeviceFocusChange(value) {
   beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -14879,6 +14881,7 @@ function onDeviceFocusChange(value) {
 }
 function onHubVarFocusChange(value) {
   beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -14891,6 +14894,7 @@ function onHubVarFocusChange(value) {
 }
 function onLocalVarFocusChange(value, item) {
   beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -14952,11 +14956,8 @@ const searchAllSelect = createCombobox({
     else if (item.group === 'device') { deviceSelect.setValue(value); onDeviceFocusChange(value); }
     else if (item.group === 'hubVariable') { hubVarSelect.setValue(value); onHubVarFocusChange(value); }
     else if (item.group === 'localVariable') { localVarSelect.setValue(value); onLocalVarFocusChange(value, item); }
-    // External systems have no Focus dropdown of their own - focusNode() is
-    // the same path a click on the node directly already used (its generic
-    // else branch), so this reuses proven behaviour rather than inventing a
-    // fifth selection state (independent UI assessment, 2026-09-07: Quick
-    // Search claimed to "search everything" while silently excluding these).
+    // External systems have no Focus dropdown; focusNode() holds one as its own
+    // focus while every dropdown shows All.
     else if (item.group === 'external') { focusNode(value); }
     // A jump tool, not a fifth persistent selection state alongside the other
     // four - resets to blank immediately after dispatching. The one matching
@@ -14991,12 +14992,16 @@ function focusLabel(id) {
   return n ? n.title : 'the whole map';
 }
 
+// An external system focused from Quick Search or the canvas. It has no Focus
+// dropdown, so it is held here while all four dropdowns show All. var, not let:
+// applyFilters can run before this line does.
+var externalFocusId = null;
 function currentFocus() {
   if (appSelect.getValue() !== '__all__') return appSelect.getValue();
   if (deviceSelect.getValue() !== '__all__') return deviceSelect.getValue();
   if (hubVarSelect.getValue() !== '__all__') return hubVarSelect.getValue();
   if (localVarSelect.getValue() !== '__all__') return localVarSelect.getValue();
-  return null;
+  return externalFocusId || null;
 }
 
 // Return to the unfiltered whole map in one step, regardless of how many
@@ -15041,6 +15046,7 @@ function closeSecondaryPanels() {
 
 function exitToWholeMap() {
   beginSelectionGeneration();
+  externalFocusId = null;
   appSelect.setValue('__all__');
   deviceSelect.setValue('__all__');
   hubVarSelect.setValue('__all__');
@@ -15096,6 +15102,7 @@ function focusNode(id) {
   // a moment later anyway - redundant there, but harmless, and it means
   // this one call is correct for every path through this function rather
   // than needing to be threaded into each branch separately.
+  externalFocusId = null;
   closeSecondaryPanels();
   if (node.group === 'app') {
     appSelect.setValue(node.id, node.title);
@@ -15145,6 +15152,15 @@ function focusNode(id) {
       syncLegendVisibility();
       applyFilters();
     }
+  } else if (node.group === 'external') {
+    externalFocusId = node.id;
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
   } else {
     deviceSelect.setValue(node.id, node.title);
     appSelect.setValue('__all__');
