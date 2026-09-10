@@ -77,7 +77,7 @@ const NODES = [
 function makeSandbox() {
     const log = [];
     const renders = [];
-    const elements = { flowTitle: { textContent: '' }, hint: { style: {} }, kindFilter: { value: 'all' } };
+    const elements = { flowTitle: { textContent: '' }, hint: { style: {} }, kindFilter: { value: 'all' }, ruleVariablesCard: { innerHTML: 'PREVIOUS VARIABLES' } };
     const combo = function () { return { setValue: function () { } }; };
     const sandbox = {
         log: log,
@@ -254,10 +254,11 @@ async function main() {
         });
     });
 
-    check('Insights hides the decode coverage card of the item it replaces', function () {
+    check('Insights hides the decode coverage and rule variables cards of the item it replaces', function () {
         const sb = makeSandbox();
         sb.insightsClick();
         assert(sb.log.indexOf('coverage:null') >= 0, 'coverage card left in place under Insights');
+        assert(sb.document.getElementById('ruleVariablesCard').innerHTML === '', 'variables card left in place under Insights');
     });
 
     check('the generation comment no longer claims only focusNode advances it', function () {

@@ -25,7 +25,42 @@ historical record, not an open gate.
 
 ## Now
 
-_Nothing open._
+### 29. Screen audit on the dev hub, 2026-09-10
+
+Found by stepping through every Focus entry type, Insights, the large panels, the full legend and all
+twelve Show filters on dev hub revision 136, measured in the browser.
+
+**Batch 1, in progress:**
+
+- **A.** A size chosen with the resize grip was kept for every later item, so the panel's right edge
+  overhung the legend. A new item now starts at the default size and position.
+- **B.** Insights showed the previous item's rule variables card beneath its own content.
+- **C.** The Hubitat releases, External systems, Pivot tables and Device icons panels had no bottom
+  bar, unlike the normal flow view.
+- **D.** "webCoRE variable use only" drew an empty map. It matched only direction-unknown references,
+  of which there were none, while real variable reads and writes had no filter. Replaced by one
+  "Variable reads and writes only" filter covering every engine.
+- **E.** Every Local Variable label named its owner twice, and the unused Local Variable panel title
+  named it twice more and added "(Local Variable)".
+- **F.** 19 app labels repeated the app type when the label is the type name, for example
+  "Tapo Integration (Tapo Integration)".
+
+**Batch 2, not started:**
+
+- **G.** An external system picked from Quick Search is written into the Focus Device dropdown, and
+  the view is not framed around it.
+- **H.** A Hub Variable and its connector device draw their labels on top of each other.
+- **I.** The webCoRE parent panel draws an informational sentence in the red attention style, and
+  its "holds 6 apps" heading repeats the title.
+- Local Variable canvas labels include the whole owner name and wrap to four lines.
+
+**Waiting on a decision:**
+
+- whether webCoRE piston locals get their own tag instead of [LOC];
+- which indented text is too large, since the webCoRE text measures the same as Rule Machine's.
+
+**Not yet covered:** the Back link and history trail, panel zoom rendering, narrow windows, and device
+focus.
 
 ## Next
 

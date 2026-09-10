@@ -9190,6 +9190,7 @@ String buildMapHtml() {
      only - #flow also hosts Insights in large mode, which is a full-area
      workspace and does not want a terminator. */
   #flow.flowClassicSize { border-bottom:2px solid #81BC00; }
+  #ext, #pivot, #icons, #releaseActivity { border-bottom:2px solid #81BC00; }
   /* Corner grip for resizing the normal flow view (v2.2.9). Hidden in the
      full-area Insights view, which sizes itself. */
   .panelResizeGrip { position:absolute; right:3px; bottom:3px; width:12px; height:12px; box-sizing:border-box; cursor:nwse-resize; border-right:2px solid #81BC00; border-bottom:2px solid #81BC00; opacity:0.7; }
@@ -9283,7 +9284,7 @@ String buildMapHtml() {
       <option value="hasComponent">Has component only</option>
       <option value="rulelinks">Rule to rule only</option>
       <option value="depends">External systems only</option>
-      <option value="usesVar">webCoRE variable use only</option>
+      <option value="variables">Variable reads and writes only</option>
       <option value="deviceRead">webCoRE device reads only</option>
     </select></label>
     <div id="headerActions">
@@ -9463,6 +9464,7 @@ function iconImageDataURL(iconKey, fillColor) {
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
 const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
+const VARIABLE_KINDS = ['write', 'read', 'usesVar'];
 
 // Human-readable form of every edge kind, reused by the legend's own wording
 // so a pivot table and the graph never describe the same relationship two
@@ -10370,6 +10372,8 @@ function applyFilters() {
   let pool = ALL_EDGES;
   if (kindVal === 'rulelinks') {
     pool = ALL_EDGES.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
+  } else if (kindVal === 'variables') {
+    pool = ALL_EDGES.filter(function (e) { return VARIABLE_KINDS.indexOf(e.kind) !== -1; });
   } else if (kindVal !== 'all') {
     pool = ALL_EDGES.filter(function (e) { return e.kind === kindVal; });
   }
@@ -11008,7 +11012,8 @@ function clampFlowPosition() {
   return changed;
 }
 
-// Every newly picked item starts the normal view from its default position.
+// Every newly picked item starts the normal view at its default size and position,
+// so its edges line up with the legend. Only reopening the same item keeps a chosen size.
 // Keyed on the item actually shown, not on focusGenerationSeq, which also moves
 // when the panel is closed or replaced by Insights. Reopening the same item leaves
 // the position alone. Returns true when it placed the panel.
@@ -11016,17 +11021,9 @@ function startFlowItemIfNew() {
   if (flowItemId === flowShownItemId) return false;
   flowItemId = flowShownItemId;
   flowUserPosition = null;
-  if (!flowUserSize) {
-    // No chosen size, so bringToFront can place it exactly as on a first open.
-    panelCustomPosition.delete(flowPanel);
-    return true;
-  }
-  // Place it at the default spot now and keep the chosen size, fitted to that
-  // spot. Marking it user-positioned stops bringToFront capping the height.
-  sizeModernPanel(flowPanel);
-  panelCustomPosition.set(flowPanel, true);
-  flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowStylePosition());
-  applyFlowUserSize();
+  flowUserSize = null;
+  clearFlowInlineSize();
+  panelCustomPosition.delete(flowPanel);
   return true;
 }
 
@@ -11371,7 +11368,7 @@ function showInertPanel(node) {
 // growing app-shaped fields that make no sense on a variable.
 function showUnreferencedLocalPanel(node) {
   const owner = ALL_NODES.filter(function (n) { return n.id === node.ownerAppId; })[0];
-  document.getElementById('flowTitle').textContent = localVarOptionText(node) + ' (Local Variable)';
+  document.getElementById('flowTitle').textContent = localVarOptionText(node);
   setFlowSub('Declared in ' + (owner ? owner.title : 'a rule no longer on this map') + '.', false);
   flowChart.innerHTML = '<p class="sub">No proven decoded reference in this rule - not read in a trigger, condition or action, and not written.</p>';
   // Both correctly no-op on a non-rule/non-app node (their own group checks
@@ -12197,7 +12194,14 @@ const APP_TYPE_TAGS = {
   'Hubitat® Dashboard': 'HUB'
 };
 function appOptionText(n) {
-  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + n.title;
+  let title = n.title;
+  const typeSuffix = n.appType ? ' (' + n.appType + ')' : '';
+  if (typeSuffix && title.length > typeSuffix.length && title.slice(-typeSuffix.length) === typeSuffix) {
+    const head = title.slice(0, -typeSuffix.length);
+    // Only when the label is the type name itself, as in Tapo Integration (Tapo Integration).
+    if (head === n.appType || head.indexOf(n.appType + ' (') === 0) title = head;
+  }
+  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + title;
 }
 
 // Same purely-decorative prefix for devices, reusing n.icon - the existing
@@ -12253,7 +12257,10 @@ ALL_NODES.forEach(function (n) { if (n.group === 'app') APP_TITLE_BY_ID[n.id] = 
 function localVarOptionText(n) {
   const ownerTitle = APP_TITLE_BY_ID[n.ownerAppId] || 'an unknown rule';
   const unused = n.unreferencedLocal ? ', unused' : '';
-  return '[LOC] ' + n.title + ' (in ' + ownerTitle + unused + ')';
+  // The node title already carries (Local Variable in owner); name the owner once.
+  const cut = n.title.indexOf(' (Local Variable in ');
+  const name = cut > 0 ? n.title.slice(0, cut) : n.title;
+  return '[LOC] ' + name + ' (in ' + ownerTitle + unused + ')';
 }
 function pickOptionText(n, group) {
   if (group === 'app') return appOptionText(n);
@@ -13195,6 +13202,8 @@ document.getElementById('insightsBtn').addEventListener('click', function () {
   // Every other write to flowChart pairs it with this - Insights was the one
   // gap, leaving a previously-focused app's community card visible under it.
   renderDecodeCoverageCard(null);
+  const varsBox = document.getElementById('ruleVariablesCard');
+  if (varsBox) varsBox.innerHTML = '';
   renderCommunityCard(null);
   setFlowSizeMode(true);
   bringToFront(flowPanel);
