@@ -2,7 +2,8 @@
 //
 // The read-only decode coverage endpoint, executed from the app source with the
 // hub surfaces stubbed. Covers the implementation map's T6: authorization,
-// failure behaviour, the response allowlist and the fingerprint.
+// failure behaviour, the layered timeout contract, claim ownership and the
+// response allowlist at every nesting level.
 // Run with: groovy tests/webcore-coverage-endpoint.groovy
 
 import groovy.json.JsonOutput
@@ -43,7 +44,6 @@ String endpoint = between(source, '// --- webcore coverage endpoint: begin ---',
 // depends on it.
 String harness = """
 import groovy.json.JsonOutput
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 class CoverageUnderTest {
@@ -51,13 +51,21 @@ class CoverageUnderTest {
     Map state = [:]
     Map params = [:]
     boolean stubScanActive = false
-    Map stubFetch = [ok: false, data: null, error: 'not configured']
+    Map stubFetch = [ok: false, data: null, error: 'not configured', timedOut: false]
     List<String> fetchedUris = []
     int clearAbandonedScanCalls = 0
+    // A controllable clock, so the cooperative deadline can be forced instead of
+    // raced. A step of zero means the real clock.
+    Long nowValue = 0L
+    Long nowStep = 0L
 
     void clearAbandonedScan() { clearAbandonedScanCalls++ }
     boolean scanEffectivelyActive() { return stubScanActive }
-    Long now() { return System.currentTimeMillis() }
+    Long now() {
+        if (nowStep == 0L) return System.currentTimeMillis()
+        nowValue = nowValue + nowStep
+        return nowValue
+    }
     Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) { fetchedUris << uri; return stubFetch }
     Map render(Map args) { return args }
 
@@ -124,12 +132,20 @@ assertThat(notPiston.http == 400 && (notPiston.body as Map).error == 'not-a-pist
 // ---- failure behaviour -----------------------------------------------------
 
 arm(app, piston)
-app.stubFetch = [ok: false, data: null, error: 'Connection refused to 127.0.0.1:8080 SECRETDETAIL']
+app.stubFetch = [ok: false, data: null, timedOut: false, error: 'Connection refused to 127.0.0.1:8080 SECRETDETAIL']
 Map unreachable = app.webcoreDecodeCoverageResult('77') as Map
 assertThat(unreachable.http == 422 && (unreachable.body as Map).error == 'source-unavailable',
     'a loopback failure returns the fixed source-unavailable code')
 assertThat(!JsonOutput.toJson(unreachable).contains('SECRETDETAIL'),
     'no loopback error text reaches the response')
+
+arm(app, piston)
+app.stubFetch = [ok: false, data: null, timedOut: true, error: 'Read timed out SECRETDETAIL']
+Map sourceTimeout = app.webcoreDecodeCoverageResult('77') as Map
+assertThat(sourceTimeout.http == 422 && (sourceTimeout.body as Map).error == 'source-timeout',
+    'a loopback timeout returns the fixed source-timeout code')
+assertThat(!JsonOutput.toJson(sourceTimeout).contains('SECRETDETAIL'),
+    'no timeout error text reaches the response')
 
 arm(app, piston)
 app.stubFetch = [ok: true, data: 'not a map', error: null]
@@ -165,12 +181,12 @@ assertThat((body.unrecognised as List).any { it.reason == 'unknown-operand-type'
 assertThat((body.provenance as Map).referenceSourceCommit == '0a37eee2537accd706aaaeeed5a7b4bb0c82646e',
     'the response carries the pinned reference commit')
 assertThat((body.meta as Map).elapsedMs != null && (body.meta as Map).resultBytes > 0 &&
-           (body.meta as Map).fingerprinted == true && (body.meta as Map).cached == false,
-    'instrumentation reports timing, size, fingerprint presence and cache state')
+           (body.meta as Map).cached == false,
+    'instrumentation reports timing, size and cache state')
 
 // ---- the response allowlist ------------------------------------------------
 
-String serialized = app.webcoreCoverageJson(body) as String
+String serialized = app.webcoreCoverageJson(body, app.webcoreCensusRegistry().constructs as Map) as String
 Map reparsed = new groovy.json.JsonSlurper().parseText(serialized) as Map
 assertThat(reparsed.keySet() == (['status', 'appId', 'registryVersion', 'provenance', 'accounting',
                                   'constructCounts', 'levelCounts', 'unrecognised',
@@ -183,7 +199,7 @@ Map smuggled = new LinkedHashMap(body)
 smuggled.document = piston
 smuggled.appSettings = [[name: 'chunk:0', value: 'SECRETCHUNK']]
 smuggled.rawError = 'SECRETERROR'
-String smuggledJson = app.webcoreCoverageJson(smuggled) as String
+String smuggledJson = app.webcoreCoverageJson(smuggled, app.webcoreCensusRegistry().constructs as Map) as String
 assertThat(!smuggledJson.contains('SECRETCHUNK') && !smuggledJson.contains('SECRETERROR') &&
            !smuggledJson.contains('document'),
     'a field added to the body cannot reach the response without being allowlisted')
@@ -204,24 +220,108 @@ Map stale = app.webcoreDecodeCoverageResult('77') as Map
 assertThat(stale.http == 200, 'an expired claim is taken over rather than locking the piston')
 assertThat(app.WEBCORE_COVERAGE_CLAIMS.get('77') == null, 'the claim is released when the request ends')
 
-// ---- fingerprint -----------------------------------------------------------
+// ---- the cooperative deadline ----------------------------------------------
 
-Map twoChunks = [appSettings: [[name: 'chunk:0', value: 'AAAA'], [name: 'chunk:1', value: 'BBBB']]]
-Map shifted = [appSettings: [[name: 'chunk:0', value: 'AAAAB'], [name: 'chunk:1', value: 'BBB']]]
-Map reordered = [appSettings: [[name: 'chunk:1', value: 'BBBB'], [name: 'chunk:0', value: 'AAAA']]]
-Map changed = [appSettings: [[name: 'chunk:0', value: 'AAAA'], [name: 'chunk:1', value: 'BBBC']]]
+// Forced through the harness clock rather than raced: every now() call jumps far
+// past the budget, so the walker's first deadline check fails deterministically.
+// The document is large enough to reach that check at all.
+arm(app, [s: (1..1200).collect { [t: 'do'] }])
+app.nowValue = 0L
+app.nowStep = 100000L
+Map analysisTimeout = app.webcoreDecodeCoverageResult('77') as Map
+app.nowStep = 0L
+assertThat(analysisTimeout.http == 422 && (analysisTimeout.body as Map).status == 'analysis-timeout' &&
+           (analysisTimeout.body as Map).error == 'analysis-deadline',
+    'an exhausted analysis budget returns the fixed analysis-timeout outcome')
+assertThat((analysisTimeout.body as Map).accounting == null &&
+           (analysisTimeout.body as Map).constructCounts == [:],
+    'an analysis timeout carries no partial counts')
 
-String fp = app.webcoreChunkFingerprint(twoChunks)
-assertThat(fp != null && fp.length() == 64 && fp ==~ /^[0-9a-f]{64}$/,
-    'the fingerprint is a full SHA-256 hex digest')
-assertThat(fp == app.webcoreChunkFingerprint(twoChunks), 'identical chunks produce the same fingerprint')
-assertThat(fp != app.webcoreChunkFingerprint(shifted),
-    'a different chunk boundary over the same joined content changes the fingerprint')
-assertThat(fp == app.webcoreChunkFingerprint(reordered),
-    'chunk order in the payload does not matter, only chunk index')
-assertThat(fp != app.webcoreChunkFingerprint(changed), 'a content change changes the fingerprint')
-assertThat(app.webcoreChunkFingerprint([appSettings: []]) == null,
-    'a piston with no chunks has no fingerprint')
+// The same document inside its budget completes, so the test above proves the
+// deadline rather than the document size.
+arm(app, [s: (1..1200).collect { [t: 'do'] }])
+Map withinBudget = app.webcoreDecodeCoverageResult('77') as Map
+assertThat((withinBudget.body as Map).status == 'complete',
+    'the same document completes when the budget is not exhausted')
+
+// ---- claim ownership -------------------------------------------------------
+
+// The interleaving an unconditional remove gets wrong: A stalls, B takes over
+// A's expired claim, and A then reaches its cleanup.
+app.WEBCORE_COVERAGE_CLAIMS.clear()
+Long stampA = 1000000L
+Long claimedA = app.webcoreCoverageClaim('77', stampA, 60000L) as Long
+Long stampB = stampA + 120000L
+Long claimedB = app.webcoreCoverageClaim('77', stampB, 60000L) as Long
+assertThat(claimedA == stampA, 'the first request takes the claim')
+assertThat(claimedB == stampB, 'a second request takes over an expired claim')
+app.webcoreCoverageRelease('77', stampA)
+assertThat(app.WEBCORE_COVERAGE_CLAIMS.get('77') == stampB,
+    'a stalled cleanup cannot release the replacement claim')
+assertThat(app.webcoreCoverageClaim('77', stampB + 10L, 60000L) == null,
+    'a third request is still refused while the replacement holds the claim')
+app.webcoreCoverageRelease('77', stampB)
+assertThat(app.WEBCORE_COVERAGE_CLAIMS.get('77') == null, 'a request releases its own claim')
+
+// Two callers arriving inside the TTL: exactly one proceeds.
+app.WEBCORE_COVERAGE_CLAIMS.clear()
+assertThat(app.webcoreCoverageClaim('77', 5000L, 60000L) == 5000L, 'one concurrent caller proceeds')
+assertThat(app.webcoreCoverageClaim('77', 5000L, 60000L) == null, 'the other is refused')
+app.WEBCORE_COVERAGE_CLAIMS.clear()
+
+// ---- the response allowlist reaches every level ----------------------------
+
+Map constructs = app.webcoreCensusRegistry().constructs as Map
+String canary2 = 'CANARYd41d8c'
+Map smuggledDeep = [
+    status: 'complete', appId: '77', registryVersion: '1',
+    document: [secret: canary2],
+    provenance: [observedWebcoreVersion: null, referenceSourceCommit: 'abc',
+                 compatibilityStatus: 'unknown', extra: canary2],
+    accounting: [objectsVisited: 1, arraysVisited: 1, fieldsVisited: 1, arrayElementsVisited: 1,
+                 scalarsVisited: 1, constructCandidates: 1, constructsIdentified: 1,
+                 defaultBranchOccurrences: 0, rawDocument: canary2],
+    constructCounts: ['wc.statement.if': 2, ('wc.not.registered.' + canary2): 7],
+    levelCounts: [L0: 0, L1: 0, L2: 1, L3: 0, L4: 0, L5: 0, (canary2): 9],
+    unrecognised: [[path: '$.s[0].t', reason: 'unknown-key', nodeKind: 'scalar',
+                    rawKey: canary2, value: canary2]],
+    unrecognisedOverflow: 0,
+    truncation: [reason: 'depth-limit', detail: canary2],
+    meta: [elapsedMs: 5, resultBytes: 9, decoderSchema: '1', cached: false, token: canary2]
+]
+String deepJson = app.webcoreCoverageJson(smuggledDeep, constructs) as String
+assertThat(!deepJson.contains(canary2), 'no canary survives at any nesting level')
+Map deepParsed = new groovy.json.JsonSlurper().parseText(deepJson) as Map
+assertThat(!deepParsed.containsKey('document'), 'a smuggled top-level field is dropped')
+assertThat((deepParsed.provenance as Map).keySet() ==
+           (['observedWebcoreVersion', 'referenceSourceCommit', 'compatibilityStatus'] as Set),
+    'provenance carries exactly its three fields')
+assertThat((deepParsed.accounting as Map).keySet() ==
+           (['objectsVisited', 'arraysVisited', 'fieldsVisited', 'arrayElementsVisited',
+             'scalarsVisited', 'constructCandidates', 'constructsIdentified',
+             'defaultBranchOccurrences'] as Set),
+    'accounting carries exactly the normative keys')
+assertThat((deepParsed.levelCounts as Map).keySet() == (['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as Set),
+    'levelCounts carries exactly the closed level keys')
+assertThat((deepParsed.unrecognised as List).every {
+        (it as Map).keySet() == (['path', 'reason', 'nodeKind'] as Set) },
+    'each unrecognised record carries exactly path, reason and nodeKind')
+assertThat((deepParsed.truncation as Map).keySet() == (['reason'] as Set),
+    'truncation carries exactly its reason')
+assertThat((deepParsed.meta as Map).keySet() ==
+           (['elapsedMs', 'resultBytes', 'decoderSchema', 'cached'] as Set),
+    'meta carries exactly the endpoint metadata fields')
+assertThat((deepParsed.constructCounts as Map).keySet() == (['wc.statement.if'] as Set),
+    'constructCounts is bounded by the registry population')
+
+// Fixed order, not insertion order, so two runs of the same census serialize
+// identically.
+Map unordered = new LinkedHashMap(smuggledDeep)
+unordered.constructCounts = ['wc.statement.while': 1, 'wc.statement.if': 2, 'wc.statement.action': 3]
+Map ordered = new LinkedHashMap(smuggledDeep)
+ordered.constructCounts = ['wc.statement.action': 3, 'wc.statement.if': 2, 'wc.statement.while': 1]
+assertThat(app.webcoreCoverageJson(unordered, constructs) == app.webcoreCoverageJson(ordered, constructs),
+    'construct counts serialize in a fixed order regardless of insertion order')
 
 int bad = results.count { !it }
 println "${results.size() - bad} passed, ${bad} failed"

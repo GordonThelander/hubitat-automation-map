@@ -1366,7 +1366,7 @@ String compatibilitySummary(Map graph) {
 // endpoint's shape. extraOpts exists only for fetchRegistry's contentType;
 // every loopback caller passes none.
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
-    Map out = [ok: false, data: null, error: null]
+    Map out = [ok: false, data: null, error: null, timedOut: false]
     try {
         httpGet(extraOpts + [uri: uri, timeout: timeoutSec]) { resp ->
             out.data = resp.data
@@ -1374,6 +1374,16 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
         }
     } catch (Exception ex) {
         out.error = "${ex.message}"
+        // By exception type, walking the cause chain - never by parsing the
+        // message, which is exactly the text no caller is allowed to surface.
+        Throwable cause = ex
+        int guard = 0
+        while (cause != null && guard < 8) {
+            if (cause instanceof java.net.SocketTimeoutException ||
+                cause instanceof java.util.concurrent.TimeoutException) { out.timedOut = true; break }
+            cause = cause.getCause()
+            guard++
+        }
     }
     return out
 }
@@ -3783,7 +3793,8 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
 // --- webcore census walker: begin ---
 
 Map webcoreCensusLimits() {
-    return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50, maxPathLength: 200]
+    return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50, maxPathLength: 200,
+            deadlineCheckInterval: 2000]
 }
 
 // A path grows two segments per nesting level, so the traversal depth bound does
@@ -3830,7 +3841,7 @@ String webcoreCensusNodeKind(Object value) {
     return 'scalar'
 }
 
-Map collectWebcoreDecodeCoverage(Object document, Map registry) {
+Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired = null) {
     Map limits = webcoreCensusLimits()
     Map constructs = (registry != null && registry.constructs instanceof Map) ? (registry.constructs as Map) : [:]
     Map provenance = (registry != null && registry.provenance instanceof Map) ? (registry.provenance as Map) : [:]
@@ -3862,6 +3873,7 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry) {
         scalarsVisited: 0, constructCandidates: 0, constructsIdentified: 0,
         defaultBranchOccurrences: 0,
         counts: [:], unrecognised: [], seen: [] as Set, overflow: 0, truncated: null,
+        expired: expired, sinceDeadlineCheck: 0,
         schemaKeys: webcoreCensusSchemaKeys() as Set,
         constructs: constructs,
         functionIndex: webcoreCensusFunctionIndex(constructs),
@@ -3916,6 +3928,15 @@ void webcoreCensusWalk(Object value, String context, String path, int depth, Map
     if (depth > ((acc.limits as Map).maxDepth as Integer)) { acc.truncated = 'depth-limit'; return }
     int seen = (acc.objectsVisited as Integer) + (acc.arraysVisited as Integer) + (acc.scalarsVisited as Integer)
     if (seen >= ((acc.limits as Map).maxValues as Integer)) { acc.truncated = 'value-limit'; return }
+    // The deadline is the caller's clock, checked at a bounded interval so the
+    // check itself cannot dominate the walk. The walker never reads a clock.
+    if (acc.expired != null) {
+        acc.sinceDeadlineCheck = (acc.sinceDeadlineCheck as Integer) + 1
+        if ((acc.sinceDeadlineCheck as Integer) >= ((acc.limits as Map).deadlineCheckInterval as Integer)) {
+            acc.sinceDeadlineCheck = 0
+            if ((acc.expired as Closure).call()) { acc.truncated = 'analysis-deadline'; return }
+        }
+    }
 
     if (value instanceof Map) {
         acc.objectsVisited = (acc.objectsVisited as Integer) + 1
@@ -4463,9 +4484,7 @@ Map webcoreCensusRegistry() {
 // decoded document is local to one call and only the bounded, value-free census
 // result is serialized.
 // --- webcore coverage endpoint: begin ---
-
-// Bumped whenever the walker's output shape or classification changes, so a
-// cached entry from an older decoder can never be served as current.
+// Bumped whenever the walker's output shape or classification changes.
 @Field static final String WEBCORE_COVERAGE_SCHEMA = '1'
 
 // One in-flight coverage operation per piston. Static, so it is per app-instance
@@ -4473,91 +4492,122 @@ Map webcoreCensusRegistry() {
 // request cannot lock a piston indefinitely.
 @Field static final ConcurrentHashMap<String, Long> WEBCORE_COVERAGE_CLAIMS = new ConcurrentHashMap<>()
 
+// The request budget is anchored to webCoRE's own tuned figures for this
+// platform rather than guessed: its gtPLimits() stops a run at 40s and starts
+// inserting pauses at 14.3s. Ours sits inside both, and the loopback and
+// analysis budgets together sit inside the request budget. Measured real pistons
+// complete in 76 to 206ms, so every number here is a safety bound rather than a
+// working limit.
 Map webcoreCoverageLimits() {
-    return [maxAppIdLength: 12, claimTtlMs: 60000L, loopbackTimeoutSec: 20]
+    return [maxAppIdLength: 12, claimTtlMs: 60000L,
+            requestBudgetMs: 12000L, loopbackTimeoutSec: 6, analysisBudgetMs: 5000L]
 }
 
-// SHA-256 over a length-delimited sequence of ordered chunk names and exact
-// encoded contents. Length-delimited rather than concatenated, so two different
-// chunk boundaries cannot produce the same input by construction. MD5 through
-// this same class is already proven on the hub by webcoreDeviceHashToken().
-String webcoreChunkFingerprint(Map data) {
-    List settings = (data?.appSettings instanceof List) ? (data.appSettings as List) : []
-    Map<Integer, String> chunks = [:]
-    settings.each { Object raw ->
-        if (!(raw instanceof Map)) return
-        Map setting = raw as Map
-        def match = ("${setting.name ?: ''}" =~ /^chunk:([0-9]+)$/)
-        if (!match.matches()) return
-        chunks[match[0][1] as int] = setting.value == null ? '' : "${setting.value}"
-    }
-    if (!chunks) return null
-    StringBuilder input = new StringBuilder()
-    chunks.keySet().sort().each { Integer index ->
-        String name = "chunk:${index}"
-        String value = chunks[index]
-        input << name.length() << ':' << name << value.length() << ':' << value
-    }
-    try {
-        MessageDigest md = MessageDigest.getInstance('SHA-256')
-        byte[] digest = md.digest(input.toString().getBytes('UTF-8'))
-        StringBuilder hex = new StringBuilder()
-        digest.each { byte b -> hex << String.format('%02x', b & 0xFF) }
-        return hex.toString()
-    } catch (Exception ignored) {
-        return null
-    }
+// Ownership is exact. Only the stamp this request installed is ever retired, so
+// a stalled request reaching its cleanup cannot release the claim a replacement
+// now holds and let a third request in alongside it.
+Long webcoreCoverageClaim(String appId, Long stamp, Long ttlMs) {
+    Long held = WEBCORE_COVERAGE_CLAIMS.putIfAbsent(appId, stamp)
+    if (held == null) return stamp
+    if ((stamp - held) < ttlMs) return null
+    return WEBCORE_COVERAGE_CLAIMS.replace(appId, held, stamp) ? stamp : null
 }
 
-// The response allowlist. Built field by field from the walker result rather
-// than by copying it, so a future walker field cannot reach the browser without
-// someone adding it here.
-String webcoreCoverageJson(Map body) {
+void webcoreCoverageRelease(String appId, Long stamp) {
+    if (stamp != null) WEBCORE_COVERAGE_CLAIMS.remove(appId, stamp)
+}
+
+Integer webcoreCoverageCount(Object value) { return (value instanceof Number) ? (value as Integer) : null }
+
+String webcoreCoverageText(Object value) { return (value instanceof String) ? (value as String) : null }
+
+// The response allowlist, rebuilt field by field at every level. A shallow
+// rebuild would leave every nested map copied wholesale, so a field added to an
+// unrecognised record or to meta would reach the browser without anyone touching
+// this method.
+Map webcoreCoverageResponse(Map body, Map constructs) {
+    Map prov = (body.provenance instanceof Map) ? (body.provenance as Map) : [:]
+    Map acc = (body.accounting instanceof Map) ? (body.accounting as Map) : null
+    Map levels = (body.levelCounts instanceof Map) ? (body.levelCounts as Map) : [:]
+    Map trunc = (body.truncation instanceof Map) ? (body.truncation as Map) : null
+    Map meta = (body.meta instanceof Map) ? (body.meta as Map) : [:]
+
+    // Bounded by the registry's own finite population and emitted in a fixed
+    // order, so an id the registry does not define cannot be reported.
+    Map counts = [:]
+    if (body.constructCounts instanceof Map) {
+        (body.constructCounts as Map).keySet().collect { "${it}" }.sort().each { String id ->
+            if (!constructs.containsKey(id)) return
+            Integer n = webcoreCoverageCount((body.constructCounts as Map)[id])
+            if (n != null) counts[id] = n
+        }
+    }
+
+    List records = []
+    if (body.unrecognised instanceof List) {
+        (body.unrecognised as List).each { Object raw ->
+            if (!(raw instanceof Map)) return
+            Map r = raw as Map
+            records << [path: webcoreCoverageText(r.path),
+                        reason: webcoreCoverageText(r.reason),
+                        nodeKind: webcoreCoverageText(r.nodeKind)]
+        }
+    }
+
     Map out = [
-        status: body.status,
-        appId: body.appId,
-        registryVersion: body.registryVersion,
+        status: webcoreCoverageText(body.status),
+        appId: webcoreCoverageText(body.appId),
+        registryVersion: webcoreCoverageText(body.registryVersion),
         provenance: [
-            observedWebcoreVersion: (body.provenance as Map)?.observedWebcoreVersion,
-            referenceSourceCommit: (body.provenance as Map)?.referenceSourceCommit,
-            compatibilityStatus: (body.provenance as Map)?.compatibilityStatus
+            observedWebcoreVersion: webcoreCoverageText(prov.observedWebcoreVersion),
+            referenceSourceCommit: webcoreCoverageText(prov.referenceSourceCommit),
+            compatibilityStatus: webcoreCoverageText(prov.compatibilityStatus)
         ],
-        accounting: body.accounting,
-        constructCounts: body.constructCounts,
-        levelCounts: body.levelCounts,
-        unrecognised: body.unrecognised,
-        unrecognisedOverflow: body.unrecognisedOverflow,
-        truncation: body.truncation,
-        meta: body.meta
+        accounting: acc == null ? null : [
+            objectsVisited: webcoreCoverageCount(acc.objectsVisited),
+            arraysVisited: webcoreCoverageCount(acc.arraysVisited),
+            fieldsVisited: webcoreCoverageCount(acc.fieldsVisited),
+            arrayElementsVisited: webcoreCoverageCount(acc.arrayElementsVisited),
+            scalarsVisited: webcoreCoverageCount(acc.scalarsVisited),
+            constructCandidates: webcoreCoverageCount(acc.constructCandidates),
+            constructsIdentified: webcoreCoverageCount(acc.constructsIdentified),
+            defaultBranchOccurrences: webcoreCoverageCount(acc.defaultBranchOccurrences)
+        ],
+        constructCounts: counts,
+        levelCounts: [L0: webcoreCoverageCount(levels.L0), L1: webcoreCoverageCount(levels.L1),
+                      L2: webcoreCoverageCount(levels.L2), L3: webcoreCoverageCount(levels.L3),
+                      L4: webcoreCoverageCount(levels.L4), L5: webcoreCoverageCount(levels.L5)],
+        unrecognised: records,
+        unrecognisedOverflow: webcoreCoverageCount(body.unrecognisedOverflow),
+        truncation: trunc == null ? null : [reason: webcoreCoverageText(trunc.reason)],
+        meta: [elapsedMs: webcoreCoverageCount(meta.elapsedMs),
+               resultBytes: webcoreCoverageCount(meta.resultBytes),
+               decoderSchema: webcoreCoverageText(meta.decoderSchema),
+               cached: meta.cached == true]
     ]
-    if (body.error != null) out.error = body.error
-    return JsonOutput.toJson(out)
+    if (body.error instanceof String) out.error = body.error
+    return out
 }
 
-Map webcoreCoverageEmpty(String status, String appId) {
-    return [http: 200, body: [
-        status: status, appId: appId,
-        registryVersion: null,
-        provenance: [observedWebcoreVersion: null, referenceSourceCommit: null, compatibilityStatus: 'unknown'],
-        accounting: null, constructCounts: [:], levelCounts: [:],
-        unrecognised: [], unrecognisedOverflow: 0, truncation: null, meta: [:]
-    ]]
+String webcoreCoverageJson(Map body, Map constructs) {
+    return JsonOutput.toJson(webcoreCoverageResponse(body, constructs))
 }
 
-Map webcoreCoverageError(String status, String code, int http, String appId) {
-    return [http: http, body: [
-        status: status, error: code, appId: appId,
-        registryVersion: null,
-        provenance: [observedWebcoreVersion: null, referenceSourceCommit: null, compatibilityStatus: 'unknown'],
-        accounting: null, constructCounts: [:], levelCounts: [:],
-        unrecognised: [], unrecognisedOverflow: 0, truncation: null, meta: [:]
-    ]]
+Map webcoreCoverageOutcome(String status, String code, int http, String appId) {
+    Map body = [status: status, appId: appId, registryVersion: null,
+                provenance: [observedWebcoreVersion: null, referenceSourceCommit: null,
+                             compatibilityStatus: 'unknown'],
+                accounting: null, constructCounts: [:], levelCounts: [:],
+                unrecognised: [], unrecognisedOverflow: 0, truncation: null, meta: [:]]
+    if (code != null) body.error = code
+    return [http: http, body: body]
 }
 
 Map webcoreDecodeCoverageMapping() {
     Map result = webcoreDecodeCoverageResult("${params?.appId ?: ''}")
     return render(status: result.http as Integer, contentType: 'application/json',
-                  data: webcoreCoverageJson(result.body as Map))
+                  data: webcoreCoverageJson(result.body as Map,
+                                            (webcoreCensusRegistry().constructs as Map)))
 }
 
 // Split from the mapping so the whole sequence is testable without a request.
@@ -4567,58 +4617,60 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
     // Same recovery the status poll runs, so a stale running flag cannot make
     // coverage permanently unavailable.
     clearAbandonedScan()
-    if (scanEffectivelyActive()) return webcoreCoverageError('busy', 'scan-active', 409, null)
+    if (scanEffectivelyActive()) return webcoreCoverageOutcome('busy', 'scan-active', 409, null)
 
     String appId = rawAppId == null ? '' : rawAppId.trim()
     if (!appId || appId.length() > (limits.maxAppIdLength as Integer) || !(appId ==~ /^[0-9]+$/)) {
-        return webcoreCoverageError('invalid-request', 'invalid-app-id', 400, null)
+        return webcoreCoverageOutcome('invalid-request', 'invalid-app-id', 400, null)
     }
 
     // The ID must be one this app already scanned AND a piston, so the route
     // cannot become an arbitrary installed-app status reader.
     Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
     Object entry = appInfo[appId]
-    if (!(entry instanceof Map)) return webcoreCoverageError('invalid-request', 'unknown-app-id', 400, appId)
+    if (!(entry instanceof Map)) return webcoreCoverageOutcome('invalid-request', 'unknown-app-id', 400, appId)
     if ("${(entry as Map).type ?: ''}".trim() != 'webCoRE Piston') {
-        return webcoreCoverageError('invalid-request', 'not-a-piston', 400, appId)
+        return webcoreCoverageOutcome('invalid-request', 'not-a-piston', 400, appId)
     }
 
-    // Atomic claim. A stale claim can be taken over, but only by the one caller
-    // whose compare-and-set wins, so an interrupted request cannot lock a piston
-    // and two concurrent callers cannot both proceed.
-    Long stamp = now()
-    Long held = WEBCORE_COVERAGE_CLAIMS.putIfAbsent(appId, stamp)
-    if (held != null) {
-        if ((stamp - held) < (limits.claimTtlMs as Long)) {
-            return webcoreCoverageError('busy', 'coverage-in-flight', 409, appId)
-        }
-        if (!WEBCORE_COVERAGE_CLAIMS.replace(appId, held, stamp)) {
-            return webcoreCoverageError('busy', 'coverage-in-flight', 409, appId)
-        }
-    }
+    Long started = now()
+    Long stamp = webcoreCoverageClaim(appId, started, limits.claimTtlMs as Long)
+    if (stamp == null) return webcoreCoverageOutcome('busy', 'coverage-in-flight', 409, appId)
 
     try {
-        Long started = now()
         Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
                                 limits.loopbackTimeoutSec as Integer,
                                 [contentType: 'application/json'])
-        if (!fetched.ok) return webcoreCoverageError('error', 'source-unavailable', 422, appId)
-        if (!(fetched.data instanceof Map)) return webcoreCoverageError('error', 'source-malformed', 422, appId)
+        if (!fetched.ok) {
+            // Distinguished by exception type inside httpFetch, never by text.
+            return fetched.timedOut ? webcoreCoverageOutcome('error', 'source-timeout', 422, appId)
+                                    : webcoreCoverageOutcome('error', 'source-unavailable', 422, appId)
+        }
+        if (!(fetched.data instanceof Map)) return webcoreCoverageOutcome('error', 'source-malformed', 422, appId)
 
-        Map data = fetched.data as Map
-        // Computed before the document is decoded, while the ordered chunks are
-        // still the thing being identified.
-        String fingerprint = webcoreChunkFingerprint(data)
-
-        Map decoded = decodeWebcorePistonDocument(data)
+        Map decoded = decodeWebcorePistonDocument(fetched.data as Map)
         // A piston that has never been saved has no configuration to account
         // for. That is absence of evidence, not a failure.
-        if (decoded.status == 'not-present') return webcoreCoverageEmpty('not-present', appId)
-        if (decoded.status != 'complete') return webcoreCoverageError('error', 'decode-failed', 422, appId)
+        if (decoded.status == 'not-present') return webcoreCoverageOutcome('not-present', null, 200, appId)
+        if (decoded.status != 'complete') return webcoreCoverageOutcome('error', 'decode-failed', 422, appId)
 
         Map registry = webcoreCensusRegistry()
-        Map census = collectWebcoreDecodeCoverage(decoded.document, registry)
+        Map constructs = registry.constructs as Map
+        // The cooperative deadline. The walker never reads a clock; this closure
+        // is the only clock it sees, and it cannot outlast the request budget
+        // the loopback has already spent part of.
+        Long analysisDeadline = Math.min(started + (limits.requestBudgetMs as Long),
+                                         now() + (limits.analysisBudgetMs as Long))
+        Map census = collectWebcoreDecodeCoverage(decoded.document, registry, { -> now() >= analysisDeadline })
         decoded = null
+
+        // A structural bound is a walker status. A request deadline is not: it
+        // surfaces here, and without partial counts, because a partial census
+        // presented beside a coverage percentage would read as a finding.
+        if (census.status == 'truncated' &&
+            ((census.truncation instanceof Map) ? (census.truncation as Map).reason : null) == 'analysis-deadline') {
+            return webcoreCoverageOutcome('analysis-timeout', 'analysis-deadline', 422, appId)
+        }
 
         Map body = [
             status: census.status,
@@ -4632,22 +4684,19 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
             unrecognisedOverflow: census.unrecognisedOverflow,
             truncation: census.truncation
         ]
-        // Instrumentation is counts and timings only. The fingerprint is internal
-        // cache identity and is reported as present or absent, never as a value.
+        // Counts and timings only. resultBytes measures the response without
+        // meta, which is the size that would matter to any future cache.
         body.meta = [
             elapsedMs: (now() - started),
-            // Serialized size of the body without meta, which is the denominator
-            // that matters: the cache stores the census result, not the envelope.
-            resultBytes: webcoreCoverageJson(body + [meta: [:]]).getBytes('UTF-8').length,
-            fingerprinted: fingerprint != null,
+            resultBytes: webcoreCoverageJson(body + [meta: [:]], constructs).getBytes('UTF-8').length,
             decoderSchema: WEBCORE_COVERAGE_SCHEMA,
             cached: false
         ]
         return [http: 200, body: body]
     } catch (Exception ignored) {
-        return webcoreCoverageError('error', 'coverage-failed', 422, appId)
+        return webcoreCoverageOutcome('error', 'coverage-failed', 422, appId)
     } finally {
-        WEBCORE_COVERAGE_CLAIMS.remove(appId)
+        webcoreCoverageRelease(appId, stamp)
     }
 }
 // --- webcore coverage endpoint: end ---
