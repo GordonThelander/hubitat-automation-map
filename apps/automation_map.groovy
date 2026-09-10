@@ -3835,6 +3835,12 @@ String webcoreCensusFixAttr(String attr) {
     return attr
 }
 
+// The only place the walker consults the caller's clock. Called as expired(),
+// the same form the hub already accepts for finishGeneration's publishWork().
+boolean webcoreCensusExpired(Closure expired) {
+    return expired != null && expired()
+}
+
 String webcoreCensusNodeKind(Object value) {
     if (value instanceof Map) return 'object'
     if (value instanceof List) return 'array'
@@ -3884,11 +3890,11 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
     // would otherwise never be checked at all, and a walk that finishes just
     // before its next checkpoint would be accepted as complete after the
     // deadline had already passed.
-    if (expired != null && expired.call()) {
+    if (webcoreCensusExpired(expired)) {
         acc.truncated = 'analysis-deadline'
     } else {
         webcoreCensusWalk(document, 'root', '$', 0, acc)
-        if (acc.truncated == null && expired != null && expired.call()) {
+        if (acc.truncated == null && webcoreCensusExpired(expired)) {
             acc.truncated = 'analysis-deadline'
         }
     }
@@ -3946,7 +3952,7 @@ void webcoreCensusWalk(Object value, String context, String path, int depth, Map
         acc.sinceDeadlineCheck = (acc.sinceDeadlineCheck as Integer) + 1
         if ((acc.sinceDeadlineCheck as Integer) >= ((acc.limits as Map).deadlineCheckInterval as Integer)) {
             acc.sinceDeadlineCheck = 0
-            if ((acc.expired as Closure).call()) { acc.truncated = 'analysis-deadline'; return }
+            if (webcoreCensusExpired(acc.expired as Closure)) { acc.truncated = 'analysis-deadline'; return }
         }
     }
 
@@ -4529,6 +4535,15 @@ void webcoreCoverageRelease(String appId, Long stamp) {
     if (stamp != null) WEBCORE_COVERAGE_CLAIMS.remove(appId, stamp)
 }
 
+// Built here rather than inline at the call. Revision 129 was refused by the
+// hub's sandbox compiler (NullPointerException in visitClosureExpression) for an
+// empty-parameter closure passed as a call argument inside a try block. This uses the
+// named-parameter Closure local the hub already accepts elsewhere.
+Closure webcoreCoverageDeadline(Long deadlineAt) {
+    Closure expired = { Object ignored -> now() >= deadlineAt }
+    return expired
+}
+
 Integer webcoreCoverageCount(Object value) { return (value instanceof Number) ? (value as Integer) : null }
 
 String webcoreCoverageText(Object value) { return (value instanceof String) ? (value as String) : null }
@@ -4673,7 +4688,7 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
         // the loopback has already spent part of.
         Long analysisDeadline = Math.min(started + (limits.requestBudgetMs as Long),
                                          now() + (limits.analysisBudgetMs as Long))
-        Map census = collectWebcoreDecodeCoverage(decoded.document, registry, { -> now() >= analysisDeadline })
+        Map census = collectWebcoreDecodeCoverage(decoded.document, registry, webcoreCoverageDeadline(analysisDeadline))
         decoded = null
 
         // A structural bound is a walker status. A request deadline is not: it
