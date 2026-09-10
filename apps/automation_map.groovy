@@ -10363,6 +10363,18 @@ function neighborhood(nodeId, edgePool) {
   return { ids: ids, edgeList: edgeList };
 }
 
+// The inert shelf belongs to the whole map. In a narrowed view a pinned inert node
+// would stay at its shelf coordinates, far from the neighbour it is shown beside.
+function releaseShelfPins(styled) {
+  styled.forEach(function (s) {
+    if (!INERT_POS[s.id] || !s.fixed) return;
+    delete s.x;
+    delete s.y;
+    s.fixed = false;
+    s.physics = true;
+  });
+}
+
 // The edges a Show filter keeps. Rule links and variable use each span several kinds.
 function edgesForKindFilter(kindVal, edges) {
   if (kindVal === 'all') return edges;
@@ -10454,6 +10466,7 @@ function applyFilters() {
     });
   }
   const styled = shownNodes.map(function (n) { return styledNode(n, !!focusId, roleByDevice); });
+  if (ids !== null) releaseShelfPins(styled);
 
   // With one app focused the whole neighbourhood is known, so it can be laid
   // out deliberately instead of being left to settle. See sectorLayout.
