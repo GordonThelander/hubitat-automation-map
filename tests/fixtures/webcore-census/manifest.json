@@ -120,6 +120,20 @@
         "wc.operand.event-match.p",
         "wc.operand.p"
       ]
+    },
+    {
+      "file": "variable-declaration.json",
+      "proves": "a root variable declaration's saved initializer is classified, and a gap inside it is still reported",
+      "expectConstructs": [
+        "wc.device-selector.direct-identifier",
+        "wc.expression.result-type.expression",
+        "wc.function.celsius",
+        "wc.operand.d",
+        "wc.operand.e",
+        "wc.statement.action"
+      ],
+      "expectReason": "unknown-operand-type",
+      "note": "the declaration's own t is a variable data type, not an operand discriminator, and is deliberately not classified"
     }
   ],
   "idNamespace": "wc.",

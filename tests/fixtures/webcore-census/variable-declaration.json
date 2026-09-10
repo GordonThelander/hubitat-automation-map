@@ -1,0 +1,28 @@
+{
+  "_proves": "constructs inside a root variable declaration's saved initializer are classified, and a gap in the same declaration is still reported",
+  "_anchor": "subscribeAll calls operandTraverser(variable, mMv(variable), ...) for a root variable whose v is an operand",
+  "v": [
+    {
+      "n": "deviceRef",
+      "t": "device",
+      "v": { "t": "d", "d": [":22222222222222222222222222222222:"] }
+    },
+    {
+      "n": "computed",
+      "t": "dynamic",
+      "v": {
+        "t": "e",
+        "exp": {
+          "t": "expression",
+          "i": [
+            { "t": "function", "n": "celsius" },
+            { "t": "not-a-real-item-type" }
+          ]
+        }
+      }
+    }
+  ],
+  "s": [
+    { "t": "action" }
+  ]
+}
