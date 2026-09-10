@@ -278,11 +278,27 @@ parts of a piston the map is reading, and its output would establish whether ful
 decoding is practical at all or whether permanent partial coverage with explicit gaps is the truthful
 end state. That answer is currently unknown and is worth having either way.
 
-**Status.** Specified in detail and independently reviewed, with the specification and an
-implementation map reconciled across two review passes. Not authorized, not started, no version
-planned, no schema change proposed. The binding constraint is fixture diversity: the dev hub has six
-pistons, which cannot establish real-world coverage, so any broad claim needs a sanitized opt-in
-corpus first. Related to item 24, which covers webCoRE variable usage specifically.
+**Status.** Building on the dev channel, in reviewed increments.
+
+- **Construct registry (done).** A registry of 279 constructs generated from a pinned webCoRE source
+  commit, with per-region evidence hashes, gates that refuse to emit on a provenance or membership
+  failure, and a determinism test proving the checked-in file is byte-identical to a fresh
+  generation. The app ships a projection of it carrying construct identity and evidence level only.
+- **Census walker (done).** A pure traversal with five independent counters balanced against an
+  independent oracle, context-sensitive classification that never steers traversal, safe paths from
+  a reviewed key allowlist, fixed reason codes, and deterministic depth, value, path-length and
+  retained-list bounds.
+- **Read-only endpoint (v2.2.9).** One authenticated route that runs the census for a single piston
+  on request. It refuses while a scan is active, accepts only an ID this app has already scanned
+  whose type is a webCoRE piston, permits one operation per piston at a time, and builds its
+  response from an explicit field allowlist rather than by copying the result.
+- **Still to come.** A panel in the piston's own focused view, a bounded result cache sized from
+  measured real pistons rather than invented limits, and the evidence work that raises constructs
+  above identification.
+
+The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
+real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
+which covers webCoRE variable usage specifically.
 
 ### 26. Contested devices: compute the trigger overlap instead of asking the user to
 
