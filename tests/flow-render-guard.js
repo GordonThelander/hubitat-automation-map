@@ -42,13 +42,22 @@ function extractAnonymous(anchor, signature) {
 }
 
 const functionNames = ['beginSelectionGeneration', 'showFlow', 'focusNode', 'exitToWholeMap',
-    'onAppFocusChange', 'onDeviceFocusChange', 'onHubVarFocusChange', 'onLocalVarFocusChange'];
+    'onAppFocusChange', 'onDeviceFocusChange', 'onHubVarFocusChange', 'onLocalVarFocusChange',
+    'bringToFront', 'secondaryPanels', 'allPanels'];
 const listeners = {
     searchChange: ['const searchAllSelect = createCombobox({', 'function (value, item)'],
     resetClick: ["document.getElementById('resetBtn').addEventListener('click', ", 'function ()'],
     closeClick: ["flowCloseBtn.addEventListener('click', ", 'function ()'],
-    insightsClick: ["document.getElementById('insightsBtn').addEventListener('click', ", 'function ()']
+    insightsClick: ["document.getElementById('insightsBtn').addEventListener('click', ", 'function ()'],
+    extClick: ["document.getElementById('extBtn').addEventListener('click', ", 'function ()'],
+    iconsClick: ["document.getElementById('iconsBtn').addEventListener('click', ", 'function ()'],
+    releaseClick: ["document.getElementById('releaseActivityBtn').addEventListener('click', ", 'function ()'],
+    pivotClick: ["document.getElementById('pivotBtn').addEventListener('click', ", 'function ()'],
+    legendClick: ["document.getElementById('legendMoreBtn').addEventListener('click', ", 'function ()']
 };
+const SECONDARY = [['extClick', 'extPanel', 'External systems'], ['iconsClick', 'iconsPanel', 'Device icons'],
+    ['releaseClick', 'releaseActivityPanel', 'Hubitat release activity'], ['pivotClick', 'pivotPanel', 'Pivot tables'],
+    ['legendClick', 'legendPanel', 'Full legend']];
 
 let pass = 0, fail = 0;
 function check(name, fn) {
@@ -84,7 +93,10 @@ function makeSandbox() {
         renders: renders,
         title: elements.flowTitle,
         flowChart: { innerHTML: '', textContent: '' },
-        flowPanel: { style: { display: 'none' } },
+        flowPanel: { style: { display: 'none' }, classList: { contains: function () { return false; } } },
+        panelCustomPosition: new WeakMap(),
+        sizeModernPanel: function () { },
+        extLoad: function () { }, iconsLoad: function () { }, releaseActivityLoad: function () { }, pivotOpen: function () { },
         ALL_NODES: NODES,
         FLOWS: { a1: ['A'], a2: ['B'] },
         document: { getElementById: function (id) { return elements[id] || null; } },
@@ -100,11 +112,13 @@ function makeSandbox() {
         }
     };
     sandbox.window = { mermaid: sandbox.mermaid };
+    SECONDARY.forEach(function (entry) {
+        sandbox[entry[1]] = { style: { display: 'none' }, classList: { contains: function () { return false; } } };
+    });
     function note(label) { return function (arg) { log.push(label + (arg === undefined ? '' : ':' + (arg && arg.id !== undefined ? arg.id : arg))); }; }
     Object.assign(sandbox, {
         renderRuleVariablesCard: note('vars'), noteFlowItem: note('item'), renderDecodeCoverageCard: note('coverage'),
         renderCommunityCard: note('community'), setFlowSizeMode: note('size'),
-        bringToFront: function (panel) { panel.style.display = 'flex'; log.push('front'); },
         setFlowSub: function () { }, setFlowWebcoreIndent: function () { },
         webcorePistonDeviceCoverageMessage: function () { return ''; },
         appOptionText: function (n) { return n.title; },
@@ -121,7 +135,7 @@ function makeSandbox() {
         fitCurrentView: function () { }, renderBackLink: function () { }, currentFocus: function () { return null; }
     });
     const script =
-        'let focusGenerationSeq = 0;\nlet poppingHistory = false;\n' +
+        'let focusGenerationSeq = 0;\nlet poppingHistory = false;\nlet panelTopZ = 0;\n' +
         functionNames.map(extractFunction).join('\n') + '\n' +
         Object.keys(listeners).map(function (name) {
             return 'var ' + name + ' = ' + extractAnonymous(listeners[name][0], listeners[name][1]) + ';';
@@ -134,12 +148,13 @@ function makeSandbox() {
 
 function snapshot(sb) {
     return { chart: sb.flowChart.innerHTML, text: sb.flowChart.textContent, title: sb.title.textContent,
-             display: sb.flowPanel.style.display, logLength: sb.log.length };
+             display: sb.flowPanel.style.display, logLength: sb.log.length,
+             secondary: SECONDARY.map(function (entry) { return sb[entry[1]].style.display; }).join(',') };
 }
 
 // Opens rule A from its dropdown, runs the interruption while A's render is still
 // pending, then settles A's render and checks that nothing it would write lands.
-async function staleCase(name, interrupt, settle) {
+async function staleCase(name, interrupt, settle, extra) {
     const sb = makeSandbox();
     sb.onAppFocusChange('a1');
     assert(sb.renders.length === 1, 'rule A did not start a render');
@@ -155,6 +170,8 @@ async function staleCase(name, interrupt, settle) {
         assert(sb.title.textContent === before.title, 'title rewritten');
         assert(sb.flowPanel.style.display === before.display, 'panel display changed to ' + sb.flowPanel.style.display);
         assert(sb.log.length === before.logLength, 'stale writes: ' + sb.log.slice(before.logLength).join(', '));
+        assert(snapshot(sb).secondary === before.secondary, 'secondary panels changed to ' + snapshot(sb).secondary);
+        if (extra) extra(sb);
     });
     return sb;
 }
@@ -232,6 +249,41 @@ async function main() {
     await staleCase('a failed render for a superseded rule writes no error text',
         function (sb) { sb.onDeviceFocusChange('d1'); }, 'reject');
 
+    // ---- a secondary panel opened over a pending render ----------------------------------
+
+    for (const entry of SECONDARY) {
+        for (const settle of ['resolve', 'reject']) {
+            await staleCase('rule A pending, then ' + entry[2] + (settle === 'reject' ? ', render fails' : '') +
+                ': the flow panel stays hidden and ' + entry[2] + ' stays open',
+                function (sb) {
+                    sb[entry[0]]();
+                    assert(sb[entry[1]].style.display === 'flex' && sb.flowPanel.style.display === 'none', entry[2] + ' did not open');
+                }, settle,
+                function (sb) { assert(sb[entry[1]].style.display === 'flex', entry[2] + ' was closed by the stale render'); });
+        }
+    }
+
+    await (async function () {
+        const sb = makeSandbox();
+        sb.extClick();
+        sb.onAppFocusChange('a2');
+        sb.renders[0].resolve({ svg: '<svg>B</svg>' });
+        await tick();
+        check('a rule picked after a secondary panel opened still renders and replaces that panel', function () {
+            assert(sb.flowChart.innerHTML === '<svg>B</svg>' && sb.flowPanel.style.display === 'flex', 'current render lost');
+            assert(sb.extPanel.style.display === 'none', 'secondary panel left open over the rule');
+        });
+    })();
+
+    check('bringToFront invalidates pending renders only when it opens a panel other than the flow panel', function () {
+        const sb = makeSandbox();
+        const start = sb.generation();
+        sb.bringToFront(sb.flowPanel);
+        assert(sb.generation() === start, 'opening the flow panel itself made its own render stale');
+        sb.bringToFront(sb.pivotPanel);
+        assert(sb.generation() === start + 1, 'opening a secondary panel did not begin a generation');
+    });
+
     // ---- one generation ------------------------------------------------------------
 
     check('the selection generation is advanced in exactly one place', function () {
@@ -241,8 +293,8 @@ async function main() {
     });
 
     check('every entry point begins a generation before it touches the panel', function () {
-        const bodies = functionNames.slice(2).map(function (name) { return [name, extractFunction(name)]; })
-            .concat(Object.keys(listeners).filter(function (name) { return name !== 'searchChange' && name !== 'resetClick'; })
+        const bodies = functionNames.slice(2, 8).map(function (name) { return [name, extractFunction(name)]; })
+            .concat(['closeClick', 'insightsClick']
                 .map(function (name) { return [name, extractAnonymous(listeners[name][0], listeners[name][1])]; }));
         bodies.forEach(function (pair) {
             const at = pair[1].indexOf('beginSelectionGeneration()');

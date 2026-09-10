@@ -11200,6 +11200,9 @@ function syncLegendVisibility() {
 // way, and only in one place.
 let panelTopZ = 30;
 function bringToFront(panel) {
+  // Opening any other panel hides the flow panel, so a render still pending
+  // for the flow panel must not come back and replace it.
+  if (panel !== flowPanel) beginSelectionGeneration();
   allPanels().forEach(function (p) {
     if (p && p !== panel) p.style.display = 'none';
   });
