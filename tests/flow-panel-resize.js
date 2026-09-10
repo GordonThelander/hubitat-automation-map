@@ -74,16 +74,18 @@ function makeSandbox(options) {
         listeners: listeners,
         sizeCalls: sizeCalls,
         panelCustomPosition: new WeakMap(),
-        sizeModernPanel: function (p) { sizeCalls.push(p); },
+        // Stands in for the measured first-open placement, so a re-placement is visible.
+        sizeModernPanel: function (p) { sizeCalls.push(p); p.style.left = '10px'; p.style.top = '63px'; },
         window: { innerWidth: opts.innerWidth || 1600, innerHeight: opts.innerHeight || 1000 },
         document: { addEventListener: function (type, fn) { if (listeners[type]) listeners[type].push(fn); } }
     };
     const script =
-        'var flowUserSize = null;\nconst FLOW_MIN_WIDTH = 280;\nconst FLOW_MIN_HEIGHT = 160;\n' +
+        'var flowUserSize = null;\nvar flowUserPosition = null;\nconst FLOW_MIN_WIDTH = 280;\nconst FLOW_MIN_HEIGHT = 160;\n' +
         ['clampFlowSize', 'applyFlowUserSize', 'clearFlowInlineSize', 'makeFlowResizable',
-         'resetFlowPanelLayout', 'setFlowSizeMode'].map(extractFunction).join('\n') + '\n' +
+         'restoreFlowUserPosition', 'resetFlowPanelLayout', 'setFlowSizeMode'].map(extractFunction).join('\n') + '\n' +
         'makeFlowResizable(flowPanel, grip);\n' +
-        'function userSize() { return flowUserSize; }\n';
+        'function userSize() { return flowUserSize; }\n' +
+        'function userPosition() { return flowUserPosition; }\n';
     vm.createContext(sandbox);
     vm.runInContext(script, sandbox);
     return sandbox;
@@ -198,6 +200,45 @@ check('returning from Insights restores the chosen size to the normal view', fun
     assert(sb.flowPanel.style.width === '600px' && sb.flowPanel.style.height === '480px', 'size lost');
 });
 
+// ---- position around Insights ------------------------------------------------------
+
+// Found on the Dev hub: after a resize, opening Insights re-placed the panel and
+// the normal view then reopened at the Insights position, over the legend.
+check('returning from Insights puts the normal view back where it was', function () {
+    const sb = makeSandbox();
+    sb.flowPanel.style.left = '377px';
+    sb.flowPanel.style.top = '221px';
+    drag(sb, 240, 180);
+    sb.setFlowSizeMode(true);
+    assert(sb.flowPanel.style.top === '63px', 'Insights was not re-placed');
+    sb.setFlowSizeMode(false);
+    assert(sb.flowPanel.style.left === '377px' && sb.flowPanel.style.top === '221px',
+        'normal view reopened at ' + sb.flowPanel.style.left + ', ' + sb.flowPanel.style.top);
+    assert(sb.userPosition() === null, 'remembered position not released');
+});
+
+check('opening Insights twice still returns the normal view to its own position', function () {
+    const sb = makeSandbox();
+    sb.flowPanel.style.left = '377px';
+    sb.flowPanel.style.top = '221px';
+    drag(sb, 240, 180);
+    sb.setFlowSizeMode(true);
+    sb.setFlowSizeMode(true);
+    sb.setFlowSizeMode(false);
+    assert(sb.flowPanel.style.left === '377px' && sb.flowPanel.style.top === '221px',
+        'normal view reopened at ' + sb.flowPanel.style.left + ', ' + sb.flowPanel.style.top);
+});
+
+check('without a user size, Insights and back leave position handling exactly as before', function () {
+    const sb = makeSandbox();
+    sb.flowPanel.style.left = '377px';
+    sb.flowPanel.style.top = '221px';
+    sb.setFlowSizeMode(true);
+    sb.setFlowSizeMode(false);
+    assert(sb.flowPanel.style.left === '377px' && sb.flowPanel.style.top === '221px', 'position changed');
+    assert(sb.sizeCalls.length === 0 && sb.userPosition() === null, 'remembered or re-measured unasked');
+});
+
 // ---- reset ------------------------------------------------------------------------
 
 check('resetting clears the size, the kept position and re-measures the panel', function () {
@@ -205,7 +246,7 @@ check('resetting clears the size, the kept position and re-measures the panel', 
     drag(sb, 240, 180);
     sb.resetFlowPanelLayout();
     const st = sb.flowPanel.style;
-    assert(sb.userSize() === null, 'size kept');
+    assert(sb.userSize() === null && sb.userPosition() === null, 'size or remembered position kept');
     assert(sb.panelCustomPosition.get(sb.flowPanel) === undefined, 'position kept');
     assert(st.width === '' && st.height === '' && st.maxWidth === '' && st.maxHeight === '', 'inline size kept');
     assert(sb.sizeCalls.length === 1, 'not re-measured');

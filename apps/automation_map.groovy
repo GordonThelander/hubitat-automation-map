@@ -10790,11 +10790,13 @@ function setFlowSizeMode(large) {
   // if the panel had never been large at all.
   if (!large) {
     flowPanel.style.width = '';
+    restoreFlowUserPosition();
     applyFlowUserSize();
   } else if (flowUserSize) {
     // Insights sizes itself to the full work area. A size chosen for the
-    // normal view is not carried into it, so give the panel back the same
-    // measured sizing it gets on a first open.
+    // normal view is not carried into it, so remember where the normal view
+    // was, once, and give the panel the measured sizing of a first open.
+    if (!flowUserPosition) flowUserPosition = { left: flowPanel.style.left, top: flowPanel.style.top };
     clearFlowInlineSize();
     sizeModernPanel(flowPanel);
   }
@@ -10890,6 +10892,9 @@ makePanelDraggable(flowPanel, document.getElementById('flowHeader'));
 // var rather than let: setFlowSizeMode reads this, and a let would throw if a
 // panel ever opened before this line had run.
 var flowUserSize = null;
+// Where the normal view was when Insights re-placed the panel, so returning
+// from Insights puts it back rather than leaving it at the Insights position.
+var flowUserPosition = null;
 const FLOW_MIN_WIDTH = 280;
 const FLOW_MIN_HEIGHT = 160;
 
@@ -10948,8 +10953,18 @@ function makeFlowResizable(panel, grip) {
   });
 }
 
+function restoreFlowUserPosition() {
+  if (!flowUserPosition) return;
+  flowPanel.style.left = flowUserPosition.left;
+  flowPanel.style.top = flowUserPosition.top;
+  flowUserPosition = null;
+  // The window may have changed while Insights was open.
+  if (flowUserSize) flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
+}
+
 function resetFlowPanelLayout() {
   flowUserSize = null;
+  flowUserPosition = null;
   panelCustomPosition.delete(flowPanel);
   clearFlowInlineSize();
   sizeModernPanel(flowPanel);
