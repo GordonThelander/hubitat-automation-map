@@ -82,7 +82,8 @@ Automation Map applies strict bounds before accepting that document:
 
 The compiled JSON is an internal representation rather than a stable public interchange format.
 Automation Map consequently recognizes only structures that have been verified against the current
-Hubitat webCoRE source and test data.
+Hubitat webCoRE source and test data. What is known about that internal structure, statement by statement, is recorded in
+[`webcore_saved_piston_structure.md`](webcore_saved_piston_structure.md).
 
 ## Variable namespaces
 
@@ -291,3 +292,8 @@ pivots and the export. Graph schema 14, export schema 12.
 
 The implementation detail and acceptance criteria are in
 [`webcore_piston_devices_and_local_variables_spec.md`](webcore_piston_devices_and_local_variables_spec.md).
+
+Automation Map Dev v2.2.9 adds a Decode coverage card to each piston. On request it walks the whole
+saved piston and reports what was accounted for, which constructs are recognised, and every position
+it could not identify as a value-free structural path. The findings that walker produced are in
+[`webcore_saved_piston_structure.md`](webcore_saved_piston_structure.md).
