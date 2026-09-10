@@ -1,14 +1,35 @@
 {
-  "_proves": "an operand under an on statement's c is an event matcher, while the same spelling under a switch statement's lo is an ordinary operand",
   "s": [
     {
       "t": "on",
       "c": [
-        { "lo": { "t": "p", "a": "switch" } },
-        { "lo": { "t": "v", "v": "mode" } },
-        { "lo": { "t": "x", "x": "counter" } }
+        {
+          "lo": {
+            "t": "p",
+            "a": "switch"
+          }
+        },
+        {
+          "lo": {
+            "t": "v",
+            "v": "mode"
+          }
+        },
+        {
+          "lo": {
+            "t": "x",
+            "x": "counter"
+          }
+        }
       ]
     },
-    { "t": "switch", "lo": { "t": "p", "a": "switch" }, "cs": [] }
+    {
+      "t": "switch",
+      "lo": {
+        "t": "p",
+        "a": "switch"
+      },
+      "cs": []
+    }
   ]
 }

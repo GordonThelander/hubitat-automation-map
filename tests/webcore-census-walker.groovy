@@ -115,6 +115,17 @@ Map<String, Map> walked = [:]
     assertThat(missing.isEmpty(), "${name}: every expected construct identified${missing ? ' (missing ' + missing + ')' : ''}")
 }
 
+// The reason set is asserted exactly, including empty for the positive
+// fixtures, so a new accidental gap cannot hide inside an existing partial
+// result.
+(manifest.fixtures as List).each { Map f ->
+    String name = f.file as String
+    Set actual = ((walked[name].unrecognised as List).collect { it.reason } as Set)
+    Set expected = ((f.expectReasons ?: []) as Set)
+    assertThat(actual == expected,
+        "${name}: reason set is exactly ${expected.isEmpty() ? 'empty' : expected}${actual == expected ? '' : ' (got ' + actual + ')'}")
+}
+
 Map numeric = walked['shared-branch-numeric.json']
 List numericMembers = ['integer', 'float', 'double', 'decimal', 'number']
 Collection numericIds = numericMembers.findAll { (numeric.constructCounts as Map).containsKey('wc.expression.result-type.' + it) }

@@ -21,7 +21,7 @@ loaded, before any evaluation. Its closures name every structural key.
 | Node | Keys | Anchor |
 | --- | --- | --- |
 | root | `r` restrictions, `s` statements, `v` variable declarations | `r9p[sR]`, `r9p[sS]`, `oMv(r9p)` |
-| variable declaration | `n` name, `t` variable data type, `v` initializer operand | `operandTraverser(variable, mMv(variable), ...)` |
+| variable declaration | `n` name, `t` variable data type, `v` initializer operand | `getLocalVariables`, `getVariable`, `subscribeAll` |
 | statement | `t`, `d`, `a`, `r`, `c`, `s`, `e`, `ei`, `cs`, `lo`, `k`, `o`, `w`, `ct`, `di`, `tep`, `tsp`, `tcp` | `statementTraverser`, `traverseStatements` |
 | else-if | `c` conditions, `s` statements | `for(Map ei in liMs(node,sEI))` |
 | switch case | `ro`, `ro2` when the case type is `r`, `s` statements | `for(Map c in liMs(node,sCS))` |
@@ -34,11 +34,21 @@ loaded, before any evaluation. Its closures name every structural key.
 | expression | `t` result type, `i` items | `evaluateExpression`, `case sEXPR` |
 | expression item | `t`; `n` when `t` is `function`; `i` for nested items | `case sFUNC`, `case sEXPR` |
 
-**A root variable declaration's `v` is an operand.** `subscribeAll` hands `mMv(variable)` to
-`operandTraverser`, so constructs used inside a saved initializer are part of the document and are
-classified. The declaration's own `t` is a variable data type rather than an operand discriminator
-and is deliberately not classified: no frozen site dispatches on it, and several of its spellings
-collide with `expression.evaluate.result-type` members.
+**A root variable declaration's `v` is an operand.** Three anchors, and the general rule rests on
+the first two rather than the third:
+
+- `getLocalVariables` evaluates a constant initializer with
+  `oMv(evaluateExpression(r9, mevaluateOperand(r9, mMv(var)), t))`;
+- `getVariable` evaluates a Map-valued local variable with `mevaluateOperand(r9, mMv(res))` when it
+  is read;
+- `subscribeAll` calls `operandTraverser(variable, mMv(variable), ...)`, but only on its
+  device-selector path, and not for every direct device identifier. It is corroborating evidence for
+  the subscription pass, not the reason the rule holds.
+
+Constructs used inside a saved initializer are therefore part of the document and are classified.
+The declaration's own `t` is a variable data type rather than an operand discriminator and is
+deliberately not classified: no frozen site dispatches on it, and several of its spellings collide
+with `expression.evaluate.result-type` members.
 
 **A statement's `c` is context-dependent.** `statementTraverser` routes `case sON` through
 `traverseEvents` and `case sIF`/`sWHILE`/`sREPEAT` through `traverseConditions`. So the same key

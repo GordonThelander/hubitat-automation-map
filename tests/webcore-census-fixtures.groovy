@@ -40,9 +40,15 @@ declared.each { Map f ->
     File file = new File(dir, f.file as String)
     check(file.isFile(), "${f.file} exists")
     Map doc = slurper.parse(file) as Map
-    check(doc._proves != null && !(doc._proves as String).trim().isEmpty(), "${f.file} states what it proves")
+    check(f.proves != null && !(f.proves as String).trim().isEmpty(), "${f.file} states what it proves in the manifest")
+    // Commentary inside the document is an unknown key to the walker, so it
+    // would manufacture a gap in every positive fixture. It lives in the
+    // manifest instead, and is not stripped before walking, because the input
+    // has to be the document whose completeness is being claimed.
+    check(doc.keySet().every { !"${it}".startsWith('_') }, "${f.file} carries no descriptive keys")
     check(doc.s instanceof List && (doc.s as List).size() > 0, "${f.file} carries a statement array")
-    passed += 3
+    check(f.expectReasons instanceof List, "${f.file} declares an exact expected reason set")
+    passed += 5
 }
 
 // The shared-branch fixture is the one whose whole point is a count, so assert

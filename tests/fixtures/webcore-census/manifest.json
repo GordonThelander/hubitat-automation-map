@@ -66,7 +66,8 @@
         "statement.subscribe.type",
         "statement.subscribe.timer-type"
       ],
-      "consumerOnlySitesNote": "These sites are saved-reachable but mint no identity: their members normalise onto the evaluate-side or statement-dispatch identities. statement.subscribe.type appears in both lists for that reason."
+      "consumerOnlySitesNote": "These sites are saved-reachable but mint no identity: their members normalise onto the evaluate-side or statement-dispatch identities. statement.subscribe.type appears in both lists for that reason.",
+      "expectReasons": []
     },
     {
       "file": "empty-operand.json",
@@ -74,10 +75,12 @@
       "expectConstructs": [
         "wc.operand.empty"
       ],
-      "expectReason": "malformed-node",
       "expectDistinct": [
         "present-empty",
         "absent"
+      ],
+      "expectReasons": [
+        "malformed-node"
       ]
     },
     {
@@ -91,13 +94,16 @@
         "wc.expression.result-type.number"
       ],
       "expectCount": 5,
-      "note": "must NOT collapse to one construct; sharedBranchBySite is provenance only"
+      "note": "must NOT collapse to one construct; sharedBranchBySite is provenance only",
+      "expectReasons": []
     },
     {
       "file": "unknown-discriminator.json",
       "proves": "unregistered discriminator is reported",
-      "expectReason": "unknown-operand-type",
-      "note": "must not echo the raw candidate value into the reason or path"
+      "note": "must not echo the raw candidate value into the reason or path",
+      "expectReasons": [
+        "unknown-operand-type"
+      ]
     },
     {
       "file": "nested-switch-trap.json",
@@ -107,7 +113,8 @@
         "wc.operand.event-match.v",
         "wc.operand.event-match.x",
         "wc.operand.p"
-      ]
+      ],
+      "expectReasons": []
     },
     {
       "file": "same-spelling-multisite.json",
@@ -119,7 +126,8 @@
       "expectDistinct": [
         "wc.operand.event-match.p",
         "wc.operand.p"
-      ]
+      ],
+      "expectReasons": []
     },
     {
       "file": "variable-declaration.json",
@@ -132,8 +140,11 @@
         "wc.operand.e",
         "wc.statement.action"
       ],
-      "expectReason": "unknown-operand-type",
-      "note": "the declaration's own t is a variable data type, not an operand discriminator, and is deliberately not classified"
+      "note": "the declaration's own t is a variable data type, not an operand discriminator, and is deliberately not classified",
+      "expectReasons": [
+        "unknown-operand-type"
+      ],
+      "anchor": "getLocalVariables evaluates a constant initializer through mevaluateOperand(r9, mMv(var)); getVariable evaluates a Map-valued local variable through mevaluateOperand when it is read; subscribeAll additionally hands a declaration's v to operandTraverser on its device path."
     }
   ],
   "idNamespace": "wc.",
@@ -163,5 +174,6 @@
     "task.variable.value-type",
     "statement.subscribe.type"
   ],
-  "canonicalNote": "expectConstructs are canonical saved-document identities that the walker must find. siteCoverage remains generator evidence about which dispatch sites are exercised, which is a different question from what the walker finds in the tree."
+  "canonicalNote": "expectConstructs are canonical saved-document identities that the walker must find. siteCoverage remains generator evidence about which dispatch sites are exercised, which is a different question from what the walker finds in the tree.",
+  "fixtureDocumentsCarryNoMetadata": "Fixture JSON files contain saved-document content only. Descriptions live here, because an underscore-prefixed commentary key inside the document is an unknown key to the walker and would manufacture an unknown-key gap in every positive fixture."
 }

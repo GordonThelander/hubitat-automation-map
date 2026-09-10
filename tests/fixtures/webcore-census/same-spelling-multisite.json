@@ -1,7 +1,28 @@
 {
-  "_proves": "p at operand.event-match.type and p at operand.evaluate.type are two constructs, not one; a flat union would merge them",
   "s": [
-    { "t": "on", "c": [ { "lo": { "t": "p", "a": "switch" } } ] },
-    { "t": "action", "c": [ { "t": "condition", "co": "is", "lo": { "t": "p", "a": "switch" } } ] }
+    {
+      "t": "on",
+      "c": [
+        {
+          "lo": {
+            "t": "p",
+            "a": "switch"
+          }
+        }
+      ]
+    },
+    {
+      "t": "action",
+      "c": [
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "p",
+            "a": "switch"
+          }
+        }
+      ]
+    }
   ]
 }
