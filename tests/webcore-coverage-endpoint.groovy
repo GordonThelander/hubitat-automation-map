@@ -55,13 +55,21 @@ class CoverageUnderTest {
     List<String> fetchedUris = []
     int clearAbandonedScanCalls = 0
     // A controllable clock, so the cooperative deadline can be forced instead of
-    // raced. A step of zero means the real clock.
+    // raced. A script plays back exact values in order; otherwise a step of zero
+    // means the real clock.
     Long nowValue = 0L
     Long nowStep = 0L
+    List<Long> nowScript = null
+    int nowIndex = 0
 
     void clearAbandonedScan() { clearAbandonedScanCalls++ }
     boolean scanEffectivelyActive() { return stubScanActive }
     Long now() {
+        if (nowScript != null) {
+            Long v = nowScript[Math.min(nowIndex, nowScript.size() - 1)]
+            nowIndex++
+            return v
+        }
         if (nowStep == 0L) return System.currentTimeMillis()
         nowValue = nowValue + nowStep
         return nowValue
@@ -243,6 +251,55 @@ arm(app, [s: (1..1200).collect { [t: 'do'] }])
 Map withinBudget = app.webcoreDecodeCoverageResult('77') as Map
 assertThat((withinBudget.body as Map).status == 'complete',
     'the same document completes when the budget is not exhausted')
+
+// ---- the request deadline at both walk boundaries --------------------------
+
+// A scripted clock: each call returns the next value, and the last repeats. The
+// endpoint reads the clock for its start, for the analysis deadline, and then
+// the walker reads it through the closure on entry and on exit. None of these
+// documents is large enough to reach a periodic check, which is the point.
+Map shortPiston = [s: [[t: 'action', k: [[c: 'setVariable', p: [[t: 'x', x: 'counter', vt: 'variable']]]]]]]
+
+// Fetch and decode spent the whole 12s request budget before traversal began:
+// start 0, deadline min(0 + 12000, 13000 + 5000) = 12000, entry check at 13001.
+arm(app, shortPiston)
+app.nowScript = [0L, 13000L, 13001L]
+app.nowIndex = 0
+Map spentBeforeWalk = app.webcoreDecodeCoverageResult('77') as Map
+app.nowScript = null
+assertThat(spentBeforeWalk.http == 422 &&
+           (spentBeforeWalk.body as Map).status == 'analysis-timeout' &&
+           (spentBeforeWalk.body as Map).error == 'analysis-deadline',
+    'a small document is refused when fetch and decode already exhausted the request budget')
+assertThat((spentBeforeWalk.body as Map).accounting == null &&
+           (spentBeforeWalk.body as Map).constructCounts == [:] &&
+           (spentBeforeWalk.body as Map).unrecognised == [],
+    'that refusal exposes no partial counts')
+
+// Inside budget on entry, past it on exit: start 0, deadline 5000, entry 100,
+// exit 99999. The walk runs to completion and the exit check refuses it.
+arm(app, shortPiston)
+app.nowScript = [0L, 0L, 100L, 99999L]
+app.nowIndex = 0
+Map expiredDuringWalk = app.webcoreDecodeCoverageResult('77') as Map
+app.nowScript = null
+assertThat(expiredDuringWalk.http == 422 &&
+           (expiredDuringWalk.body as Map).status == 'analysis-timeout',
+    'a sub-interval document is refused when the deadline passes during its walk')
+assertThat((expiredDuringWalk.body as Map).accounting == null &&
+           (expiredDuringWalk.body as Map).constructCounts == [:],
+    'a deadline passing during the walk exposes no partial counts either')
+
+// The same document, same clock shape, never crossing the deadline.
+arm(app, shortPiston)
+app.nowScript = [0L, 0L, 100L, 200L, 300L]
+app.nowIndex = 0
+Map shortInsideBudget = app.webcoreDecodeCoverageResult('77') as Map
+app.nowScript = null
+assertThat(shortInsideBudget.http == 200 && (shortInsideBudget.body as Map).status == 'complete',
+    'the same small document completes while inside budget')
+assertThat(((shortInsideBudget.body as Map).constructCounts as Map).containsKey('wc.statement.action'),
+    'and its census is real rather than empty')
 
 // ---- claim ownership -------------------------------------------------------
 
