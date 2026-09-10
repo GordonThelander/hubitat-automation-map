@@ -27,7 +27,18 @@ if (args.length < 1) {
     System.exit 2
 }
 File root = new File(args[0])
-boolean emit = args.length > 1 && args[1] == '--emit'
+boolean emit = args.length > 1 && (args[1] == '--emit' || args[1] == '--candidate')
+// --candidate prints the literal and nothing else, so its determinism can be
+// asserted directly rather than by grepping report lines out of --emit.
+boolean candidateOnly = args.length > 1 && args[1] == '--candidate'
+
+// In --candidate mode the ONLY thing on stdout is the literal, so its
+// determinism can be asserted with a plain diff. Report lines are suppressed
+// rather than filtered, because filtering is what produced a determinism claim
+// that was true of the filtered output and false of the actual output.
+// Restored before any gate failure so those stay visible.
+PrintStream realOut = System.out
+if (candidateOnly) System.setOut(new PrintStream(new OutputStream() { void write(int b) {} }))
 if (!root.isDirectory()) {
     System.err.println "not a directory: ${root}"
     System.exit 2
@@ -59,7 +70,11 @@ String remote = gitOut(root, 'config', '--get', 'remote.origin.url')
 if (!sha) fail(failures, 'no git provenance in source root - cannot record an immutable pin')
 if (sha && sha != EXPECTED_SHA) fail(failures, "source is ${sha}, expected pin ${EXPECTED_SHA}")
 if (branch && branch != EXPECTED_BRANCH) fail(failures, "branch is ${branch}, expected ${EXPECTED_BRANCH}")
-if (remote && !remote.contains('imnotbob/webCoRE')) fail(failures, "remote is ${remote}, expected ${EXPECTED_REPO}")
+// Missing provenance fails exactly like wrong provenance. The earlier form
+// guarded on `remote &&`, so an absent remote passed silently - fail-open on
+// the one check whose whole job is establishing what source this is.
+if (!remote) fail(failures, 'no remote.origin.url - repository provenance cannot be established')
+else if (!remote.contains('imnotbob/webCoRE')) fail(failures, "remote is ${remote}, expected ${EXPECTED_REPO}")
 
 File pistonFile = new File(root, 'smartapps/ady624/webcore-piston.src/webcore-piston.groovy')
 File appFile = new File(root, 'smartapps/ady624/webcore.src/webcore.groovy')
@@ -303,6 +318,17 @@ Map<String, Map> DEVICE_SELECTOR_GRAMMAR = [
                  'not evaluate live variable state during a structural census.'],
 ]
 
+// Reviewed aliases, established by the source survey and required by the spec
+// to carry canonicalTarget. Distinct from sharedBranchGroup: these are cases
+// where the source explicitly delegates one implementation to another, not
+// merely cases sharing a switch branch.
+Map<String, String> REVIEWED_ALIASES = [
+    'bool'  : 'boolean',
+    'substr': 'substring',
+    'mid'   : 'substring',
+    'text'  : 'string',
+]
+
 // --------------------------------------------------------------------- gates
 
 // Reviewed expectations. A mismatch is drift requiring review, never a value
@@ -336,7 +362,11 @@ println '=' * 72
 println "repository : ${remote ?: '(unknown)'}"
 println "branch     : ${branch ?: '(unknown)'}"
 println "commit     : ${sha ?: '(unknown)'}"
-println "generated  : ${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))}"
+// Report metadata only. Deliberately NOT part of the candidate literal: an
+// earlier version put a timestamp inside the emitted registry, which made
+// "the candidate is deterministic" untestable and led to a byte-identical
+// claim that was false as stated (Codex 537).
+println "generated  : ${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))}  (report only, not in candidate)"
 println ''
 actual.each { String k, List<String> v -> printf('%-22s %4d  (expected %d)%n', k, v.size(), EXPECTED[k]) }
 println ''
@@ -477,6 +507,7 @@ printf('  device-selector grammar: %d forms (%d active, %d unreachable), no nume
        DEVICE_SELECTOR_GRAMMAR.count { it.value.status == 'unreachable' })
 
 if (failures) {
+    System.setOut(realOut)
     println 'GATE FAILURES:'
     failures.each { println "  - ${it}" }
     println ''
@@ -501,6 +532,8 @@ if (!emit) {
 // silently reported all 69 virtual commands as executor-only.
 Set<String> declFuncSet = declaredFuncs.collect { it.toLowerCase() } as Set
 Set<String> declVcmdSet = declaredVcmds.collect { it.toLowerCase() } as Set
+Set<String> implFuncSet = functions.collect { it.substring('func_'.length()).toLowerCase() } as Set
+Set<String> implVcmdSet = vcmds.collect { it.substring('vcmd_'.length()).toLowerCase() } as Set
 boolean isDeclared(String bare, Set<String> declaredLower) { declaredLower.contains(bare.toLowerCase()) }
 String availability(String bare, boolean implemented, Set<String> declaredLower) {
     boolean d = isDeclared(bare, declaredLower)
@@ -510,33 +543,165 @@ String availability(String bare, boolean implemented, Set<String> declaredLower)
     return 'unknown'
 }
 
+// Per-region evidence hashes, required by the spec's drift model. A whole-repo
+// SHA only says something changed somewhere; a region hash says WHICH reviewed
+// claims need re-verification when hubitat-patches moves.
+String sha256(String text) {
+    java.security.MessageDigest.getInstance('SHA-256')
+        .digest(text.getBytes('UTF-8')).collect { String.format('%02x', it & 0xFF) }.join().take(16)
+}
+String regionOf(String src, String anchor, int span) {
+    int i = src.indexOf(anchor)
+    return i < 0 ? '' : src.substring(i, Math.min(i + span, src.length()))
+}
+Map<String, String> REGION_HASHES = [
+    'executor.statement-dispatch': sha256(regionOf(piston, 'private Boolean executeStatement(', 20000)),
+    'executor.evaluate-operand'  : sha256(regionOf(piston, 'private evaluateOperand(', 20000)),
+    'executor.subscribe-all'     : sha256(regionOf(piston, 'private void subscribeAll(', 20000)),
+    'executor.expand-device-list': sha256(regionOf(piston, 'private List<String> expandDeviceList(', 2000)),
+    'catalogue.virtual-commands' : sha256(regionOf(app, 'private static Map<String,Map> virtualCommands(){', 40000)),
+    'catalogue.functions-fld'     : sha256(regionOf(app, '@Field final Map<String,Map> functionsFLD=[', 12000)),
+]
+
+// One helper so every population emits the same schema. sourceRef may be null
+// at L2 but the field exists, because this is the static runtime shape being
+// frozen and a consumer should not have to guess whether a key is absent or
+// merely unset.
+String NS = 'wc.'
+String REGISTRY_VERSION = '1'
+List<String> emittedIds = []
+// A closure, not a method: a Groovy script's local variables are not visible
+// inside a separately-declared method, so entry() as a method could not see
+// emittedIds, NS or REGISTRY_VERSION. Same shape as the Hubitat sandbox
+// scoping trap this project hit in v2.2.8, in a different guise.
+def entry
+entry = { String id, Map f ->
+    emittedIds << id
+    String canon = f.canonicalTarget ? "'${f.canonicalTarget}'" : 'null'
+    String sref = f.sourceRef ? "'${f.sourceRef}'" : 'null'
+    String extra = ''
+    if (f.sharedBranchGroup) extra += ", sharedBranchGroup:'${f.sharedBranchGroup}'"
+    if (f.dispatchSite) extra += ", dispatchSite:'${f.dispatchSite}'"
+    if (f.status) extra += ", status:'${f.status}'"
+    if (f.staticallyResolvable != null) extra += ", staticallyResolvable:${f.staticallyResolvable}"
+    return "    '${id}': [kind:'${f.kind}', name:'${f.name}', declared:${f.declared}, " +
+           "implemented:${f.implemented}, canonicalTarget:${canon}, availability:'${f.availability}', " +
+           "level:'${f.level}', sinceRegistryVersion:'${REGISTRY_VERSION}', sourceRef:${sref}${extra}],\n"
+}
+
 StringBuilder sb = new StringBuilder()
 sb << "// GENERATED by tools/webcore-investigation/generate-construct-registry.groovy v${GENERATOR_VERSION}\n"
 sb << "// Source: ${remote} @ ${branch} ${sha}\n"
 sb << "// Reviewed as a diff before use. Not self-authorizing.\n"
 sb << "@Field static final Map WEBCORE_CONSTRUCT_REGISTRY = [\n"
-sb << "  provenance: [repo: '${remote}', branch: '${branch}', commit: '${sha}', generator: '${GENERATOR_VERSION}'],\n"
+sb << "  provenance: [repo: '${remote}', branch: '${branch}', commit: '${sha}',\n"
+sb << "               generator: '${GENERATOR_VERSION}', registryVersion: '${REGISTRY_VERSION}',\n"
+sb << "               regionHashes: [\n"
+REGION_HASHES.sort().each { String k, String v -> sb << "                 '${k}': '${v}',\n" }
+sb << "               ]],\n"
 sb << "  constructs: [\n"
-statements.each { sb << "    'statement.${it}': [kind:'statement', name:'${it}', declared:true, implemented:true, canonicalTarget:null, availability:'current', level:'L2'],\n" }
-functions.sort().each {
-    String bare = it.substring('func_'.length())
-    sb << "    'function.${bare}': [kind:'function', name:'${bare}', declared:${isDeclared(bare, declFuncSet)}, implemented:true, canonicalTarget:null, availability:'${availability(bare, true, declFuncSet)}', level:'L2'],\n"
+
+// statements
+statements.each { String st ->
+    sb << entry("${NS}statement.${st}", [kind: 'statement', name: st, declared: true, implemented: true,
+        canonicalTarget: null, availability: 'current', level: 'L2',
+        sourceRef: 'executor.statement-dispatch'])
 }
-vcmds.sort().each {
-    String bare = it.substring('vcmd_'.length())
-    sb << "    'vcmd.${bare}': [kind:'vcmd', name:'${bare}', declared:${isDeclared(bare, declVcmdSet)}, implemented:true, canonicalTarget:null, availability:'${availability(bare, true, declVcmdSet)}', level:'L2'],\n"
+// execution policy flags - part of the agreed population and previously omitted
+['tep', 'tsp', 'tcp'].each { String pf ->
+    sb << entry("${NS}policy.${pf}", [kind: 'policy', name: pf, declared: false, implemented: true,
+        canonicalTarget: null, availability: 'current', level: 'L2',
+        sourceRef: 'executor.statement-dispatch'])
 }
-declaredFuncs.findAll { !functions.contains('func_' + it) }.each {
-    sb << "    'function.${it}': [kind:'function', name:'${it}', declared:true, implemented:false, canonicalTarget:null, availability:'catalog-only', level:'L2'],\n"
+// functions
+functions.sort().each { String f ->
+    String bare = f.substring('func_'.length())
+    String canon = REVIEWED_ALIASES[bare.toLowerCase()]
+    sb << entry("${NS}function.${bare}", [kind: 'function', name: bare,
+        declared: isDeclared(bare, declFuncSet), implemented: true,
+        canonicalTarget: canon ? "${NS}function.${canon}" : null,
+        availability: availability(bare, true, declFuncSet), level: 'L2',
+        sourceRef: 'catalogue.functions-fld'])
 }
-declaredVcmds.findAll { !vcmds.contains('vcmd_' + it) }.each {
-    sb << "    'vcmd.${it}': [kind:'vcmd', name:'${it}', declared:true, implemented:false, canonicalTarget:null, availability:'catalog-only', level:'L2'],\n"
+// virtual commands
+vcmds.sort().each { String v ->
+    String bare = v.substring('vcmd_'.length())
+    sb << entry("${NS}vcmd.${bare}", [kind: 'vcmd', name: bare,
+        declared: isDeclared(bare, declVcmdSet), implemented: true,
+        canonicalTarget: null, availability: availability(bare, true, declVcmdSet), level: 'L2',
+        sourceRef: 'catalogue.virtual-commands'])
 }
-// Not derivable from this source: executeRoutine does not appear in the
-// Hubitat fork at all. Recorded as a fixed known construct so that an imported
-// SmartThings piston carrying it is named accurately rather than reported as
-// unrecognised (Codex 526). Its absence here is the whole point of the entry.
-sb << "    'vcmd.executeRoutine': [kind:'vcmd', name:'executeRoutine', declared:false, implemented:false, canonicalTarget:null, availability:'smartthings-only', level:'L2'],\n"
+// catalogue-only reconciliation, now case-normalized on both sides like the
+// availability lookup already was
+declaredFuncs.findAll { !implFuncSet.contains((it as String).toLowerCase()) }.each { String d ->
+    sb << entry("${NS}function.${d}", [kind: 'function', name: d, declared: true, implemented: false,
+        canonicalTarget: null, availability: 'catalog-only', level: 'L2',
+        sourceRef: 'catalogue.functions-fld'])
+}
+declaredVcmds.findAll { !implVcmdSet.contains((it as String).toLowerCase()) }.each { String d ->
+    sb << entry("${NS}vcmd.${d}", [kind: 'vcmd', name: d, declared: true, implemented: false,
+        canonicalTarget: null, availability: 'catalog-only', level: 'L2',
+        sourceRef: 'catalogue.virtual-commands'])
+}
+// SmartThings-only, not derivable: absent from this source entirely
+sb << entry("${NS}vcmd.executeRoutine", [kind: 'vcmd', name: 'executeRoutine', declared: false,
+    implemented: false, canonicalTarget: null, availability: 'smartthings-only', level: 'L2',
+    sourceRef: null])
+
+// Dispatch-site members, context-qualified. Previously validated only and never
+// emitted, which would have left the Increment 2 walker unable to resolve
+// wc.operand.evaluate.type.d from the registry it is supposed to consult.
+FROZEN_SITES.each { String siteId, Map site ->
+    Map<String, String> groupOf = [:]
+    (site.shared as List).each { List g -> (g as List).each { groupOf[it as String] = (g as List).join('+') } }
+    (site.members as List).each { String m ->
+        String label = (m == '') ? 'empty' : m
+        sb << entry("${NS}${siteId}.${label}", [kind: 'operand', name: label,
+            declared: false, implemented: true, canonicalTarget: null, availability: 'current',
+            level: 'L2', sourceRef: siteId, dispatchSite: siteId,
+            sharedBranchGroup: groupOf[m]])
+    }
+}
+
+// Device-selector grammar. Value-shape metadata, deliberately kept distinct
+// from switch membership: these are not discriminator members and carry no
+// numeric gate.
+DEVICE_SELECTOR_GRAMMAR.each { String id, Map g ->
+    sb << entry("${NS}${id}", [kind: 'deviceSelector', name: id.tokenize('.').last(),
+        declared: false, implemented: g.status == 'active',
+        canonicalTarget: null,
+        availability: g.status == 'active' ? 'current' : 'unreachable',
+        level: 'L2', sourceRef: 'executor.expand-device-list',
+        status: g.status, staticallyResolvable: g.staticallyResolvable])
+}
 sb << "  ]\n]\n"
+
+// Post-assembly validation across ALL populations, not per-population. Two
+// families could each be internally unique and still collide once combined.
+List<String> dupes = emittedIds.countBy { it }.findAll { it.value > 1 }.keySet() as List
+if (dupes) { System.err.println "GATE: duplicate registry ids after assembly ${dupes}"; System.exit 1 }
+
+// Alias targets must exist, or canonicalTarget points at nothing.
+Set<String> idSet = emittedIds as Set
+REVIEWED_ALIASES.each { String from, String to ->
+    String target = "${NS}function.${to}"
+    if (!idSet.contains(target)) {
+        System.err.println "GATE: alias ${from} -> ${to} but ${target} is not in the registry"
+        System.exit 1
+    }
+}
+
+if (candidateOnly) { System.setOut(realOut); print sb.toString(); System.exit 0 }
+
+println ''
+println "Emitted ${emittedIds.size()} constructs:"
+printf('  statements %d, policy %d, functions %d, vcmds %d, operand members %d, selectors %d%n',
+    statements.size(), 3,
+    emittedIds.count { it.startsWith(NS + 'function.') },
+    emittedIds.count { it.startsWith(NS + 'vcmd.') },
+    emittedIds.count { it.contains('.type.') || it.contains('.name.') || it.contains('.value-type.') || it.contains('.timer-type.') || it.contains('.result-type.') },
+    DEVICE_SELECTOR_GRAMMAR.size())
+println "  aliases with canonicalTarget: ${REVIEWED_ALIASES.size()}"
+println "  region hashes: ${REGION_HASHES.size()}"
 println ''
 println sb.toString()
