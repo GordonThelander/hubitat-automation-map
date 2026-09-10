@@ -290,11 +290,18 @@ end state. That answer is currently unknown and is worth having either way.
   retained-list bounds.
 - **Read-only endpoint (v2.2.9).** One authenticated route that runs the census for a single piston
   on request. It refuses while a scan is active, accepts only an ID this app has already scanned
-  whose type is a webCoRE piston, permits one operation per piston at a time, and builds its
-  response from an explicit field allowlist rather than by copying the result.
-- **Still to come.** A panel in the piston's own focused view, a bounded result cache sized from
-  measured real pistons rather than invented limits, and the evidence work that raises constructs
-  above identification.
+  whose type is a webCoRE piston, permits one operation per piston at a time, bounds the request,
+  the loopback and the analysis with fixed time limits, and builds its response field by field from
+  an explicit allowlist at every level.
+- **Decode coverage card (v2.2.9, dev).** A card in the focused panel of a webCoRE piston. Nothing is
+  fetched until its button is pressed. It leads with whether the whole saved piston was accounted
+  for, then the share of construct positions identified, the constructs found, and any gaps as
+  structural paths. Verified in a browser on the dev hub.
+- **No cache, by measurement.** Results on the dev hub are under 1KB and return well within a second,
+  so a cache would add hub state for no meaningful saving.
+- **Still to come.** The evidence work that raises constructs above identification, which is what
+  eventually lets a piston draw its own flow with anything not yet understood shown as an explicit
+  opaque block.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
