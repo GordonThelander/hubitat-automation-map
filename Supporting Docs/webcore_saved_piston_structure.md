@@ -270,7 +270,8 @@ things.
    - an unrecognised field is shown as a placeholder such as
      `$.s[0].k[0].p[1].exp.<unknown-key#0>`;
    - a source-known editor or data field (`zc` comments, `data`) is reported once as "Opaque field,
-     not interpreted", and nothing beneath it is examined or reported.
+     not interpreted". Its contents are still traversed for accounting and to enforce the depth,
+     value and time bounds, but they are never interpreted, classified or reported.
 
 **The percentage rule.** Unrecognised fields are not construct positions, so a piston can have every
 construct recognised and still contain fields the walker does not understand.
@@ -365,6 +366,8 @@ Measured on a Hubitat C-8 development hub, 2026-09.
   - reading of `lo2`, `lo3`, `ctp`, `rn`, `wt`, `wd` and `m` in the positions the executor uses;
   - opaque-field reporting.
 
-  No coverage result is cached: results are under 1KB and return well within a second.
+  Coverage results are not cached. The endpoint applies fixed traversal, output and time bounds.
+  Measured on the development hub, results were under 1KB and returned within a second; that is
+  observed evidence, not a guarantee.
 - **In progress:** raising statement constructs from L2 to L3, meaning structural grammar and child
   positions proven against the pinned executor and editor source and against editor-saved fixtures.
