@@ -823,11 +823,19 @@ orderedSites.each { String siteId ->
 // Statement consumer provenance folds into the existing statement entries
 // rather than creating wc.statement.subscribe.type.* duplicates.
 Map<String, Set<String>> statementConsumers = [:]
-statements.each { String st -> statementConsumers[st] = ['executeStatement'] as TreeSet }
+Map<String, Set<String>> statementRefs = [:]
+statements.each { String st ->
+    statementConsumers[st] = ['executeStatement'] as TreeSet
+    statementRefs[st] = ['executor.statement-dispatch'] as TreeSet
+}
 canonical.keySet().findAll { it.startsWith(NS + 'statement.') }.each { String id ->
     String st = id.substring((NS + 'statement.').length())
     if (statementConsumers.containsKey(st)) {
         statementConsumers[st].addAll(canonical[id].consumedBy as Set)
+        // Carry the site references too. Folding kept consumedBy and dropped
+        // the evidence supporting it, so a subscription consumer claim had no
+        // resolvable reference behind it.
+        statementRefs[st].addAll(canonical[id].sites as Set)
     } else {
         fail(failures, "statement consumer site references unknown statement '${st}'")
     }
@@ -858,7 +866,7 @@ sb << "  constructs: [\n"
 statements.each { String st ->
     sb << entry("${NS}statement.${st}", [kind: 'statement', name: st, declared: true, implemented: true,
         canonicalTarget: null, availability: 'current', level: 'L2',
-        refs: ['executor.statement-dispatch'],
+        refs: (statementRefs[st] as List),
         consumedByList: (statementConsumers[st] as List)])
 }
 // execution policy flags - part of the agreed population and previously omitted

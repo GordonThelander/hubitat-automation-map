@@ -30,6 +30,19 @@ check(text.contains("'wc.device-selector.variable-device-map'") && text.contains
     'unreachable device-map form is present and marked unreachable')
 passed += 6
 
+// Every consumer claim must have evidence behind it. Folding the statement
+// consumer sites previously kept consumedBy and dropped the site references
+// that supported it, leaving two of three claims unresolvable.
+String everyLine = text.readLines().find { it.contains("'wc.statement.every'") }
+check(everyLine != null, 'wc.statement.every is present')
+['executeStatement', 'subscribeAll', 'subscribeAll.timer'].each { String c ->
+    check(everyLine.contains("'" + c + "'"), "wc.statement.every records consumer ${c}")
+}
+['executor.statement-dispatch', 'statement.subscribe.timer-type', 'statement.subscribe.type'].each { String r ->
+    check(everyLine.contains("'" + r + "'"), "wc.statement.every references evidence ${r}")
+}
+passed += 7
+
 int ids = (text =~ /(?m)^\s+'wc\./).count
 check(ids == 279, "registry holds the reviewed population (${ids} of 279)")
 passed++
@@ -93,6 +106,10 @@ Closure runGen = { File root ->
 
 rmrf(tmpRoot)
 tmpRoot.mkdirs()
+// Registered now so any failing check() below still cleans up. Previously
+// cleanup ran only on the successful path and a failure left a full copy of the
+// checkout in the temp directory.
+Runtime.runtime.addShutdownHook(new Thread({ rmrf(tmpRoot) } as Runnable))
 Closure copyTree
 copyTree = { File src, File dst ->
     dst.mkdirs()
@@ -132,5 +149,36 @@ Closure noControlChars = { File f, String label ->
 noControlChars(new File('tools/webcore-investigation/generate-construct-registry.groovy'), 'generator')
 noControlChars(checkedIn, 'generated candidate')
 passed += 2
+
+// Durable orphan-gate test. The gate is enforced in the generator, but it has
+// twice been a thing that existed in a report rather than in verification, so it
+// gets an assertion of its own.
+//
+// Mutates NORMALIZATION, not FROZEN_SITES: injecting a bogus member into the
+// frozen set is caught by the membership gate first, which is correct behaviour
+// but proves the wrong gate.
+File genSrc = new File('tools/webcore-investigation/generate-construct-registry.groovy')
+String genOriginal = genSrc.getText('UTF-8')
+String mutated = genOriginal.replace(
+    "'operand.subscribe.type':           [prefix: 'operand.',              consumer: 'subscribeAll'],",
+    "'operand.subscribe.type':           [prefix: 'operand.nonexistent.',  consumer: 'subscribeAll'],")
+check(mutated != genOriginal, 'orphan mutation target found in generator')
+passed++
+
+try {
+    genSrc.setText(mutated, 'UTF-8')
+    def orph = runGen(srcRoot)
+    check(orph.rc != 0, 'orphan in a consumer-only site fails the generator')
+    check(orph.out.contains('orphan member'), 'orphan is reported with the fixed reason')
+    check(!orph.out.contains('@Field static final Map WEBCORE_CONSTRUCT_REGISTRY'),
+        'no candidate registry is emitted when an orphan is present')
+    passed += 3
+} finally {
+    genSrc.setText(genOriginal, 'UTF-8')
+}
+
+// Prove the restore worked, so a failure here cannot leave the generator mutated.
+check(genSrc.getText('UTF-8') == genOriginal, 'generator restored after orphan mutation')
+passed++
 
 println "${passed} passed, 0 failed"
