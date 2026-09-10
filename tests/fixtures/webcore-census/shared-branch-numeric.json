@@ -1,5 +1,4 @@
 {
-  "_proves": "all five numeric members stay distinct despite sharing conversion branches at expression.evaluate.result-type",
   "s": [
     {
       "t": "action",
@@ -12,11 +11,26 @@
               "exp": {
                 "t": "expression",
                 "i": [
-                  { "t": "integer", "v": 1 },
-                  { "t": "float", "v": 2 },
-                  { "t": "double", "v": 3 },
-                  { "t": "decimal", "v": 4 },
-                  { "t": "number", "v": 5 }
+                  {
+                    "t": "integer",
+                    "v": 1
+                  },
+                  {
+                    "t": "float",
+                    "v": 2
+                  },
+                  {
+                    "t": "double",
+                    "v": 3
+                  },
+                  {
+                    "t": "decimal",
+                    "v": 4
+                  },
+                  {
+                    "t": "number",
+                    "v": 5
+                  }
                 ]
               }
             }

@@ -1,35 +1,144 @@
 {
-  "_proves": "one ordinary member per saved-reachable dispatch site",
-  "_note": "Increment 2 corrected the saved keys: value types are vt (sMvt), not ovt; an expression is reached through an operand's exp; a task carries c and p. expression.item.type is not represented because it is not saved-reachable.",
   "s": [
     {
       "t": "action",
-      "d": [":00000000000000000000000000000000:"],
+      "d": [
+        ":00000000000000000000000000000000:"
+      ],
       "tep": "",
       "tsp": "",
       "tcp": "c",
       "c": [
-        { "t": "condition", "co": "is", "lo": { "t": "d", "d": [":11111111111111111111111111111111:"] } }
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "d",
+            "d": [
+              ":11111111111111111111111111111111:"
+            ]
+          }
+        }
       ],
       "k": [
-        { "c": "setVariable", "p": [ { "t": "x", "x": "counter", "vt": "variable" } ] }
+        {
+          "c": "setVariable",
+          "p": [
+            {
+              "t": "x",
+              "x": "counter",
+              "vt": "variable"
+            }
+          ]
+        }
       ]
     },
-    { "t": "on", "c": [ { "lo": { "t": "x", "x": "counter" } } ] },
-    { "t": "every", "c": [ { "t": "condition", "co": "is", "lo": { "t": "c", "c": 1 } } ] },
-    { "t": "if", "c": [ { "t": "condition", "co": "is", "lo": { "t": "v", "v": "mode" } } ] },
-    { "t": "while", "c": [ { "t": "condition", "co": "is", "lo": { "t": "v", "v": "tile" } } ] },
-    { "t": "repeat", "c": [ { "t": "condition", "co": "is", "lo": { "t": "s", "s": "sunset", "vt": "time" } } ] },
-    { "t": "switch", "lo": { "t": "c", "vt": "date", "c": 1 }, "cs": [] },
+    {
+      "t": "on",
+      "c": [
+        {
+          "lo": {
+            "t": "x",
+            "x": "counter"
+          }
+        }
+      ]
+    },
+    {
+      "t": "every",
+      "c": [
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "c",
+            "c": 1
+          }
+        }
+      ]
+    },
+    {
+      "t": "if",
+      "c": [
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "v",
+            "v": "mode"
+          }
+        }
+      ]
+    },
+    {
+      "t": "while",
+      "c": [
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "v",
+            "v": "tile"
+          }
+        }
+      ]
+    },
+    {
+      "t": "repeat",
+      "c": [
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "s",
+            "s": "sunset",
+            "vt": "time"
+          }
+        }
+      ]
+    },
+    {
+      "t": "switch",
+      "lo": {
+        "t": "c",
+        "vt": "date",
+        "c": 1
+      },
+      "cs": []
+    },
     {
       "t": "do",
       "k": [
-        { "c": "log", "p": [ { "t": "e", "exp": { "t": "expression", "i": [ { "t": "string", "v": "x" } ] } } ] }
+        {
+          "c": "log",
+          "p": [
+            {
+              "t": "e",
+              "exp": {
+                "t": "expression",
+                "i": [
+                  {
+                    "t": "string",
+                    "v": "x"
+                  }
+                ]
+              }
+            }
+          ]
+        }
       ]
     },
-    { "t": "each" },
-    { "t": "for" },
-    { "t": "break" },
-    { "t": "exit" }
+    {
+      "t": "each"
+    },
+    {
+      "t": "for"
+    },
+    {
+      "t": "break"
+    },
+    {
+      "t": "exit"
+    }
   ]
 }

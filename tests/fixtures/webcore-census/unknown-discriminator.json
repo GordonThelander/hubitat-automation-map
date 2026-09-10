@@ -1,6 +1,16 @@
 {
-  "_proves": "an unregistered discriminator yields unknown-operand-type rather than being skipped",
   "s": [
-    { "t": "action", "c": [ { "t": "condition", "co": "is", "lo": { "t": "zzz-not-a-real-operand-type" } } ] }
+    {
+      "t": "action",
+      "c": [
+        {
+          "t": "condition",
+          "co": "is",
+          "lo": {
+            "t": "zzz-not-a-real-operand-type"
+          }
+        }
+      ]
+    }
   ]
 }
