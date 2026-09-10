@@ -1,0 +1,14 @@
+{
+  "_proves": "one ordinary member per dispatch site resolves to that site's construct",
+  "s": [
+    { "t": "action",
+      "c": [ { "t": "condition", "lo": { "t": "d", "d": [":00000000000000000000000000000000:"] }, "co": "is" } ],
+      "k": [ { "t": "expression", "i": [ { "t": "integer", "v": 1 } ] } ] },
+    { "t": "if",     "c": [ { "t": "condition", "lo": { "t": "v", "v": "time" }, "co": "is" } ] },
+    { "t": "while",  "c": [ { "t": "condition", "lo": { "t": "s", "s": "sunset" }, "co": "is" } ] },
+    { "t": "repeat", "c": [ { "t": "condition", "lo": { "t": "c" }, "co": "is" } ] },
+    { "t": "every",  "c": [ { "t": "condition", "lo": { "t": "e" }, "co": "is" } ] },
+    { "t": "on",     "c": [ { "t": "condition", "lo": { "t": "x" }, "co": "changes" } ] },
+    { "t": "each" }, { "t": "for" }, { "t": "switch" }, { "t": "do" }, { "t": "break" }, { "t": "exit" }
+  ]
+}

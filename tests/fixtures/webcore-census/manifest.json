@@ -1,0 +1,33 @@
+{
+  "increment": 1,
+  "purpose": "prove the extractor and lookup model, not per-member semantics",
+  "authority": "queue 533 revised list, approved 535",
+  "notRequired": "a fixture per member of a large shared branch merely because it falls through",
+  "fixtures": [
+    { "file": "ordinary-members.json", "proves": "one ordinary member per dispatch site",
+      "expectConstructs": ["statement.action","statement.if","statement.while","statement.repeat",
+                           "statement.every","statement.on","statement.each","statement.for",
+                           "statement.switch","statement.do","statement.break","statement.exit",
+                           "operand.evaluate.type.d","operand.evaluate.type.v","operand.evaluate.type.s",
+                           "operand.evaluate.type.c","operand.evaluate.type.e",
+                           "operand.event-match.type.x","expression.item.type.integer"] },
+    { "file": "empty-operand.json", "proves": "t:'' recognised and distinct from missing t",
+      "expectConstructs": ["operand.evaluate.type.empty"],
+      "expectDistinct": ["present-empty", "absent"] },
+    { "file": "shared-branch-numeric.json", "proves": "five members survive one shared branch",
+      "expectConstructs": ["expression.item.type.integer","expression.item.type.float",
+                           "expression.item.type.double","expression.item.type.decimal",
+                           "expression.item.type.number"],
+      "expectCount": 5,
+      "note": "must NOT collapse to one construct; sharedBranchGroup is provenance only" },
+    { "file": "unknown-discriminator.json", "proves": "unregistered discriminator is reported",
+      "expectReason": "unknown-operand-type",
+      "note": "must not echo the raw candidate value into the reason or path" },
+    { "file": "nested-switch-trap.json", "proves": "event matcher not confused with statement switch",
+      "expectConstructs": ["operand.event-match.type.p","operand.event-match.type.v",
+                           "operand.event-match.type.x"] },
+    { "file": "same-spelling-multisite.json", "proves": "context-qualified lookup, not flat union",
+      "expectConstructs": ["operand.event-match.type.p","operand.evaluate.type.p"],
+      "expectDistinct": ["operand.event-match.type.p", "operand.evaluate.type.p"] }
+  ]
+}

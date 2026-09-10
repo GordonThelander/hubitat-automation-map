@@ -1,0 +1,12 @@
+{
+  "_proves": "t:'' is a recognised member of operand.evaluate.type, distinct from a missing t",
+  "s": [
+    {
+      "t": "action",
+      "c": [
+        { "t": "condition", "lo": { "t": "", "i": 1 }, "co": "is" },
+        { "t": "condition", "lo": { "i": 2 }, "co": "is" }
+      ]
+    }
+  ]
+}

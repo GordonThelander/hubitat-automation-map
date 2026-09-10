@@ -1,0 +1,17 @@
+{
+  "_proves": "all five expression.item.type members stay distinct despite one shared conversion branch",
+  "s": [
+    {
+      "t": "action",
+      "k": [
+        { "t": "expression", "i": [
+          { "t": "integer", "v": 1 },
+          { "t": "float",   "v": 2 },
+          { "t": "double",  "v": 3 },
+          { "t": "decimal", "v": 4 },
+          { "t": "number",  "v": 5 }
+        ] }
+      ]
+    }
+  ]
+}
