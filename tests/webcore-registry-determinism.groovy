@@ -8,6 +8,7 @@
 // explicitly rather than passing quietly, because a test that says nothing on
 // absence is indistinguishable from one that verified something.
 
+String GENERATOR_PATH = 'tools/webcore-investigation/generate-construct-registry.groovy'
 File checkedIn = new File('tools/webcore-investigation/generated/webcore_construct_registry.groovy')
 File srcRoot = new File('tmp/webcore-source')
 
@@ -93,11 +94,11 @@ File tmpRoot = new File(System.getProperty('java.io.tmpdir'),
     'wc-region-neg-' + UUID.randomUUID().toString())
 void rmrf(File f) { if (f.isDirectory()) f.listFiles().each { rmrf(it) }; f.delete() }
 
-Closure runGen = { File root ->
+Closure runGen = { File root, File script = null ->
     List<String> env = System.getenv().collect { k, v -> "${k}=${v}" as String }
         .findAll { !it.startsWith('JAVA_HOME=') }
     env << ("JAVA_HOME=" + new File(System.getProperty('java.home')).canonicalPath)
-    def proc = ['groovy.bat', 'tools/webcore-investigation/generate-construct-registry.groovy',
+    def proc = ['groovy.bat', (script ?: new File(GENERATOR_PATH)).path,
                 root.path, '--emit'].execute(env as String[], new File('.'))
     StringWriter o = new StringWriter(); StringWriter e = new StringWriter()
     proc.consumeProcessOutput(o, e); proc.waitFor()
@@ -116,6 +117,7 @@ copyTree = { File src, File dst ->
     src.listFiles().each { File f -> f.isDirectory() ? copyTree(f, new File(dst, f.name)) : (new File(dst, f.name).bytes = f.bytes) }
 }
 copyTree(srcRoot, tmpRoot)
+try {
 
 // Missing anchor: remove the expandDeviceList definition entirely.
 File pistonCopy = new File(tmpRoot, 'smartapps/ady624/webcore-piston.src/webcore-piston.groovy')
@@ -132,7 +134,9 @@ pistonCopy.setText(orig.replace('private List<String> expandDeviceList(Map r9,Li
 def trunc = runGen(tmpRoot)
 check(trunc.rc != 0, 'unbalanced region boundary fails the generator')
 passed++
-rmrf(tmpRoot)
+} finally {
+    rmrf(tmpRoot)
+}
 
 // C0 control characters make a source file read as binary to grep and git.
 // The generator briefly contained literal NUL and SOH separators, which is the
@@ -146,39 +150,54 @@ Closure noControlChars = { File f, String label ->
     }
     check(bad.isEmpty(), "${label} contains no C0 control characters${bad ? ' (found ' + bad.unique() + ')' : ''}")
 }
-noControlChars(new File('tools/webcore-investigation/generate-construct-registry.groovy'), 'generator')
+noControlChars(new File(GENERATOR_PATH), 'generator')
 noControlChars(checkedIn, 'generated candidate')
 passed += 2
 
-// Durable orphan-gate test. The gate is enforced in the generator, but it has
-// twice been a thing that existed in a report rather than in verification, so it
-// gets an assertion of its own.
+// Durable orphan-gate test, isolated from the shared worktree.
 //
-// Mutates NORMALIZATION, not FROZEN_SITES: injecting a bogus member into the
-// frozen set is caught by the membership gate first, which is correct behaviour
-// but proves the wrong gate.
-File genSrc = new File('tools/webcore-investigation/generate-construct-registry.groovy')
-String genOriginal = genSrc.getText('UTF-8')
-String mutated = genOriginal.replace(
+// An earlier version mutated the TRACKED generator and restored it in finally.
+// That is unsafe in this collaboration model: another agent can read or edit the
+// file during the mutation window, and a forced termination leaves tracked
+// source altered. The mutation now exists only in a UUID-named temporary copy;
+// the tracked generator is read, never written.
+//
+// Mutates SITE_NORMALIZATION, not FROZEN_SITES: a bogus frozen member trips the
+// membership gate first and proves the wrong gate.
+File tracked = new File(GENERATOR_PATH)
+String trackedBefore = tracked.getText('UTF-8')
+String hashBefore = java.security.MessageDigest.getInstance('SHA-256')
+    .digest(trackedBefore.getBytes('UTF-8')).collect { String.format('%02x', it & 0xFF) }.join()
+
+String mutated = trackedBefore.replace(
     "'operand.subscribe.type':           [prefix: 'operand.',              consumer: 'subscribeAll'],",
     "'operand.subscribe.type':           [prefix: 'operand.nonexistent.',  consumer: 'subscribeAll'],")
-check(mutated != genOriginal, 'orphan mutation target found in generator')
+check(mutated != trackedBefore, 'orphan mutation target found in generator')
 passed++
 
+File orphDir = new File(System.getProperty('java.io.tmpdir'),
+    'wc-orphan-' + UUID.randomUUID().toString())
+Runtime.runtime.addShutdownHook(new Thread({ rmrf(orphDir) } as Runnable))
 try {
-    genSrc.setText(mutated, 'UTF-8')
-    def orph = runGen(srcRoot)
+    orphDir.mkdirs()
+    File mutatedScript = new File(orphDir, 'generate-construct-registry-mutated.groovy')
+    mutatedScript.setText(mutated, 'UTF-8')
+    def orph = runGen(srcRoot, mutatedScript)
     check(orph.rc != 0, 'orphan in a consumer-only site fails the generator')
     check(orph.out.contains('orphan member'), 'orphan is reported with the fixed reason')
     check(!orph.out.contains('@Field static final Map WEBCORE_CONSTRUCT_REGISTRY'),
         'no candidate registry is emitted when an orphan is present')
     passed += 3
 } finally {
-    genSrc.setText(genOriginal, 'UTF-8')
+    rmrf(orphDir)
 }
 
-// Prove the restore worked, so a failure here cannot leave the generator mutated.
-check(genSrc.getText('UTF-8') == genOriginal, 'generator restored after orphan mutation')
+// The tracked generator must be untouched by this test, proven by hash rather
+// than by a restore that only runs if nothing killed the process first.
+String hashAfter = java.security.MessageDigest.getInstance('SHA-256')
+    .digest(tracked.getBytes()).collect { String.format('%02x', it & 0xFF) }.join()
+check(hashAfter == hashBefore, 'tracked generator is unmodified by the orphan test')
 passed++
+
 
 println "${passed} passed, 0 failed"
