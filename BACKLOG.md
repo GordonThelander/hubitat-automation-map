@@ -75,10 +75,12 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 **Still open, waiting on Gordon:**
 
 - **Narrow windows:** not yet checked. It needs the browser window resized or the viewport overridden.
-- **Indented font size:** no change until the exact text is identified, since the webCoRE text
-  measures the same as Rule Machine's.
-- **webCoRE piston locals:** they keep [LOC], the recommendation because the tag marks scope, not
-  engine, until Gordon decides.
+
+**Decided by Gordon, 2026-09-11:**
+
+- **Indented font size:** kept as it is. The webCoRE text already measures the same as Rule Machine's.
+- **webCoRE piston locals:** tagged [WCV] in the dropdowns, Quick Search, their panel and the rule
+  variables card. Rule Machine locals keep [LOC].
 
 ## Next
 

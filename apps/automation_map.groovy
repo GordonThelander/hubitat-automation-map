@@ -11541,7 +11541,7 @@ function renderRuleVariablesCard(appId) {
   if (!refs.length && !nonResolved.length && !webcoreVariableEdges.length && !webcoreDeviceEdges.length && !webcoreIssue) { box.innerHTML = ''; return; }
 
   // tag is the same [XXX] convention as the Focus dropdowns (queue 305/306) -
-  // LOC/HVR reflect only the already-proven scope filter below, never guessed.
+  // LOC/WCV/HVR reflect only the already-proven scope filter below, never guessed.
   function line(name, operation, usageRole, tag) {
     const op = operation === 'write' ? 'writes' : 'reads';
     const role = usageRole ? ' (' + extEsc(usageRole) + ')' : '';
@@ -11550,7 +11550,7 @@ function renderRuleVariablesCard(appId) {
   }
 
   const localItems = refs.filter(function (r) { return r.scope === 'local'; })
-    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'LOC'); });
+    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, localVarTag(appId)); });
   const hubItems = refs.filter(function (r) { return r.scope === 'hub'; })
     .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'HVR'); });
   const reviewItems = nonResolved.map(function (r) {
@@ -12308,9 +12308,14 @@ function localVarDisplay(n) {
   const owner = ALL_NODES.filter(function (a) { return a.id === n.ownerAppId; })[0];
   return { name: n.title, owner: owner ? owner.title : 'an unknown rule' };
 }
+// A webCoRE piston local is tagged WCV and every other rule local LOC (Gordon, 2026-09-11).
+function localVarTag(ownerAppId) {
+  const owner = ALL_NODES.filter(function (a) { return a.id === ownerAppId; })[0];
+  return owner && owner.appType === 'webCoRE Piston' ? 'WCV' : 'LOC';
+}
 function localVarOptionText(n) {
   const d = localVarDisplay(n);
-  return '[LOC] ' + d.name + ' (in ' + d.owner + (n.unreferencedLocal ? ', unused' : '') + ')';
+  return '[' + localVarTag(n.ownerAppId) + '] ' + d.name + ' (in ' + d.owner + (n.unreferencedLocal ? ', unused' : '') + ')';
 }
 function localVarCanvasText(n) {
   const d = localVarDisplay(n);

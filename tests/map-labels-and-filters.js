@@ -37,10 +37,11 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed
 const sandbox = {
     APP_TYPE_TAGS: { 'Tapo Integration': 'INT', 'Rule-5.1': 'RM5', 'webCoRE Piston': 'WCP', 'Maker API': 'INT' },
     APP_TITLE_BY_ID: { a1: '__AM WC Read B Write A (Paused) (webCoRE Piston)', a2: 'Perimeter Open (Rule-5.1)' },
-    ALL_NODES: [{ id: 'a2', title: 'Perimeter Open (Rule-5.1)' }]
+    ALL_NODES: [{ id: 'a1', title: '__AM WC Read B Write A (Paused) (webCoRE Piston)', appType: 'webCoRE Piston' },
+                { id: 'a2', title: 'Perimeter Open (Rule-5.1)', appType: 'Rule-5.1' }]
 };
 vm.createContext(sandbox);
-vm.runInContext([extractFunction('appOptionText'), extractFunction('localVarDisplay'), extractFunction('localVarOptionText'),
+vm.runInContext([extractFunction('appOptionText'), extractFunction('localVarDisplay'), extractFunction('localVarTag'), extractFunction('localVarOptionText'),
     extractFunction('localVarCanvasText'),
     extractLine('const RULE_LINK_KINDS = '), extractLine('const VARIABLE_KINDS = '), extractFunction('edgesForKindFilter'),
     'function kinds(list) { return list.map(function (e) { return e.id; }).join(","); }'].join('\n'), sandbox);
@@ -50,7 +51,18 @@ vm.runInContext([extractFunction('appOptionText'), extractFunction('localVarDisp
 check('a Local Variable label names its owner once', function () {
     const text = sandbox.localVarOptionText({ title: 'WC_Local_Test_Var (Local Variable in __AM WC Read B Write A (Paused) (webCoRE Piston))',
         ownerAppId: 'a1', unreferencedLocal: true });
-    assert(text === '[LOC] WC_Local_Test_Var (in __AM WC Read B Write A (Paused) (webCoRE Piston), unused)', text);
+    assert(text === '[WCV] WC_Local_Test_Var (in __AM WC Read B Write A (Paused) (webCoRE Piston), unused)', text);
+});
+
+check('a webCoRE piston local is tagged WCV and a Rule Machine local LOC', function () {
+    assert(sandbox.localVarTag('a1') === 'WCV', 'piston local not WCV');
+    assert(sandbox.localVarTag('a2') === 'LOC', 'rule local not LOC');
+    assert(sandbox.localVarTag('missing') === 'LOC', 'unknown owner not LOC');
+});
+
+check('the variables card tags a piston local the same way as the dropdowns', function () {
+    const card = extractFunction('renderRuleVariablesCard');
+    assert(card.indexOf('localVarTag(appId)') >= 0 && card.indexOf("r.usageRole, 'LOC')") < 0, 'variables card still hard-codes LOC');
 });
 
 check('a referenced Local Variable label has no unused marker', function () {
