@@ -11549,11 +11549,24 @@ function renderRuleVariablesCard(appId) {
     return '<li>' + prefix + extEsc(name) + ' - ' + op + role + '</li>';
   }
 
-  const localItems = refs.filter(function (r) { return r.scope === 'local'; })
+  // One visible row per variable, operation and role. The saved references stay one
+  // per field for evidence and export; only identical visible rows are merged here.
+  function distinctBy(list, keyOf) {
+    const seen = {};
+    return list.filter(function (r) {
+      const key = keyOf(r);
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+  const referenceKey = function (r) { return JSON.stringify([r.scope, r.canonicalName || r.name, r.operation, r.usageRole || null]); };
+
+  const localItems = distinctBy(refs.filter(function (r) { return r.scope === 'local'; }), referenceKey)
     .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, localVarTag(appId)); });
-  const hubItems = refs.filter(function (r) { return r.scope === 'hub'; })
+  const hubItems = distinctBy(refs.filter(function (r) { return r.scope === 'hub'; }), referenceKey)
     .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'HVR'); });
-  const reviewItems = nonResolved.map(function (r) {
+  const reviewItems = distinctBy(nonResolved, function (r) { return JSON.stringify([r.name, r.operation, r.status]); }).map(function (r) {
     const reason = r.status === 'ambiguous' ? 'scope not distinguishable from configuration' : 'no matching definition found';
     return '<li>' + extEsc(r.name) + ' - ' + (r.operation === 'write' ? 'writes' : 'reads') + ', ' + reason + '</li>';
   });

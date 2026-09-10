@@ -81,6 +81,9 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **Indented font size:** kept as it is. The webCoRE text already measures the same as Rule Machine's.
 - **webCoRE piston locals:** tagged [WCV] in the dropdowns, Quick Search, their panel and the rule
   variables card. Rule Machine locals keep [LOC].
+- **Repeated variable card rows.** A rule that writes the same Local Variable from two fields showed
+  "[LOC] Overloadcount - writes" twice. Identical visible rows now merge by scope, name, operation and
+  read role in the Local, Hub and Needs review lists; the saved references stay one per field.
 
 ## Next
 
