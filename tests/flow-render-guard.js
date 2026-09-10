@@ -306,10 +306,11 @@ async function main() {
         });
     });
 
-    check('Insights hides the decode coverage and rule variables cards of the item it replaces', function () {
+    check('Insights hides the decode coverage, community and rule variables cards of the item it replaces', function () {
         const sb = makeSandbox();
         sb.insightsClick();
         assert(sb.log.indexOf('coverage:null') >= 0, 'coverage card left in place under Insights');
+        assert(sb.log.indexOf('community:null') >= 0, 'community card left in place under Insights');
         assert(sb.document.getElementById('ruleVariablesCard').innerHTML === '', 'variables card left in place under Insights');
     });
 
