@@ -283,8 +283,25 @@ async function main() {
         assert(rendered(body).indexOf('1 matched position is below L2') >= 0, 'singular wording wrong');
     });
 
+    check('100 percent of constructs with unrecognised fields is still shown as a gap, with the count beside it', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.unrecognised = [{ path: '$.s[0].<unknown-key#1>', reason: 'unknown-key', nodeKind: 'scalar' },
+                             { path: '$.s[0].<unknown-key#2>', reason: 'unknown-key', nodeKind: 'scalar' }];
+        const h = rendered(body);
+        assert(h.indexOf('dcRateGap') >= 0, 'a 100 percent rate with unrecognised fields reads as a pass');
+        assert(h.indexOf('4 of 4 construct positions recognised at L2 or above; 2 positions not identified') >= 0, 'not-identified count missing from the rate line');
+    });
+
+    check('a truncated walk states unrecognised fields on its partial count line too', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.status = 'truncated';
+        body.unrecognised = [{ path: '$.s[0].<unknown-key#1>', reason: 'unknown-key', nodeKind: 'scalar' }];
+        assert(rendered(body).indexOf('visited construct positions recognised at L2 or above; 1 position not identified') >= 0, 'partial line missing the count');
+    });
+
     check('a response where every construct is at L2 still reads 100 percent', function () {
-        assert(rendered(completeBody).indexOf('100% ') >= 0, 'all-L2 response no longer complete');
+        const h = rendered(completeBody);
+        assert(h.indexOf('100% ') >= 0 && h.indexOf('dcRateGap') < 0 && h.indexOf('not identified') < 0, 'all-L2 response no longer a clean complete');
     });
 
     // ---- truncated walks ----------------------------------------------------------
