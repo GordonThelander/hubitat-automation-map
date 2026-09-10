@@ -9284,8 +9284,9 @@ String buildMapHtml() {
       <option value="hasComponent">Has component only</option>
       <option value="rulelinks">Rule to rule only</option>
       <option value="depends">External systems only</option>
-      <option value="variables">Variable reads and writes only</option>
-      <option value="deviceRead">webCoRE device reads only</option>
+      <option value="variables">Variable use only</option>
+      <option value="synchronizedWith">Variable connectors only</option>
+      <option value="deviceRead">webCoRE device state reads only</option>
     </select></label>
     <div id="headerActions">
       <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
@@ -9787,7 +9788,7 @@ function styledNode(n, useFullLabel, roleByDevice) {
     // the status and is what the hover tooltip shows. The fallback matters: a
     // graph cached before draw existed has only title, and rendering undefined
     // would blank every label on the map rather than fail visibly.
-    id: n.id, label: useFullLabel ? (n.draw || n.title) : n.label, title: n.title, color: color,
+    id: n.id, label: useFullLabel ? (n.group === 'localVariable' ? localVarCanvasText(n) : (n.draw || n.title)) : n.label, title: n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
     // 12, not 13, and a 4px stroke rather than 5. At FOCUS_MAX_ZOOM (1.05) this
@@ -10362,6 +10363,14 @@ function neighborhood(nodeId, edgePool) {
   return { ids: ids, edgeList: edgeList };
 }
 
+// The edges a Show filter keeps. Rule links and variable use each span several kinds.
+function edgesForKindFilter(kindVal, edges) {
+  if (kindVal === 'all') return edges;
+  if (kindVal === 'rulelinks') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
+  if (kindVal === 'variables') return edges.filter(function (e) { return VARIABLE_KINDS.indexOf(e.kind) !== -1; });
+  return edges.filter(function (e) { return e.kind === kindVal; });
+}
+
 function applyFilters() {
   const appVal = appSelect.getValue();
   const devVal = deviceSelect.getValue();
@@ -10369,14 +10378,7 @@ function applyFilters() {
   const localVarVal = localVarSelect.getValue();
   const kindVal = document.getElementById('kindFilter').value;
 
-  let pool = ALL_EDGES;
-  if (kindVal === 'rulelinks') {
-    pool = ALL_EDGES.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
-  } else if (kindVal === 'variables') {
-    pool = ALL_EDGES.filter(function (e) { return VARIABLE_KINDS.indexOf(e.kind) !== -1; });
-  } else if (kindVal !== 'all') {
-    pool = ALL_EDGES.filter(function (e) { return e.kind === kindVal; });
-  }
+  const pool = edgesForKindFilter(kindVal, ALL_EDGES);
 
   let ids = null;
   let shownEdges = pool;
@@ -11372,7 +11374,7 @@ function showInertPanel(node) {
 function showUnreferencedLocalPanel(node) {
   const owner = ALL_NODES.filter(function (n) { return n.id === node.ownerAppId; })[0];
   document.getElementById('flowTitle').textContent = localVarOptionText(node);
-  setFlowSub('Declared in ' + (owner ? owner.title : 'a rule no longer on this map') + '.', false);
+  setFlowSub(owner ? '' : 'The rule that declared it is no longer on this map.', false);
   flowChart.innerHTML = '<p class="sub">No proven decoded reference in this rule - not read in a trigger, condition or action, and not written.</p>';
   // Both correctly no-op on a non-rule/non-app node (their own group checks
   // already handle that) - called anyway so switching here from a rule with
@@ -12201,8 +12203,8 @@ function appOptionText(n) {
   const typeSuffix = n.appType ? ' (' + n.appType + ')' : '';
   if (typeSuffix && title.length > typeSuffix.length && title.slice(-typeSuffix.length) === typeSuffix) {
     const head = title.slice(0, -typeSuffix.length);
-    // Only when the label is the type name itself, as in Tapo Integration (Tapo Integration).
-    if (head === n.appType || head.indexOf(n.appType + ' (') === 0) title = head;
+    // Only when the label is exactly the type name, as in Tapo Integration (Tapo Integration).
+    if (head === n.appType) title = head;
   }
   return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + title;
 }
@@ -12257,13 +12259,22 @@ function hubVarOptionText(n) {
 // runs once per dropdown render, not once per keystroke.
 const APP_TITLE_BY_ID = {};
 ALL_NODES.forEach(function (n) { if (n.group === 'app') APP_TITLE_BY_ID[n.id] = n.title; });
+// The one place a Local Variable's name and owner are split out of its node title,
+// so the dropdowns, Quick Search, the canvas and its panel all name the owner once.
+function localVarDisplay(n) {
+  const marker = ' (Local Variable in ';
+  const cut = n.title.indexOf(marker);
+  if (cut > 0 && n.title.slice(-1) === ')') return { name: n.title.slice(0, cut), owner: n.title.slice(cut + marker.length, -1) };
+  const owner = ALL_NODES.filter(function (a) { return a.id === n.ownerAppId; })[0];
+  return { name: n.title, owner: owner ? owner.title : 'an unknown rule' };
+}
 function localVarOptionText(n) {
-  const ownerTitle = APP_TITLE_BY_ID[n.ownerAppId] || 'an unknown rule';
-  const unused = n.unreferencedLocal ? ', unused' : '';
-  // The node title already carries (Local Variable in owner); name the owner once.
-  const cut = n.title.indexOf(' (Local Variable in ');
-  const name = cut > 0 ? n.title.slice(0, cut) : n.title;
-  return '[LOC] ' + name + ' (in ' + ownerTitle + unused + ')';
+  const d = localVarDisplay(n);
+  return '[LOC] ' + d.name + ' (in ' + d.owner + (n.unreferencedLocal ? ', unused' : '') + ')';
+}
+function localVarCanvasText(n) {
+  const d = localVarDisplay(n);
+  return d.name + ' (in ' + d.owner + ')';
 }
 function pickOptionText(n, group) {
   if (group === 'app') return appOptionText(n);

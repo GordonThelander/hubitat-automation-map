@@ -1,5 +1,5 @@
-// Screen audit batch 1 (backlog 29), against the REAL label builders and filter
-// markup extracted from apps/automation_map.groovy.
+// Screen audit batch 1 (backlog 29), against the REAL label builders, filter
+// function and markup extracted from apps/automation_map.groovy.
 //
 // Usage: node tests/map-labels-and-filters.js
 'use strict';
@@ -21,6 +21,12 @@ function extractFunction(name) {
     throw new Error('unbalanced ' + name);
 }
 
+function extractLine(prefix) {
+    const start = source.indexOf(prefix);
+    if (start < 0) throw new Error('could not find ' + prefix);
+    return source.slice(start, source.indexOf('\n', start));
+}
+
 let pass = 0, fail = 0;
 function check(name, fn) {
     try { fn(); console.log('PASS  ' + name); pass++; }
@@ -30,10 +36,14 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed
 
 const sandbox = {
     APP_TYPE_TAGS: { 'Tapo Integration': 'INT', 'Rule-5.1': 'RM5', 'webCoRE Piston': 'WCP', 'Maker API': 'INT' },
-    APP_TITLE_BY_ID: { a1: '__AM WC Read B Write A (Paused) (webCoRE Piston)', a2: 'Perimeter Open (Rule-5.1)' }
+    APP_TITLE_BY_ID: { a1: '__AM WC Read B Write A (Paused) (webCoRE Piston)', a2: 'Perimeter Open (Rule-5.1)' },
+    ALL_NODES: [{ id: 'a2', title: 'Perimeter Open (Rule-5.1)' }]
 };
 vm.createContext(sandbox);
-vm.runInContext(extractFunction('appOptionText') + '\n' + extractFunction('localVarOptionText'), sandbox);
+vm.runInContext([extractFunction('appOptionText'), extractFunction('localVarDisplay'), extractFunction('localVarOptionText'),
+    extractFunction('localVarCanvasText'),
+    extractLine('const RULE_LINK_KINDS = '), extractLine('const VARIABLE_KINDS = '), extractFunction('edgesForKindFilter'),
+    'function kinds(list) { return list.map(function (e) { return e.id; }).join(","); }'].join('\n'), sandbox);
 
 // ---- E. Local Variable labels -----------------------------------------------------
 
@@ -56,39 +66,88 @@ check('the unused Local Variable panel title adds nothing after the option text'
     assert(source.indexOf("localVarOptionText(node) + ' (Local Variable)'") < 0, 'panel title still appends (Local Variable)');
 });
 
+check('the canvas label names a Local Variable owner once', function () {
+    const text = sandbox.localVarCanvasText({ title: 'localFlag (Local Variable in ___ Random WC Piston test (Paused) (webCoRE Piston))' });
+    assert(text === 'localFlag (in ___ Random WC Piston test (Paused) (webCoRE Piston))', text);
+});
+
+check('dropdowns, Quick Search, canvas and panel share one Local Variable builder', function () {
+    assert(extractFunction('localVarOptionText').indexOf('localVarDisplay(n)') >= 0, 'option text has its own split');
+    assert(extractFunction('localVarCanvasText').indexOf('localVarDisplay(n)') >= 0, 'canvas text has its own split');
+    assert(source.indexOf("n.group === 'localVariable' ? localVarCanvasText(n)") >= 0, 'canvas label does not use the builder');
+    assert(extractFunction('pickOptionText').indexOf('localVarOptionText(n)') >= 0, 'Quick Search does not use the builder');
+    const panel = extractFunction('showUnreferencedLocalPanel');
+    assert(panel.indexOf('localVarOptionText(node)') >= 0 && panel.indexOf("'Declared in ' + (owner") < 0, 'panel repeats the owner');
+    assert((source.match(/indexOf\(' \(Local Variable in '\)/g) || []).length === 0, 'a second title split exists');
+});
+
 // ---- F. App labels ------------------------------------------------------------------
 
-check('an app whose label is its type name does not repeat it', function () {
+check('an app whose label is exactly its type name does not repeat it', function () {
     assert(sandbox.appOptionText({ title: 'Tapo Integration (Tapo Integration)', appType: 'Tapo Integration' }) === '[INT] Tapo Integration', 'type repeated');
 });
 
-check('the repeat is removed when the label adds its own detail after the type name', function () {
-    const text = sandbox.appOptionText({ title: 'Tapo Integration (Paused) (Tapo Integration)', appType: 'Tapo Integration' });
-    assert(text === '[INT] Tapo Integration (Paused)', text);
-});
-
-check('an ordinary app keeps its type', function () {
-    const text = sandbox.appOptionText({ title: 'Perimeter Open (Rule-5.1)', appType: 'Rule-5.1' });
-    assert(text === '[RM5] Perimeter Open (Rule-5.1)', text);
-});
-
-check('a label that only starts with the type name keeps the type', function () {
-    const text = sandbox.appOptionText({ title: 'Maker API Local (Maker API)', appType: 'Maker API' });
-    assert(text === '[INT] Maker API Local (Maker API)', text);
+check('a label that differs from the type keeps the type, even when it starts with it', function () {
+    [['Tapo Integration (Paused) (Tapo Integration)', 'Tapo Integration', '[INT] Tapo Integration (Paused) (Tapo Integration)'],
+     ['Maker API Local (Maker API)', 'Maker API', '[INT] Maker API Local (Maker API)'],
+     ['Perimeter Open (Rule-5.1)', 'Rule-5.1', '[RM5] Perimeter Open (Rule-5.1)']].forEach(function (c) {
+        const text = sandbox.appOptionText({ title: c[0], appType: c[1] });
+        assert(text === c[2], text);
+    });
 });
 
 // ---- D. Show filter --------------------------------------------------------------
 
-check('the empty webCoRE-only variable filter is gone', function () {
-    assert(source.indexOf('webCoRE variable use only') < 0, 'old filter label still present');
-    assert(source.indexOf('<option value="usesVar">') < 0, 'old filter value still present');
+const EDGES = [
+    { id: 'rmRead', kind: 'read' }, { id: 'wcWrite', kind: 'write' }, { id: 'wcUses', kind: 'usesVar' },
+    { id: 'connector', kind: 'synchronizedWith' }, { id: 'wcDeviceRead', kind: 'deviceRead' },
+    { id: 'wcAction', kind: 'action', from: 'webCoRE Piston' }, { id: 'rmAction', kind: 'action', from: 'Rule-5.1' },
+    { id: 'runs', kind: 'runs' }, { id: 'trigger', kind: 'trigger' }
+];
+
+check('Variable use keeps reads, writes and direction-unknown use, and nothing else', function () {
+    assert(sandbox.kinds(sandbox.edgesForKindFilter('variables', EDGES)) === 'rmRead,wcWrite,wcUses', sandbox.kinds(sandbox.edgesForKindFilter('variables', EDGES)));
 });
 
-check('one filter covers variable reads and writes from every engine', function () {
-    assert(source.indexOf('<option value="variables">Variable reads and writes only</option>') >= 0, 'new option missing');
-    assert(source.indexOf("const VARIABLE_KINDS = ['write', 'read', 'usesVar'];") >= 0, 'kinds missing');
-    const applyFilters = extractFunction('applyFilters');
-    assert(applyFilters.indexOf("kindVal === 'variables'") >= 0 && applyFilters.indexOf('VARIABLE_KINDS.indexOf(e.kind)') >= 0, 'filter not applied');
+check('Variable connectors keeps only connector synchronisation, which is not variable use', function () {
+    assert(sandbox.kinds(sandbox.edgesForKindFilter('synchronizedWith', EDGES)) === 'connector', 'connector filter wrong');
+    assert(sandbox.edgesForKindFilter('variables', EDGES).every(function (e) { return e.kind !== 'synchronizedWith'; }), 'connector counted as use');
+});
+
+check('webCoRE device state reads keeps only deviceRead edges', function () {
+    assert(sandbox.kinds(sandbox.edgesForKindFilter('deviceRead', EDGES)) === 'wcDeviceRead', 'device read filter wrong');
+});
+
+check('webCoRE commands stay under Actions only, beside other engines', function () {
+    assert(sandbox.kinds(sandbox.edgesForKindFilter('action', EDGES)) === 'wcAction,rmAction', 'actions filter wrong');
+});
+
+check('Rule to rule and All relationships are unchanged', function () {
+    assert(sandbox.kinds(sandbox.edgesForKindFilter('rulelinks', EDGES)) === 'runs', 'rule links wrong');
+    assert(sandbox.edgesForKindFilter('all', EDGES) === EDGES, 'all changed');
+});
+
+check('the filter labels say what each keeps', function () {
+    const select = source.slice(source.indexOf('<select id="kindFilter">'), source.indexOf('</select>', source.indexOf('<select id="kindFilter">')));
+    ['<option value="variables">Variable use only</option>',
+     '<option value="synchronizedWith">Variable connectors only</option>',
+     '<option value="deviceRead">webCoRE device state reads only</option>'].forEach(function (option) {
+        assert(select.indexOf(option) >= 0, 'missing ' + option);
+    });
+    assert(select.indexOf('webCoRE variable use only') < 0 && select.indexOf('value="usesVar"') < 0, 'old empty filter still offered');
+});
+
+check('every variable and device-read edge kind has a filter that keeps it', function () {
+    const select = source.slice(source.indexOf('<select id="kindFilter">'), source.indexOf('</select>', source.indexOf('<select id="kindFilter">')));
+    const values = (select.match(/value="([^"]+)"/g) || []).map(function (v) { return v.slice(7, -1); });
+    ['read', 'write', 'usesVar', 'synchronizedWith', 'deviceRead'].forEach(function (kind) {
+        const kept = values.some(function (v) { return v !== 'all' && sandbox.edgesForKindFilter(v, [{ id: kind, kind: kind }]).length === 1; });
+        assert(kept, kind + ' has no filter');
+    });
+});
+
+check('applyFilters takes its edges from the tested filter function', function () {
+    assert(extractFunction('applyFilters').indexOf('const pool = edgesForKindFilter(kindVal, ALL_EDGES);') >= 0, 'applyFilters does not use edgesForKindFilter');
 });
 
 // ---- B and C ---------------------------------------------------------------------------

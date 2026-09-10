@@ -38,26 +38,31 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **C.** The Hubitat releases, External systems, Pivot tables and Device icons panels had no bottom
   bar, unlike the normal flow view.
 - **D.** "webCoRE variable use only" drew an empty map. It matched only direction-unknown references,
-  of which there were none, while real variable reads and writes had no filter. Replaced by one
-  "Variable reads and writes only" filter covering every engine.
+  of which there were none, while real variable reads and writes had no filter. Now "Variable use
+  only" keeps reads, writes and direction-unknown use from every engine; "Variable connectors only"
+  keeps Hub Variable connector synchronisation, which is not use; the device filter is "webCoRE
+  device state reads only". webCoRE commands stay under Actions only.
 - **E.** Every Local Variable label named its owner twice, and the unused Local Variable panel title
-  named it twice more and added "(Local Variable)".
-- **F.** 19 app labels repeated the app type when the label is the type name, for example
-  "Tapo Integration (Tapo Integration)".
+  named it twice more and added "(Local Variable)". One builder now serves the dropdowns, Quick
+  Search, canvas labels and the panel, each naming the owner once.
+- **F.** App labels repeated the app type when the label is exactly the type name, for example
+  "Tapo Integration (Tapo Integration)". Stripped only on an exact repeat.
 
 **Batch 2, not started:**
 
 - **G.** An external system picked from Quick Search is written into the Focus Device dropdown, and
-  the view is not framed around it.
+  the view is not framed around it. Needs its own transient focus that works with history, filtering,
+  framing and Show all, with every Focus dropdown left at All.
 - **H.** A Hub Variable and its connector device draw their labels on top of each other.
 - **I.** The webCoRE parent panel draws an informational sentence in the red attention style, and
   its "holds 6 apps" heading repeats the title.
-- Local Variable canvas labels include the whole owner name and wrap to four lines.
 
-**Waiting on a decision:**
+**Waiting on Gordon:**
 
-- whether webCoRE piston locals get their own tag instead of [LOC];
-- which indented text is too large, since the webCoRE text measures the same as Rule Machine's.
+- **webCoRE piston locals:** the recommendation is to keep [LOC] for them, because the tag marks
+  scope, not engine.
+- **Indented font size:** no change until the exact text is identified, since the webCoRE text
+  measures the same as Rule Machine's.
 
 **Not yet covered:** the Back link and history trail, panel zoom rendering, narrow windows, and device
 focus.
