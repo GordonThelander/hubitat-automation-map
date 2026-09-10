@@ -17,6 +17,7 @@ where the backlog referenced them and they would eventually have been lost.
 | `ai_export_spec.md` | AI-friendly Export JSON (implemented contract through export schema 12) |
 | `webcore_hub_variable_decoding.md` | Technical positioning paper on webCoRE's saved-piston model and how Automation Map derives variable and device relationships |
 | `webcore_piston_devices_and_local_variables_spec.md` | Implementation specification for owner-scoped webCoRE Local Variables and direct piston device read/action relationships (implemented, v2.2.8) |
+| `webcore_saved_piston_structure.md` | Findings about how webCoRE stores a piston, from building the Decode coverage walker: stored versus in-memory keys, per-statement grammar, position-dependent keys, what the subscription pass misses, and what the editor saves for an unknown function |
 | `hpm_scrape_spec.md` | Origin task spec for the package identity index now built and maintained in `GordonThelander/HPM_Manifest_Crawl` |
 | `async_scan_v205_technical_report.md` | v2.0.5 bounded-async scan architecture, failure model, harness evidence, dev-hub validation, and remaining release gates |
 | `hubitat_local_mcp_data_access_assessment.md` | Assessment of reusable Hubitat data-access methods evidenced by the Community Hubitat Local MCP server |
