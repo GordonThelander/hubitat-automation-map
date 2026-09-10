@@ -50,9 +50,9 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 
 **Batch 2, not started:**
 
-- **G.** An external system picked from Quick Search is written into the Focus Device dropdown, and
-  the view is not framed around it. Needs its own transient focus that works with history, filtering,
-  framing and Show all, with every Focus dropdown left at All.
+- **G.** An external system picked from Quick Search was written into the Focus Device dropdown. It
+  now has its own transient focus, used by currentFocus, the map filter, history, Back and Forward and
+  Show all, with every Focus dropdown left at All. Framing to be confirmed on the dev hub.
 - **H.** A Hub Variable and its connector device draw their labels on top of each other.
 - **I.** The webCoRE parent panel draws an informational sentence in the red attention style, and
   its "holds 6 apps" heading repeats the title.
