@@ -3773,6 +3773,354 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
 }
 
 // ===================================================================================================================
+// webCoRE decode coverage census - pure walker
+//
+// Structural census of one decoded webCoRE piston document. Pure: no state, no
+// hub access, no caller in any runtime path yet. Values never reach the result;
+// it carries counts, fixed construct IDs, fixed reason codes and safe paths
+// only. Saved positions and normalisations are anchored to named sites in the
+// pinned source - see tools/webcore-investigation/saved-position-map.md.
+// --- webcore census walker: begin ---
+
+Map webcoreCensusLimits() {
+    return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50]
+}
+
+// Keys read at reviewed traversal and dispatch sites in the pinned source. The
+// list fails safe: an omitted key costs path legibility, never a leaked value.
+List<String> webcoreCensusSchemaKeys() {
+    return ['a', 'c', 'co', 'cs', 'ct', 'd', 'di', 'e', 'ei', 'exp', 'f', 'fs', 'g', 'i',
+            'id', 'k', 'lo', 'n', 'o', 'p', 'r', 'ro', 'ro2', 's', 'sm', 't', 'tcp', 'tep',
+            'ts', 'tsp', 'v', 'vt', 'w', 'x', 'xi', 'z']
+}
+
+// Mirrors fixAttr() in the pinned source: legacy SmartThings attribute names are
+// renamed before the virtual-device dispatch, so a saved document can carry a
+// spelling the registry deliberately does not list.
+String webcoreCensusFixAttr(String attr) {
+    if (attr == null) return null
+    if (attr in ['orientation', 'axisX', 'axisY', 'axisZ']) return 'threeAxis'
+    switch (attr) {
+        case 'alarmSystemStatus': return 'hsmStatus'
+        case 'alarmSystemAlert': return 'hsmAlert'
+        case 'alarmSystemEvent': return 'hsmSetArm'
+        case 'alarmSystemRule': return 'hsmRule'
+        case 'alarmSystemRules': return 'hsmRules'
+    }
+    return attr
+}
+
+String webcoreCensusNodeKind(Object value) {
+    if (value instanceof Map) return 'object'
+    if (value instanceof List) return 'array'
+    return 'scalar'
+}
+
+Map collectWebcoreDecodeCoverage(Object document, Map registry) {
+    Map limits = webcoreCensusLimits()
+    Map constructs = (registry != null && registry.constructs instanceof Map) ? (registry.constructs as Map) : [:]
+    Map provenance = (registry != null && registry.provenance instanceof Map) ? (registry.provenance as Map) : [:]
+    Map result = [
+        status: 'complete',
+        truncation: null,
+        registryVersion: provenance.registryVersion,
+        provenance: [
+            observedWebcoreVersion: null,
+            referenceSourceCommit: provenance.commit,
+            compatibilityStatus: 'unknown'
+        ],
+        accounting: [objectsVisited: 0, arraysVisited: 0, fieldsVisited: 0, arrayElementsVisited: 0,
+                     scalarsVisited: 0, constructCandidates: 0, constructsIdentified: 0,
+                     defaultBranchOccurrences: 0],
+        constructCounts: [:],
+        levelCounts: [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0],
+        unrecognised: [],
+        unrecognisedOverflow: 0
+    ]
+    if (!(document instanceof Map)) {
+        result.status = 'error'
+        result.error = 'unexpected-root'
+        return result
+    }
+
+    Map acc = [
+        objectsVisited: 0, arraysVisited: 0, fieldsVisited: 0, arrayElementsVisited: 0,
+        scalarsVisited: 0, constructCandidates: 0, constructsIdentified: 0,
+        defaultBranchOccurrences: 0,
+        counts: [:], unrecognised: [], seen: [] as Set, overflow: 0, truncated: null,
+        schemaKeys: webcoreCensusSchemaKeys() as Set,
+        constructs: constructs,
+        functionIndex: webcoreCensusFunctionIndex(constructs),
+        limits: limits
+    ]
+    webcoreCensusWalk(document, 'root', '$', 0, acc)
+
+    Map counts = [:]
+    (acc.counts as Map).keySet().sort().each { Object id -> counts[id] = (acc.counts as Map)[id] }
+    Map levels = [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0]
+    counts.keySet().each { Object id ->
+        Object entry = constructs[id]
+        String level = (entry instanceof Map && (entry as Map).level instanceof String) ? ((entry as Map).level as String) : 'L0'
+        if (levels.containsKey(level)) levels[level] = (levels[level] as Integer) + 1
+    }
+
+    result.accounting = [
+        objectsVisited: acc.objectsVisited, arraysVisited: acc.arraysVisited,
+        fieldsVisited: acc.fieldsVisited, arrayElementsVisited: acc.arrayElementsVisited,
+        scalarsVisited: acc.scalarsVisited, constructCandidates: acc.constructCandidates,
+        constructsIdentified: acc.constructsIdentified,
+        defaultBranchOccurrences: acc.defaultBranchOccurrences
+    ]
+    result.constructCounts = counts
+    result.levelCounts = levels
+    result.unrecognised = acc.unrecognised
+    result.unrecognisedOverflow = acc.overflow
+    if (acc.truncated != null) {
+        result.status = 'truncated'
+        result.truncation = [reason: acc.truncated, maxDepth: limits.maxDepth, maxValues: limits.maxValues]
+    }
+    return result
+}
+
+// Case-insensitive index over registered function names. The pinned source
+// dispatches to func_<name>; the registry generator matched case-insensitively
+// on both sides, so this lookup must too or every function reads as unknown.
+Map webcoreCensusFunctionIndex(Map constructs) {
+    Map index = [:]
+    constructs.each { Object id, Object entry ->
+        String key = "${id}"
+        if (!key.startsWith('wc.function.')) return
+        index[key.substring('wc.function.'.length()).toLowerCase()] = key
+    }
+    return index
+}
+
+// Traversal is complete and never steered by classification: an unclassified or
+// unrecognised node is still walked in full.
+void webcoreCensusWalk(Object value, String context, String path, int depth, Map acc) {
+    if (acc.truncated != null) return
+    if (depth > ((acc.limits as Map).maxDepth as Integer)) { acc.truncated = 'depth-limit'; return }
+    int seen = (acc.objectsVisited as Integer) + (acc.arraysVisited as Integer) + (acc.scalarsVisited as Integer)
+    if (seen >= ((acc.limits as Map).maxValues as Integer)) { acc.truncated = 'value-limit'; return }
+
+    if (value instanceof Map) {
+        acc.objectsVisited = (acc.objectsVisited as Integer) + 1
+        Map node = value as Map
+        webcoreCensusClassify(node, context, path, acc)
+        List entryKeys = node.keySet().toList()
+        for (int i = 0; i < entryKeys.size(); i++) {
+            acc.fieldsVisited = (acc.fieldsVisited as Integer) + 1
+            String key = "${entryKeys[i]}"
+            boolean known = (acc.schemaKeys as Set).contains(key)
+            String childPath = known ? "${path}.${key}" : "${path}.<unknown-key#${i}>"
+            Object child = node[entryKeys[i]]
+            if (!known) webcoreCensusRecord(acc, childPath, 'unknown-key', webcoreCensusNodeKind(child))
+            String childContext = known ? webcoreCensusChildContext(node, context, key) : null
+            webcoreCensusWalk(child, childContext, childPath, depth + 1, acc)
+            if (acc.truncated != null) return
+        }
+        return
+    }
+    if (value instanceof List) {
+        acc.arraysVisited = (acc.arraysVisited as Integer) + 1
+        List list = value as List
+        for (int i = 0; i < list.size(); i++) {
+            acc.arrayElementsVisited = (acc.arrayElementsVisited as Integer) + 1
+            webcoreCensusWalk(list[i], context, "${path}[${i}]", depth + 1, acc)
+            if (acc.truncated != null) return
+        }
+        return
+    }
+    acc.scalarsVisited = (acc.scalarsVisited as Integer) + 1
+    if (context == 'device-list') webcoreCensusDeviceSelector(acc, path, value)
+}
+
+// A list-valued key gives its element context to every element, because the
+// walker hands the parent context down through the List branch unchanged.
+String webcoreCensusChildContext(Map node, String context, String key) {
+    String t = node.t instanceof String ? (node.t as String) : null
+    switch (context) {
+        case 'root':
+            if (key == 's') return 'statement'
+            if (key == 'r') return 'restriction'
+            return null
+        case 'statement':
+            if (key == 's' || key == 'e') return 'statement'
+            if (key == 'r') return 'restriction'
+            if (key == 'ei') return 'elseif'
+            if (key == 'cs') return 'case'
+            if (key == 'k') return 'task'
+            if (key == 'lo') return 'operand'
+            if (key == 'd') return 'device-list'
+            // An `on` statement's c holds events; every other statement's c holds
+            // conditions (statementTraverser in the pinned source).
+            if (key == 'c') return (t == 'on') ? 'event' : 'condition'
+            return null
+        case 'elseif':
+            if (key == 'c') return 'condition'
+            if (key == 's') return 'statement'
+            return null
+        case 'case':
+            if (key == 'ro' || key == 'ro2') return 'operand'
+            if (key == 's') return 'statement'
+            return null
+        case 'condition':
+            if (key == 'lo' || key == 'ro' || key == 'ro2') return 'operand'
+            if (key == 'c') return 'condition'
+            if (key == 'ts' || key == 'fs') return 'statement'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'restriction':
+            if (key == 'lo' || key == 'ro' || key == 'ro2') return 'operand'
+            if (key == 'r') return 'restriction'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'event':
+            if (key == 'lo') return 'event-operand'
+            return null
+        case 'operand':
+        case 'event-operand':
+        case 'param':
+            if (key == 'exp') return 'expression'
+            if (key == 'i') return 'expression'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'task':
+            if (key == 'p') return 'param'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'expression':
+            if (key == 'i') return 'expression'
+            if (key == 'd') return 'device-list'
+            return null
+    }
+    return null
+}
+
+void webcoreCensusClassify(Map node, String context, String path, Map acc) {
+    if (context == null) return
+    if (context == 'statement') {
+        webcoreCensusCandidate(acc, "${path}.t", node.t, 'wc.statement.', 'unknown-statement-type')
+        ['tep', 'tsp', 'tcp'].each { String key ->
+            if (!node.containsKey(key)) return
+            // The registry registers the policy key, not its value, so the value
+            // is deliberately not judged. unknown-policy-value stays reserved.
+            webcoreCensusCandidate(acc, "${path}.${key}", key, 'wc.policy.', 'unknown-policy-value')
+        }
+        return
+    }
+    if (context == 'operand' || context == 'event-operand' || context == 'param') {
+        String prefix = (context == 'event-operand') ? 'wc.operand.event-match.' : 'wc.operand.'
+        String spelling = (node.t instanceof String) ? (node.t as String) : null
+        // '' is a registered member of operand.evaluate.type; the registry names
+        // it 'empty', which is also what keeps a missing t distinguishable.
+        Object member = (node.t instanceof String) ? ((spelling == '') ? 'empty' : spelling) : node.t
+        webcoreCensusCandidate(acc, "${path}.t", member, prefix, 'unknown-operand-type')
+        if (context == 'param') webcoreCensusDefaultSite(acc, node.vt, 'wc.task.value-type.')
+        if (spelling == 'v') {
+            Object name = (node.v instanceof String) ? webcoreCensusFixAttr(node.v as String) : node.v
+            webcoreCensusCandidate(acc, "${path}.v", name, 'wc.virtual-device.', 'unknown-operand-type')
+        } else if (spelling == 's') {
+            webcoreCensusCandidate(acc, "${path}.s", node.s, 'wc.preset.', 'unknown-operand-type')
+            webcoreCensusDefaultSite(acc, node.vt, 'wc.preset.value-type.')
+        } else if (spelling == 'c') {
+            webcoreCensusDefaultSite(acc, node.vt, 'wc.constant.value-type.')
+        }
+        return
+    }
+    if (context == 'expression') {
+        String spelling = (node.t instanceof String) ? (node.t as String) : null
+        // Operator items are consumed inline by the pinned source and never reach
+        // the result-type dispatch, so they are not candidates.
+        if (spelling == 'operator') return
+        webcoreCensusCandidate(acc, "${path}.t", node.t, 'wc.expression.result-type.', 'unknown-operand-type')
+        if (spelling == 'function') webcoreCensusFunction(acc, "${path}.n", node.n)
+        return
+    }
+}
+
+void webcoreCensusCandidate(Map acc, String path, Object member, String prefix, String reason) {
+    acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+    if (!(member instanceof String)) {
+        webcoreCensusRecord(acc, path, 'malformed-node', webcoreCensusNodeKind(member))
+        return
+    }
+    String id = prefix + (member as String)
+    if ((acc.constructs as Map).containsKey(id)) {
+        webcoreCensusIdentify(acc, id)
+        return
+    }
+    webcoreCensusRecord(acc, path, reason, 'scalar')
+}
+
+// Sites whose pinned dispatch carries a default branch: only an explicit member
+// is a distinct construct. Anything else took the documented default path, so it
+// is counted separately rather than reported as a gap.
+void webcoreCensusDefaultSite(Map acc, Object member, String prefix) {
+    if (!(member instanceof String)) return
+    String id = prefix + (member as String)
+    if ((acc.constructs as Map).containsKey(id)) {
+        acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+        webcoreCensusIdentify(acc, id)
+        return
+    }
+    acc.defaultBranchOccurrences = (acc.defaultBranchOccurrences as Integer) + 1
+}
+
+void webcoreCensusFunction(Map acc, String path, Object name) {
+    acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+    if (!(name instanceof String)) {
+        webcoreCensusRecord(acc, path, 'malformed-node', webcoreCensusNodeKind(name))
+        return
+    }
+    Object id = (acc.functionIndex as Map)[(name as String).toLowerCase()]
+    if (id != null) { webcoreCensusIdentify(acc, "${id}"); return }
+    webcoreCensusRecord(acc, path, 'unknown-function', 'scalar')
+}
+
+// A d entry is a device selector. Only the direct identifier and the empty entry
+// are statically resolvable; any other entry is a variable reference whose form
+// depends on runtime variable state, so it stays unidentified rather than guessed.
+void webcoreCensusDeviceSelector(Map acc, String path, Object entry) {
+    acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+    if (entry == null || (entry instanceof String && (entry as String).isEmpty())) {
+        webcoreCensusIdentify(acc, 'wc.device-selector.empty')
+        return
+    }
+    if (!(entry instanceof String)) {
+        webcoreCensusRecord(acc, path, 'malformed-node', webcoreCensusNodeKind(entry))
+        return
+    }
+    if ((entry as String) ==~ /^:[0-9a-f]{32}:$/) {
+        webcoreCensusIdentify(acc, 'wc.device-selector.direct-identifier')
+        return
+    }
+    webcoreCensusRecord(acc, path, 'unknown-device-selector', 'scalar')
+}
+
+void webcoreCensusIdentify(Map acc, String id) {
+    acc.constructsIdentified = (acc.constructsIdentified as Integer) + 1
+    Map counts = acc.counts as Map
+    counts[id] = ((counts[id] ?: 0) as Integer) + 1
+}
+
+// Deduplicated on the full record before the cap is applied, so a repeated gap
+// cannot consume the budget a distinct gap needs.
+void webcoreCensusRecord(Map acc, String path, String reason, String nodeKind) {
+    String key = "${path}|${reason}|${nodeKind}"
+    Set seen = acc.seen as Set
+    if (seen.contains(key)) return
+    seen << key
+    List records = acc.unrecognised as List
+    if (records.size() >= ((acc.limits as Map).maxUnrecognised as Integer)) {
+        acc.overflow = (acc.overflow as Integer) + 1
+        return
+    }
+    records << [path: path, reason: reason, nodeKind: nodeKind]
+}
+// --- webcore census walker: end ---
+
+// ===================================================================================================================
 // Rule Machine flow decoding
 //
 // A relationship graph cannot show order, so for Rule Machine rules the ordered

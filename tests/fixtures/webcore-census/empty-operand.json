@@ -4,8 +4,8 @@
     {
       "t": "action",
       "c": [
-        { "t": "condition", "lo": { "t": "", "i": 1 }, "co": "is" },
-        { "t": "condition", "lo": { "i": 2 }, "co": "is" }
+        { "t": "condition", "co": "is", "lo": { "t": "" } },
+        { "t": "condition", "co": "is", "lo": { "a": "switch" } }
       ]
     }
   ]

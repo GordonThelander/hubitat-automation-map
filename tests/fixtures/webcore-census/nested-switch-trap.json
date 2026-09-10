@@ -1,13 +1,14 @@
 {
-  "_proves": "the event matcher nested inside case sON is not confused with the statement switch; p/v/x here belong to operand.event-match.type",
+  "_proves": "an operand under an on statement's c is an event matcher, while the same spelling under a switch statement's lo is an ordinary operand",
   "s": [
     {
       "t": "on",
       "c": [
-        { "t": "condition", "lo": { "t": "p" }, "co": "changes" },
-        { "t": "condition", "lo": { "t": "v" }, "co": "changes" },
-        { "t": "condition", "lo": { "t": "x" }, "co": "changes" }
+        { "lo": { "t": "p", "a": "switch" } },
+        { "lo": { "t": "v", "v": "mode" } },
+        { "lo": { "t": "x", "x": "counter" } }
       ]
-    }
+    },
+    { "t": "switch", "lo": { "t": "p", "a": "switch" }, "cs": [] }
   ]
 }

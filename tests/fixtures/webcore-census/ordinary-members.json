@@ -1,145 +1,35 @@
 {
-  "_proves": "one ordinary member per dispatch site, all thirteen sites represented",
-  "_siteCoverage": {
-    "operand.event-match.type": "x",
-    "operand.evaluate.type": "d",
-    "operand.subscribe.type": "c",
-    "expression.item.type": "integer",
-    "virtual-device.evaluate.name": "mode",
-    "virtual-device.subscribe.name": "tile",
-    "preset.evaluate.value-type": "time",
-    "preset.evaluate.name": "sunset",
-    "constant.evaluate.value-type": "date",
-    "expression.evaluate.result-type": "string",
-    "task.variable.value-type": "variable",
-    "statement.subscribe.timer-type": "every",
-    "statement.subscribe.type": "action"
-  },
+  "_proves": "one ordinary member per saved-reachable dispatch site",
+  "_note": "Increment 2 corrected the saved keys: value types are vt (sMvt), not ovt; an expression is reached through an operand's exp; a task carries c and p. expression.item.type is not represented because it is not saved-reachable.",
   "s": [
     {
       "t": "action",
+      "d": [":00000000000000000000000000000000:"],
+      "tep": "",
+      "tsp": "",
+      "tcp": "c",
       "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "d",
-            "d": [
-              ":00000000000000000000000000000000:"
-            ]
-          },
-          "co": "is"
-        }
+        { "t": "condition", "co": "is", "lo": { "t": "d", "d": [":11111111111111111111111111111111:"] } }
       ],
       "k": [
-        {
-          "t": "expression",
-          "i": [
-            {
-              "t": "integer",
-              "v": 1
-            }
-          ],
-          "vt": "variable"
-        }
+        { "c": "setVariable", "p": [ { "t": "x", "x": "counter", "vt": "variable" } ] }
       ]
     },
-    {
-      "t": "on",
-      "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "x"
-          },
-          "co": "changes"
-        }
-      ]
-    },
-    {
-      "t": "every",
-      "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "c"
-          },
-          "co": "is"
-        }
-      ]
-    },
-    {
-      "t": "if",
-      "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "v",
-            "v": "mode"
-          },
-          "co": "is"
-        }
-      ]
-    },
-    {
-      "t": "while",
-      "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "v",
-            "v": "tile"
-          },
-          "co": "is"
-        }
-      ]
-    },
-    {
-      "t": "repeat",
-      "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "s",
-            "s": "sunset",
-            "ovt": "time"
-          },
-          "co": "is"
-        }
-      ]
-    },
-    {
-      "t": "switch",
-      "c": [
-        {
-          "t": "condition",
-          "lo": {
-            "t": "c",
-            "ovt": "date"
-          },
-          "co": "is"
-        }
-      ]
-    },
+    { "t": "on", "c": [ { "lo": { "t": "x", "x": "counter" } } ] },
+    { "t": "every", "c": [ { "t": "condition", "co": "is", "lo": { "t": "c", "c": 1 } } ] },
+    { "t": "if", "c": [ { "t": "condition", "co": "is", "lo": { "t": "v", "v": "mode" } } ] },
+    { "t": "while", "c": [ { "t": "condition", "co": "is", "lo": { "t": "v", "v": "tile" } } ] },
+    { "t": "repeat", "c": [ { "t": "condition", "co": "is", "lo": { "t": "s", "s": "sunset", "vt": "time" } } ] },
+    { "t": "switch", "lo": { "t": "c", "vt": "date", "c": 1 }, "cs": [] },
     {
       "t": "do",
       "k": [
-        {
-          "t": "expression",
-          "exprType": "string"
-        }
+        { "c": "log", "p": [ { "t": "e", "exp": { "t": "expression", "i": [ { "t": "string", "v": "x" } ] } } ] }
       ]
     },
-    {
-      "t": "each"
-    },
-    {
-      "t": "for"
-    },
-    {
-      "t": "break"
-    },
-    {
-      "t": "exit"
-    }
+    { "t": "each" },
+    { "t": "for" },
+    { "t": "break" },
+    { "t": "exit" }
   ]
 }

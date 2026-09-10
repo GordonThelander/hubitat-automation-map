@@ -49,10 +49,11 @@ declared.each { Map f ->
 // it directly: five members must be present, because collapsing them to one
 // construct is the specific error this fixture exists to catch.
 Map numeric = slurper.parse(new File(dir, 'shared-branch-numeric.json')) as Map
-List items = ((numeric.s as List)[0].k as List)[0].i as List
+Map numericTask = ((numeric.s as List)[0].k as List)[0] as Map
+List items = (((numericTask.p as List)[0] as Map).exp as Map).i as List
 check(items.size() == 5, 'shared-branch fixture carries all five numeric forms')
 check(items.collect { it.t }.toSet() == ['integer', 'float', 'double', 'decimal', 'number'].toSet(),
-    'shared-branch fixture members match expression.item.type exactly')
+    'shared-branch fixture members match expression.evaluate.result-type exactly')
 passed += 2
 
 // The multisite fixture must use the same spelling at two different sites, or
@@ -73,18 +74,28 @@ check(conds.any { !(it.lo as Map).containsKey('t') }, 'empty fixture has an abse
 passed += 2
 
 // Site coverage. Codex 537 item 4: the README claimed one ordinary member per
-// dispatch site while the manifest named only three site families. Compare the
-// frozen site list against what the manifest actually expects, so the claim
-// cannot drift ahead of the corpus again.
+// dispatch site while the manifest named only three site families. Increment 2
+// narrowed the claim again: four sites are consumer-only and one is not
+// reachable from a saved document at all, so the corpus is compared against the
+// saved-reachable list rather than the frozen list.
 List<String> frozenSites = manifest.frozenSites as List
 check(frozenSites != null && frozenSites.size() == 13, 'manifest declares all thirteen frozen sites')
 passed++
 
+List<String> savedSites = manifest.savedReachableSites as List
+check(savedSites != null && (savedSites as Set).every { frozenSites.contains(it) },
+    'every saved-reachable site is one of the frozen sites')
+check((frozenSites as Set) - (savedSites as Set) ==
+        ['operand.subscribe.type', 'virtual-device.subscribe.name',
+         'statement.subscribe.timer-type', 'expression.item.type'] as Set,
+    'the excluded sites are exactly the consumer-only ones plus the runtime-only item site')
+passed += 2
+
 Map<String, Object> ordinary = declared.find { it.file == 'ordinary-members.json' } as Map
 Map cov = ordinary.siteCoverage as Map
 check(cov != null, 'ordinary-members declares per-site coverage')
-check((cov.keySet() as Set) == (frozenSites as Set),
-    "every frozen site has an ordinary member (covered ${cov?.size()}, frozen ${frozenSites.size()})")
+check((cov.keySet() as Set) == (savedSites as Set),
+    "every saved-reachable site has an ordinary member (covered ${cov?.size()}, reachable ${savedSites.size()})")
 passed += 2
 
 // Every expected construct id must carry the wc. namespace from the
