@@ -187,6 +187,7 @@ Map webcoreCensusRegistry() {
         'wc.statement.repeat': [level: 'L2'],
         'wc.statement.switch': [level: 'L2'],
         'wc.statement.while': [level: 'L2'],
+        'wc.task-parameter.unselected': [level: 'L2'],
         'wc.task.value-type.variable': [level: 'L2'],
         'wc.vcmd.adjustColorTemperature': [level: 'L2'],
         'wc.vcmd.adjustHue': [level: 'L2'],

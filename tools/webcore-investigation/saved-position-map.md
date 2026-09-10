@@ -104,6 +104,18 @@ switch's `default:` and uses `s` as a raw value, so a `setColor` parameter saved
 **A condition's `to` and `to2` are operands.** `evalRO1` passes `mMs(cndtn,sTO)` straight to
 `mevaluateOperand`, so a comparison offset carries constructs like any other operand.
 
+**An optional task parameter is saved with no discriminator.** `executeTask` evaluates every saved
+parameter through `mevaluateOperand`, and `evaluateOperand` switches on `sMt(operand)` with no
+default, so a parameter Map without `t` matches no case and yields a dynamic null rather than
+throwing. That null is the unselected state of an optional parameter, not an error: `cmd_setColor`
+reads position 1 as the optional "only if switch is" enum and `ntMatSw()` skips the restriction when
+it is null, and `vcmd_toggleRandom` falls back to 50 when its optional probability does not cast.
+
+It is therefore registered as the structural construct `wc.task-parameter.unselected`, scoped to the
+task-parameter position. A missing `t` anywhere else stays `malformed-node`, which is what the
+`empty-operand` fixture's absent case continues to prove. Observed on two of the six Dev pistons and
+confirmed against both consumers before being registered.
+
 **Defaulted sites.** `preset.evaluate.value-type`, `constant.evaluate.value-type` and
 `task.variable.value-type` each carry a default branch. Only an explicit member is a distinct
 construct; every other invocation, including a missing, null or non-String value, still reaches the

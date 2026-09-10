@@ -4038,7 +4038,16 @@ void webcoreCensusClassify(Map node, String context, String path, Map acc) {
         // '' is a registered member of operand.evaluate.type; the registry names
         // it 'empty', which is also what keeps a missing t distinguishable.
         Object member = (node.t instanceof String) ? ((spelling == '') ? 'empty' : spelling) : node.t
-        webcoreCensusCandidate(acc, "${path}.t", member, prefix, 'unknown-operand-type')
+        if (context == 'param' && !(node.t instanceof String)) {
+            // An optional task parameter with nothing selected is saved without a
+            // discriminator at all. executeTask still evaluates it, evaluateOperand
+            // matches no case and yields a dynamic null, and the consumers read
+            // that null as unselected rather than as an error: cmd_setColor skips
+            // its switch-state restriction and vcmd_toggleRandom falls back to 50.
+            webcoreCensusCandidate(acc, "${path}.t", 'unselected', 'wc.task-parameter.', 'malformed-node')
+        } else {
+            webcoreCensusCandidate(acc, "${path}.t", member, prefix, 'unknown-operand-type')
+        }
         if (context == 'param') webcoreCensusDefaultSite(acc, node.vt, 'wc.task.value-type.')
         if (spelling == 'v') {
             Object name = (node.v instanceof String) ? webcoreCensusFixAttr(node.v as String) : node.v
@@ -4343,6 +4352,7 @@ Map webcoreCensusRegistry() {
         'wc.statement.repeat': [level: 'L2'],
         'wc.statement.switch': [level: 'L2'],
         'wc.statement.while': [level: 'L2'],
+        'wc.task-parameter.unselected': [level: 'L2'],
         'wc.task.value-type.variable': [level: 'L2'],
         'wc.vcmd.adjustColorTemperature': [level: 'L2'],
         'wc.vcmd.adjustHue': [level: 'L2'],

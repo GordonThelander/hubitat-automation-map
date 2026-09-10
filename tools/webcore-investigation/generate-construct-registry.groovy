@@ -294,6 +294,23 @@ Map<String, Map> FROZEN_SITES = [
 // selectors are not switch-dispatched, so there is no discriminator population
 // to count. Source basis is expandDeviceList (line 9435), which serves both
 // physical operands and action targets.
+// Saved structural forms. Not dispatch-site members: a shape the saved document
+// carries whose meaning comes from how the executor consumes it rather than from
+// a discriminator spelling. Kept separate from switch membership for the same
+// reason the device-selector grammar is.
+Map<String, Map> STRUCTURAL_FORMS = [
+  'task-parameter.unselected': [
+    refs: ['executor.execute-task', 'executor.evaluate-operand'],
+    recognition: 'a saved task parameter Map carrying no t at all. executeTask evaluates every ' +
+                 'parameter through mevaluateOperand, and evaluateOperand switches on sMt(operand) ' +
+                 'with no default, so a Map without t matches no case and yields a dynamic null ' +
+                 'rather than throwing. That null is the unselected state of an optional parameter: ' +
+                 'cmd_setColor reads position 1 as the optional "only if switch is" enum and ' +
+                 'ntMatSw() skips the restriction when it is null, and vcmd_toggleRandom falls back ' +
+                 'to 50 when its optional probability does not cast. Observed on two of the six Dev ' +
+                 'pistons, and confirmed against both consumers before being registered.'],
+]
+
 Map<String, Map> DEVICE_SELECTOR_GRAMMAR = [
   'device-selector.direct-identifier': [
     status: 'active', staticallyResolvable: true,
@@ -931,6 +948,14 @@ canonical.sort().each { String id, Map c ->
 // Device-selector grammar. Value-shape metadata, deliberately kept distinct
 // from switch membership: these are not discriminator members and carry no
 // numeric gate.
+// Structural forms, emitted through the same explicit path as the selector
+// grammar so a saved shape cannot enter the registry without a reviewed entry.
+STRUCTURAL_FORMS.each { String id, Map g ->
+    sb << entry("${NS}${id}", [kind: 'structural', name: id.tokenize('.').last(),
+        declared: false, implemented: true, canonicalTarget: null, availability: 'current',
+        level: 'L2', refs: (g.refs as List)])
+}
+
 DEVICE_SELECTOR_GRAMMAR.each { String id, Map g ->
     sb << entry("${NS}${id}", [kind: 'deviceSelector', name: id.tokenize('.').last(),
         declared: false, implemented: g.status == 'active',
@@ -997,12 +1022,13 @@ if (candidateOnly) { System.setOut(realOut); print sb.toString(); System.exit 0 
 
 println ''
 println "Emitted ${emittedIds.size()} constructs:"
-printf('  statements %d, policy %d, functions %d, vcmds %d, canonical operand-family %d, selectors %d%n',
+printf('  statements %d, policy %d, functions %d, vcmds %d, canonical operand-family %d, selectors %d, structural %d%n',
     statements.size(), 3,
     emittedIds.count { it.startsWith(NS + 'function.') },
     emittedIds.count { it.startsWith(NS + 'vcmd.') },
     canonical.size(),
-    DEVICE_SELECTOR_GRAMMAR.size())
+    DEVICE_SELECTOR_GRAMMAR.size(),
+    STRUCTURAL_FORMS.size())
 // The two numbers Codex 539 asked to be reported separately, because conflating
 // them is precisely the error this rework corrects.
 printf('  source-site memberships %d  ->  unique canonical saved constructs %d%n',

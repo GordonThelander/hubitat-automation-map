@@ -145,6 +145,19 @@
         "unknown-operand-type"
       ],
       "anchor": "getLocalVariables evaluates a constant initializer through mevaluateOperand(r9, mMv(var)); getVariable evaluates a Map-valued local variable through mevaluateOperand when it is read; subscribeAll additionally hands a declaration's v to operandTraverser on its device path."
+    },
+    {
+      "file": "unselected-task-parameter.json",
+      "proves": "an optional task parameter saved with no discriminator is the unselected structural form, not a malformed node",
+      "anchor": "executeTask evaluates every parameter through mevaluateOperand; evaluateOperand matches no case without a t and yields a dynamic null; cmd_setColor skips its switch-state restriction when position 1 is null and vcmd_toggleRandom falls back to 50",
+      "expectConstructs": [
+        "wc.device-selector.direct-identifier",
+        "wc.operand.s",
+        "wc.statement.action",
+        "wc.task-parameter.unselected"
+      ],
+      "expectReasons": [],
+      "note": "the two parameter shapes are sanitized copies of shapes observed on Dev pistons 3093 and 3095; the colour value is a placeholder"
     }
   ],
   "idNamespace": "wc.",

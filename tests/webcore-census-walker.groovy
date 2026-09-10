@@ -43,7 +43,7 @@ String anchor = 'WEBCORE_CONSTRUCT_REGISTRY = '
 int registryStart = registryText.indexOf(anchor)
 assert registryStart >= 0: 'registry constant not found'
 Map registry = new GroovyShell().evaluate(registryText.substring(registryStart + anchor.length())) as Map
-assertThat((registry.constructs as Map).size() == 279, 'registry loaded with the reviewed population')
+assertThat((registry.constructs as Map).size() == 280, 'registry loaded with the reviewed population')
 
 File fixtureDir = new File(repoRoot, 'tests/fixtures/webcore-census')
 def slurper = new JsonSlurper()
@@ -378,6 +378,29 @@ Map schemaKeys = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', '$': 1, 
     o: [cto: false, ced: 0]], registry) as Map
 assertThat(!(schemaKeys.unrecognised as List).any { it.reason == 'unknown-key' },
     "reviewed schema keys are not reported as unknown (${(schemaKeys.unrecognised as List).findAll { it.reason == 'unknown-key' }*.path})")
+
+// ---- the unselected task parameter -----------------------------------------
+
+Map unselected = walked['unselected-task-parameter.json']
+assertThat((unselected.constructCounts as Map)['wc.task-parameter.unselected'] == 2,
+    "both observed parameter shapes identify as the fixed construct (${(unselected.constructCounts as Map)['wc.task-parameter.unselected']})")
+assertThat(!(unselected.unrecognised as List).any { it.reason == 'malformed-node' },
+    'the previous malformed-node records are gone')
+String unselectedJson = JsonOutput.toJson(unselected)
+assertThat(!unselectedJson.contains('placeholder') && !unselectedJson.contains('setColor') &&
+           !unselectedJson.contains('toggleRandom') && !unselectedJson.contains('0123456789abcdef'),
+    'no parameter field or value enters the result')
+
+// The construct is scoped to the task-parameter position. A missing t anywhere
+// else is still a node the decoder cannot classify.
+Map missingElsewhere = walker.collectWebcoreDecodeCoverage([s: [
+    [t: 'if', c: [[t: 'condition', co: 'is', lo: [a: 'switch']]]],
+    [t: 'on', c: [[lo: [a: 'switch']]]]
+]], registry) as Map
+assertThat((missingElsewhere.unrecognised as List).count { it.reason == 'malformed-node' } == 2,
+    "a missing discriminator outside a task parameter is still malformed-node (${(missingElsewhere.unrecognised as List).count { it.reason == 'malformed-node' }})")
+assertThat(!(missingElsewhere.constructCounts as Map).containsKey('wc.task-parameter.unselected'),
+    'the unselected construct never appears outside a task parameter')
 
 // ---- summary ---------------------------------------------------------------
 
