@@ -10790,8 +10790,10 @@ function setFlowSizeMode(large) {
   // if the panel had never been large at all.
   if (!large) {
     flowPanel.style.width = '';
-    restoreFlowUserPosition();
-    applyFlowUserSize();
+    if (!startFlowItemIfNew()) {
+      restoreFlowUserPosition();
+      applyFlowUserSize();
+    }
   } else if (flowUserSize) {
     // Insights sizes itself to the full work area. A size chosen for the
     // normal view is not carried into it, so remember where the normal view
@@ -10895,6 +10897,9 @@ var flowUserSize = null;
 // Where the normal view was when Insights re-placed the panel, so returning
 // from Insights puts it back rather than leaving it at the Insights position.
 var flowUserPosition = null;
+// The selection the normal view was last opened for. A different one means a
+// new item, which starts again from the default position.
+var flowItemSeq = null;
 const FLOW_MIN_WIDTH = 280;
 const FLOW_MIN_HEIGHT = 160;
 
@@ -10958,8 +10963,51 @@ function restoreFlowUserPosition() {
   flowPanel.style.left = flowUserPosition.left;
   flowPanel.style.top = flowUserPosition.top;
   flowUserPosition = null;
+  clampFlowPosition();
   // The window may have changed while Insights was open.
   if (flowUserSize) flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
+}
+
+function flowStylePosition() {
+  return { left: parseFloat(flowPanel.style.left) || 0, top: parseFloat(flowPanel.style.top) || 0 };
+}
+
+// The header is the only way to move the panel back, so it may never sit off
+// screen, in either view of this panel. Reads the inline position rather than
+// the rendered box, so it works while the panel is still hidden.
+function clampFlowPosition() {
+  const header = document.getElementById('flowHeader');
+  const headerHeight = (header && header.offsetHeight) || 40;
+  const width = flowPanel.offsetWidth || parseFloat(flowPanel.style.width) || 375;
+  const pos = flowStylePosition();
+  const left = Math.round(Math.min(Math.max(pos.left, 0), Math.max(0, window.innerWidth - width)));
+  const top = Math.round(Math.min(Math.max(pos.top, 0), Math.max(0, window.innerHeight - headerHeight)));
+  const changed = left !== Math.round(pos.left) || top !== Math.round(pos.top);
+  flowPanel.style.left = left + 'px';
+  flowPanel.style.top = top + 'px';
+  return changed;
+}
+
+// Every new selection starts the normal view from its default position.
+// focusGenerationSeq goes up once per focusNode() call, whatever was selected;
+// reopening the same item, such as returning from Insights, leaves it alone.
+// Returns true when it has placed the panel for a new item.
+function startFlowItemIfNew() {
+  if (flowItemSeq === focusGenerationSeq) return false;
+  flowItemSeq = focusGenerationSeq;
+  flowUserPosition = null;
+  if (!flowUserSize) {
+    // No chosen size, so bringToFront can place it exactly as on a first open.
+    panelCustomPosition.delete(flowPanel);
+    return true;
+  }
+  // Place it at the default spot now and keep the chosen size, fitted to that
+  // spot. Marking it user-positioned stops bringToFront capping the height.
+  sizeModernPanel(flowPanel);
+  panelCustomPosition.set(flowPanel, true);
+  flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowStylePosition());
+  applyFlowUserSize();
+  return true;
 }
 
 function resetFlowPanelLayout() {
@@ -10980,8 +11028,30 @@ if (flowResizeHeader) {
   });
 }
 
-// A smaller window could otherwise leave the grip out of reach.
+// Keeps the header inside the window while it is being dragged. These run after
+// makePanelDraggable has moved the panel, because they were registered after it,
+// so the shared drag helper and the other panels are left exactly as they were.
+let flowHeaderDragging = false;
+if (flowResizeHeader) {
+  flowResizeHeader.addEventListener('mousedown', function (e) {
+    if (!e.target.closest('.panelClose')) flowHeaderDragging = true;
+  });
+}
+document.addEventListener('mousemove', function () {
+  if (flowHeaderDragging) clampFlowPosition();
+});
+document.addEventListener('mouseup', function () {
+  if (!flowHeaderDragging) return;
+  flowHeaderDragging = false;
+  // The drag helper has already re-fitted the map; do it again only if the
+  // clamp moved the panel afterwards.
+  if (clampFlowPosition()) fitCurrentView();
+});
+
+// A smaller window could otherwise leave the header or the grip out of reach.
 window.addEventListener('resize', function () {
+  if (flowPanel.style.display !== 'flex') return;
+  clampFlowPosition();
   if (!flowUserSize || flowPanel.classList.contains('modernPanelLarge')) return;
   flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
   applyFlowUserSize();
