@@ -156,6 +156,14 @@ check('connector synchronisation has a legend row in the colour it is drawn', fu
     assert(source.indexOf("color: roleColors[e.kind] || '#999',") >= 0, 'edge colour no longer comes from roleColors');
 });
 
+check('the Full legend lists connector synchronisation too, not only the compact legend', function () {
+    const start = source.indexOf('<div id="legendPanel">');
+    const full = source.slice(start, source.indexOf('</div></div>', start + 1000) > 0 ? source.indexOf('\n</div>', start) : start + 20000);
+    assert(start >= 0, 'Full legend markup not found');
+    assert(full.indexOf('<div class="legend-row"><span class="line" style="border-color:#999"></span>Connector - a Hub Variable and its connector device hold the same value</div>') >= 0,
+        'Full legend has no Connector row');
+});
+
 // ---- B and C ---------------------------------------------------------------------------
 
 check('Insights clears the rule variables card', function () {
