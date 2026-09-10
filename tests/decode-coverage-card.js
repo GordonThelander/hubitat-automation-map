@@ -5,7 +5,8 @@
 //
 // Covers the lifecycle rather than only the formatting: focusing does not fetch,
 // one press makes one request, a late response for a superseded selection is
-// discarded, and busy and failure states stay retryable.
+// discarded, busy and failure states stay retryable, the table is grouped with an
+// evidence level on every row, and a truncated walk never shows a percentage.
 //
 // Usage: node tests/decode-coverage-card.js
 'use strict';
@@ -48,8 +49,8 @@ function extractLineConst(name) {
     return source.slice(start, source.indexOf('\n', start));
 }
 
-const functionNames = ['extEsc', 'coverageHubAppId', 'coverageConstructLabel', 'decodeCoverageIdleHtml',
-    'decodeCoverageMessageHtml', 'decodeCoverageResultHtml', 'decodeCoverageOutcomeHtml',
+const functionNames = ['extEsc', 'coverageHubAppId', 'coverageConstructParts', 'coverageFamilyLabel',
+    'decodeCoverageIdleHtml', 'decodeCoverageMessageHtml', 'decodeCoverageResultHtml', 'decodeCoverageOutcomeHtml',
     'renderDecodeCoverageCard', 'requestDecodeCoverage'];
 const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
     'COVERAGE_FAMILY_LABELS', 'COVERAGE_OPERAND_NAMES', 'COVERAGE_LEVEL_NAMES'];
@@ -115,10 +116,16 @@ const completeBody = {
     accounting: { objectsVisited: 41, arraysVisited: 45, fieldsVisited: 192, arrayElementsVisited: 30,
                   scalarsVisited: 137, constructCandidates: 40, constructsIdentified: 40, defaultBranchOccurrences: 15 },
     constructCounts: { 'wc.statement.if': 1, 'wc.operand.p': 2, 'wc.task-parameter.unselected': 1 },
+    constructLevels: { 'wc.statement.if': 'L2', 'wc.operand.p': 'L2', 'wc.task-parameter.unselected': 'L2' },
     levelCounts: { L0: 0, L1: 0, L2: 3, L3: 0, L4: 0, L5: 0 },
     unrecognised: [], unrecognisedOverflow: 0, truncation: null,
     meta: { elapsedMs: 113, resultBytes: 961, decoderSchema: '1', cached: false }
 };
+
+function rendered(body) {
+    const sb = makeSandbox();
+    return sb.decodeCoverageResultHtml(body);
+}
 
 async function main() {
 
@@ -137,6 +144,14 @@ async function main() {
         assert(sb.box.hidden === false, 'card hidden');
         assert(sb.box.innerHTML.indexOf('Check decode coverage') >= 0, 'no button');
         assert(sb.fetchCalls.length === 0, 'fetched on focus');
+    });
+
+    check('the resting card describes privacy accurately', function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        assert(sb.box.innerHTML.indexOf('It examines the saved piston structure and does not expose piston values.') >= 0,
+            'corrected wording missing');
+        assert(sb.box.innerHTML.indexOf('never values') < 0, 'overstated wording still present');
     });
 
     // ---- one press, one request ---------------------------------------------
@@ -159,25 +174,78 @@ async function main() {
             assert(sb.fetchCalls.length === 1, 'fetch count ' + sb.fetchCalls.length);
         });
         await respond(sb, 0, completeBody);
-        check('a complete result renders accounting, rate, table and footer', function () {
+        check('a complete result renders accounting, rate, the unknown count and footer', function () {
             const h = sb.box.innerHTML;
             assert(h.indexOf('visited and accounted for') >= 0, 'no accounting line');
             assert(h.indexOf('223 values across 192 fields') >= 0, 'accounting figures wrong');
             assert(h.indexOf('100%') >= 0 && h.indexOf('40 of 40') >= 0, 'rate wrong');
-            assert(h.indexOf('Statement: if') >= 0 && h.indexOf('Operand: physical device') >= 0, 'labels wrong');
-            assert(h.indexOf('Task parameter: unselected') >= 0, 'structural label missing');
+            assert(h.indexOf('0 unrecognised positions.') >= 0, 'zero unknowns not stated');
             assert(h.indexOf('3 identified (L2)') >= 0, 'evidence line missing');
             assert(h.indexOf('15 values took a documented default path') >= 0, 'default path line missing');
             assert(h.indexOf('opaque constructs are not silently omitted') >= 0, 'footer missing');
         });
-        check('the accounting line comes before the rate', function () {
+        check('the accounting line comes before the rate, and the rate before the unknown count', function () {
             const h = sb.box.innerHTML;
             assert(h.indexOf('accounted for') < h.indexOf('dcRate'), 'rate precedes accounting');
+            assert(h.indexOf('dcRate') < h.indexOf('unrecognised position'), 'unknown count precedes rate');
         });
         check('the request is no longer marked in flight once answered', function () {
             assert(sb.inFlight() === false, 'still in flight');
         });
     })();
+
+    // ---- the grouped construct table ----------------------------------------------
+
+    check('constructs are grouped under a heading for each family', function () {
+        const h = rendered(completeBody);
+        ['Operand', 'Statement', 'Task parameter'].forEach(function (family) {
+            assert(h.indexOf('<tr class="dcFamily"><td colspan="3">' + family + '</td></tr>') >= 0, 'no heading for ' + family);
+        });
+        assert(h.split('class="dcFamily"').length - 1 === 3, 'wrong number of family headings');
+    });
+
+    check('families appear in label order, each with its own rows beneath it', function () {
+        const h = rendered(completeBody);
+        const operand = h.indexOf('>Operand<'), statement = h.indexOf('>Statement<'), task = h.indexOf('>Task parameter<');
+        assert(operand < statement && statement < task, 'family order wrong');
+        assert(h.indexOf('<td>physical device</td>') > operand && h.indexOf('<td>physical device</td>') < statement, 'operand row misplaced');
+        assert(h.indexOf('<td>if</td>') > statement && h.indexOf('<td>if</td>') < task, 'statement row misplaced');
+        assert(h.indexOf('<td>unselected</td>') > task, 'task parameter row misplaced');
+    });
+
+    check('every construct row carries its occurrence count and evidence level', function () {
+        const h = rendered(completeBody);
+        assert(h.indexOf('<th class="n">Evidence</th>') >= 0, 'no evidence column');
+        assert(h.indexOf('<tr><td>physical device</td><td class="n">2</td><td class="n"><span class="dcLevel" title="identified">L2</span></td></tr>') >= 0,
+            'row does not carry count and level');
+        assert(h.split('class="dcLevel"').length - 1 === 3, 'not every row has a level');
+    });
+
+    check('a family label is a table cell, not a sticky header cell', function () {
+        const h = rendered(completeBody);
+        assert(h.indexOf('<th colspan') < 0, 'family label rendered as th');
+    });
+
+    check('a level outside L0 to L5 is not rendered', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.constructLevels['wc.statement.if'] = 'L9<script>';
+        const h = rendered(body);
+        assert(h.indexOf('L9') < 0 && h.indexOf('<script>') < 0, 'untrusted level rendered');
+        assert(h.indexOf('<tr><td>if</td><td class="n">1</td><td class="n">-</td></tr>') >= 0, 'no placeholder for a missing level');
+    });
+
+    // ---- truncated walks ----------------------------------------------------------
+
+    check('a truncated walk shows a labelled partial count and no percentage', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.status = 'truncated';
+        body.truncation = { reason: 'depth-limit' };
+        body.accounting.constructsIdentified = 12;
+        const h = rendered(body);
+        assert(h.indexOf('12 of 40 visited construct positions identified') >= 0, 'partial count missing');
+        assert(h.indexOf('%') < 0 && h.indexOf('dcRate') < 0, 'percentage shown for a truncated walk');
+        assert(h.indexOf('A safety bound was reached') >= 0, 'safety warning missing');
+    });
 
     // ---- late responses ------------------------------------------------------
 
@@ -220,8 +288,11 @@ async function main() {
         const h = sb.box.innerHTML;
         check('gaps are listed by fixed reason and path', function () {
             assert(h.indexOf('Unrecognised statement') >= 0 && h.indexOf('$.s[4].t') >= 0, 'gap missing');
-            assert(h.indexOf('3 more not listed') >= 0, 'overflow missing');
             assert(h.indexOf('dcRateGap') >= 0, 'rate not marked partial');
+        });
+        check('the unknown count includes positions past the listing cap', function () {
+            assert(h.indexOf('5 unrecognised positions, the first 2 listed below.') >= 0, 'total or listing note wrong');
+            assert(h.indexOf('more not listed') < 0, 'old overflow line still shown');
         });
         check('a path is escaped rather than injected', function () {
             assert(h.indexOf('<script>') < 0 && h.indexOf('&lt;script&gt;') >= 0, 'path not escaped');
@@ -231,6 +302,12 @@ async function main() {
             assert(h.indexOf('caution, not a failure') >= 0, 'drift wording missing');
         });
     })();
+
+    check('a single unrecognised position is stated in the singular', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.unrecognised = [{ path: '$.s[1].t', reason: 'unknown-statement-type', nodeKind: 'scalar' }];
+        assert(rendered(body).indexOf('1 unrecognised position, listed below.') >= 0, 'singular wording wrong');
+    });
 
     const outcomes = [
         { label: 'busy', body: { status: 'busy', error: 'scan-active' }, cls: 'dcBusy', retry: true, text: 'relationship scan is running' },
@@ -253,7 +330,7 @@ async function main() {
                 assert(h.indexOf(o.text) >= 0, 'text missing');
                 assert(h.indexOf('class="' + o.cls + '"') >= 0, 'tone class missing');
                 assert((h.indexOf('Try again</button>') >= 0) === o.retry, 'retry wrong');
-                assert(h.indexOf('dcTable') < 0 && h.indexOf('dcRate') < 0, 'partial result shown');
+                assert(h.indexOf('dcTable') < 0 && h.indexOf('dcRate') < 0 && h.indexOf('dcPartial') < 0, 'partial result shown');
             });
             if (o.retry) {
                 sb.requestDecodeCoverage();
@@ -305,22 +382,12 @@ async function main() {
     });
     check('the card resets wherever the community card renders', function () {
         const renders = source.split('renderCommunityCard(node);').length - 1;
-        // Tolerant of CRLF and of each site's own indentation, so the check is
-        // about adjacency rather than whitespace.
         const resets = (source.match(/renderDecodeCoverageCard\(node\);\r?\n[ \t]*renderCommunityCard\(node\);/g) || []).length;
         assert(renders >= 5 && resets === renders, 'renders ' + renders + ', resets ' + resets);
     });
-    check('each reset shares the indentation of the call it precedes', function () {
-        const pairs = source.match(/[ \t]*renderDecodeCoverageCard\(node\);\r?\n[ \t]*renderCommunityCard\(node\);/g) || [];
-        pairs.forEach(function (pair) {
-            const lines = pair.split(/\r?\n/);
-            const a = lines[0].match(/^[ \t]*/)[0], b = lines[1].match(/^[ \t]*/)[0];
-            assert(a === b, 'indent mismatch: ' + JSON.stringify(a) + ' vs ' + JSON.stringify(b));
-        });
-    });
-    check('the markup places the card between the variables and community cards', function () {
-        assert(source.indexOf('<div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div>') >= 0,
-            'markup missing');
+    check('the card sits above the variables list, with the community card last', function () {
+        assert(source.indexOf('<div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div>') >= 0,
+            'markup order wrong');
     });
 
     console.log(pass + ' passed, ' + fail + ' failed');

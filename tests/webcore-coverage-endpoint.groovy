@@ -197,7 +197,7 @@ assertThat((body.meta as Map).elapsedMs != null && (body.meta as Map).resultByte
 String serialized = app.webcoreCoverageJson(body, app.webcoreCensusRegistry().constructs as Map) as String
 Map reparsed = new groovy.json.JsonSlurper().parseText(serialized) as Map
 assertThat(reparsed.keySet() == (['status', 'appId', 'registryVersion', 'provenance', 'accounting',
-                                  'constructCounts', 'levelCounts', 'unrecognised',
+                                  'constructCounts', 'constructLevels', 'levelCounts', 'unrecognised',
                                   'unrecognisedOverflow', 'truncation', 'meta'] as Set),
     'the serialized response carries exactly the allowlisted fields')
 
@@ -379,6 +379,35 @@ Map ordered = new LinkedHashMap(smuggledDeep)
 ordered.constructCounts = ['wc.statement.action': 3, 'wc.statement.if': 2, 'wc.statement.while': 1]
 assertThat(app.webcoreCoverageJson(unordered, constructs) == app.webcoreCoverageJson(ordered, constructs),
     'construct counts serialize in a fixed order regardless of insertion order')
+
+// ---- per-construct evidence levels ------------------------------------------------
+
+arm(app, piston)
+Map levelled = app.webcoreDecodeCoverageResult('77') as Map
+Map levelledJson = new groovy.json.JsonSlurper().parseText(app.webcoreCoverageJson(levelled.body as Map, constructs) as String) as Map
+assertThat(levelledJson.containsKey('constructLevels') && !(levelledJson.constructLevels as Map).isEmpty(),
+    'the response carries a level for each construct')
+assertThat((levelledJson.constructLevels as Map).keySet() == (levelledJson.constructCounts as Map).keySet(),
+    'construct level keys match construct count keys exactly')
+assertThat((levelledJson.constructLevels as Map).values().every { it in ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] },
+    'every level is from the closed L0 to L5 set')
+assertThat((levelledJson.constructLevels as Map).keySet().toList() == (levelledJson.constructLevels as Map).keySet().toList().sort(),
+    'construct levels are emitted in sorted order')
+
+// Levels come from the registry, never from the body, and an id whose registered
+// level is outside L0 to L5 is left out of both maps.
+Map fakeRegistry = ['wc.statement.if': [level: 'L2'], 'wc.statement.while': [level: 'L9'], 'wc.statement.action': [level: 'L3']]
+Map levelBody = [status: 'complete', appId: '77',
+                 constructCounts: ['wc.statement.while': 1, 'wc.statement.if': 2, 'wc.statement.action': 3, 'wc.unregistered.x': 4],
+                 constructLevels: ['wc.statement.if': 'L5', ('wc.injected.' + canary2): 'L2', 'wc.statement.action': canary2]]
+String levelJsonText = app.webcoreCoverageJson(levelBody, fakeRegistry) as String
+Map levelOut = new groovy.json.JsonSlurper().parseText(levelJsonText) as Map
+assertThat((levelOut.constructLevels as Map) == ['wc.statement.action': 'L3', 'wc.statement.if': 'L2'],
+    "levels come from the registry, not the body (${levelOut.constructLevels})")
+assertThat((levelOut.constructCounts as Map).keySet() == (['wc.statement.action', 'wc.statement.if'] as Set),
+    'an id with a level outside L0 to L5 is dropped from the counts as well')
+assertThat(!levelJsonText.contains(canary2) && !levelJsonText.contains('wc.injected'),
+    'nothing placed in the body under constructLevels reaches the response')
 
 int bad = results.count { !it }
 println "${results.size() - bad} passed, ${bad} failed"

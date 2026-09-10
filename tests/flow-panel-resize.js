@@ -470,7 +470,7 @@ check('the wheel listener is non-passive, or preventDefault would be ignored', f
 });
 
 check('the zoom wrapper sits inside the scrolling body, around all four sections', function () {
-    assert(source.indexOf('<div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div></div>') >= 0,
+    assert(source.indexOf('<div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>') >= 0,
         'wrapper markup missing or misplaced');
 });
 
