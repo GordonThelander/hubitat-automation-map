@@ -206,7 +206,8 @@ check('a dragged panel goes back to the default position for a new item', functi
     assert(sb.panelCustomPosition.get(sb.flowPanel) === undefined, 'still marked user-positioned');
 });
 
-check('a resized panel goes back to the default position for a new item and keeps its size', function () {
+check('a resized panel goes back to the default size and position for a new item', function () {
+    // A kept size left the right edge overhanging the legend on the Dev hub.
     const sb = makeSandbox();
     openItem(sb);
     dragGrip(sb, 240, 180);
@@ -214,19 +215,8 @@ check('a resized panel goes back to the default position for a new item and keep
     openItem(sb);
     const st = sb.flowPanel.style;
     assert(st.left === DEFAULT_LEFT && st.top === DEFAULT_TOP, 'new item opened at ' + st.left + ', ' + st.top);
-    assert(st.width === '600px' && st.height === '480px', 'size ' + st.width + ' x ' + st.height);
-    assert(st.maxHeight === 'none', 'height cap came back');
-});
-
-check('a size too tall for the default position is fitted to it', function () {
-    const sb = makeSandbox({ innerHeight: 800 });
-    openItem(sb);
-    moveTo(sb, 10, 20);
-    sb.rect.top = 20;
-    dragGrip(sb, 0, 400);
-    openItem(sb);
-    // Default top 367 in an 800px window leaves 423px with the 10px margin.
-    assert(sb.flowPanel.style.height === '423px', 'height ' + sb.flowPanel.style.height);
+    assert(st.width === '' && st.height === '' && st.maxWidth === '' && st.maxHeight === '', 'size ' + st.width + ' x ' + st.height);
+    assert(!sb.flowPanel.classList.contains('flowUserSized') && sb.userSize() === null, 'chosen size kept');
 });
 
 check('reopening the same item does not reset the position', function () {
