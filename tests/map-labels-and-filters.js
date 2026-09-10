@@ -150,6 +150,12 @@ check('applyFilters takes its edges from the tested filter function', function (
     assert(extractFunction('applyFilters').indexOf('const pool = edgesForKindFilter(kindVal, ALL_EDGES);') >= 0, 'applyFilters does not use edgesForKindFilter');
 });
 
+check('connector synchronisation has a legend row in the colour it is drawn', function () {
+    assert(source.indexOf("{ key: 'synchronizedWith', html: '<span class=\"line\" style=\"border-color:' + roleColors.synchronizedWith + '\"></span>Connector - a Hub Variable and its connector device hold the same value' },") >= 0, 'legend row missing');
+    assert(source.indexOf("synchronizedWith: '#999' };") >= 0, 'role colour missing');
+    assert(source.indexOf("color: roleColors[e.kind] || '#999',") >= 0, 'edge colour no longer comes from roleColors');
+});
+
 // ---- B and C ---------------------------------------------------------------------------
 
 check('Insights clears the rule variables card', function () {
