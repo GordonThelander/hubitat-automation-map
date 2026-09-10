@@ -9902,6 +9902,8 @@ document.fonts.ready.then(function () {
 // scan, so nothing is drawn - a divider with nothing under it would be
 // confusing rather than informative.
 let shelfDivider = null;
+// The shelf and its label belong to the whole map only.
+var shelfDividerShown = true;
 
 // Device node id -> the tags to draw beside it on the next redraw, recomputed
 // by applyFilters because "unused" depends on what is currently on screen, not
@@ -10062,7 +10064,7 @@ function drawNodeTags(ctx, scale) {
 network.on('afterDrawing', function (ctx) {
   const scale = network.getScale() || 1;
   drawNodeTags(ctx, scale);
-  if (!shelfDivider) return;
+  if (!shelfDivider || !shelfDividerShown) return;
   ctx.save();
   ctx.strokeStyle = 'rgba(255,255,255,0.35)';
   ctx.lineWidth = 1 / scale;
@@ -10231,6 +10233,10 @@ setTimeout(watchOverlayGeometry, 0);
 // map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
 // which is an upsert, so running it against a focused dataset silently added
 // every inert node back and collapsed the fit to a fraction of its scale.
+// Each settle owns the view until the next one starts. vis delivers
+// stabilizationIterationsDone to every pending listener, so an older settle's
+// listener would otherwise shelve or frame a view it no longer owns.
+var settleSeq = 0;
 function settle(shelve) {
   // A narrowed view rebuilds the DataSet with physics live, so the nodes are
   // watched flying apart and the framing then snaps the view back. The page's
@@ -10244,9 +10250,10 @@ function settle(shelve) {
   const canvasEl = document.getElementById('network');
   const reveal = function () { if (canvasEl) canvasEl.style.opacity = ''; };
   if (!shelve && canvasEl) canvasEl.style.opacity = '0';
+  const mySettle = ++settleSeq;
   let finished = false;
   const finish = function () {
-    if (finished) return;
+    if (finished || mySettle !== settleSeq) return;
     finished = true;
     network.setOptions({ physics: { enabled: false } });
     if (shelve) shelveInertNodes();
@@ -10259,10 +10266,12 @@ function settle(shelve) {
   // focus: six nodes left at whole-hub scale in a three-pixel blob. The
   // fallback is deliberately limited to narrowed views - shelve is true only
   // for the whole-hub map, whose startup path has been broken twice by changes
-  // around this and is left exactly as it was. A handful of nodes settles well
-  // inside this delay, so the timer only fires when the event genuinely did
-  // not, and finish() is guarded so both routes cannot run it twice.
+  // around this and is left exactly as it was. The timer only fires when the
+  // event did not, and finish() is guarded so both routes cannot run it twice.
   if (!shelve) {
+    // Run the layout to rest before framing. Measured on the Dev hub, the timer
+    // alone froze a Hub Variable 41px from its connector, labels overlapping.
+    network.stabilize(200);
     setTimeout(finish, 1500);
     // Last resort. finish() already reveals and is guarded, but the canvas must
     // never be left invisible if anything above throws.
@@ -10299,6 +10308,8 @@ settle(true);
 // entry, so the first Back press after opening would appear to do nothing.
 network.once('stabilizationIterationsDone', function () {
   setTimeout(function () {
+    // A focus picked before the first settle finished is kept, not reset.
+    if (currentFocus()) return;
     poppingHistory = true;
     exitToWholeMap();
     poppingHistory = false;
@@ -10494,6 +10505,7 @@ function applyFilters() {
   // "all" - exactly the start-up / Show all view the shelf belongs to. Any
   // narrowed view skips the shelf and is allowed to magnify instead.
   const wholeMap = (ids === null);
+  shelfDividerShown = wholeMap;
   currentFitOptions = wholeMap ? { animation: false }
                                : { animation: false, maxZoomLevel: FOCUS_MAX_ZOOM };
 
