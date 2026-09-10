@@ -11290,19 +11290,18 @@ function showInertPanel(node) {
   // device decode was clean AND found genuinely zero device operands (see
   // webcorePistonHasDeviceEvidence in buildGraph) - an ordinary, unremarkable
   // finding, not a coverage gap, so it does not need the red notice styling.
-  const isWebcoreNotice = node.webcoreDeviceRelationshipsSuppressed && node.appType === 'webCoRE';
   setFlowSub(node.unreadable ?
     'The hub could not answer for this app during the scan. What it references is unknown, not empty - rescan to try again.' :
     (node.webcoreDeviceRelationshipsSuppressed && node.appType === 'webCoRE' ?
       'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.' :
       (node.appType === 'webCoRE Piston' ?
         'This piston has saved configuration that was fully decoded and genuinely references no device, Hub Variable or declared local variable.' :
-        'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.')), isWebcoreNotice);
+        'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.')), false);
   setFlowWebcoreIndent(node);
 
   let html = node.unreadable ?
     '<h3>Could not be read</h3><p class="sub">' + extEsc(node.errorDetail || 'No further detail was recorded.') + '</p>' :
-    '<h3>' + extEsc(node.reason || 'References nothing') + '</h3>';
+    ((node.reason && node.title.indexOf('(' + node.reason + ')') >= 0) ? '' : '<h3>' + extEsc(node.reason || 'References nothing') + '</h3>');
   const facts = [];
   if (node.sched) facts.push(node.sched + ' scheduled job' + (node.sched === 1 ? '' : 's'));
   if (node.subs) facts.push(node.subs + ' event subscription' + (node.subs === 1 ? '' : 's'));
@@ -11419,9 +11418,9 @@ function showFlow(appId) {
     // the coverage gaps ('partial'/'error') still read as an attention-
     // worthy notice; 'complete' and 'none' are both ordinary outcomes, not
     // something to flag in red.
-    const isWebcoreNotice = isPistonNotice
-      ? (node.webcoreDeviceRelationshipCoverage === 'partial' || node.webcoreDeviceRelationshipCoverage === 'error')
-      : !!(node && node.webcoreDeviceRelationshipsSuppressed && node.appType === 'webCoRE');
+    // Red only for a real coverage gap. The webCoRE parent sentence is an explanation, not a fault.
+    const isWebcoreNotice = isPistonNotice &&
+      (node.webcoreDeviceRelationshipCoverage === 'partial' || node.webcoreDeviceRelationshipCoverage === 'error');
     setFlowSub(isPistonNotice
       ? webcorePistonDeviceCoverageMessage(node)
       : (node && node.appType === 'webCoRE' && node.webcoreDeviceRelationshipsSuppressed
