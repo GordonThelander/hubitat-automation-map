@@ -74,7 +74,10 @@ passed += 2
 // hashing could return the SHA-256 of an empty string when an anchor was
 // missing, producing a stable hash for no evidence at all. These prove the
 // generator now fails instead.
-File tmpRoot = new File(System.getProperty('java.io.tmpdir'), 'wc-region-neg')
+// UUID-suffixed so concurrent runs cannot collide, and only this exact
+// directory is ever deleted.
+File tmpRoot = new File(System.getProperty('java.io.tmpdir'),
+    'wc-region-neg-' + UUID.randomUUID().toString())
 void rmrf(File f) { if (f.isDirectory()) f.listFiles().each { rmrf(it) }; f.delete() }
 
 Closure runGen = { File root ->
@@ -113,5 +116,21 @@ def trunc = runGen(tmpRoot)
 check(trunc.rc != 0, 'unbalanced region boundary fails the generator')
 passed++
 rmrf(tmpRoot)
+
+// C0 control characters make a source file read as binary to grep and git.
+// The generator briefly contained literal NUL and SOH separators, which is the
+// encoding class of problem this project has hit before.
+Closure noControlChars = { File f, String label ->
+    String t = f.getText('UTF-8')
+    List<Integer> bad = []
+    t.each { String ch ->
+        int c = ch.charAt(0) as int
+        if (c < 32 && c != 9 && c != 10 && c != 13) bad << c
+    }
+    check(bad.isEmpty(), "${label} contains no C0 control characters${bad ? ' (found ' + bad.unique() + ')' : ''}")
+}
+noControlChars(new File('tools/webcore-investigation/generate-construct-registry.groovy'), 'generator')
+noControlChars(checkedIn, 'generated candidate')
+passed += 2
 
 println "${passed} passed, 0 failed"

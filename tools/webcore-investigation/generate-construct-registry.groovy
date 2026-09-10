@@ -76,8 +76,10 @@ if (branch && branch != EXPECTED_BRANCH) fail(failures, "branch is ${branch}, ex
 if (!remote) fail(failures, 'no remote.origin.url - repository provenance cannot be established')
 else if (!remote.contains('imnotbob/webCoRE')) fail(failures, "remote is ${remote}, expected ${EXPECTED_REPO}")
 
-File pistonFile = new File(root, 'smartapps/ady624/webcore-piston.src/webcore-piston.groovy')
-File appFile = new File(root, 'smartapps/ady624/webcore.src/webcore.groovy')
+String PISTON_PATH = 'smartapps/ady624/webcore-piston.src/webcore-piston.groovy'
+String APP_PATH = 'smartapps/ady624/webcore.src/webcore.groovy'
+File pistonFile = new File(root, PISTON_PATH)
+File appFile = new File(root, APP_PATH)
 if (!pistonFile.isFile()) fail(failures, "missing source file: ${pistonFile}")
 if (!appFile.isFile()) fail(failures, "missing source file: ${appFile}")
 if (failures) { failures.each { System.err.println "GATE: ${it}" }; System.exit 1 }
@@ -599,12 +601,17 @@ String definitionCorpus(String src, String prefix, List<String> f, String label)
         bodies[name] = body
     }
     if (bodies.isEmpty()) { fail(f, "region ${label}: no definitions matched ${prefix}"); return null }
-    return bodies.collect { k, v -> k + ' ' + v }.join('')
+    // Deterministic length-prefixed textual encoding. An earlier version used
+    // literal NUL and SOH separators, which made this file read as binary to
+    // grep and git and recreated an encoding class of problem this project has
+    // hit before. Length prefixes are unambiguous without needing any
+    // character that cannot appear in the content.
+    return bodies.collect { k, v -> "${k.length()}:${k}${v.length()}:${v}" }.join('')
 }
 
 String sha256(String text) {
     java.security.MessageDigest.getInstance('SHA-256')
-        .digest(text.getBytes('UTF-8')).collect { String.format('%02x', it & 0xFF) }.join().take(16)
+        .digest(text.getBytes('UTF-8')).collect { String.format('%02x', it & 0xFF) }.join()
 }
 
 Map<String, String> regionSource = [:]
@@ -648,6 +655,7 @@ if (failures) {
 String NS = 'wc.'
 String REGISTRY_VERSION = '1'
 List<String> emittedIds = []
+Map<String, List> emittedRefs = [:]
 // A closure, not a method: a Groovy script's local variables are not visible
 // inside a separately-declared method, so entry() as a method could not see
 // emittedIds, NS or REGISTRY_VERSION. Same shape as the Hubitat sandbox
@@ -655,17 +663,45 @@ List<String> emittedIds = []
 def entry
 entry = { String id, Map f ->
     emittedIds << id
+    if (f.refs) emittedRefs[id] = (f.refs as List)
     String canon = f.canonicalTarget ? "'${f.canonicalTarget}'" : 'null'
-    String sref = f.sourceRef ? "'${f.sourceRef}'" : 'null'
     String extra = ''
-    if (f.consumedBy) extra += ", consumedBy:'${f.consumedBy}'"
-    if (f.sharedBranchGroup) extra += ", sharedBranchGroup:'${f.sharedBranchGroup}'"
-    if (f.dispatchSite) extra += ", dispatchSite:'${f.dispatchSite}'"
+    // Structured lists rather than comma-joined strings: a CSV pushes parsing
+    // ambiguity into the walker for no benefit, and a reference that is not a
+    // resolvable key is not evidence.
+    if (f.refs) extra += ", sourceRef:[" + (f.refs as List).collect { "'${it}'" }.join(',') + "]"
+    else extra += ", sourceRef:" + (f.sourceRef ? "'${f.sourceRef}'" : 'null')
+    if (f.consumedByList) extra += ", consumedBy:[" + (f.consumedByList as List).collect { "'${it}'" }.join(',') + "]"
+    if (f.dispatchSiteList) extra += ", dispatchSite:[" + (f.dispatchSiteList as List).collect { "'${it}'" }.join(',') + "]"
+    // Shared-branch evidence per site. One member can sit in a three-member
+    // branch at one site and a twenty-member branch at another, and a single
+    // string cannot represent both.
+    if (f.sharedBySite) extra += ", sharedBranchBySite:[" +
+        (f.sharedBySite as Map).collect { k, v -> "'${k}':'${v}'" }.join(',') + "]"
     if (f.status) extra += ", status:'${f.status}'"
     if (f.staticallyResolvable != null) extra += ", staticallyResolvable:${f.staticallyResolvable}"
     return "    '${id}': [kind:'${f.kind}', name:'${f.name}', declared:${f.declared}, " +
            "implemented:${f.implemented}, canonicalTarget:${canon}, availability:'${f.availability}', " +
-           "level:'${f.level}', sinceRegistryVersion:'${REGISTRY_VERSION}', sourceRef:${sref}${extra}],\n"
+           "level:'${f.level}', sinceRegistryVersion:'${REGISTRY_VERSION}'${extra}],\n"
+}
+
+// Each frozen site resolves to real evidence: source file, dispatch anchor and
+// the region-hash key covering it. Without this a construct's sourceRef named a
+// site that was not a key in regionHashes, so the chain stopped short of
+// anything actually hashed.
+Map<String, String> METHOD_REGION = [
+    'executeStatement'   : 'executor.statement-dispatch',
+    'evaluateOperand'    : 'executor.evaluate-operand',
+    'subscribeAll'       : 'executor.subscribe-all',
+    'evaluateExpression' : 'executor.evaluate-expression',
+    'executeTask'        : 'executor.execute-task',
+]
+Map<String, Map> SITE_PROVENANCE = [:]
+FROZEN_SITES.each { String sid, Map site ->
+    String rk = METHOD_REGION[site.method as String]
+    if (rk == null) fail(failures, "site ${sid}: method '${site.method}' has no evidence region")
+    SITE_PROVENANCE[sid] = [file: PISTON_PATH, method: site.method, subject: site.subject,
+                            ordinal: site.ordinal, line: site.line, regionHash: rk]
 }
 
 // ------------------------------------------------- source evidence vs identity
@@ -710,9 +746,48 @@ Map<String, Map> SITE_NORMALIZATION = [
 
 // Build canonical identities from the frozen sites. Membership stays gated at
 // the site level; identity is what the walker will look up.
+// Identity ownership is explicit. A consumer-only site may only contribute
+// provenance to an identity that its owner already defines; it may never mint
+// one. Without this, a subscribe-only member absent from the evaluate site
+// silently became a new construct - an orphan promoted to an identity.
+//
+// 540 claimed this check existed. It did not: the subset relationship had been
+// verified by hand once and then described as if enforced. It is enforced now.
+// Only CONSUMER-ONLY sites need subset enforcement. Most sites are the sole
+// definer of their own canonical prefix and therefore own it by definition;
+// requiring them to find an external owner made every one of their members an
+// orphan on the first attempt. These four read nodes another site defines.
+Map<String, String> CONSUMER_ONLY_SITES = [
+    'operand.subscribe.type'        : 'operand.evaluate.type',
+    'virtual-device.subscribe.name' : 'virtual-device.evaluate.name',
+    'statement.subscribe.type'      : '(statement dispatch forms)',
+    'statement.subscribe.timer-type': '(statement dispatch forms)',
+]
+List<String> ownerSites = ['operand.evaluate.type', 'virtual-device.evaluate.name']
+
 Map<String, Map> canonical = [:]
 int siteMemberships = 0
-FROZEN_SITES.each { String siteId, Map site ->
+
+// Owner sites first, so ownership cannot depend on map iteration order.
+// Owners first, then the rest. Written as an explicit concatenation because
+// `owners + all - owners` evaluates left to right and removes the owners,
+// which silently made every member an orphan.
+List<String> orderedSites = ownerSites + ((FROZEN_SITES.keySet() as List) - ownerSites)
+// Statements are owned by the dispatch population, not by a site.
+Set<String> statementIds = statements.collect { NS + 'statement.' + it } as Set
+
+// An owner or consumer site naming something absent from FROZEN_SITES is a
+// configuration error, and previously threw a NullPointerException rather than
+// reporting it.
+(ownerSites + (CONSUMER_ONLY_SITES.keySet() as List)).unique().each { String sid ->
+    if (!FROZEN_SITES.containsKey(sid) && !sid.startsWith('(')) {
+        fail(failures, "configured site '${sid}' is not present in FROZEN_SITES")
+    }
+}
+
+orderedSites.each { String siteId ->
+    Map site = FROZEN_SITES[siteId]
+    if (site == null) { fail(failures, "site '${siteId}' has no frozen definition"); return }
     Map norm = SITE_NORMALIZATION[siteId]
     if (norm == null) { fail(failures, "site ${siteId} has no reviewed normalization"); return }
     Map<String, String> groupOf = [:]
@@ -722,16 +797,26 @@ FROZEN_SITES.each { String siteId, Map site ->
         String label = (m == '') ? 'empty' : m
         String id = NS + norm.prefix + label
         Map c = canonical[id]
+        boolean ownedElsewhere = statementIds.contains(id)
+        if (c == null && CONSUMER_ONLY_SITES.containsKey(siteId) && !ownedElsewhere) {
+            // A consumer-only site named something its owner never defines.
+            // Promoting it would turn an orphan into a construct identity.
+            fail(failures, "orphan member: consumer site '${siteId}' member '${m}' -> '${id}' " +
+                           "is not defined by its owner (${CONSUMER_ONLY_SITES[siteId]})")
+            return
+        }
         if (c == null) {
             canonical[id] = [kind: 'operand', name: label, consumedBy: [norm.consumer] as TreeSet,
-                             sites: [siteId] as TreeSet, sharedBranchGroup: groupOf[m]]
+                             sites: [siteId] as TreeSet, sharedBySite: new TreeMap<String, String>()]
         } else {
             (c.consumedBy as Set) << norm.consumer
             (c.sites as Set) << siteId
-            // A shared-branch group seen at one site but not another is site
-            // provenance; keep the first non-null rather than merging strings.
-            if (!c.sharedBranchGroup && groupOf[m]) c.sharedBranchGroup = groupOf[m]
         }
+        // Shared-branch evidence is per site. One canonical member can sit in a
+        // three-member branch at one site and a twenty-member branch at another,
+        // and a single string cannot represent both. No site wins by being
+        // visited first.
+        if (groupOf[m] && canonical[id] != null) (canonical[id].sharedBySite as Map)[siteId] = groupOf[m]
     }
 }
 
@@ -756,6 +841,14 @@ sb << "// Reviewed as a diff before use. Not self-authorizing.\n"
 sb << "@Field static final Map WEBCORE_CONSTRUCT_REGISTRY = [\n"
 sb << "  provenance: [repo: '${remote}', branch: '${branch}', commit: '${sha}',\n"
 sb << "               generator: '${GENERATOR_VERSION}', registryVersion: '${REGISTRY_VERSION}',\n"
+sb << "               sourcePaths: ['${PISTON_PATH}', '${APP_PATH}'],\n"
+sb << "               sites: [\n"
+SITE_PROVENANCE.sort().each { String sid, Map pv ->
+    sb << "                 '${sid}': [file:'${pv.file}', method:'${pv.method}', " +
+          "subject:'${pv.subject}', ordinal:${pv.ordinal}, line:${pv.line}, " +
+          "regionHash:'${pv.regionHash}'],\n"
+}
+sb << "               ],\n"
 sb << "               regionHashes: [\n"
 REGION_HASHES.sort().each { String k, String v -> sb << "                 '${k}': '${v}',\n" }
 sb << "               ]],\n"
@@ -765,14 +858,14 @@ sb << "  constructs: [\n"
 statements.each { String st ->
     sb << entry("${NS}statement.${st}", [kind: 'statement', name: st, declared: true, implemented: true,
         canonicalTarget: null, availability: 'current', level: 'L2',
-        sourceRef: 'executor.statement-dispatch',
-        consumedBy: (statementConsumers[st] as List).join(',')])
+        refs: ['executor.statement-dispatch'],
+        consumedByList: (statementConsumers[st] as List)])
 }
 // execution policy flags - part of the agreed population and previously omitted
 ['tep', 'tsp', 'tcp'].each { String pf ->
     sb << entry("${NS}policy.${pf}", [kind: 'policy', name: pf, declared: false, implemented: true,
         canonicalTarget: null, availability: 'current', level: 'L2',
-        sourceRef: 'executor.statement-dispatch'])
+        refs: ['executor.statement-dispatch']])
 }
 // functions
 functions.sort().each { String f ->
@@ -785,7 +878,7 @@ functions.sort().each { String f ->
         declared: decl, implemented: true,
         canonicalTarget: canon ? "${NS}function.${canon}" : null,
         availability: availability(bare, true, declFuncSet), level: 'L2',
-        sourceRef: decl ? 'executor.functions,catalogue.functions-fld' : 'executor.functions'])
+        refs: decl ? ['executor.functions', 'catalogue.functions-fld'] : ['executor.functions']])
 }
 // virtual commands
 vcmds.sort().each { String v ->
@@ -794,35 +887,37 @@ vcmds.sort().each { String v ->
     sb << entry("${NS}vcmd.${bare}", [kind: 'vcmd', name: bare,
         declared: vdecl, implemented: true,
         canonicalTarget: null, availability: availability(bare, true, declVcmdSet), level: 'L2',
-        sourceRef: vdecl ? 'executor.virtual-commands,catalogue.virtual-commands' : 'executor.virtual-commands'])
+        refs: vdecl ? ['executor.virtual-commands', 'catalogue.virtual-commands'] : ['executor.virtual-commands']])
 }
 // catalogue-only reconciliation, now case-normalized on both sides like the
 // availability lookup already was
 declaredFuncs.findAll { !implFuncSet.contains((it as String).toLowerCase()) }.each { String d ->
     sb << entry("${NS}function.${d}", [kind: 'function', name: d, declared: true, implemented: false,
         canonicalTarget: null, availability: 'catalog-only', level: 'L2',
-        sourceRef: 'catalogue.functions-fld'])
+        refs: ['catalogue.functions-fld']])
 }
 declaredVcmds.findAll { !implVcmdSet.contains((it as String).toLowerCase()) }.each { String d ->
     sb << entry("${NS}vcmd.${d}", [kind: 'vcmd', name: d, declared: true, implemented: false,
         canonicalTarget: null, availability: 'catalog-only', level: 'L2',
-        sourceRef: 'catalogue.virtual-commands'])
+        refs: ['catalogue.virtual-commands']])
 }
 // SmartThings-only, not derivable: absent from this source entirely
 sb << entry("${NS}vcmd.executeRoutine", [kind: 'vcmd', name: 'executeRoutine', declared: false,
     implemented: false, canonicalTarget: null, availability: 'smartthings-only', level: 'L2',
-    sourceRef: null])
+    refs: []])
 
 // Dispatch-site members, context-qualified. Previously validated only and never
 // emitted, which would have left the Increment 2 walker unable to resolve
 // wc.operand.evaluate.type.d from the registry it is supposed to consult.
 canonical.sort().each { String id, Map c ->
+    // Every site reference resolves through SITE_PROVENANCE to a region hash.
     sb << entry(id, [kind: 'operand', name: c.name,
         declared: false, implemented: true, canonicalTarget: null, availability: 'current',
-        level: 'L2', sourceRef: (c.sites as List).join(','),
-        dispatchSite: (c.sites as List).join(','),
-        consumedBy: (c.consumedBy as List).join(','),
-        sharedBranchGroup: c.sharedBranchGroup])
+        level: 'L2',
+        refs: (c.sites as List),
+        dispatchSiteList: (c.sites as List),
+        consumedByList: (c.consumedBy as List),
+        sharedBySite: (c.sharedBySite as Map)])
 }
 
 // Device-selector grammar. Value-shape metadata, deliberately kept distinct
@@ -833,7 +928,7 @@ DEVICE_SELECTOR_GRAMMAR.each { String id, Map g ->
         declared: false, implemented: g.status == 'active',
         canonicalTarget: null,
         availability: g.status == 'active' ? 'current' : 'unreachable',
-        level: 'L2', sourceRef: 'executor.expand-device-list',
+        level: 'L2', refs: ['executor.expand-device-list'],
         status: g.status, staticallyResolvable: g.staticallyResolvable])
 }
 sb << "  ]\n]\n"
@@ -843,6 +938,29 @@ sb << "  ]\n]\n"
 List<String> dupes = emittedIds.countBy { it }.findAll { it.value > 1 }.keySet() as List
 if (dupes) { System.err.println "GATE: duplicate registry ids after assembly ${dupes}"; System.exit 1 }
 
+// Every reference must resolve: either directly to a region-hash key, or to a
+// frozen site that SITE_PROVENANCE maps to one. A reference that resolves to
+// nothing is not evidence, and the chain previously stopped at site names that
+// were not keys in regionHashes at all.
+Set<String> resolvable = (REGION_HASHES.keySet() as Set) + (SITE_PROVENANCE.keySet() as Set)
+List<String> dangling = []
+emittedRefs.each { String id, List refs ->
+    refs.each { String r -> if (!resolvable.contains(r)) dangling << "${id} -> ${r}" }
+}
+if (dangling) {
+    System.setOut(realOut)
+    System.err.println "GATE: dangling evidence references: ${dangling.take(5)}"
+    System.exit 1
+}
+// Each site reference must itself terminate in a region hash.
+SITE_PROVENANCE.each { String sid, Map pv ->
+    if (!REGION_HASHES.containsKey(pv.regionHash)) {
+        System.setOut(realOut)
+        System.err.println "GATE: site ${sid} names region ${pv.regionHash}, which was not hashed"
+        System.exit 1
+    }
+}
+
 // Alias targets must exist, or canonicalTarget points at nothing.
 Set<String> idSet = emittedIds as Set
 REVIEWED_ALIASES.each { String from, String to ->
@@ -851,6 +969,20 @@ REVIEWED_ALIASES.each { String from, String to ->
         System.err.println "GATE: alias ${from} -> ${to} but ${target} is not in the registry"
         System.exit 1
     }
+}
+
+// Single pre-output gate. Failures are recorded by several phases and were
+// previously read only by whichever gate happened to follow that phase, so a
+// later phase's failures went unread. Twice: region-boundary failures, then
+// orphan failures. Nothing is emitted while any failure stands, wherever it
+// was recorded.
+if (failures) {
+    System.setOut(realOut)
+    println 'GATE FAILURES:'
+    failures.unique().each { println "  - ${it}" }
+    println ''
+    println 'No registry emitted.'
+    System.exit 1
 }
 
 if (candidateOnly) { System.setOut(realOut); print sb.toString(); System.exit 0 }
