@@ -46,7 +46,7 @@ if (!root.isDirectory()) {
 
 // ---------------------------------------------------------------- provenance
 
-// Recorded per Codex 526: repository, tracking branch, immutable SHA, source
+// Recorded per review 526: repository, tracking branch, immutable SHA, source
 // paths, generator version and timestamp. The SHA is the pin; the branch is
 // the maintenance channel that detects a newer candidate and stops a naive
 // clone landing on `master`, which is still 2019 SmartThings-era code.
@@ -100,7 +100,7 @@ piston.eachLine { String line ->
 
 // ------------------------------------------------- reviewed extraction sites
 
-// Codex 528: extraction reads only explicitly named, reviewed sites. A broad
+// review 528: extraction reads only explicitly named, reviewed sites. A broad
 // literal scan could admit UI text, setting names or unrelated implementation
 // detail, and anything admitted here is later emitted verbatim in a census
 // path. Each site below is named, bounded and justified.
@@ -220,7 +220,7 @@ List<String> declaredFuncs = extractCatalogue(app, '@Field final Map<String,Map>
 // member disappears and a phantom appears in the same run.
 //
 // sharedBranch records members that fall through to a common body. It is
-// PROVENANCE ONLY and never collapses members (Codex 533): sunriseTime and
+// PROVENANCE ONLY and never collapses members (review 533): sunriseTime and
 // sunsetTime are semantically different values even where execution shares a
 // path, and the five numeric labels at expression.item.type are five recognised
 // serialized forms handled by one conversion branch.
@@ -290,7 +290,7 @@ Map<String, Map> FROZEN_SITES = [
     shared: [['while', 'repeat']]],
 ]
 
-// Device-selector grammar. NOT a numeric vocabulary gate (Codex 533/535):
+// Device-selector grammar. NOT a numeric vocabulary gate (review 533/535):
 // selectors are not switch-dispatched, so there is no discriminator population
 // to count. Source basis is expandDeviceList (line 9435), which serves both
 // physical operands and action targets.
@@ -317,7 +317,7 @@ Map<String, Map> DEVICE_SELECTOR_GRAMMAR = [
     recognition: 'isWcDev(entry): length 34, colon-delimited. Automation Map additionally requires ' +
                  '32 lowercase hex, which is deliberately STRICTER than the source. A 34-character ' +
                  'colon-delimited non-hex value stays unknown-device-selector rather than being ' +
-                 'resolved (Codex 535).'],
+                 'resolved (review 535).'],
   'device-selector.variable-device-list': [
     status: 'active', staticallyResolvable: false,
     recognition: 'variable of type device whose value is a List'],
@@ -351,7 +351,7 @@ Map<String, String> REVIEWED_ALIASES = [
 // --------------------------------------------------------------------- gates
 
 // Reviewed expectations. A mismatch is drift requiring review, never a value
-// to absorb. Populations are labelled separately per Codex 526: there is no
+// to absorb. Populations are labelled separately per review 526: there is no
 // honest single denominator once declared and implemented surfaces differ.
 Map<String, Integer> EXPECTED = [
     'statement.dispatch'      : 12,
@@ -384,7 +384,7 @@ println "commit     : ${sha ?: '(unknown)'}"
 // Report metadata only. Deliberately NOT part of the candidate literal: an
 // earlier version put a timestamp inside the emitted registry, which made
 // "the candidate is deterministic" untestable and led to a byte-identical
-// claim that was false as stated (Codex 537).
+// claim that was false as stated (review 537).
 println "generated  : ${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))}  (report only, not in candidate)"
 println ''
 actual.each { String k, List<String> v -> printf('%-22s %4d  (expected %d)%n', k, v.size(), EXPECTED[k]) }
@@ -487,7 +487,7 @@ FROZEN_SITES.each { String id, Map want ->
     Map got = observedSites[key]
     if (got == null) {
         // Fail closed: a configured site that cannot be located is drift, never
-        // an absence to shrug at (Codex 531).
+        // an absence to shrug at (review 531).
         fail(failures, "${id}: dispatch site not found (${key})")
         printf('  %-32s NOT FOUND%n', id)
         return
@@ -543,7 +543,7 @@ if (!emit) {
 
 // -------------------------------------------------------------------- output
 
-// availability, per Codex 526, so the real catalogue/executor mismatches are
+// availability, per review 526, so the real catalogue/executor mismatches are
 // representable as known constructs rather than as unknowns.
 // Case-insensitive on BOTH sides. functionsFLD keys are lowercase
 // (`previousage`) while virtualCommands() keys are camelCase (`waitRandom`),
@@ -568,7 +568,7 @@ String availability(String bare, boolean implemented, Set<String> declaredLower)
 // version hashed fixed character windows (2k/12k/20k/40k), which could truncate
 // a method, swallow unrelated following code, or - worst - hash the SHA-256 of
 // an empty string when an anchor was missing, silently producing a stable hash
-// for no evidence at all (Codex 539).
+// for no evidence at all (review 539).
 //
 // Every region below is brace- or bracket-matched from a named anchor, and a
 // missing or unbalanced boundary FAILS rather than degrading.
@@ -654,7 +654,7 @@ regionSource.each { String k, String v ->
 // Region hashing runs in the emit path, AFTER the main gate check, so failures
 // recorded above would otherwise be written to a list nobody reads. A missing
 // anchor produced "All gates passed" and a registry with one fewer hash. Caught
-// by the negative test Codex asked for in 539, which is the entire argument for
+// by the negative test review 539 asked for, which is the entire argument for
 // having written it.
 if (failures) {
     System.setOut(realOut)
@@ -724,7 +724,7 @@ FROZEN_SITES.each { String sid, Map site ->
 // ------------------------------------------------- source evidence vs identity
 
 // A source dispatch membership is NOT automatically a saved construct identity
-// (Codex 539). The thirteen sites are evidence about which runtime paths consume
+// (review 539). The thirteen sites are evidence about which runtime paths consume
 // a serialized value; the saved document contains one node regardless of how
 // many passes inspect it. A saved {t:'p'} operand is ONE persisted operand that
 // evaluateOperand evaluates and subscribeAll inspects - not two constructs.
@@ -898,7 +898,7 @@ functions.sort().each { String f ->
     String canon = REVIEWED_ALIASES[bare.toLowerCase()]
     boolean decl = isDeclared(bare, declFuncSet)
     // Evidence must contain the entry: an executor-only function cannot cite
-    // the catalogue it is absent from (Codex 539).
+    // the catalogue it is absent from (review 539).
     sb << entry("${NS}function.${bare}", [kind: 'function', name: bare,
         declared: decl, implemented: true,
         canonicalTarget: canon ? "${NS}function.${canon}" : null,
@@ -1029,7 +1029,7 @@ printf('  statements %d, policy %d, functions %d, vcmds %d, canonical operand-fa
     canonical.size(),
     DEVICE_SELECTOR_GRAMMAR.size(),
     STRUCTURAL_FORMS.size())
-// The two numbers Codex 539 asked to be reported separately, because conflating
+// The two numbers review 539 asked to be reported separately, because conflating
 // them is precisely the error this rework corrects.
 printf('  source-site memberships %d  ->  unique canonical saved constructs %d%n',
     siteMemberships, canonical.size())
