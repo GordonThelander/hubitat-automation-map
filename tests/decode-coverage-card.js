@@ -1,0 +1,330 @@
+// T7 for the Decode coverage card (v2.2.9), against the REAL functions extracted
+// from apps/automation_map.groovy, never a copy. The card lives inside a Groovy
+// GString, so it cannot be imported; each function and constant is located by
+// brace matching and evaluated here with a stubbed document and fetch.
+//
+// Covers the lifecycle rather than only the formatting: focusing does not fetch,
+// one press makes one request, a late response for a superseded selection is
+// discarded, and busy and failure states stay retryable.
+//
+// Usage: node tests/decode-coverage-card.js
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const SRC = path.join(__dirname, '..', 'apps', 'automation_map.groovy');
+const source = fs.readFileSync(SRC, 'utf8');
+
+function balancedFrom(start, open, close) {
+    const first = source.indexOf(open, start);
+    let depth = 0;
+    for (let i = first; i < source.length; i++) {
+        const c = source[i];
+        if (c === open) depth++;
+        else if (c === close) {
+            depth--;
+            if (depth === 0) return source.slice(start, i + 1);
+        }
+    }
+    throw new Error('unbalanced extraction from ' + start);
+}
+
+function extractFunction(name) {
+    const start = source.indexOf('function ' + name + '(');
+    if (start < 0) throw new Error('could not find function ' + name);
+    return balancedFrom(start, '{', '}');
+}
+
+function extractConst(name) {
+    const start = source.indexOf('const ' + name + ' = {');
+    if (start < 0) throw new Error('could not find const ' + name);
+    return balancedFrom(start, '{', '}') + ';';
+}
+
+function extractLineConst(name) {
+    const start = source.indexOf('const ' + name + ' = ');
+    if (start < 0) throw new Error('could not find const ' + name);
+    return source.slice(start, source.indexOf('\n', start));
+}
+
+const functionNames = ['extEsc', 'coverageHubAppId', 'coverageConstructLabel', 'decodeCoverageIdleHtml',
+    'decodeCoverageMessageHtml', 'decodeCoverageResultHtml', 'decodeCoverageOutcomeHtml',
+    'renderDecodeCoverageCard', 'requestDecodeCoverage'];
+const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
+    'COVERAGE_FAMILY_LABELS', 'COVERAGE_OPERAND_NAMES', 'COVERAGE_LEVEL_NAMES'];
+
+const cardBlock = source.slice(source.indexOf('// Decode coverage card (v2.2.9).'),
+                               source.indexOf('function renderCommunityCard(node) {'));
+
+let pass = 0, fail = 0;
+function check(name, fn) {
+    try {
+        fn();
+        console.log('PASS  ' + name);
+        pass++;
+    } catch (e) {
+        console.log('FAIL  ' + name + ' - ' + e.message);
+        fail++;
+    }
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
+
+// ---- a sandbox wired to controllable fetch and selection state -------------
+
+function makeSandbox() {
+    const box = { innerHTML: '', hidden: true };
+    const pending = [];
+    const sandbox = {
+        box: box,
+        fetchCalls: [],
+        document: { getElementById: function (id) { return id === 'decodeCoverageCard' ? box : null; } },
+        fetch: function (url, opts) {
+            sandbox.fetchCalls.push({ url: url, opts: opts });
+            return new Promise(function (resolve, reject) { pending.push({ resolve: resolve, reject: reject }); });
+        },
+        pending: pending,
+        encodeURIComponent: encodeURIComponent,
+        Math: Math, Object: Object, String: String
+    };
+    const script =
+        'let focusGenerationSeq = 0;\n' +
+        'const COVERAGE_URL = "http://hub/coverage?access_token=T";\n' +
+        extractLineConst('COVERAGE_FOOTER') + '\n' +
+        'let coverageRequestSeq = 0;\nlet coverageAppId = null;\nlet coverageInFlight = false;\n' +
+        objectConsts.map(extractConst).join('\n') + '\n' +
+        functionNames.map(extractFunction).join('\n') + '\n' +
+        'function bumpSelection() { focusGenerationSeq++; }\n' +
+        'function inFlight() { return coverageInFlight; }\n';
+    vm.createContext(sandbox);
+    vm.runInContext(script, sandbox);
+    return sandbox;
+}
+
+function respond(sb, index, body) {
+    sb.pending[index].resolve({ json: function () { return Promise.resolve(body); } });
+    return new Promise(function (r) { setImmediate(r); });
+}
+
+const piston = { id: 'a3095', appType: 'webCoRE Piston' };
+const ruleMachine = { id: 'a2279', appType: 'Rule-5.1' };
+
+const completeBody = {
+    status: 'complete', appId: '3095', registryVersion: '1',
+    provenance: { observedWebcoreVersion: null, referenceSourceCommit: 'abc', compatibilityStatus: 'unknown' },
+    accounting: { objectsVisited: 41, arraysVisited: 45, fieldsVisited: 192, arrayElementsVisited: 30,
+                  scalarsVisited: 137, constructCandidates: 40, constructsIdentified: 40, defaultBranchOccurrences: 15 },
+    constructCounts: { 'wc.statement.if': 1, 'wc.operand.p': 2, 'wc.task-parameter.unselected': 1 },
+    levelCounts: { L0: 0, L1: 0, L2: 3, L3: 0, L4: 0, L5: 0 },
+    unrecognised: [], unrecognisedOverflow: 0, truncation: null,
+    meta: { elapsedMs: 113, resultBytes: 961, decoderSchema: '1', cached: false }
+};
+
+async function main() {
+
+    // ---- focusing -----------------------------------------------------------
+
+    check('a non-piston selection hides the card and fetches nothing', function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(ruleMachine);
+        assert(sb.box.hidden === true && sb.box.innerHTML === '', 'card not hidden');
+        assert(sb.fetchCalls.length === 0, 'fetched on focus');
+    });
+
+    check('focusing a piston shows the button and fetches nothing', function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        assert(sb.box.hidden === false, 'card hidden');
+        assert(sb.box.innerHTML.indexOf('Check decode coverage') >= 0, 'no button');
+        assert(sb.fetchCalls.length === 0, 'fetched on focus');
+    });
+
+    // ---- one press, one request ---------------------------------------------
+
+    await (async function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        sb.requestDecodeCoverage();
+        check('a press makes exactly one request for the hub app id', function () {
+            assert(sb.fetchCalls.length === 1, 'fetch count ' + sb.fetchCalls.length);
+            assert(sb.fetchCalls[0].url === 'http://hub/coverage?access_token=T&appId=3095', 'url ' + sb.fetchCalls[0].url);
+            assert(sb.fetchCalls[0].opts.credentials === 'omit', 'credentials not omitted');
+        });
+        check('the button is disabled while the request is pending', function () {
+            assert(sb.box.innerHTML.indexOf('disabled') >= 0 && sb.box.innerHTML.indexOf('Checking') >= 0, 'not disabled');
+        });
+        sb.requestDecodeCoverage();
+        sb.requestDecodeCoverage();
+        check('further presses while pending make no further request', function () {
+            assert(sb.fetchCalls.length === 1, 'fetch count ' + sb.fetchCalls.length);
+        });
+        await respond(sb, 0, completeBody);
+        check('a complete result renders accounting, rate, table and footer', function () {
+            const h = sb.box.innerHTML;
+            assert(h.indexOf('visited and accounted for') >= 0, 'no accounting line');
+            assert(h.indexOf('223 values across 192 fields') >= 0, 'accounting figures wrong');
+            assert(h.indexOf('100%') >= 0 && h.indexOf('40 of 40') >= 0, 'rate wrong');
+            assert(h.indexOf('Statement: if') >= 0 && h.indexOf('Operand: physical device') >= 0, 'labels wrong');
+            assert(h.indexOf('Task parameter: unselected') >= 0, 'structural label missing');
+            assert(h.indexOf('3 identified (L2)') >= 0, 'evidence line missing');
+            assert(h.indexOf('15 values took a documented default path') >= 0, 'default path line missing');
+            assert(h.indexOf('opaque constructs are not silently omitted') >= 0, 'footer missing');
+        });
+        check('the accounting line comes before the rate', function () {
+            const h = sb.box.innerHTML;
+            assert(h.indexOf('accounted for') < h.indexOf('dcRate'), 'rate precedes accounting');
+        });
+        check('the request is no longer marked in flight once answered', function () {
+            assert(sb.inFlight() === false, 'still in flight');
+        });
+    })();
+
+    // ---- late responses ------------------------------------------------------
+
+    await (async function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        sb.requestDecodeCoverage();
+        sb.renderDecodeCoverageCard({ id: 'a3089', appType: 'webCoRE Piston' });
+        await respond(sb, 0, completeBody);
+        check('a response for a piston no longer shown is discarded', function () {
+            assert(sb.box.innerHTML.indexOf('Check decode coverage') >= 0, 'stale result rendered');
+            assert(sb.box.innerHTML.indexOf('40 of 40') < 0, 'stale figures shown');
+        });
+    })();
+
+    await (async function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        sb.requestDecodeCoverage();
+        sb.bumpSelection();
+        await respond(sb, 0, completeBody);
+        check('a response arriving after any newer selection is discarded', function () {
+            assert(sb.box.innerHTML.indexOf('40 of 40') < 0, 'stale figures shown');
+        });
+    })();
+
+    // ---- gaps, drift, busy, failure -----------------------------------------
+
+    await (async function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        sb.requestDecodeCoverage();
+        const withGaps = JSON.parse(JSON.stringify(completeBody));
+        withGaps.accounting.constructsIdentified = 38;
+        withGaps.unrecognised = [{ path: '$.s[4].t', reason: 'unknown-statement-type', nodeKind: 'scalar' },
+                                 { path: '$.s[0].<script>', reason: 'unknown-key', nodeKind: 'scalar' }];
+        withGaps.unrecognisedOverflow = 3;
+        withGaps.provenance.compatibilityStatus = 'version-drift';
+        await respond(sb, 0, withGaps);
+        const h = sb.box.innerHTML;
+        check('gaps are listed by fixed reason and path', function () {
+            assert(h.indexOf('Unrecognised statement') >= 0 && h.indexOf('$.s[4].t') >= 0, 'gap missing');
+            assert(h.indexOf('3 more not listed') >= 0, 'overflow missing');
+            assert(h.indexOf('dcRateGap') >= 0, 'rate not marked partial');
+        });
+        check('a path is escaped rather than injected', function () {
+            assert(h.indexOf('<script>') < 0 && h.indexOf('&lt;script&gt;') >= 0, 'path not escaped');
+        });
+        check('drift is a caution, visually distinct from a failure', function () {
+            assert(h.indexOf('dcCaution') >= 0 && h.indexOf('dcError') < 0, 'drift styled as failure');
+            assert(h.indexOf('caution, not a failure') >= 0, 'drift wording missing');
+        });
+    })();
+
+    const outcomes = [
+        { label: 'busy', body: { status: 'busy', error: 'scan-active' }, cls: 'dcBusy', retry: true, text: 'relationship scan is running' },
+        { label: 'in flight', body: { status: 'busy', error: 'coverage-in-flight' }, cls: 'dcBusy', retry: true, text: 'already running' },
+        { label: 'source timeout', body: { status: 'error', error: 'source-timeout' }, cls: 'dcError', retry: true, text: 'took too long' },
+        { label: 'analysis timeout', body: { status: 'analysis-timeout', error: 'analysis-deadline' }, cls: 'dcError', retry: true, text: 'No partial result' },
+        { label: 'decode failure', body: { status: 'error', error: 'decode-failed' }, cls: 'dcError', retry: false, text: 'could not be decoded' },
+        { label: 'not a piston', body: { status: 'invalid-request', error: 'not-a-piston' }, cls: 'dcError', retry: false, text: 'only available for webCoRE' },
+        { label: 'not present', body: { status: 'not-present' }, cls: 'sub', retry: false, text: 'no saved configuration' },
+        { label: 'unknown code', body: { status: 'error', error: 'something-new' }, cls: 'dcError', retry: true, text: 'did not complete' }
+    ];
+    for (const o of outcomes) {
+        await (async function () {
+            const sb = makeSandbox();
+            sb.renderDecodeCoverageCard(piston);
+            sb.requestDecodeCoverage();
+            await respond(sb, 0, o.body);
+            const h = sb.box.innerHTML;
+            check(o.label + ': fixed text, ' + (o.retry ? 'retryable' : 'final') + ', no partial result', function () {
+                assert(h.indexOf(o.text) >= 0, 'text missing');
+                assert(h.indexOf('class="' + o.cls + '"') >= 0, 'tone class missing');
+                assert((h.indexOf('Try again</button>') >= 0) === o.retry, 'retry wrong');
+                assert(h.indexOf('dcTable') < 0 && h.indexOf('dcRate') < 0, 'partial result shown');
+            });
+            if (o.retry) {
+                sb.requestDecodeCoverage();
+                check(o.label + ': retry makes a fresh request', function () {
+                    assert(sb.fetchCalls.length === 2, 'fetch count ' + sb.fetchCalls.length);
+                });
+            }
+        })();
+    }
+
+    await (async function () {
+        const sb = makeSandbox();
+        sb.renderDecodeCoverageCard(piston);
+        sb.requestDecodeCoverage();
+        sb.pending[0].reject(new Error('network down SECRETDETAIL'));
+        await new Promise(function (r) { setImmediate(r); });
+        check('a network failure is retryable and shows no error text', function () {
+            assert(sb.box.innerHTML.indexOf('could not be reached') >= 0, 'message missing');
+            assert(sb.box.innerHTML.indexOf('SECRETDETAIL') < 0, 'error text leaked');
+            assert(sb.box.innerHTML.indexOf('Try again</button>') >= 0, 'not retryable');
+        });
+    })();
+
+    // ---- source hygiene -------------------------------------------------------
+
+    check('the card source is plain ASCII', function () {
+        for (let i = 0; i < cardBlock.length; i++) {
+            if (cardBlock.charCodeAt(i) > 126) throw new Error('non-ASCII at offset ' + i);
+        }
+    });
+    check('the card source has no backslash for Groovy to consume', function () {
+        assert(cardBlock.indexOf('\\') < 0, 'backslash present');
+    });
+    check('the card source has no template literal Groovy would interpolate', function () {
+        assert(cardBlock.indexOf('`') < 0, 'backtick present');
+        const dollars = cardBlock.split('$').length - 1;
+        assert(dollars === 2, 'unexpected $ count ' + dollars + ' (only the two endpoint URL interpolations are allowed)');
+    });
+    check('no apostrophe inside any user-facing string', function () {
+        const strings = cardBlock.match(/'[^'\n]*'/g) || [];
+        const texts = strings.filter(function (t) { return t.length > 20 && t.indexOf(' ') > 0; });
+        texts.forEach(function (t) { assert(t.slice(1, -1).indexOf("'") < 0, 'apostrophe in ' + t); });
+        assert(cardBlock.indexOf("n't") < 0 && cardBlock.indexOf("'s ") < 0, 'contraction or possessive present');
+    });
+    check('the card never calls the export builder or touches graph data', function () {
+        ['buildAiExport', 'ALL_NODES', 'ALL_EDGES', 'exportJson', 'aiExport'].forEach(function (n) {
+            assert(cardBlock.indexOf(n) < 0, 'references ' + n);
+        });
+    });
+    check('the card resets wherever the community card renders', function () {
+        const renders = source.split('renderCommunityCard(node);').length - 1;
+        // Tolerant of CRLF and of each site's own indentation, so the check is
+        // about adjacency rather than whitespace.
+        const resets = (source.match(/renderDecodeCoverageCard\(node\);\r?\n[ \t]*renderCommunityCard\(node\);/g) || []).length;
+        assert(renders >= 5 && resets === renders, 'renders ' + renders + ', resets ' + resets);
+    });
+    check('each reset shares the indentation of the call it precedes', function () {
+        const pairs = source.match(/[ \t]*renderDecodeCoverageCard\(node\);\r?\n[ \t]*renderCommunityCard\(node\);/g) || [];
+        pairs.forEach(function (pair) {
+            const lines = pair.split(/\r?\n/);
+            const a = lines[0].match(/^[ \t]*/)[0], b = lines[1].match(/^[ \t]*/)[0];
+            assert(a === b, 'indent mismatch: ' + JSON.stringify(a) + ' vs ' + JSON.stringify(b));
+        });
+    });
+    check('the markup places the card between the variables and community cards', function () {
+        assert(source.indexOf('<div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div>') >= 0,
+            'markup missing');
+    });
+
+    console.log(pass + ' passed, ' + fail + ' failed');
+    if (fail > 0) process.exit(1);
+}
+
+main();

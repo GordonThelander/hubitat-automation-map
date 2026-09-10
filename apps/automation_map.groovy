@@ -8944,6 +8944,7 @@ String buildMapHtml() {
   #flow.wcIndent #flowSub,
   #flow.wcIndent #ruleVariablesCard,
   #flow.wcIndent #communityCard { margin-left:24px; }
+  #flow.wcIndent #decodeCoverageCard { margin-left:24px; }
   #flow.wcIndent #flowSub { max-width:calc(var(--leftColWidth) - 56px); }
   #flowSub.webcoreNotice { color:#ff6b6b; font-weight:700; }
   #flow a { color:#7fb6d6; text-decoration:none; }
@@ -8981,6 +8982,25 @@ String buildMapHtml() {
   #communityCard .ccBadge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:0.75em; margin:0 6px 6px 0; background:#d7e6ea; color:#2c4a55; }
   #communityCard .ccCaution { color:#a05a1f; }
   #communityCard .ccLinks a { margin-right:12px; }
+  /* Decode coverage card (v2.2.9). Dark, unlike the light community card above,
+     because it reports on this app rather than quoting an outside source. */
+  #decodeCoverageCard { margin-top:14px; padding:12px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.03); max-width:calc(var(--leftColWidth) - 32px); box-sizing:border-box; }
+  #decodeCoverageCard h4 { margin:0 0 6px; }
+  #decodeCoverageCard h5 { margin:10px 0 4px; font-size:0.85em; }
+  #decodeCoverageCard .dcBtn { background:#81BC00; color:#121214; border:1px solid #5c8500; border-radius:999px; padding:4px 14px; font-weight:700; cursor:pointer; }
+  #decodeCoverageCard .dcBtn[disabled] { background:#33484f; border-color:#26383e; color:#9fb4bc; cursor:default; }
+  #decodeCoverageCard .dcRate { font-size:1.6em; font-weight:800; margin:4px 0; }
+  #decodeCoverageCard .dcRate .sub { font-size:0.5em; font-weight:400; }
+  #decodeCoverageCard .dcTable { width:100%; border-collapse:collapse; font-size:0.9em; margin-top:6px; }
+  #decodeCoverageCard .dcTable th, #decodeCoverageCard .dcTable td { text-align:left; padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.06); }
+  #decodeCoverageCard .dcTable .n { text-align:right; font-variant-numeric:tabular-nums; }
+  #decodeCoverageCard .dcGaps { margin:4px 0; padding-left:16px; }
+  #decodeCoverageCard .dcGaps code { font-size:0.85em; word-break:break-all; }
+  #decodeCoverageCard .dcReason { color:#e08a73; }
+  #decodeCoverageCard .dcCaution { color:#d9a441; }
+  #decodeCoverageCard .dcBusy { color:#9fb4bc; }
+  #decodeCoverageCard .dcError { color:#ff6b6b; }
+  #decodeCoverageCard .dcFoot { margin:10px 0 0; font-size:0.8em; opacity:0.75; }
   #communityCard.ccClickable { cursor:pointer; }
   #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
@@ -9256,7 +9276,7 @@ String buildMapHtml() {
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
-<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader"><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody"><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="decodeCoverageCard" hidden></div><div id="communityCard"></div></div></div>
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
@@ -11068,6 +11088,7 @@ function showInertPanel(node) {
   // evidence included) correctly clears the container via that function's
   // own empty-state branch, not a separate ad hoc clear here.
   renderRuleVariablesCard(node.id);
+  renderDecodeCoverageCard(node);
   renderCommunityCard(node);
   setFlowSizeMode(false);
   bringToFront(flowPanel);
@@ -11090,6 +11111,7 @@ function showUnreferencedLocalPanel(node) {
   // stale content in either card actually clears it, the same discipline
   // the review 296 correction established for showInertPanel above.
   renderRuleVariablesCard(node.id);
+  renderDecodeCoverageCard(node);
   renderCommunityCard(node);
   setFlowSizeMode(false);
   bringToFront(flowPanel);
@@ -11128,6 +11150,7 @@ function showFlow(appId) {
     // sequence itself could not be decoded (or genuinely has none) - shown
     // regardless of which branch of this function is taken.
     renderRuleVariablesCard(appId);
+    renderDecodeCoverageCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
     bringToFront(flowPanel);
@@ -11148,6 +11171,7 @@ function showFlow(appId) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
     renderRuleVariablesCard(appId);
+    renderDecodeCoverageCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
     bringToFront(flowPanel);
@@ -11155,6 +11179,7 @@ function showFlow(appId) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
     renderRuleVariablesCard(appId);
+    renderDecodeCoverageCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
     bringToFront(flowPanel);
@@ -11577,6 +11602,206 @@ function ccApplyClickable(box, url) {
     if (ev.target.closest('a')) return;
     window.open(url, '_blank', 'noopener,noreferrer');
   } : null;
+}
+
+// Decode coverage card (v2.2.9). On demand only: focusing a piston renders the
+// button and nothing else, and one press makes one request. Every label is plain
+// ASCII with no apostrophes, because this script lives inside a Groovy GString and
+// a stray quote has broken this page before. Dynamic text goes through extEsc.
+const COVERAGE_URL = amPickURL('${getLocalURL('webcore-decode-coverage')}', '${getCloudURL('webcore-decode-coverage')}');
+let coverageRequestSeq = 0;
+let coverageAppId = null;
+let coverageInFlight = false;
+
+const COVERAGE_FOOTER = 'Decode coverage shows what Automation Map understands; opaque constructs are not silently omitted.';
+
+const COVERAGE_REASON_LABELS = {
+  'unknown-statement-type': 'Unrecognised statement',
+  'unknown-operand-type': 'Unrecognised operand',
+  'unknown-function': 'Unrecognised function',
+  'unknown-virtual-command': 'Unrecognised virtual command',
+  'unknown-policy-value': 'Unrecognised policy value',
+  'unknown-device-selector': 'Device selector not statically resolvable',
+  'unknown-key': 'Unrecognised field',
+  'malformed-node': 'Could not be classified'
+};
+
+// Fixed text per fixed endpoint code. The endpoint never returns free text, so
+// neither does this card.
+const COVERAGE_ERROR_TEXT = {
+  'scan-active': 'A relationship scan is running. Try again when it finishes.',
+  'coverage-in-flight': 'A coverage check for this piston is already running. Try again in a moment.',
+  'source-timeout': 'The hub took too long to return this piston. Try again.',
+  'source-unavailable': 'The hub did not return this piston. Try again.',
+  'source-malformed': 'The hub returned this piston in an unexpected shape.',
+  'decode-failed': 'The saved configuration of this piston could not be decoded.',
+  'analysis-deadline': 'The check ran out of time before it finished. No partial result is shown.',
+  'coverage-failed': 'The coverage check failed. Try again.',
+  'unknown-app-id': 'This piston is not in the current scan. Rescan, then try again.',
+  'not-a-piston': 'Coverage is only available for webCoRE pistons.',
+  'invalid-app-id': 'This selection could not be checked.'
+};
+
+// Codes where trying again cannot change the answer.
+const COVERAGE_FINAL_ERRORS = { 'not-a-piston': true, 'invalid-app-id': true, 'decode-failed': true, 'source-malformed': true };
+
+const COVERAGE_FAMILY_LABELS = {
+  'statement': 'Statement', 'operand': 'Operand', 'operand.event-match': 'Event operand',
+  'virtual-device': 'Virtual device', 'preset': 'Preset', 'preset.value-type': 'Preset type',
+  'constant.value-type': 'Constant type', 'expression.result-type': 'Expression type',
+  'task.value-type': 'Parameter type', 'function': 'Function', 'vcmd': 'Virtual command',
+  'policy': 'Policy', 'device-selector': 'Device selector', 'task-parameter': 'Task parameter'
+};
+
+// Only the operand spellings whose meaning the pinned source states in its own
+// case comments. Anything else is shown as its spelling rather than guessed at.
+const COVERAGE_OPERAND_NAMES = {
+  'p': 'physical device', 'v': 'virtual device', 's': 'preset', 'c': 'constant', 'x': 'variable', 'empty': 'nothing selected'
+};
+
+const COVERAGE_LEVEL_NAMES = { 'L1': 'present', 'L2': 'identified', 'L3': 'structural', 'L4': 'semantic', 'L5': 'renderable' };
+
+// Page app nodes carry the scan id with a leading a, the endpoint wants the hub id.
+function coverageHubAppId(nodeId) {
+  const s = String(nodeId === null || nodeId === undefined ? '' : nodeId);
+  return s.charAt(0) === 'a' ? s.slice(1) : s;
+}
+
+function coverageConstructLabel(id) {
+  const s = String(id);
+  if (s.indexOf('wc.') !== 0) return s;
+  const rest = s.slice(3);
+  const cut = rest.lastIndexOf('.');
+  if (cut < 0) return rest;
+  const family = rest.slice(0, cut);
+  let name = rest.slice(cut + 1);
+  if ((family === 'operand' || family === 'operand.event-match') && COVERAGE_OPERAND_NAMES[name]) {
+    name = COVERAGE_OPERAND_NAMES[name];
+  }
+  return (COVERAGE_FAMILY_LABELS[family] || family) + ': ' + name;
+}
+
+function decodeCoverageIdleHtml() {
+  return '<h4>Decode coverage</h4>' +
+    '<p class="sub">Checks how much of the saved configuration of this piston Automation Map can identify. It reads structure only, never values.</p>' +
+    '<button type="button" class="dcBtn" onclick="requestDecodeCoverage()">Check decode coverage</button>';
+}
+
+function decodeCoverageMessageHtml(text, tone, retry) {
+  const cls = tone === 'error' ? 'dcError' : (tone === 'busy' ? 'dcBusy' : 'sub');
+  return '<h4>Decode coverage</h4>' +
+    '<p class="' + cls + '">' + extEsc(text) + '</p>' +
+    (retry ? '<button type="button" class="dcBtn" onclick="requestDecodeCoverage()">Try again</button>' : '') +
+    '<p class="dcFoot">' + COVERAGE_FOOTER + '</p>';
+}
+
+function decodeCoverageResultHtml(body) {
+  const acc = body.accounting || {};
+  const cand = acc.constructCandidates || 0;
+  const ident = acc.constructsIdentified || 0;
+  const pct = cand ? Math.round((ident / cand) * 1000) / 10 : 100;
+  const values = (acc.objectsVisited || 0) + (acc.arraysVisited || 0) + (acc.scalarsVisited || 0);
+  const truncated = body.status === 'truncated';
+
+  // Accounting first. Traversal being complete is a separate claim from
+  // understanding being complete, and the card says which one it is making.
+  let html = '<h4>Decode coverage</h4>';
+  html += '<p class="sub">' + (truncated
+    ? 'A safety bound was reached before the whole piston was walked, so these counts are incomplete.'
+    : 'Every part of the saved piston was visited and accounted for: ' + extEsc(values) + ' values across ' + extEsc(acc.fieldsVisited || 0) + ' fields.') + '</p>';
+  html += '<p class="dcRate' + (ident < cand ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
+    '<span class="sub">' + extEsc(ident) + ' of ' + extEsc(cand) + ' construct positions identified</span></p>';
+
+  const provenance = body.provenance || {};
+  if (provenance.compatibilityStatus === 'version-drift') {
+    html += '<p class="dcCaution">The installed webCoRE version differs from the pinned reference, so identification is less certain. This is a caution, not a failure.</p>';
+  }
+
+  const levels = body.levelCounts || {};
+  const levelParts = ['L5', 'L4', 'L3', 'L2', 'L1'].filter(function (k) { return levels[k]; })
+    .map(function (k) { return extEsc(levels[k]) + ' ' + COVERAGE_LEVEL_NAMES[k] + ' (' + k + ')'; });
+  if (levelParts.length) html += '<p class="sub">Evidence: ' + levelParts.join(', ') + '.</p>';
+
+  const counts = body.constructCounts || {};
+  const ids = Object.keys(counts).sort();
+  if (ids.length) {
+    html += '<table class="dcTable"><thead><tr><th>Construct</th><th class="n">Seen</th></tr></thead><tbody>';
+    ids.forEach(function (id) {
+      html += '<tr><td>' + extEsc(coverageConstructLabel(id)) + '</td><td class="n">' + extEsc(counts[id]) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  const gaps = body.unrecognised || [];
+  if (gaps.length) {
+    html += '<h5>Not identified</h5><ul class="dcGaps">';
+    gaps.forEach(function (g) {
+      html += '<li><span class="dcReason">' + extEsc(COVERAGE_REASON_LABELS[g.reason] || 'Not identified') + '</span> ' +
+        '<code>' + extEsc(g.path) + '</code></li>';
+    });
+    html += '</ul>';
+    if (body.unrecognisedOverflow) html += '<p class="sub">' + extEsc(body.unrecognisedOverflow) + ' more not listed.</p>';
+  }
+
+  if (acc.defaultBranchOccurrences) {
+    html += '<p class="sub">' + extEsc(acc.defaultBranchOccurrences) + ' values took a documented default path. These are not gaps.</p>';
+  }
+  html += '<p class="dcFoot">' + COVERAGE_FOOTER + '</p>';
+  return html;
+}
+
+function decodeCoverageOutcomeHtml(body) {
+  if (body.status === 'complete' || body.status === 'truncated') return decodeCoverageResultHtml(body);
+  if (body.status === 'not-present') {
+    return decodeCoverageMessageHtml('This piston has no saved configuration to check yet.', 'info', false);
+  }
+  const text = COVERAGE_ERROR_TEXT[body.error] || 'The coverage check did not complete. Try again.';
+  if (body.status === 'busy') return decodeCoverageMessageHtml(text, 'busy', true);
+  return decodeCoverageMessageHtml(text, 'error', !COVERAGE_FINAL_ERRORS[body.error]);
+}
+
+// Called wherever the community card renders, so it resets on every selection.
+// Bumping the request sequence here is what makes a response for an earlier
+// selection arrive to nothing.
+function renderDecodeCoverageCard(node) {
+  const box = document.getElementById('decodeCoverageCard');
+  if (!box) return;
+  coverageRequestSeq++;
+  coverageInFlight = false;
+  if (!node || node.appType !== 'webCoRE Piston') {
+    coverageAppId = null;
+    box.innerHTML = '';
+    box.hidden = true;
+    return;
+  }
+  coverageAppId = node.id;
+  box.hidden = false;
+  box.innerHTML = decodeCoverageIdleHtml();
+}
+
+function requestDecodeCoverage() {
+  const box = document.getElementById('decodeCoverageCard');
+  if (!box || !coverageAppId || coverageInFlight) return;
+  const mySelectionSeq = focusGenerationSeq;
+  const seq = ++coverageRequestSeq;
+  coverageInFlight = true;
+  box.innerHTML = '<h4>Decode coverage</h4><p class="sub">Checking the saved configuration...</p>' +
+    '<button type="button" class="dcBtn" disabled>Checking...</button>';
+  const url = COVERAGE_URL + '&appId=' + encodeURIComponent(coverageHubAppId(coverageAppId));
+  fetch(url, { cache: 'no-store', credentials: 'omit' })
+    .then(function (resp) {
+      return resp.json().then(function (body) { return body; }, function () { return {}; });
+    })
+    .then(function (body) {
+      if (seq !== coverageRequestSeq || mySelectionSeq !== focusGenerationSeq) return;
+      coverageInFlight = false;
+      box.innerHTML = decodeCoverageOutcomeHtml(body || {});
+    })
+    .catch(function () {
+      if (seq !== coverageRequestSeq || mySelectionSeq !== focusGenerationSeq) return;
+      coverageInFlight = false;
+      box.innerHTML = decodeCoverageMessageHtml('Coverage could not be reached from this page. Try again.', 'error', true);
+    });
 }
 
 function renderCommunityCard(node) {
