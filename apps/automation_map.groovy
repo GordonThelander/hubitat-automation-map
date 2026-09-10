@@ -11009,10 +11009,9 @@ function clampFlowPosition() {
 }
 
 // Every newly picked item starts the normal view from its default position.
-// Keyed on the item actually shown, not on focusGenerationSeq: the four Focus
-// dropdowns open the panel through showFlow without calling focusNode, so that
-// counter never moves for them. Reopening the same item, such as returning from
-// Insights, leaves the position alone. Returns true when it placed the panel.
+// Keyed on the item actually shown, not on focusGenerationSeq, which also moves
+// when the panel is closed or replaced by Insights. Reopening the same item leaves
+// the position alone. Returns true when it placed the panel.
 function startFlowItemIfNew() {
   if (flowItemId === flowShownItemId) return false;
   flowItemId = flowShownItemId;
@@ -11388,8 +11387,7 @@ function showUnreferencedLocalPanel(node) {
 }
 
 function showFlow(appId) {
-  // Captured after focusNode() has already bumped it for the selection that
-  // led here - see focusGenerationSeq's own comment for why this exists.
+  // Captured after the caller began this selection's generation.
   const mySelectionSeq = focusGenerationSeq;
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
@@ -11549,6 +11547,7 @@ function renderRuleVariablesCard(appId) {
 const flowCloseBtn = document.getElementById('flowClose');
 if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () {
+    beginSelectionGeneration();
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     fitCurrentView();
@@ -11581,11 +11580,11 @@ const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
 const COMMUNITY_CONTEXT_LINK_LABELS = { record: 'Full record', documentation: 'Documentation', community: 'Community support', source: 'Source' };
 let communityContextPromise = null;
 let communityCardRequestSeq = 0;
-// Bumped once per focusNode() call, any selection type. Guards showFlow()'s
-// async Mermaid render: that promise can still be pending when a later
-// selection has changed the screen, and letting it write flowChart or reopen
-// the panel would silently restore a stale selection.
+// The one selection generation. Every path that selects, closes or replaces
+// the flow panel begins a new generation before touching the screen, so a
+// Mermaid render or coverage request started earlier knows it is stale.
 let focusGenerationSeq = 0;
+function beginSelectionGeneration() { focusGenerationSeq += 1; }
 
 // One request for the whole page view, whichever app is selected first -
 // later selections reuse this same promise (spec 3.2 steps 2-4).
@@ -11932,7 +11931,9 @@ const COVERAGE_OPERAND_NAMES = {
   'p': 'physical device', 'v': 'virtual device', 's': 'preset', 'c': 'constant', 'x': 'variable', 'empty': 'nothing selected'
 };
 
-const COVERAGE_LEVEL_NAMES = { 'L0': 'unseen', 'L1': 'present', 'L2': 'identified', 'L3': 'structural', 'L4': 'semantic', 'L5': 'renderable' };
+const COVERAGE_LEVEL_NAMES = { 'L1': 'present', 'L2': 'identified', 'L3': 'structural', 'L4': 'semantic', 'L5': 'renderable' };
+// Recognition is an evidence claim: only these levels count as recognised.
+const COVERAGE_RECOGNISED_LEVELS = { 'L2': true, 'L3': true, 'L4': true, 'L5': true };
 
 // Page app nodes carry the scan id with a leading a, the endpoint wants the hub id.
 function coverageHubAppId(nodeId) {
@@ -11976,11 +11977,23 @@ function decodeCoverageMessageHtml(text, tone, retry) {
 function decodeCoverageResultHtml(body) {
   const acc = body.accounting || {};
   const cand = acc.constructCandidates || 0;
-  const ident = acc.constructsIdentified || 0;
   const values = (acc.objectsVisited || 0) + (acc.arraysVisited || 0) + (acc.scalarsVisited || 0);
   const truncated = body.status === 'truncated';
   const gaps = body.unrecognised || [];
   const unknownTotal = gaps.length + (body.unrecognisedOverflow || 0);
+  const counts = body.constructCounts || {};
+  const constructLevels = body.constructLevels || {};
+
+  // A registry match is not recognition. Only occurrences of constructs at L2 or
+  // above count as recognised; a match below L2 is reported on its own line and is
+  // never folded into the recognised figure or into the unrecognised paths.
+  let recognised = 0;
+  let belowL2 = 0;
+  Object.keys(counts).forEach(function (id) {
+    const n = Number(counts[id]) || 0;
+    if (COVERAGE_RECOGNISED_LEVELS[constructLevels[id]] === true) recognised += n;
+    else belowL2 += n;
+  });
 
   // Accounting first. Traversal being complete is a separate claim from
   // understanding being complete, and the card says which one it is making.
@@ -11991,11 +12004,15 @@ function decodeCoverageResultHtml(body) {
 
   // A percentage reads as whole-piston coverage, so only a complete walk gets one.
   if (truncated) {
-    html += '<p class="dcPartial">' + extEsc(ident) + ' of ' + extEsc(cand) + ' visited construct positions identified</p>';
+    html += '<p class="dcPartial">' + extEsc(recognised) + ' of ' + extEsc(cand) + ' visited construct positions recognised at L2 or above</p>';
   } else {
-    const pct = cand ? Math.round((ident / cand) * 1000) / 10 : 100;
-    html += '<p class="dcRate' + (ident < cand ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
-      '<span class="sub">' + extEsc(ident) + ' of ' + extEsc(cand) + ' construct positions identified</span></p>';
+    const pct = cand ? Math.round((recognised / cand) * 1000) / 10 : 100;
+    html += '<p class="dcRate' + (recognised < cand ? ' dcRateGap' : '') + '">' + extEsc(pct) + '% ' +
+      '<span class="sub">' + extEsc(recognised) + ' of ' + extEsc(cand) + ' construct positions recognised at L2 or above</span></p>';
+  }
+  if (belowL2) {
+    html += '<p class="sub">' + extEsc(belowL2) + ' matched ' + (belowL2 === 1 ? 'position is' : 'positions are') +
+      ' below L2 and not counted as recognised.</p>';
   }
   // Stated even when it is zero. Retained records plus those past the cap.
   html += '<p class="sub">' + extEsc(unknownTotal) + ' unrecognised ' + (unknownTotal === 1 ? 'position' : 'positions') +
@@ -12012,15 +12029,15 @@ function decodeCoverageResultHtml(body) {
   if (levelParts.length) html += '<p class="sub">Evidence: ' + levelParts.join(', ') + '.</p>';
 
   // Grouped by the family in each construct id, one table body per family, with
-  // the occurrence count and the registry evidence level on every row. The family
-  // label is a td, not a th: every th in the panel body is made sticky.
-  const counts = body.constructCounts || {};
-  const constructLevels = body.constructLevels || {};
+  // the occurrence count and the registry evidence level on every row. Only L1 to
+  // L5 are listed: L0 is a statement about the fixture corpus, not about this
+  // piston. The family label is a td, not a th: every th in the panel is sticky.
   const groups = {};
   Object.keys(counts).sort().forEach(function (id) {
+    if (!Object.prototype.hasOwnProperty.call(COVERAGE_LEVEL_NAMES, constructLevels[id])) return;
     const parts = coverageConstructParts(id);
     if (!groups[parts.family]) groups[parts.family] = [];
-    groups[parts.family].push({ id: id, name: parts.name });
+    groups[parts.family].push({ id: id, name: parts.name, level: constructLevels[id] });
   });
   const families = Object.keys(groups).sort(function (a, b) {
     return coverageFamilyLabel(a).localeCompare(coverageFamilyLabel(b));
@@ -12030,10 +12047,8 @@ function decodeCoverageResultHtml(body) {
     families.forEach(function (family) {
       html += '<tbody><tr class="dcFamily"><td colspan="3">' + extEsc(coverageFamilyLabel(family)) + '</td></tr>';
       groups[family].forEach(function (row) {
-        const level = constructLevels[row.id];
-        const known = Object.prototype.hasOwnProperty.call(COVERAGE_LEVEL_NAMES, level);
         html += '<tr><td>' + extEsc(row.name) + '</td><td class="n">' + extEsc(counts[row.id]) + '</td>' +
-          '<td class="n">' + (known ? '<span class="dcLevel" title="' + COVERAGE_LEVEL_NAMES[level] + '">' + level + '</span>' : '-') + '</td></tr>';
+          '<td class="n"><span class="dcLevel" title="' + COVERAGE_LEVEL_NAMES[row.level] + '">' + row.level + '</span></td></tr>';
       });
       html += '</tbody>';
     });
@@ -13173,11 +13188,13 @@ function buildInsights() {
 }
 
 document.getElementById('insightsBtn').addEventListener('click', function () {
+  beginSelectionGeneration();
   document.getElementById('flowTitle').textContent = 'Automation health';
   setFlowSub('', false);
   flowChart.innerHTML = buildInsights();
   // Every other write to flowChart pairs it with this - Insights was the one
   // gap, leaving a previously-focused app's community card visible under it.
+  renderDecodeCoverageCard(null);
   renderCommunityCard(null);
   setFlowSizeMode(true);
   bringToFront(flowPanel);
@@ -14810,6 +14827,7 @@ document.getElementById('legendPanelClose').addEventListener('click', function (
 // until a later click, by which point all four consts exist, same as every
 // other forward reference already in this file.
 function onAppFocusChange(value) {
+  beginSelectionGeneration();
   if (value !== '__all__') {
     deviceSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -14825,6 +14843,7 @@ function onAppFocusChange(value) {
   }
 }
 function onDeviceFocusChange(value) {
+  beginSelectionGeneration();
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -14836,6 +14855,7 @@ function onDeviceFocusChange(value) {
   applyFilters();
 }
 function onHubVarFocusChange(value) {
+  beginSelectionGeneration();
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -14847,6 +14867,7 @@ function onHubVarFocusChange(value) {
   applyFilters();
 }
 function onLocalVarFocusChange(value, item) {
+  beginSelectionGeneration();
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -14996,6 +15017,7 @@ function closeSecondaryPanels() {
 }
 
 function exitToWholeMap() {
+  beginSelectionGeneration();
   appSelect.setValue('__all__');
   deviceSelect.setValue('__all__');
   hubVarSelect.setValue('__all__');
@@ -15038,7 +15060,7 @@ function renderBackLink() {
 function focusNode(id) {
   const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
   if (!node) return false;
-  focusGenerationSeq += 1;
+  beginSelectionGeneration();
   if (!poppingHistory) {
     const from = currentFocus();
     if (from !== id) {
