@@ -92,7 +92,7 @@ check(countDrift.isEmpty(), "every committed fixture is normalized without trunc
 Set closed = (['or', 'decision', 'sequential-block', 'then', 'else', 'group', 'opaque-condition', 'opaque-followed-by-group',
                'multi-way-decision', 'switch-scoped-control-transfer', 'piston-terminate', 'i', 'e',
                'pre-condition-loop', 'post-condition-loop', 'step-iteration', 'device-iteration', 'loop-scoped-control-transfer',
-               'own-timer-only', 'any-event-match', 'targeted-tasks', 'static', 'dynamic'] +
+               'own-timer-only', 'any-event-match', 'targeted-tasks', 'static', 'dynamic', 'ordered-tasks'] +
               (evidence.claims as Map).keySet() + (evidence.gaps as Map).keySet()) as Set
 def strings
 strings = { Object o, List acc ->
@@ -187,7 +187,9 @@ Map mutations = [
     'a saved tcp of c is read as never cancel':
         ["if (node.tcp != null && node.tcp != 'c') claims << 'statement.tcp.cancellation-policy.v1'", "if (node.tcp != null) claims << 'statement.tcp.cancellation-policy.v1'"],
     'a saved device list is expanded per task rather than once and shared by the whole action':
-        ["claims << 'statement.action.device-list.v1'", '']
+        ["claims << 'statement.action.device-list.v1'", ''],
+    'the saved task list runs in an order webCoRE chooses at execution time rather than the saved list order':
+        ["claims << 'statement.action.task-order.v1'", '']
 ]
 List named = (manifest.claims as List).collect { (it as Map).negative } + (manifest.limits as List).collect { (it as Map).negative }
 check((mutations.keySet() as Set) == (named as Set), 'every named misreading in the manifest has a mutation here')

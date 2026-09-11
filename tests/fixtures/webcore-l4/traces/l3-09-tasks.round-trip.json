@@ -1,0 +1,18 @@
+{
+  "fixture": "l3-09-tasks.round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "taskOrder": {"docs": "https://wiki.webcore.co/Piston links to an empty Action construct page; task order and the break-on-failure behaviour are undocumented, source only", "source": "executor.execute-action"},
+    "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "fastForward": {"docs": "https://wiki.webcore.co/Piston links to an empty Action construct page; fast-forward's effect on the break-on-failure condition is undocumented, source only", "source": "executor.execute-action"}
+  },
+  "occurrences": {
+    "$.s[0]": {
+      "construct": "wc.statement.action", "role": "ordered-tasks",
+      "claims": ["statement.envelope.default.v1", "statement.action.task-order.v1"],
+      "gaps": ["statement.action.fast-forward-unresolved"],
+      "taskCount": 3,
+      "cite": {"role": "taskOrder", "taskCount": "taskOrder", "gaps": "fastForward", "envelope": "envelope"}
+    }
+  }
+}

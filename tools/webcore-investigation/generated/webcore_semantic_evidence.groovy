@@ -24,7 +24,8 @@ Map webcoreSemanticEvidence() {
             'statement.tep.execution-policy.v1': true,
             'statement.tsp.scheduling-policy.v1': true,
             'statement.tcp.cancellation-policy.v1': true,
-            'statement.action.device-list.v1': true
+            'statement.action.device-list.v1': true,
+            'statement.action.task-order.v1': true
         ],
         gaps: [
             'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
@@ -34,7 +35,8 @@ Map webcoreSemanticEvidence() {
             'statement.envelope.tcp-non-default': 'The task cancellation policy is not the proven default',
             'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
             'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
-            'statement.action.task-order-unresolved': 'Task order and per-task command meaning are not yet proven; the only multi-task capture has no committed first-save in its lineage',
+            'statement.action.task-order-unresolved': 'Task order is not yet proven; this action has one task, or fewer, so no capture exercises order',
+            'statement.action.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'statement.action.device-list.dynamic-unresolved': 'A dynamic ($currentEventDevice) device target is not yet explained further than being dynamic',
             'statement.unrecognised': 'The statement type is not recognised',
             'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
@@ -71,7 +73,8 @@ Map webcoreSemanticEvidence() {
             'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-            'claim.statement.action.device-list.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+            'claim.statement.action.device-list.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.action.task-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
         ]
     ]
 }

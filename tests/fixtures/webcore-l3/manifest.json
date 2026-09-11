@@ -518,10 +518,25 @@
             "unrecognised": 0
         },
         {
+            "file": "l3-09-tasks.first-save.json",
+            "piston": "zz-L3-09 tasks",
+            "capture": "first-save",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "2f1f3ccc1cbf452abe9f6cced7fb7a97170ecbb60d98d8ce42b4991e2c84bd94",
+            "statements": {
+                "wc.statement.action": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
             "file": "l3-09-tasks.round-trip.json",
             "piston": "zz-L3-09 tasks",
             "capture": "round-trip",
-            "pistonBuild": 4,
+            "pistonBuild": 3,
             "activeAtCapture": false,
             "inertAtCapture": true,
             "sha256": "408c6b34190650a7772aba83d6bd81282839d29b3a907f82a645b285f4e1624b",

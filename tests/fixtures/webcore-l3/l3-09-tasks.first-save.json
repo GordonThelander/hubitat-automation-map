@@ -1,0 +1,120 @@
+{
+    "id": ":00000000000000000000000000000001:",
+    "o": {
+        "ced": 1,
+        "cto": 1
+    },
+    "s": [
+        {
+            "t": "action",
+            "a": "0",
+            "tcp": "c",
+            "r": [
+                
+            ],
+            "rop": "<string#1>",
+            "d": [
+                
+            ],
+            "k": [
+                {
+                    "c": "noop",
+                    "p": [
+                        
+                    ]
+                },
+                {
+                    "c": "log",
+                    "p": [
+                        {
+                            "c": "<string#2>",
+                            "d": [
+                                
+                            ],
+                            "g": "avg",
+                            "f": "l",
+                            "t": "c",
+                            "vt": "enum",
+                            "exp": {
+                                "t": "expression",
+                                "i": [
+                                    {
+                                        "t": "string",
+                                        "v": "<string#2>",
+                                        "l": "<string#3>",
+                                        "ok": true
+                                    }
+                                ],
+                                "str": "<string#2>",
+                                "ok": true
+                            }
+                        },
+                        {
+                            "c": "<string#4>",
+                            "d": [
+                                
+                            ],
+                            "g": "avg",
+                            "f": "l",
+                            "t": "c",
+                            "vt": "string",
+                            "exp": {
+                                "t": "expression",
+                                "i": [
+                                    {
+                                        "t": "string",
+                                        "v": "<string#4>",
+                                        "l": "<string#5>",
+                                        "ok": true
+                                    }
+                                ],
+                                "str": "<string#4>",
+                                "ok": true
+                            }
+                        },
+                        {
+                            "c": "<string#6>",
+                            "d": [
+                                
+                            ],
+                            "g": "avg",
+                            "f": "l",
+                            "t": "c",
+                            "vt": "boolean",
+                            "exp": {
+                                "t": "expression",
+                                "i": [
+                                    {
+                                        "t": "boolean",
+                                        "v": "<string#6>",
+                                        "l": "<string#7>",
+                                        "ok": true
+                                    }
+                                ],
+                                "str": "<string#6>",
+                                "ok": true
+                            }
+                        }
+                    ]
+                },
+                {
+                    "c": "cancelTasks",
+                    "p": [
+                        
+                    ]
+                }
+            ]
+        }
+    ],
+    "v": [
+        
+    ],
+    "r": [
+        
+    ],
+    "rop": "<string#1>",
+    "n": "<string#8>",
+    "l": {
+        
+    }
+}
