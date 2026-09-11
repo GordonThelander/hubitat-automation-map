@@ -44,7 +44,7 @@ check((manifest.limits as List).every { Map l -> gaps.containsKey(l.gap) && l.ne
 // ---- closed gap list -----------------------------------------------------------------
 
 List statementTypes = (registry.constructs as Map).keySet().findAll { "${it}".startsWith('wc.statement.') }.collect { "${it}".substring('wc.statement.'.length()) }
-List claimedTypes = ['if', 'do', 'switch', 'break', 'exit']
+List claimedTypes = ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each']
 Set expectedNotInIncrement = statementTypes.findAll { !(it in claimedTypes) }.collect { "statement.${it}.not-in-increment".toString() } as Set
 check(expectedNotInIncrement.every { gaps.containsKey(it) } && claimedTypes.every { !gaps.containsKey("statement.${it}.not-in-increment".toString()) },
     'every statement type outside this increment has a closed gap, and every claimed type does not')
@@ -100,7 +100,8 @@ List conditionClaims = ['condition.followed-by.opaque-group.v1', 'condition.list
   ['source drift in the condition evaluator', conditionClaims, { Map m, Map r, Map fm, Map tr -> ((r.provenance as Map).regionHashes as Map)['executor.evaluate-conditions'] = '0' * 64 }],
   ['a structure falling below L3', ['statement.do.sequential-block.v1'], { Map m, Map r, Map fm, Map tr -> ((r.constructs as Map)['wc.statement.do'] as Map).level = 'L2' }],
   ['a fixture that is not committed', ['statement.envelope.default.v1'], { Map m, Map r, Map fm, Map tr -> claimOf(m, 'statement.envelope.default.v1').fixtures = ['l3-09-missing.round-trip'] }],
-  ['a fixture whose save is not committed', ['statement.do.sequential-block.v1'], { Map m, Map r, Map fm, Map tr -> fm.fixtures = (fm.fixtures as List).findAll { (it as Map).file != 'l3-04-loops.edit-save.json' } }],
+  ['a fixture whose save is not committed', ['statement.do.sequential-block.v1', 'statement.while.pre-condition-loop.v1', 'statement.repeat.post-condition-loop.v1', 'statement.break.loop-scope.v1'],
+   { Map m, Map r, Map fm, Map tr -> fm.fixtures = (fm.fixtures as List).findAll { (it as Map).file != 'l3-04-loops.edit-save.json' } }],
   ['a trace that never reaches the claim', ['condition.followed-by.opaque-group.v1'], { Map m, Map r, Map fm, Map tr -> (((tr['l3-02-followed-by.edit-round-trip'] as Map).occurrences as Map)['$.s[0]'] as Map).claims = [] }],
   ['an edge that is not traced', ['statement.if.branch-order.v1'], { Map m, Map r, Map fm, Map tr -> ((claimOf(m, 'statement.if.branch-order.v1').edges as List)[0] as Map).path = '$.s[9]' }],
   ['a missing named negative', ['condition.list.negation.v1'], { Map m, Map r, Map fm, Map tr -> claimOf(m, 'condition.list.negation.v1').negative = '' }]

@@ -4,24 +4,71 @@
   "citations": {
     "do": {"docs": "https://wiki.webcore.co/Piston (Do); statement-level effect undocumented, source only", "source": "executor.statement-dispatch"},
     "break": {"docs": "https://wiki.webcore.co/Piston links to an empty Break construct page; undocumented, source only", "source": "executor.statement-dispatch"},
+    "while": {"docs": "https://wiki.webcore.co/Piston links to an empty While Loop construct page; undocumented, source only", "source": "executor.statement-dispatch"},
+    "repeat": {"docs": "https://wiki.webcore.co/Piston links to an empty Repeat construct page; undocumented, source only", "source": "executor.statement-dispatch"},
+    "condition": {"docs": "https://wiki.webcore.co/Piston (Condition Group); negation and operator undocumented, source only", "source": "executor.evaluate-conditions"},
     "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
     "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
   },
   "occurrences": {
-    "$.s[0]": {"construct": "wc.statement.while", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.while.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0]": {
+      "construct": "wc.statement.while", "role": "pre-condition-loop",
+      "claims": ["statement.envelope.default.v1", "condition.list.negation.v1", "statement.while.pre-condition-loop.v1"],
+      "gaps": ["condition.operator-unproven", "condition.leaf-opaque", "statement.while.fast-forward-unresolved"],
+      "condition": {"operator": null, "negated": true, "children": [{"kind": "opaque-condition"}]},
+      "cite": {"role": "while", "condition": "condition", "gaps": "while", "envelope": "envelope"}
+    },
     "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[0].s[1]": {"construct": "wc.statement.do", "role": "sequential-block", "claims": ["statement.do.sequential-block.v1", "statement.envelope.default.v1"], "gaps": [],
       "children": 1, "lowersStatementLevel": true, "cite": {"role": "do", "children": "do", "lowersStatementLevel": "do", "envelope": "envelope"}},
     "$.s[0].s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[0].s[2]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}},
-    "$.s[1]": {"construct": "wc.statement.while", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.while.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[2]": {
+      "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
+      "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
+      "gaps": ["statement.break.fast-forward-unresolved"],
+      "cite": {"role": "break", "gaps": "break", "envelope": "envelope"}
+    },
+    "$.s[1]": {
+      "construct": "wc.statement.while", "role": "pre-condition-loop",
+      "claims": ["statement.envelope.default.v1", "condition.list.negation.v1", "statement.while.pre-condition-loop.v1"],
+      "gaps": ["condition.operator-unproven", "condition.leaf-opaque", "statement.while.fast-forward-unresolved"],
+      "condition": {"operator": null, "negated": false, "children": [{"kind": "opaque-condition"}]},
+      "cite": {"role": "while", "condition": "condition", "gaps": "while", "envelope": "envelope"}
+    },
     "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[1].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}},
-    "$.s[2]": {"construct": "wc.statement.repeat", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.repeat.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1].s[1]": {
+      "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
+      "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
+      "gaps": ["statement.break.fast-forward-unresolved"],
+      "cite": {"role": "break", "gaps": "break", "envelope": "envelope"}
+    },
+    "$.s[2]": {
+      "construct": "wc.statement.repeat", "role": "post-condition-loop",
+      "claims": ["statement.envelope.default.v1", "condition.list.negation.v1", "statement.repeat.post-condition-loop.v1"],
+      "gaps": ["condition.operator-unproven", "condition.leaf-opaque", "statement.repeat.fast-forward-unresolved"],
+      "condition": {"operator": null, "negated": true, "children": [{"kind": "opaque-condition"}]},
+      "cite": {"role": "repeat", "condition": "condition", "gaps": "repeat", "envelope": "envelope"}
+    },
     "$.s[2].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[2].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}},
-    "$.s[3]": {"construct": "wc.statement.repeat", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.repeat.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[2].s[1]": {
+      "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
+      "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
+      "gaps": ["statement.break.fast-forward-unresolved"],
+      "cite": {"role": "break", "gaps": "break", "envelope": "envelope"}
+    },
+    "$.s[3]": {
+      "construct": "wc.statement.repeat", "role": "post-condition-loop",
+      "claims": ["statement.envelope.default.v1", "condition.list.negation.v1", "statement.repeat.post-condition-loop.v1"],
+      "gaps": ["condition.operator-unproven", "condition.leaf-opaque", "statement.repeat.fast-forward-unresolved"],
+      "condition": {"operator": null, "negated": false, "children": [{"kind": "opaque-condition"}]},
+      "cite": {"role": "repeat", "condition": "condition", "gaps": "repeat", "envelope": "envelope"}
+    },
     "$.s[3].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[3].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}}
+    "$.s[3].s[1]": {
+      "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
+      "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
+      "gaps": ["statement.break.fast-forward-unresolved"],
+      "cite": {"role": "break", "gaps": "break", "envelope": "envelope"}
+    }
   }
 }

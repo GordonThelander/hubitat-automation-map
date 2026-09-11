@@ -1,5 +1,5 @@
-// Semantic (L4) evidence manifest, increments 1 (if, do, condition lists, the default envelope) and
-// 2 (switch, switch-scoped break, exit).
+// Semantic (L4) evidence manifest, increments 1 (if, do, condition lists, the default envelope),
+// 2 (switch, switch-scoped break, exit) and 3 (while, repeat, for, each, loop-scoped break).
 //
 // A claim states what a saved construct means at runtime, never a live outcome. It is promoted only
 // when L4Promotion finds every contract item: the structure it rests on is L3, a documentation
@@ -99,14 +99,54 @@
      sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
      fixtures: ['l3-05-iteration.edit-round-trip'],
      edges: [[fixture: 'l3-05-iteration.edit-round-trip', path: '$.s[2]', exercises: 'an exit nested inside no loop or switch']],
-     negative: 'exit only exits its immediate containing statement, the way break does']
+     negative: 'exit only exits its immediate containing statement, the way break does'],
+
+    [id: 'statement.while.pre-condition-loop.v1', structural: ['wc.statement.while'],
+     meaning: 'A while evaluates its condition list before each pass; the body runs, and the loop repeats, only while the condition holds. It runs zero or more times.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'The Piston page links to a While Loop construct page that is empty; the pre-condition, zero-or-more-times rule is undocumented, source only']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-04-loops.edit-round-trip'],
+     edges: [[fixture: 'l3-04-loops.edit-round-trip', path: '$.s[1]', exercises: 'a while with an unnegated condition']],
+     negative: 'a while runs its body once unconditionally before checking the condition, the way repeat does'],
+
+    [id: 'statement.repeat.post-condition-loop.v1', structural: ['wc.statement.repeat'],
+     meaning: 'A repeat runs its body first, then evaluates its condition list; it repeats only while the condition does not yet hold, so it stops once the condition becomes true. It runs at least once.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'The Piston page links to a Repeat construct page that is empty; the post-condition, stop-on-true rule is undocumented, source only']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-04-loops.edit-round-trip'],
+     edges: [[fixture: 'l3-04-loops.edit-round-trip', path: '$.s[3]', exercises: 'a repeat with an unnegated condition']],
+     negative: 'a repeat continues running while its condition holds, the same as while'],
+
+    [id: 'statement.for.step-iteration.v1', structural: ['wc.statement.for'],
+     meaning: 'A for runs its body once per step from a saved start operand to a saved end operand by a saved step operand, in order. The operand values themselves are kept opaque.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'The Piston page links to a For Loop construct page that is empty; undocumented, source only']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-05-iteration.edit-round-trip'],
+     edges: [[fixture: 'l3-05-iteration.edit-round-trip', path: '$.s[0]', exercises: 'a for with a saved counter variable']],
+     negative: 'a for runs its body exactly once, ignoring its start, end and step operands'],
+
+    [id: 'statement.each.device-iteration.v1', structural: ['wc.statement.each'],
+     meaning: 'An each runs its body once per device in its saved device-list operand, in the saved device order. The operand itself is kept opaque.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'The Piston page links to a For Each Loop construct page that is empty; undocumented, source only']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-05-iteration.edit-round-trip'],
+     edges: [[fixture: 'l3-05-iteration.edit-round-trip', path: '$.s[1]', exercises: 'an each with a saved counter variable']],
+     negative: 'an each runs its body exactly once, ignoring the device list it saves'],
+
+    [id: 'statement.break.loop-scope.v1', structural: ['wc.statement.break', 'wc.statement.while', 'wc.statement.repeat', 'wc.statement.for', 'wc.statement.each'],
+     meaning: 'A break saved directly in a while, repeat, for or each own statement list, with no further nesting, stops that loop: the loop does not repeat, and execution continues after it.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the Break construct page is empty']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-04-loops.edit-round-trip'],
+     edges: [[fixture: 'l3-04-loops.edit-round-trip', path: '$.s[0].s[2]', exercises: 'a break whose nearest container is a while, alongside a nested do']],
+     negative: 'a break inside a loop terminates the whole piston, as exit does']
   ],
 
   // Named misreadings for the recorded limits. They cap occurrences and are never promoted.
   limits: [
     [gap: 'statement.if.automatic-piston-state-unresolved', negative: 'if has no side effect beyond branch selection', source: 'executor.statement-dispatch'],
     [gap: 'condition.leaf-opaque', negative: 'a saved ct decides a condition leaf role', source: 'executor.evaluate-conditions'],
-    [gap: 'statement.break.container-unresolved', negative: 'a break with no switch as its nearest container is read as switch-scoped', source: 'executor.statement-dispatch']
+    [gap: 'statement.break.container-unresolved', negative: 'a break with neither a switch nor a loop as its nearest container is read as scoped to one anyway', source: 'executor.statement-dispatch']
   ],
 
   gaps: [
@@ -118,12 +158,8 @@
     'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
     'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
     'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.while.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.every.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.repeat.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.each.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.for.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.unrecognised': 'The statement type is not recognised',
     'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
     'condition.operator-unproven': 'This condition operator is not yet proven',
@@ -133,6 +169,10 @@
     'statement.break.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
     'statement.break.container-unresolved': 'This break statement is not directly inside a switch case or default, so its scope is not yet proven',
     'statement.exit.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.while.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.repeat.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.for.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.each.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
     'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
@@ -142,6 +182,11 @@
     'claim.statement.switch.ordered-cases.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.switch.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.break.switch-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-    'claim.statement.exit.terminate-piston.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+    'claim.statement.exit.terminate-piston.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.while.pre-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.repeat.post-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.for.step-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.each.device-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
   ]
 ]
