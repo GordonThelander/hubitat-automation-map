@@ -40,6 +40,10 @@ String endpoint = between(source, '// --- webcore coverage endpoint: begin ---',
                                   '// --- webcore coverage endpoint: end ---')
 String shapesBlock = between(source, '// --- webcore statement shapes: begin ---',
                                      '// --- webcore statement shapes: end ---')
+String semanticEvidenceBlock = between(source, '// --- webcore semantic evidence: begin ---',
+                                               '// --- webcore semantic evidence: end ---')
+String semanticBlock = between(source, '// --- webcore semantic normalizer: begin ---',
+                                       '// --- webcore semantic normalizer: end ---')
 
 // @Field is a script-scoping directive and is not valid on a class member, so it
 // is dropped when the block is wrapped. Nothing about the behaviour under test
@@ -83,6 +87,8 @@ ${decoder.replace('@Field ', '')}
 ${walker.replace('@Field ', '')}
 ${projection.replace('@Field ', '')}
 ${shapesBlock.replace('@Field ', '')}
+${semanticEvidenceBlock.replace('@Field ', '')}
+${semanticBlock.replace('@Field ', '')}
 ${endpoint.replace('@Field ', '')}
 }
 """
@@ -201,7 +207,7 @@ String serialized = app.webcoreCoverageJson(body, app.webcoreCensusRegistry().co
 Map reparsed = new groovy.json.JsonSlurper().parseText(serialized) as Map
 assertThat(reparsed.keySet() == (['status', 'appId', 'registryVersion', 'provenance', 'accounting',
                                   'constructCounts', 'constructLevels', 'constructOccurrences', 'structurallyCapped',
-                                  'evidenceCapped', 'evidenceGaps', 'statementAssessment', 'nonStatementAssessment',
+                                  'evidenceCapped', 'evidenceGaps', 'statementAssessment', 'nonStatementAssessment', 'semanticAssessment',
                                   'levelCounts', 'unrecognised', 'unrecognisedOverflow', 'structureFindings',
                                   'structureFindingsOverflow', 'truncation', 'meta'] as Set),
     'the serialized response carries exactly the allowlisted fields')
@@ -252,6 +258,31 @@ assertThat((provenOut.statementAssessment as Map)?.level == 'L3' && provenOut.no
     "unrecognised positions outside statements do not lower a proven statement result (${provenOut.statementAssessment} ${body.constructCounts})")
 assertThat(body.unrecognisedOutsideStatements instanceof Number && reparsed.statementAssessment instanceof Map,
     'the live endpoint passes the outside-statement count through and reports a statement assessment')
+
+// ---- the semantic (L4) assessment ------------------------------------------------
+
+Map semantic = reparsed.semanticAssessment as Map
+assertThat(semantic.keySet() == (['status', 'occurrences', 'explained', 'explainable', 'gaps', 'claims'] as Set) &&
+           semantic.status == 'complete' && semantic.occurrences == 2 && semantic.explainable == false &&
+           (semantic.gaps as List) && (semantic.gaps as List).every { Map g -> g.keySet() == (['id', 'reason', 'occurrences'] as Set) },
+    "the live endpoint reports a separate, counted semantic assessment with closed gaps (${semantic})")
+Map smuggledSemantic = new LinkedHashMap(body)
+smuggledSemantic.semanticAssessment = [status: 'complete', occurrences: 1, explained: 1, explainable: true,
+    gaps: [[id: 'SECRETGAP', occurrences: 1], [id: 'condition.leaf-opaque', occurrences: 'x', reason: 'SECRETREASON']],
+    claims: ['SECRETCLAIM', 'statement.if.branch-order.v1']]
+String smuggledSemanticJson = app.webcoreCoverageJson(smuggledSemantic, shippedConstructs) as String
+Map smuggledSemanticOut = (new groovy.json.JsonSlurper().parseText(smuggledSemanticJson) as Map).semanticAssessment as Map
+assertThat(!smuggledSemanticJson.contains('SECRET') && smuggledSemanticOut.gaps == [] && smuggledSemanticOut.claims == ['statement.if.branch-order.v1'],
+    'unknown gap and claim ids, bad counts and supplied reasons never reach the semantic assessment')
+Map oddStatus = new LinkedHashMap(body)
+oddStatus.semanticAssessment = [status: 'partial', occurrences: 5, explained: 5, explainable: true, gaps: [], claims: ['statement.if.branch-order.v1']]
+assertThat((new groovy.json.JsonSlurper().parseText(app.webcoreCoverageJson(oddStatus, shippedConstructs) as String) as Map).semanticAssessment ==
+           [status: 'not-evaluated', occurrences: 0, explained: 0, explainable: false, gaps: [], claims: []],
+    'any status other than complete is reported as not evaluated, with no counts or claims')
+Map withoutSemantic = new LinkedHashMap(body)
+withoutSemantic.semanticAssessment = null
+assertThat((new groovy.json.JsonSlurper().parseText(app.webcoreCoverageJson(withoutSemantic, shippedConstructs) as String) as Map).constructLevels == reparsed.constructLevels,
+    'the semantic assessment never changes a structural level')
 
 Map smuggledStructure = new LinkedHashMap(body)
 smuggledStructure.constructOccurrences = ['wc.statement.if': [structurallyValid: 1, structurallyInvalid: 0, detail: 'SECRETOCC'],
