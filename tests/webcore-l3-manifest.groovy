@@ -124,6 +124,7 @@ specs.each { Map s ->
 }
 (manifest.sourceAssertions as List).each { Map a -> if (a.region && !regionHashes.containsKey(a.region)) dangling << "sourceAssertion ${a.region}" }
 (manifest.inventory as List).each { Map e -> if (!regionHashes.containsKey(e.region)) dangling << "inventory ${e.region}" }
+(manifest.roundTrip as List).each { Map e -> if (!regionHashes.containsKey(e.region)) dangling << "roundTrip ${e.region}" }
 check(dangling.isEmpty(), "every cited region is a registry region hash ${dangling.take(5)}")
 
 List unsourced = specs.findAll { Map s -> !((s.spec as Map).readBy) && !((s.spec as Map).writtenBy) && !((s.spec as Map).normalisedBy) }.collect(label)
@@ -521,6 +522,138 @@ gateMutations.each { Map mu ->
     check(!found.isEmpty(), "gate mutation: ${mu.name} leaves ${found.size()} inventoried key(s) unaccounted ${found.take(2)}")
 }
 
+// ---- the IDE round trip ----------------------------------------------------------------
+
+List roundTripBad = (manifest.roundTrip as List).findAll { Map e ->
+    !(manifest.roundTripGuards as List).contains(e.guard) || !(manifest.roundTripEffects as List).contains(e.effect) ||
+        !(e.source instanceof String && e.source) || !(e.key instanceof String) ||
+        (e.when != null && !(manifest.roundTripConditions as List).contains(e.when))
+}.collect { "${it.region}: ${it.source}" }
+check(roundTripBad.isEmpty(), "every round-trip entry takes closed guard, effect and condition values ${roundTripBad}")
+
+def deepCopy = { Object o -> new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(o)) }
+// Applies only the entries the manifest says reach the IDE copy, so the prediction follows the manifest.
+def predictRoundTrip = { Map m, Map first ->
+    Map b = deepCopy(first) as Map
+    List rules = (m.roundTrip as List).findAll { Map e -> e.guard == 'always' }
+    def on = { String key, String effect, String when = null -> rules.any { Map e -> e.key == key && e.effect == effect && (when == null || e.when == when) } }
+    int number = 0
+    def numbered = { Map node -> if (on('$', 'assign')) node['$'] = ++number }
+    def anyNode = { Map node ->
+        if (on('data', 'remove', 'empty-map') && node.data instanceof Map && (node.data as Map).isEmpty()) node.remove('data')
+        if (on('sm', 'remove', 'value-auto') && node.sm == 'auto') node.remove('sm')
+        if (on('z', 'remove')) node.remove('z')
+    }
+    Closure statementNode
+    Closure conditionNode
+    conditionNode = { Map node ->
+        numbered(node); anyNode(node)
+        if (node.t == 'condition') {
+            if (on('s', 'remove')) node.remove('s')
+            if (on('ct', 'assign')) node.ct = 'c'
+            if (on('ro2', 'remove', 'comparison-arity')) node.remove('ro2')
+        }
+        ((node.c ?: []) as List).each { conditionNode(it as Map) }
+        (((node.ts ?: []) as List) + ((node.fs ?: []) as List)).each { statementNode(it as Map) }
+    }
+    statementNode = { Map node ->
+        numbered(node); anyNode(node)
+        if (on('w', 'remove')) node.remove('w')
+        if (on('a', 'remove', 'value-0') && node.a == '0') node.remove('a')
+        if (!node.containsKey('tcp') && on('tcp', 'assign', 'absent')) node.tcp = 'n'
+        else if (node.tcp == 'c' && on('tcp', 'remove', 'value-c')) node.remove('tcp')
+        if (on('rop', 'remove', 'empty-restrictions') && node.rop && !node.r) { node.remove('rop'); node.remove('rn') }
+        if (on('ctp', 'remove', 'value-i') && node.ctp == 'i') node.remove('ctp')
+        if (node.t == 'every' && on('lo2', 'remove', 'short-interval') && ((node.lo as Map)?.vt in ['ms', 's', 'm', 'h'])) { node.remove('lo2'); node.remove('lo3') }
+        if (node.t == 'switch') { if (on('s', 'remove')) node.remove('s'); if (on('ct', 'remove')) node.remove('ct') }
+        if (node.ei instanceof List && on('ei', 'remove-node')) node.ei = (node.ei as List).findAll { Map e -> (e.c as List) || (e.s as List) }
+        ((node.ei ?: []) as List).each { Map e -> numbered(e); anyNode(e); ((e.c ?: []) as List).each { conditionNode(it as Map) }; ((e.s ?: []) as List).each { statementNode(it as Map) } }
+        ((node.cs ?: []) as List).each { Map cs -> numbered(cs); anyNode(cs); ((cs.s ?: []) as List).each { statementNode(it as Map) } }
+        ((node.k ?: []) as List).each { Map k -> numbered(k); anyNode(k); if (on('m', 'remove', 'empty-list') && k.m instanceof List && (k.m as List).isEmpty()) k.remove('m') }
+        if (node.t == 'on') ((node.c ?: []) as List).each { Map ev -> numbered(ev); anyNode(ev) }
+        else ((node.c ?: []) as List).each { conditionNode(it as Map) }
+        (((node.s instanceof List ? node.s : []) as List) + ((node.e ?: []) as List)).each { statementNode(it as Map) }
+    }
+    statementNode(b)
+    b
+}
+
+List<Map> firstSaves = [
+    ifStmt([leaf(), group([leaf()], [n: true])], [tcp: 'c', sm: 'always', ei: [[o: 'and', n: true, c: [leaf()], s: []], [o: 'and', c: [], s: []]]]),
+    action([task([m: []]), task([m: [':m1:']])]) + [tcp: 'c'],
+    every('m') + [tcp: 'c'],
+    every('d') + [tcp: 'c'],
+    switchStmt([[t: 's', ro: [t: 'c'], ro2: [t: 'c'], s: []]], [tcp: 'c']),
+    onStmt([evt()]) + [tcp: 'c'],
+    stmt('while', [o: 'and', c: [leaf()], s: [stmt('break', [:])]])
+]
+List abProblems = []
+firstSaves.eachWithIndex { Map a, int i ->
+    List aCodes = codesOf(validateStatement(manifest, a))
+    List bCodes = codesOf(validateStatement(manifest, predictRoundTrip(manifest, a)))
+    if (aCodes || bCodes) abProblems << "#${i} first-save ${aCodes} round-trip ${bCodes}"
+}
+check(abProblems.isEmpty(), "every first-save shape and its predicted round-trip shape validate ${abProblems}")
+Map predictedIf = predictRoundTrip(manifest, firstSaves[0])
+Map predictedAction = predictRoundTrip(manifest, firstSaves[1])
+check(predictedIf['$'] == 1 && (predictedIf.ei as List).size() == 1 && ((predictedIf.c as List)[0] as Map).ct == 'c' &&
+      predictedIf.a == '0' && predictedIf.rop == 'and' && predictedIf.tcp == 'c' && predictedIf.sm == 'always' &&
+      !((predictedAction.k as List)[0] as Map).containsKey('m') && ((predictedAction.k as List)[1] as Map).m == [':m1:'],
+    'the prediction numbers nodes, writes ct, prunes the empty else-if and the empty mode list, and keeps a, rop, tcp and sm')
+
+def flipGuard = { String key, String effect ->
+    Map mm = deepCopy(manifest) as Map
+    (mm.roundTrip as List).findAll { Map e -> e.key == key && e.effect == effect && e.region == 'executor.clean-code' }.each { Map e -> e.guard = (e.guard == 'always' ? 'inMem' : 'always') }
+    mm
+}
+[['a', 'remove'], ['rop', 'remove'], ['tcp', 'assign']].each { List kv ->
+    Map mm = flipGuard(kv[0] as String, kv[1] as String)
+    check(firstSaves.any { Map a -> codesOf(validateStatement(manifest, predictRoundTrip(mm, a))) },
+        "round-trip mutation: if the ${kv[0]} ${kv[1]} ran on the IDE copy, a round-trip shape would fail validation")
+}
+
+// ---- branch evidence --------------------------------------------------------------------
+
+List fixtureStems = manifest.fixtureStems as List
+List captureKinds = manifest.captureKinds as List
+Set fixtureRefs = ((['all'] + captureKinds.collect { "all.${it}".toString() } + fixtureStems +
+                   fixtureStems.collectMany { String s -> captureKinds.collect { "${s}.${it}".toString() } }) as Set)
+def branchesOf = { Map m ->
+    Set out = [] as Set
+    def add = { String structure, Map keys ->
+        keys.each { String key, Map spec ->
+            if (spec.persisted in ['unless-empty', 'user-optional', 'round-trip']) { out << [structure, key, 'present']; out << [structure, key, 'absent'] }
+            if (spec.persisted == 'when') { out << [structure, key, 'present']; if (spec.outsideWhen == 'retained-unconsumed') out << [structure, key, 'retained'] }
+            if (spec.values && spec.values != [true]) (spec.values as List).each { out << [structure, key, "value:${it}".toString()] }
+            if (spec.consumedWhen) { out << [structure, key, 'consumed']; out << [structure, key, 'unconsumed'] }
+        }
+    }
+    add('statement', m.common as Map)
+    (m.statements as Map).each { id, e -> add(id as String, (e as Map).keys as Map) }
+    (m.substructures as Map).each { String name, Map s ->
+        if (s.discriminator) (s.variants as Map).each { vn, keys -> add(vn as String, keys as Map) }
+        else add(name, s.keys as Map)
+    }
+    out
+}
+def tableBranches = { Map m -> ((m.branchEvidence ?: []) as List).collect { Map r -> [r.structure, r.key, r.branch] } as Set }
+Set expectedBranches = branchesOf(manifest)
+Set listedBranches = tableBranches(manifest)
+check(expectedBranches == listedBranches && (manifest.branchEvidence as List).size() == listedBranches.size(),
+    "the branch table lists every optional and conditional branch exactly once (${expectedBranches.size()}) missing ${(expectedBranches - listedBranches).take(3)} extra ${(listedBranches - expectedBranches).take(3)}")
+List branchBad = (manifest.branchEvidence as List).findAll { Map r ->
+    boolean hasFixtures = r.fixtures instanceof List && (r.fixtures as List)
+    boolean hasGap = r.gap != null
+    hasFixtures == hasGap || (hasFixtures && !(r.fixtures as List).every { fixtureRefs.contains(it) }) ||
+        (hasGap && !(manifest.branchGaps as List).contains(r.gap))
+}.collect { "${it.structure}.${it.key} ${it.branch}" }
+check(branchBad.isEmpty(), "every branch names planned fixtures or one closed gap, never both ${branchBad.take(3)}")
+check((manifest.branchEvidence as List).find { Map r -> r.structure == 'task' && r.key == 'cm' && r.branch == 'present' }?.gap == 'needs-physical-device',
+    'a task carrying cm stays capped by a fixed evidence gap')
+Map droppedBranch = deepCopy(manifest) as Map
+droppedBranch.branchEvidence = (droppedBranch.branchEvidence as List).findAll { Map r -> !(r.structure == 'task' && r.key == 'cm' && r.branch == 'present') }
+check(branchesOf(droppedBranch) != tableBranches(droppedBranch), 'branch mutation: dropping the cm row leaves the table incomplete')
+
 // ---- source cross-check, when the pinned checkout is present ------------------------
 
 File srcRoot = new File(repoRoot, 'tmp/webcore-source')
@@ -655,6 +788,77 @@ if (!new File(srcRoot, (prov.executorPath as String)).isFile() || !new File(srcR
         return !java.util.regex.Pattern.compile(a.pattern as String).matcher(text).find()
     }.collect { Map a -> "${a.region ?: a.constant ?: a.constantValueAbsent}: ${a.supports}" }
     check(assertionMisses.isEmpty(), "every source assertion holds in the pinned source ${assertionMisses}")
+
+    // The guard a source position runs under: inside an inMem block, inside a doit block, or always.
+    // The region's own header is skipped, since every one of these methods takes inMem as a parameter.
+    def guardAt = { String text, int idx ->
+        List stack = []
+        int p = 0
+        while (p < idx) {
+            char ch = text.charAt(p)
+            if (ch == ('/' as char) && p + 1 < text.length()) {
+                char n = text.charAt(p + 1)
+                if (n == ('/' as char)) { int e = text.indexOf(10, p); if (e < 0 || e >= idx) break; p = e; continue }
+                if (n == ('*' as char)) { int e = text.indexOf('*/', p); if (e < 0) break; p = e + 2; continue }
+            }
+            if (ch == (char) 34 || ch == (char) 39) {
+                char q = ch; p++
+                while (p < idx && text.charAt(p) != q) { if (text.charAt(p) == (char) 92) p++; p++ }
+                p++
+                continue
+            }
+            if (ch == ('{' as char)) stack << text.substring(text.lastIndexOf('\n', p) + 1, p)
+            else if (ch == ('}' as char) && stack) stack.remove((int) (stack.size() - 1))
+            p++
+        }
+        List scope = (stack.size() > 1 ? stack.subList(1, stack.size()) : []) + [text.substring(text.lastIndexOf('\n', idx) + 1, idx)]
+        if (scope.any { (it as String).contains('inMem') }) return 'inMem'
+        if (scope.any { ((it as String) =~ /\bdoit\b/).find() }) return 'doit'
+        return 'always'
+    }
+    def roundTripGuardMisses = { Map m ->
+        List misses = []
+        (m.roundTrip as List).each { Map e ->
+            String text = regions[e.region as String]
+            List hits = []
+            int from = 0
+            while (text != null && (from = text.indexOf(e.source as String, from)) >= 0) { hits << from; from++ }
+            List guards = hits.collect { guardAt(text, it as int) }
+            if (hits.isEmpty() || guards.any { it != e.guard }) misses << "${e.region}: ${e.source} ${guards}"
+        }
+        misses
+    }
+    List guardMisses = roundTripGuardMisses(manifest)
+    check(guardMisses.isEmpty(), "every round-trip entry's guard matches its position in the pinned source ${guardMisses.take(3)}")
+
+    String cleanText = regions['executor.clean-code']
+    def unlistedIn = { Map m ->
+        List unlisted = []
+        def transform = java.util.regex.Pattern.compile('(\\.remove\\(s[A-Z]\\w*\\)|\\[s[A-Z]\\w*\\]\\s*=(?!=))').matcher(cleanText)
+        while (transform.find()) {
+            int idx = transform.start()
+            int lineStart = cleanText.lastIndexOf('\n', idx) + 1
+            int lineEnd = cleanText.indexOf('\n', idx)
+            String line = cleanText.substring(lineStart, lineEnd < 0 ? cleanText.length() : lineEnd)
+            if (line.trim().startsWith('//') || guardAt(cleanText, idx) != 'always') continue
+            if (!(m.roundTrip as List).any { Map e -> e.region == 'executor.clean-code' && line.contains(e.source as String) }) unlisted << line.trim()
+        }
+        unlisted.unique()
+    }
+    List unlistedTransforms = unlistedIn(manifest)
+    check(unlistedTransforms.isEmpty(), "every cleanCode transformation that reaches the IDE copy is in the round-trip table ${unlistedTransforms.take(3)}")
+
+    [['a', 'remove'], ['tcp', 'remove'], ['tcp', 'assign'], ['rop', 'remove'], ['w', 'remove'], ['m', 'remove']].each { List kv ->
+        Map mm = deepCopy(manifest) as Map
+        (mm.roundTrip as List).findAll { Map e -> e.key == kv[0] && e.effect == kv[1] && e.region == 'executor.clean-code' }.each { Map e ->
+            e.guard = (e.guard == 'always' ? 'inMem' : 'always')
+        }
+        check(!roundTripGuardMisses(mm).isEmpty(), "round-trip mutation: misclassifying the ${kv[0]} ${kv[1]} guard is caught against the source")
+    }
+    Map unlistedMutant = deepCopy(manifest) as Map
+    unlistedMutant.roundTrip = (unlistedMutant.roundTrip as List).findAll { Map e -> e.key != 'm' }
+    check(unlistedIn(unlistedMutant).any { (it as String).contains('item.remove(sM)') },
+        'round-trip mutation: dropping the empty mode-list entry leaves an unguarded transformation unlisted')
 }
 
 println "\n${passed} passed, ${failed} failed"

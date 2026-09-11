@@ -692,6 +692,18 @@ assertThat(isInvalid(conditionD, 'wc.statement.if') && categoriesOf(conditionD) 
            ((walker.collectWebcoreDecodeCoverage(selectorDoc, registry) as Map).constructCounts as Map).containsKey('wc.device-selector.direct-identifier'),
     'an excluded condition d holding a selector produces no device-selector construct, though the unvalidated walk counts one')
 
+// The copy the IDE re-saves numbers every node, writes ct and s, and drops an empty task mode list
+// and an empty else-if. A first save and its round trip are both structurally valid.
+Map firstSaveDoc = [s: [ifNode([leafNode()], [tcp: 'c', ei: [[o: 'and', c: [leafNode()], s: []], [o: 'and', c: [], s: []]],
+                                           s: [stmtNode('action', [tcp: 'c', d: [], k: [[c: 'noop', p: [], m: []]]])]])]]
+Map roundTripDoc = [s: [ifNode([leafNode(['$': 2, ct: 'c', s: true])], ['$': 1, tcp: 'c', ei: [['$': 3, o: 'and', c: [leafNode(['$': 4, ct: 'c'])], s: []]],
+                                           s: [stmtNode('action', ['$': 5, tcp: 'c', d: [], k: [['$': 6, c: 'noop', p: []]]])]])]]
+Map firstSaveOut = census(walker, firstSaveDoc)
+Map roundTripOut = census(walker, roundTripDoc)
+assertThat(isValid(firstSaveOut, 'wc.statement.if') && isValid(firstSaveOut, 'wc.statement.action') &&
+           isValid(roundTripOut, 'wc.statement.if') && isValid(roundTripOut, 'wc.statement.action'),
+    "a first-save shape and its round-trip shape are both structurally valid (${firstSaveOut.structureFindings} ${roundTripOut.structureFindings})")
+
 // Conservative levels: every ceiling is L2 today, and a raised ceiling needs every occurrence valid.
 assertThat(census(walker, richDoc).levelCounts == plain.levelCounts, 'with every ceiling at L2 the level counts are unchanged')
 Map raised = [provenance: registry.provenance, constructs: (registry.constructs as Map) + ['wc.statement.if': [level: 'L3']]]
