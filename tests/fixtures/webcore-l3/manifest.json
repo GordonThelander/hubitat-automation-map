@@ -29,7 +29,7 @@
         },
         {
             "branch": "statement tcp absent",
-            "observation": "selecting Never cancel tasks persists tcp c"
+            "observation": "Original A2 observation was misattributed. The pinned editor and executor source show that selecting Never cancel tasks persists tcp absent; this editor-producible branch has not yet been captured."
         }
     ],
     "fixtures": [
