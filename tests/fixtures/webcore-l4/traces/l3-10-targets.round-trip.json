@@ -1,0 +1,18 @@
+{
+  "fixture": "l3-10-targets.round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "deviceList": {"docs": "https://wiki.webcore.co/Piston links to an empty Action construct page; the shared-expansion and dynamic-target sentinel are undocumented, source only", "source": "executor.execute-action"},
+    "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
+  },
+  "occurrences": {
+    "$.s[0]": {
+      "construct": "wc.statement.action", "role": "targeted-tasks",
+      "claims": ["statement.envelope.default.v1", "statement.action.device-list.v1"],
+      "gaps": ["statement.action.task-order-unresolved"],
+      "deviceTarget": "static",
+      "cite": {"role": "deviceList", "deviceTarget": "deviceList", "gaps": "not-in-increment", "envelope": "envelope"}
+    }
+  }
+}

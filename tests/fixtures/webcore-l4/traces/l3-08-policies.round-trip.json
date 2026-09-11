@@ -12,15 +12,15 @@
   "occurrences": {
     "$.s[0]": {"construct": "wc.statement.action", "role": null,
       "claims": ["statement.tep.execution-policy.v1", "statement.tsp.scheduling-policy.v1", "statement.tcp.cancellation-policy.v1"],
-      "gaps": ["statement.action.not-in-increment", "statement.envelope.restrictions-present", "statement.envelope.tep-present", "statement.envelope.tsp-present", "statement.envelope.tcp-non-default"],
+      "gaps": ["statement.action.task-order-unresolved", "statement.envelope.restrictions-present", "statement.envelope.tep-present", "statement.envelope.tsp-present", "statement.envelope.tcp-non-default"],
       "cite": {"gaps": "not-in-increment", "restrictions": "restrictions", "tep": "tep", "tsp": "tsp", "tcp": "tcp"}},
     "$.s[1]": {"construct": "wc.statement.action", "role": null,
       "claims": ["statement.tep.execution-policy.v1", "statement.tcp.cancellation-policy.v1"],
-      "gaps": ["statement.action.not-in-increment", "statement.envelope.tep-present", "statement.envelope.tcp-non-default"],
+      "gaps": ["statement.action.task-order-unresolved", "statement.envelope.tep-present", "statement.envelope.tcp-non-default"],
       "cite": {"gaps": "not-in-increment", "tep": "tep", "tcp": "tcp"}},
     "$.s[2]": {"construct": "wc.statement.action", "role": null,
       "claims": ["statement.tep.execution-policy.v1"],
-      "gaps": ["statement.action.not-in-increment", "statement.envelope.tep-present"],
+      "gaps": ["statement.action.task-order-unresolved", "statement.envelope.tep-present"],
       "cite": {"gaps": "not-in-increment", "tep": "tep"}}
   }
 }

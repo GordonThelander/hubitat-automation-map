@@ -15,14 +15,14 @@
       "gaps": ["statement.for.fast-forward-unresolved"],
       "cite": {"role": "for", "gaps": "for", "envelope": "envelope"}
     },
-    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[1]": {
       "construct": "wc.statement.each", "role": "device-iteration",
       "claims": ["statement.envelope.default.v1", "statement.each.device-iteration.v1"],
       "gaps": ["statement.each.fast-forward-unresolved"],
       "cite": {"role": "each", "gaps": "each", "envelope": "envelope"}
     },
-    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[2]": {
       "construct": "wc.statement.exit", "role": "piston-terminate",
       "claims": ["statement.envelope.default.v1", "statement.exit.terminate-piston.v1"],

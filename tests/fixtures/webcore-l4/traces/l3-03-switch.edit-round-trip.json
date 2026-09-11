@@ -14,7 +14,7 @@
       "gaps": ["statement.switch.fast-forward-unresolved"],
       "cite": {"role": "switch", "ctp": "switch", "gaps": "switch", "envelope": "envelope"}
     },
-    "$.s[0].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+    "$.s[0].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[0].cs[0].s[1]": {
       "construct": "wc.statement.break", "role": "switch-scoped-control-transfer",
@@ -22,9 +22,9 @@
       "gaps": ["statement.break.fast-forward-unresolved"],
       "cite": {"role": "break", "gaps": "break", "envelope": "envelope"}
     },
-    "$.s[0].cs[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+    "$.s[0].cs[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[0].e[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+    "$.s[0].e[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[1]": {
       "construct": "wc.statement.switch", "role": "multi-way-decision", "ctp": "i",
@@ -32,7 +32,7 @@
       "gaps": ["statement.switch.fast-forward-unresolved"],
       "cite": {"role": "switch", "ctp": "switch", "gaps": "switch", "envelope": "envelope"}
     },
-    "$.s[1].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+    "$.s[1].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
   }
 }
