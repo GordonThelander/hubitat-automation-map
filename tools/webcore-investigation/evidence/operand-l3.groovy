@@ -53,7 +53,7 @@
                // Value-type discriminator. The registered catalogue of vt values is not yet
                // reconciled here; treating any string as valid pending that cross-check.
                notes: 'value-type discriminator, closed vocabulary not yet reconciled'],
-        'c':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'read', exclusive: true,
+        'c':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'read', exclusiveTo: ['c'],
                readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                notes: 'the literal value itself; never read into any coverage result, opaque by design'],
         'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
@@ -62,9 +62,9 @@
         'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
                writtenBy: ['editor.edit-statement'],
                notes: 'grouping function; present on multi-value operands, stripped in memory when avg or any and the type is in ListC1 - inMem-guarded, not yet proven for the saved copy'],
-        'exp': [kind: 'expression', persisted: 'always', consumed: 'read', exclusive: true,
+        'exp': [kind: 'expression', persisted: 'always', consumed: 'read', exclusiveTo: ['c', 'e'],
                 readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
-                notes: 'the expression container; exp survives only for t in [e, c] (ListEC) - executor.clean-code: if(!(ty in ListEC) && item[sEXP]) item.remove(sEXP)']
+                notes: 'the expression container, shared by exactly two kinds; exp survives only for t in [e, c] (ListEC) - executor.clean-code: if(!(ty in ListEC) && item[sEXP]) item.remove(sEXP)']
       ]
     ],
 
@@ -75,7 +75,7 @@
         'vt': [kind: 'scalar', persisted: 'always', consumed: 'read',
                readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                notes: 'value-type discriminator, closed vocabulary not yet reconciled'],
-        'v':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusive: true,
+        'v':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['v'],
                readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                values: ['mode', 'time', 'date', 'dtime', 'pwrSrc', 'hsmSts', 'hsmAlrt', 'hsmSArm', 'hsmRule', 'hsmRules',
                         'pstnRsm', 'cloudBackup', 'lowMemory', 'manualReboot', 'update', 'systemStart', 'severeLoad',
@@ -88,7 +88,7 @@
                writtenBy: ['editor.edit-statement'],
                notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven'],
         'd':  [kind: 'device-list', persisted: 'never', consumed: 'not-cited',
-               notes: 'editor-authored-only: cleanCode strips d unconditionally for t in ListC2 (which includes v) during recreatePiston; observed present on l3-01-conditional.first-save and absent on its edit-round-trip']
+               notes: 'editor-authored-only, not exclusive to v: cleanCode strips d unconditionally for t in ListC2 (which includes v, s, x, c, e, u) during recreatePiston; observed present on l3-01-conditional.first-save (on both v and c operands) and absent on its edit-round-trip']
       ]
     ],
 
@@ -99,7 +99,7 @@
         'vt': [kind: 'scalar', persisted: 'always', consumed: 'read',
                readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                notes: 'value-type discriminator; when device, x holds a list of variable names instead of one, per executor.evaluate-operand'],
-        'x':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusive: true,
+        'x':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['x'],
                readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                notes: 'the referenced variable name, opaque by design; a leading @ names a global variable and @@ a superglobal, per the existing webCoRE variable investigation in Supporting Docs, confirmed again here at executor.evaluate-operand: operX.startsWith(sAT) / sAT2'],
         'xi': [kind: 'scalar', persisted: 'user-optional', consumed: 'read',
@@ -121,7 +121,7 @@
         'vt':  [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
                 writtenBy: ['editor.edit-statement'],
                 notes: 'evaluateOperand evaluates exp directly for this kind and does not read vt; value-type discriminator elsewhere, purpose here unproven'],
-        'exp': [kind: 'expression', persisted: 'always', consumed: 'read', exclusive: true,
+        'exp': [kind: 'expression', persisted: 'always', consumed: 'read', exclusiveTo: ['c', 'e'],
                 readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                 notes: 'the only field evaluateOperand reads for this kind: mv=movt+evaluateExpression(r9,mMs(operand,sEXP)) - exp survives only for t in [e, c] (ListEC), same rule as operand.c.exp'],
         'e':   [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
