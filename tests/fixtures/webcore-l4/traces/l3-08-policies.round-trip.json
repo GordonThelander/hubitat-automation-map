@@ -1,0 +1,20 @@
+{
+  "fixture": "l3-08-policies.round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "policies": {"docs": "https://wiki.webcore.co/Task_Execution_Policy; https://wiki.webcore.co/Task_Scheduling_Policy; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "restrictions": {"docs": "https://wiki.webcore.co/Piston (Restriction); restriction meaning not proven in this increment", "source": "executor.statement-dispatch"},
+    "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
+  },
+  "occurrences": {
+    "$.s[0]": {"construct": "wc.statement.action", "role": null, "claims": [],
+      "gaps": ["statement.action.not-in-increment", "statement.envelope.restrictions-present", "statement.envelope.tcp-non-default", "statement.envelope.tep-present", "statement.envelope.tsp-present"],
+      "cite": {"gaps": "not-in-increment", "restrictions": "restrictions", "envelope": "policies"}},
+    "$.s[1]": {"construct": "wc.statement.action", "role": null, "claims": [],
+      "gaps": ["statement.action.not-in-increment", "statement.envelope.tcp-non-default", "statement.envelope.tep-present"],
+      "cite": {"gaps": "not-in-increment", "envelope": "policies"}},
+    "$.s[2]": {"construct": "wc.statement.action", "role": null, "claims": [],
+      "gaps": ["statement.action.not-in-increment", "statement.envelope.tep-present"],
+      "cite": {"gaps": "not-in-increment", "envelope": "policies"}}
+  }
+}
