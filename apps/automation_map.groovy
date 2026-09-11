@@ -3813,7 +3813,7 @@ String webcoreCensusBoundPath(String path, int limit) {
 // Keys read at reviewed traversal and dispatch sites in the pinned source. The
 // list fails safe: an omitted key costs path legibility, never a leaked value.
 List<String> webcoreCensusSchemaKeys() {
-    return ['$', 'a', 'c', 'ced', 'co', 'cs', 'ct', 'ctp', 'cto', 'd', 'di', 'e', 'ei', 'exp',
+    return ['$', 'a', 'c', 'ced', 'cm', 'co', 'cs', 'ct', 'ctp', 'cto', 'd', 'di', 'e', 'ei', 'exp',
             'f', 'fs', 'g', 'i', 'id', 'k', 'l', 'lo', 'lo2', 'lo3', 'm', 'n', 'o', 'ok', 'p',
             'r', 'rn', 'ro', 'ro2', 'rop', 's', 'sm', 'str', 't', 'tcp', 'tep', 'to', 'to2',
             'ts', 'tsp', 'v', 'vt', 'w', 'wd', 'wt', 'x', 'xi', 'z']

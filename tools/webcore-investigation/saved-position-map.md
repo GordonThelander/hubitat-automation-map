@@ -43,9 +43,21 @@ positions it never visits:
 - `rn` negates a statement's restrictions;
 - `wt` is a followed-by step's wait type, a scalar, and `wd` is its wait delay, evaluated with
   `mevaluateOperand` on a condition node;
-- `m` is a task's mode restriction list, checked in `executeTask`, and is not a device list.
+- `m` is a task's mode restriction list, checked in `executeTask`, and is not a device list;
+- `cm` is `true` on a task whose command is custom. `updateTask` writes it and the editor's
+  `compilePiston` deletes it when false. The executor never reads it: the command name in `c` takes
+  the ordinary device or virtual command path.
 
 `cleanCode` removes editor fields only when `inMem` is true, so the stored document keeps them.
+
+**Some saved keys are written by the hub, not the editor.** The IDE opens a piston through `get()`,
+which calls `getRunTimeData(doit=false, shorten=true, inMem=false)`. That rebuilds the piston with
+`recreatePiston`, numbering every node with `msetIds`, and runs `subscribeAll`, which writes `ct` and
+`s` onto subscribed nodes. The copy returned to the editor carries those keys. The editor keeps them,
+and `compilePiston` deletes only `w` and false, null or empty values, so a re-saved piston persists
+`$`, `ct` and a true `s` on every node that existed when it was opened. None of these saved values is
+trusted on load: `clearMsetIds` nulls every `$` before renumbering, and `subscribeAll` recomputes `s`
+and a condition's `ct`.
 
 **A root variable declaration's `v` is an operand.** Three anchors, and the general rule rests on
 the first two rather than the third:
@@ -154,12 +166,12 @@ is therefore recorded as `unknown-device-selector` rather than assigned to one o
 The walker's allowlist is exactly the keys named above:
 
 ```
-$ a c ced co cs ct ctp cto d di e ei exp f fs g i id k l lo lo2 lo3 m n o ok p r rn ro ro2 rop s
-sm str t tcp tep to to2 ts tsp v vt w wd wt x xi z
+$ a c ced cm co cs ct ctp cto d di e ei exp f fs g i id k l lo lo2 lo3 m n o ok p r rn ro ro2 rop
+s sm str t tcp tep to to2 ts tsp v vt w wd wt x xi z
 ```
 
 `ctp`, `lo2`, `lo3`, `m`, `rn`, `wd` and `wt` were added after tracing them to the executor, as set out
-in section 1. `zc` (comments) and `data` are source-known but never interpreted. They are reported with
+in section 1. `cm` was added after tracing it through the editor serializer. `zc` (comments) and `data` are source-known but never interpreted. They are reported with
 the fixed reason `known-opaque-field`, so they count as unidentified without being mistaken for
 unknown structure. `u`, `pr` and `os` are not added until a saved position and a runtime consumer are
 traced. Editor diagnostics (`err`, `errVar`, `loc`) stay unknown fields.

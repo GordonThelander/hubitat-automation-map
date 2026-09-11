@@ -356,8 +356,12 @@ end state. That answer is currently unknown and is worth having either way.
   for, then the share of construct positions recognised at L2 or above, the constructs found with
   their evidence level, and any gaps as structural paths. Verified in a browser on the dev hub in
   every state it can show, and accepted in review.
-- **No cache, by measurement.** Results on the dev hub are under 1KB and return well within a second,
-  so a cache would add hub state for no meaningful saving.
+- **No cache.** The endpoint applies fixed traversal, output and time bounds. Measured on the dev hub,
+  results were under 1KB and returned within a second, so a cache would add hub state for no
+  meaningful saving there; that is observed evidence, not a guarantee for every hub.
+- **Custom command tasks (fixed on dev).** The editor saves `cm: true` on a task with a custom
+  command. `cm` was missing from the walker's key allowlist, so such a task reported an unidentified
+  key; it is now allowlisted after tracing it through the editor serializer.
 - **Still to come.** The evidence work that raises constructs above identification, which is what
   eventually lets a piston draw its own flow with anything not yet understood shown as an explicit
   opaque block.

@@ -439,6 +439,9 @@ assertThat(!(taskModes.unrecognised as List).any { it.reason == 'unknown-device-
            (taskModes.constructCounts as Map).keySet().every { !"${it}".startsWith('wc.device-selector.') },
     "a task's mode list is not read as a device list")
 
+Map customTask = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', k: [[c: 'refreshNow', cm: true, p: []]]]]], registry) as Map
+assertThat(unknownKeys(customTask).isEmpty(), "a custom command task's cm flag is not an unknown field (${unknownKeys(customTask)})")
+
 Map opaque = walker.collectWebcoreDecodeCoverage([s: [[t: 'action', zc: 'a comment', data: [t: 'c', vt: 'integer', c: 1], k: []]]], registry) as Map
 List opaqueRecords = (opaque.unrecognised as List).findAll { it.reason == 'known-opaque-field' }
 assertThat(opaqueRecords*.path.sort() == ['$.s[0].data', '$.s[0].zc'], "zc and data are reported as known opaque fields with legible paths (${opaqueRecords*.path})")
