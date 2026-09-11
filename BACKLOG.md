@@ -369,10 +369,9 @@ end state. That answer is currently unknown and is worth having either way.
   allowlisted.
 - **Statement evidence gaps to close.** The twelve statement families are structural (L3), but an
   occurrence that takes a saved branch without a matching editor save and reload in the fixtures is
-  held at identified (L2). Open: a condition whose `ct` is a trigger after reload, which needs an
-  unchanged reopen and save of a piston whose saved condition is already a trigger; `sm` on a
-  statement and an absent `tcp`, which the hosted editor did not produce; a task carrying `cm` or
-  `a`; a `for` without `x`; and a group's retained or unconsumed `wd`, and `wt` of `l` or `n`. Nodes
+  held at identified (L2). Open: `sm` on a statement and an absent `tcp`, which the hosted editor did
+  not produce; a task carrying `cm` or `a`; a `for` without `x`; and a group's retained or unconsumed
+  `wd`, and `wt` of `l` or `n`. Nodes
   saved before the piston was first reopened (`$`, `ct` or `s` absent) cannot be shown after a reload
   and stay held by design.
 - **Still to come.** Structural evidence beyond the statement backbone, then the semantic evidence
