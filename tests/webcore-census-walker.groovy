@@ -745,8 +745,8 @@ assertThat(gapsOf(smIf, 'wc.statement.if') == ['statement/sm/present': 1] && lev
            !JsonOutput.toJson(smIf).contains('CANARY'),
     "an if carrying sm is held by a gap id that names the branch, never the saved value (${smIf.constructOccurrences})")
 Map triggerIf = census(walker, [s: [rtIf([rtLeaf([ct: 't'])])]])
-assertThat(gapsOf(triggerIf, 'wc.statement.if') == ['condition/ct/value:t': 1],
-    "a condition whose reloaded ct is a trigger is held by the canonical-only gap (${triggerIf.constructOccurrences})")
+assertThat(gapsOf(triggerIf, 'wc.statement.if').isEmpty() && levelOf(walker, triggerIf, 'wc.statement.if') == 'L3',
+    "a condition whose reloaded ct is a trigger reaches L3 now a chained reload save evidences it (${triggerIf.constructOccurrences})")
 Map nestedGap = census(walker, [s: [rtIf([rtLeaf()], [s: [rtStmt('do', [s: [], sm: 'always'])]])]])
 assertThat(occurrence(nestedGap, 'wc.statement.if').evidenceGapped == 0 && gapsOf(nestedGap, 'wc.statement.do') == ['statement/sm/present': 1],
     'a gap in a nested statement belongs to that statement, not the one containing it')

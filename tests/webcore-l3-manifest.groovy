@@ -201,10 +201,10 @@ Map fixtureDocs = [:]
     fixtureDocs[name] = new groovy.json.JsonSlurper().parseText(new File(fixtureDir, f.file as String).getText('UTF-8'))
 }
 Map lineage = manifest.captureLineage as Map
-check(manifest.captureKinds == ['first-save', 'round-trip', 'edit-save', 'edit-round-trip'] &&
+check(manifest.captureKinds == ['first-save', 'round-trip', 'edit-save', 'edit-round-trip', 'chained-round-trip'] &&
       (fixtureManifest.captureKinds as Map).keySet() == (manifest.captureKinds as Set) &&
-      lineage == ['first-save': 'round-trip', 'edit-save': 'edit-round-trip'],
-    'the manifest declares the four committed capture kinds and pairs each save with its round trip')
+      lineage == ['first-save': 'round-trip', 'edit-save': 'edit-round-trip', 'edit-round-trip': 'chained-round-trip'],
+    'the manifest declares the committed capture kinds and pairs each save with its round trip, including the chained reload')
 def roundTripOf = { String name ->
     Map f = fixtureMeta[name] as Map
     (f && lineage[f.capture]) ? name.substring(0, name.length() - (f.capture as String).length()) + lineage[f.capture] : null
@@ -776,10 +776,12 @@ def branchGate = { Map m, Map meta, Map docs ->
             if (!t.contains(n)) problems << "${rowLabel} cites ${n}, which does not take it".toString()
             else if (!t.contains(rt)) problems << "${rowLabel} cites ${n}, whose round trip no longer takes it".toString()
         }
-        List saves = t.findAll { saveKinds.contains((meta[it] as Map)?.capture) }.sort()
+        // A capture is a save only when its round trip is committed, and a round trip only when its save
+        // is, so an edit round trip is both where a chained reload follows it.
+        List saves = t.findAll { String n -> meta.containsKey(roundTripName(n)) }.sort()
         List canonical = saves.findAll { t.contains(roundTripName(it as String)) }
         List editorAuthored = saves.findAll { !t.contains(roundTripName(it as String)) }
-        List canonicalOnly = t.findAll { !saveKinds.contains((meta[it] as Map)?.capture) && !t.contains(saveName(it as String)) }.sort()
+        List canonicalOnly = t.findAll { String n -> meta.containsKey(saveName(n)) && !t.contains(saveName(n)) }.sort()
         if (cited.sort(false) != canonical) problems << "${rowLabel} cites ${cited}, but the promoting saves are ${canonical}".toString()
         if (((r.editorAuthored ?: []) as List).sort(false) != editorAuthored) problems << "${rowLabel} records editorAuthored ${r.editorAuthored}, derived ${editorAuthored}".toString()
         if (((r.canonicalOnly ?: []) as List).sort(false) != canonicalOnly) problems << "${rowLabel} records canonicalOnly ${r.canonicalOnly}, derived ${canonicalOnly}".toString()
@@ -800,8 +802,10 @@ check(['statement sm present', 'statement tcp absent'].every { String b ->
         List p = b.tokenize(' ')
         observedGaps.containsKey(b) && (manifest.branchEvidence as List).find { Map r -> r.structure == p[0] && r.key == p[1] && r.branch == p[2] }?.gap == 'observed-at-capture' },
     'the two editor refusals recorded at capture are observed-at-capture gaps')
-check((manifest.branchEvidence as List).find { Map r -> r.structure == 'condition' && r.key == 'ct' && r.branch == 'value:t' }?.gap == 'canonical-only',
-    'a trigger ct written only by the reload after a save kept a stale ct does not promote the branch')
+Map triggerRow = (manifest.branchEvidence as List).find { Map r -> r.structure == 'condition' && r.key == 'ct' && r.branch == 'value:t' } as Map
+check(triggerRow?.gap == null && triggerRow?.fixtures == ['l3-02-followed-by.edit-round-trip'] &&
+      triggerRow?.canonicalOnly == ['l3-02-followed-by.edit-round-trip'],
+    'a trigger ct promotes only through the chained reload save, and the stale ct save before it stays recorded')
 check((manifest.branchEvidence as List).find { Map r -> r.structure == 'task' && r.key == 'cm' && r.branch == 'present' }?.gap == 'needs-physical-device',
     'a task carrying cm stays capped by a fixed evidence gap')
 Map droppedBranch = deepCopy(manifest) as Map
@@ -830,7 +834,8 @@ def rowOf = { Map m, String structure, String key, String branch -> (m.branchEvi
  ['deleting a committed fixture file', { Map m, Map meta, Map docs -> meta.remove('l3-06-timers.first-save'); docs.remove('l3-06-timers.first-save') }],
  ['a gap on a branch the fixtures canonically take', { Map m, Map meta, Map docs -> Map r = rowOf(m, 'statement', 'tep', 'present'); r.remove('fixtures'); r.gap = 'not-in-matrix' }],
  ['an editor-authored save left unrecorded', { Map m, Map meta, Map docs -> rowOf(m, 'condition', 'ct', 'absent').remove('editorAuthored') }],
- ['a taken branch missing from the table', { Map m, Map meta, Map docs -> m.branchEvidence = (m.branchEvidence as List).findAll { Map r -> !(r.structure == 'statement' && r.key == 'tep' && r.branch == 'present') } }]
+ ['a taken branch missing from the table', { Map m, Map meta, Map docs -> m.branchEvidence = (m.branchEvidence as List).findAll { Map r -> !(r.structure == 'statement' && r.key == 'tep' && r.branch == 'present') } }],
+ ['removing the chained reload capture', { Map m, Map meta, Map docs -> meta.remove('l3-02-followed-by.chained-round-trip'); docs.remove('l3-02-followed-by.chained-round-trip') }]
 ].each { List mc ->
     check(!gateMutant(mc[1] as Closure).isEmpty(), "branch mutation: ${mc[0]} fails the gate")
 }

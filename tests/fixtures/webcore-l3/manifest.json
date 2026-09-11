@@ -18,7 +18,8 @@
         "first-save": "first constructed save of a newly created piston",
         "round-trip": "unchanged reopen and save of that piston",
         "edit-save": "correction save of a piston that had been opened before",
-        "edit-round-trip": "unchanged reopen and save after the correction"
+        "edit-round-trip": "unchanged reopen and save after the correction",
+        "chained-round-trip": "unchanged reopen and save of the edit-round-trip state"
     },
     "sanitiserVersion": "L3CaptureSanitiser 1",
     "observedEditorGaps": [
@@ -95,6 +96,22 @@
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 6
+        },
+        {
+            "file": "l3-02-followed-by.chained-round-trip.json",
+            "piston": "zz-L3-02 followed-by",
+            "capture": "chained-round-trip",
+            "pistonBuild": 6,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "bab5d896cda0ea8232970aeac480d7fdf31c4eba1ec831a1db15e10103ecd73b",
+            "statements": {
+                "wc.statement.action": 2,
+                "wc.statement.if": 2
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
         },
         {
             "file": "l3-02-followed-by.edit-round-trip.json",

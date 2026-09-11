@@ -174,7 +174,6 @@ Map webcoreStatementShapes() {
             'task/a/present': 'observed-at-capture',
             'condition/$/absent': 'editor-authored-only',
             'condition/ct/absent': 'editor-authored-only',
-            'condition/ct/value:t': 'canonical-only',
             'group/$/absent': 'editor-authored-only',
             'group/wd/retained': 'not-in-matrix',
             'group/wd/unconsumed': 'not-in-matrix',
