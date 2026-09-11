@@ -119,8 +119,9 @@ copy Hubitat returns has already been processed:
   and switch statements, a subscription flag `s` on subscribed nodes, and `w` warnings.
 
 The editor keeps what it received. Its serializer, `compilePiston`, deletes `w` and every false, null or
-empty value before saving, so a later save persists `$`, `ct` and a true `s` on every node that existed
-when the piston was opened. A node added since then has none of them, and `w` is never saved.
+empty value before saving, so a later save persists `$` on every node that existed when the piston was
+opened, and `ct` and a true `s` on the nodes the subscription pass marked. A node added since then has
+none of them, and `w` is never saved.
 
 None of these saved values is trusted on the next load. `clearMsetIds` nulls every `$` before the tree
 is renumbered, and `subscribeAll` recomputes `s` everywhere and `ct` on conditions and switch
