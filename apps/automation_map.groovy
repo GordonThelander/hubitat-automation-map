@@ -4977,6 +4977,209 @@ Map webcoreStatementShapes() {
 }
 // --- webcore statement shapes: end ---
 
+// --- webcore semantic evidence: begin ---
+// GENERATED from tools/webcore-investigation/evidence/semantic-l4.groovy
+// by tools/webcore-investigation/generate-semantic-evidence.groovy. Do not hand-edit.
+// Promotion outcome and closed gap reasons only. The manifest keeps the evidence.
+Map webcoreSemanticEvidence() {
+    return [
+        claims: [
+            'statement.if.branch-order.v1': true,
+            'condition.list.negation.v1': true,
+            'condition.list.operator-or.v1': true,
+            'condition.followed-by.opaque-group.v1': true,
+            'statement.do.sequential-block.v1': true,
+            'statement.envelope.default.v1': true
+        ],
+        gaps: [
+            'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
+            'statement.envelope.async': 'The execution method is not the proven synchronous default',
+            'statement.envelope.tep-present': 'A task execution policy is set and its meaning is not yet proven',
+            'statement.envelope.tsp-present': 'A task scheduling policy is set and its meaning is not yet proven',
+            'statement.envelope.tcp-non-default': 'The task cancellation policy is not the proven default',
+            'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
+            'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
+            'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.while.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.every.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.repeat.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.each.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.for.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.switch.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.break.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.exit.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.unrecognised': 'The statement type is not recognised',
+            'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
+            'condition.operator-unproven': 'This condition operator is not yet proven',
+            'condition.group-depth-unproven': 'A group inside a group is not yet proven',
+            'condition.followed-by-timing-unproven': 'The timing of a followed-by sequence is not yet explained',
+            'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.condition.followed-by.opaque-group.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.do.sequential-block.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.envelope.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+        ]
+    ]
+}
+// --- webcore semantic evidence: end ---
+
+// --- webcore semantic normalizer: begin ---
+// L4 first increment: a deterministic, value-free model of what saved statements mean, used only by
+// the on-demand coverage check. It normalizes if, do, ordinary condition lists and the default
+// statement envelope; everything else is an occurrence-scoped gap from the closed evidence list. It
+// never predicts a live result, and a claim the evidence no longer promotes becomes a gap.
+Map webcoreSemanticModel(Object document, Map evidence, int maxDepth) {
+    Map acc = [occurrences: [:], truncated: false, maxDepth: maxDepth, evidence: evidence]
+    if (document instanceof Map && (document as Map).s instanceof List) {
+        webcoreSemanticStatements((document as Map).s as List, '$.s', 0, acc)
+    }
+    return [occurrences: acc.occurrences, truncated: acc.truncated]
+}
+
+void webcoreSemanticStatements(List list, String path, int depth, Map acc) {
+    for (int i = 0; i < list.size(); i++) {
+        if (list[i] instanceof Map) webcoreSemanticStatement(list[i] as Map, path + '[' + i + ']', depth + 1, acc)
+    }
+}
+
+void webcoreSemanticStatement(Map node, String path, int depth, Map acc) {
+    if (depth > (acc.maxDepth as Integer)) { acc.truncated = true; return }
+    String type = (node.t instanceof String) ? (node.t as String) : ''
+    Set claims = [] as Set
+    Set gaps = [] as Set
+    Map gapReasons = (((acc.evidence as Map).gaps ?: [:]) as Map)
+    boolean known = type in ['if', 'do'] || gapReasons.containsKey('statement.' + type + '.not-in-increment')
+    Map entry = [construct: known ? 'wc.statement.' + type : 'wc.statement.unrecognised', role: null]
+    // Saved tcp c is the default; a saved absent tcp is never cancel (editor option "", cleanCode).
+    boolean envelope = true
+    if (node.r instanceof List && (node.r as List)) { gaps << 'statement.envelope.restrictions-present'; envelope = false }
+    if (node.a != '0') { gaps << 'statement.envelope.async'; envelope = false }
+    if (node.containsKey('tep')) { gaps << 'statement.envelope.tep-present'; envelope = false }
+    if (node.containsKey('tsp')) { gaps << 'statement.envelope.tsp-present'; envelope = false }
+    if (node.tcp != 'c') { gaps << 'statement.envelope.tcp-non-default'; envelope = false }
+    if (envelope) claims << 'statement.envelope.default.v1'
+    if (type == 'if') {
+        entry.role = 'decision'
+        claims << 'statement.if.branch-order.v1'
+        gaps << 'statement.if.automatic-piston-state-unresolved'
+        gaps << 'statement.if.fast-forward-resumption-unresolved'
+        List branches = [[name: 'then', condition: webcoreSemanticConditionList(node, path, depth, acc, claims, gaps)]]
+        List elseIfs = (node.ei instanceof List) ? (node.ei as List) : []
+        for (int i = 0; i < elseIfs.size(); i++) {
+            if (!(elseIfs[i] instanceof Map)) continue
+            branches << [name: 'else-if[' + i + ']', condition: webcoreSemanticConditionList(elseIfs[i] as Map, path + '.ei[' + i + ']', depth, acc, claims, gaps)]
+        }
+        if (node.e instanceof List && (node.e as List)) branches << [name: 'else']
+        entry.branches = branches
+    } else if (type == 'do') {
+        entry.role = 'sequential-block'
+        claims << 'statement.do.sequential-block.v1'
+        entry.children = (node.s instanceof List) ? (node.s as List).count { it instanceof Map } : 0
+        entry.lowersStatementLevel = true
+    } else {
+        String gap = 'statement.' + type + '.not-in-increment'
+        gaps << ((((acc.evidence as Map).gaps ?: [:]) as Map).containsKey(gap) ? gap : 'statement.unrecognised')
+        webcoreSemanticConditionStatements(node.c, path, depth, acc)
+    }
+    Map promoted = (((acc.evidence as Map).claims ?: [:]) as Map)
+    List kept = []
+    for (Object c : claims) {
+        if (promoted[c] == true) { kept << c } else { gaps << ('claim.' + c + '.not-promoted') }
+    }
+    entry.claims = kept.sort()
+    entry.gaps = (gaps as List).sort()
+    (acc.occurrences as Map)[path] = entry
+    if (node.s instanceof List) webcoreSemanticStatements(node.s as List, path + '.s', depth, acc)
+    List elseIfLists = (node.ei instanceof List) ? (node.ei as List) : []
+    for (int i = 0; i < elseIfLists.size(); i++) {
+        if (elseIfLists[i] instanceof Map && (elseIfLists[i] as Map).s instanceof List) {
+            webcoreSemanticStatements((elseIfLists[i] as Map).s as List, path + '.ei[' + i + '].s', depth, acc)
+        }
+    }
+    List cases = (node.cs instanceof List) ? (node.cs as List) : []
+    for (int i = 0; i < cases.size(); i++) {
+        if (cases[i] instanceof Map && (cases[i] as Map).s instanceof List) {
+            webcoreSemanticStatements((cases[i] as Map).s as List, path + '.cs[' + i + '].s', depth, acc)
+        }
+    }
+    if (node.e instanceof List) webcoreSemanticStatements(node.e as List, path + '.e', depth, acc)
+}
+
+// An ordinary condition list or group: its operator only when proven, its negation, and its ordered
+// children. A followed-by group stays opaque, and a comparison leaf never takes a role from saved ct.
+Map webcoreSemanticConditionList(Map owner, String path, int depth, Map acc, Set claims, Set gaps) {
+    Map out = [operator: null, negated: owner.n == true, children: []]
+    if (depth > (acc.maxDepth as Integer)) { acc.truncated = true; return out }
+    claims << 'condition.list.negation.v1'
+    if (owner.o == 'or') { out.operator = 'or'; claims << 'condition.list.operator-or.v1' } else { gaps << 'condition.operator-unproven' }
+    List items = (owner.c instanceof List) ? (owner.c as List) : []
+    for (int i = 0; i < items.size(); i++) {
+        Object k = items[i]
+        String at = path + '.c[' + i + ']'
+        if (k instanceof Map && (k as Map).t == 'group') {
+            Map g = k as Map
+            if (g.o == 'followed by') {
+                (out.children as List) << [kind: 'opaque-followed-by-group']
+                claims << 'condition.followed-by.opaque-group.v1'
+                gaps << 'condition.followed-by-timing-unproven'
+                webcoreSemanticConditionStatements(g.c, at, depth + 1, acc)
+            } else {
+                List inner = (g.c instanceof List) ? (g.c as List) : []
+                if (inner.any { it instanceof Map && (it as Map).t == 'group' }) gaps << 'condition.group-depth-unproven'
+                (out.children as List) << ([kind: 'group'] + webcoreSemanticConditionList(g, at, depth + 1, acc, claims, gaps))
+            }
+        } else {
+            (out.children as List) << [kind: 'opaque-condition']
+            gaps << 'condition.leaf-opaque'
+        }
+        if (k instanceof Map) webcoreSemanticTaskLists(k as Map, at, depth, acc)
+    }
+    return out
+}
+
+void webcoreSemanticTaskLists(Map condition, String path, int depth, Map acc) {
+    if (condition.ts instanceof List) webcoreSemanticStatements(condition.ts as List, path + '.ts', depth + 1, acc)
+    if (condition.fs instanceof List) webcoreSemanticStatements(condition.fs as List, path + '.fs', depth + 1, acc)
+}
+
+// Statements saved beneath the conditions of a statement this increment does not normalize.
+void webcoreSemanticConditionStatements(Object conditions, String path, int depth, Map acc) {
+    if (!(conditions instanceof List) || depth > (acc.maxDepth as Integer)) return
+    List items = conditions as List
+    for (int i = 0; i < items.size(); i++) {
+        if (!(items[i] instanceof Map)) continue
+        Map k = items[i] as Map
+        String at = path + '.c[' + i + ']'
+        webcoreSemanticTaskLists(k, at, depth, acc)
+        if (k.t == 'group') webcoreSemanticConditionStatements(k.c, at, depth + 1, acc)
+    }
+}
+
+// Occurrence counts and closed gaps only. A truncated model is not evaluated rather than partial.
+Map webcoreSemanticAssessment(Map model, Map evidence) {
+    if (!(model instanceof Map) || model.truncated == true) {
+        return [status: 'not-evaluated', occurrences: 0, explained: 0, explainable: false, gaps: [], claims: []]
+    }
+    Map occurrences = (model.occurrences ?: [:]) as Map
+    int explained = 0
+    Map gapCounts = [:]
+    Set claims = [] as Set
+    for (Object o : occurrences.values()) {
+        Map om = o as Map
+        if (!(om.gaps as List)) explained++
+        for (Object g : (om.gaps as List)) gapCounts[g] = ((gapCounts[g] ?: 0) as Integer) + 1
+        claims.addAll(om.claims as List)
+    }
+    Map reasons = (evidence?.gaps ?: [:]) as Map
+    return [status: 'complete', occurrences: occurrences.size(), explained: explained,
+            explainable: occurrences.size() > 0 && explained == occurrences.size(),
+            gaps: gapCounts.keySet().sort().collect { Object g -> [id: g, reason: reasons[g], occurrences: gapCounts[g]] },
+            claims: (claims as List).sort()]
+}
+// --- webcore semantic normalizer: end ---
+
 // ===================================================================================================================
 // webCoRE decode coverage endpoint (v2.2.9)
 //
@@ -5172,6 +5375,7 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
         evidenceGaps: evidenceGaps,
         statementAssessment: statementAssessment,
         nonStatementAssessment: nonStatementAssessment,
+        semanticAssessment: webcoreSemanticResponse(body.semanticAssessment),
         levelCounts: [L0: webcoreCoverageCount(levels.L0), L1: webcoreCoverageCount(levels.L1),
                       L2: webcoreCoverageCount(levels.L2), L3: webcoreCoverageCount(levels.L3),
                       L4: webcoreCoverageCount(levels.L4), L5: webcoreCoverageCount(levels.L5)],
@@ -5187,6 +5391,35 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
     ]
     if (body.error instanceof String) out.error = body.error
     return out
+}
+
+// The semantic (L4) assessment, rebuilt field by field against the closed evidence ids. It is kept
+// apart from the structural levels, which it can neither raise nor lower.
+Map webcoreSemanticResponse(Object raw) {
+    Map evidence = webcoreSemanticEvidence()
+    Map reasons = (evidence.gaps ?: [:]) as Map
+    Map claimIds = (evidence.claims ?: [:]) as Map
+    Map a = (raw instanceof Map) ? (raw as Map) : [:]
+    String status = (a.status == 'complete') ? 'complete' : 'not-evaluated'
+    List gaps = []
+    if (a.gaps instanceof List) {
+        for (Object g : (a.gaps as List)) {
+            if (!(g instanceof Map)) continue
+            String id = webcoreCoverageText((g as Map).id)
+            Integer n = webcoreCoverageCount((g as Map).occurrences)
+            if (id != null && reasons.containsKey(id) && n != null && n > 0) gaps << [id: id, reason: reasons[id], occurrences: n]
+        }
+    }
+    List claims = []
+    if (a.claims instanceof List) {
+        for (Object c : (a.claims as List)) { if (c instanceof String && claimIds.containsKey(c)) claims << c }
+    }
+    Integer occurrences = webcoreCoverageCount(a.occurrences)
+    Integer explained = webcoreCoverageCount(a.explained)
+    boolean counted = status == 'complete' && occurrences != null && explained != null
+    return [status: status, occurrences: counted ? occurrences : 0, explained: counted ? explained : 0,
+            explainable: counted && occurrences > 0 && explained == occurrences && a.explainable == true,
+            gaps: status == 'complete' ? gaps : [], claims: status == 'complete' ? claims : []]
 }
 
 String webcoreCoverageJson(Map body, Map constructs) {
@@ -5264,6 +5497,8 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
                                          now() + (limits.analysisBudgetMs as Long))
         Map census = collectWebcoreDecodeCoverage(decoded.document, registry, webcoreCoverageDeadline(analysisDeadline),
                                                   webcoreStatementShapes())
+        Map semanticModel = (census.status == 'complete') ?
+            webcoreSemanticModel(decoded.document, webcoreSemanticEvidence(), webcoreCensusLimits().maxDepth as int) : null
         decoded = null
 
         // A structural bound is a walker status. A request deadline is not: it
@@ -5288,6 +5523,7 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
             structureFindings: census.structureFindings,
             structureFindingsOverflow: census.structureFindingsOverflow,
             unrecognisedOutsideStatements: census.unrecognisedOutsideStatements,
+            semanticAssessment: webcoreSemanticAssessment(semanticModel, webcoreSemanticEvidence()),
             truncation: census.truncation
         ]
         // Counts and timings only. resultBytes measures the response without
