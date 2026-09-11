@@ -3875,7 +3875,8 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
         unrecognised: [],
         unrecognisedOverflow: 0,
         structureFindings: [],
-        structureFindingsOverflow: 0
+        structureFindingsOverflow: 0,
+        unrecognisedOutsideStatements: null
     ]
     if (!(document instanceof Map)) {
         result.status = 'error'
@@ -3896,7 +3897,7 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
         limits: limits,
         shapes: shapes,
         occurrenceStack: [], occurrences: [:],
-        structureFindings: [], structureSeen: [] as Set, structureOverflow: 0
+        structureFindings: [], structureSeen: [] as Set, structureOverflow: 0, outsideStatements: 0
     ]
     // The deadline is enforced at both boundaries as well as periodically. The
     // interval only keeps the clock cheap: a document smaller than one interval
@@ -3915,7 +3916,13 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
     Map counts = [:]
     (acc.counts as Map).keySet().sort().each { Object id -> counts[id] = (acc.counts as Map)[id] }
     Map occurrences = [:]
-    (acc.occurrences as Map).keySet().sort().each { Object id -> occurrences[id] = (acc.occurrences as Map)[id] }
+    (acc.occurrences as Map).keySet().sort().each { Object id ->
+        Map entry = (acc.occurrences as Map)[id] as Map
+        Map gapCounts = [:]
+        (entry.evidenceGaps as Map).keySet().sort().each { Object g -> gapCounts[g] = (entry.evidenceGaps as Map)[g] }
+        occurrences[id] = [structurallyValid: entry.structurallyValid, structurallyInvalid: entry.structurallyInvalid,
+                           evidenceGapped: entry.evidenceGapped, evidenceGaps: gapCounts]
+    }
     Map levels = [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0]
     counts.keySet().each { Object id ->
         Object entry = constructs[id]
@@ -3938,6 +3945,7 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
     result.constructOccurrences = occurrences
     result.structureFindings = acc.structureFindings
     result.structureFindingsOverflow = acc.structureOverflow
+    if (shapes != null) result.unrecognisedOutsideStatements = acc.outsideStatements
     if (acc.truncated != null) {
         result.status = 'truncated'
         result.truncation = [reason: acc.truncated, maxDepth: limits.maxDepth, maxValues: limits.maxValues]
@@ -4240,6 +4248,7 @@ void webcoreCensusRecord(Map acc, String path, String reason, String nodeKind) {
     Set seen = acc.seen as Set
     if (seen.contains(key)) return
     seen << key
+    if (!(acc.occurrenceStack as List)) acc.outsideStatements = (acc.outsideStatements as Integer) + 1
     List records = acc.unrecognised as List
     if (records.size() >= ((acc.limits as Map).maxUnrecognised as Integer)) {
         acc.overflow = (acc.overflow as Integer) + 1
@@ -4282,7 +4291,7 @@ boolean webcoreCensusOpenOccurrence(Map node, String context, Map acc) {
     if (acc.shapes == null || context != 'statement' || !(node.t instanceof String)) return false
     String id = 'wc.statement.' + (node.t as String)
     if (!(acc.constructs as Map).containsKey(id) || !(((acc.shapes as Map).statements as Map).containsKey(id))) return false
-    (acc.occurrenceStack as List) << [id: id, invalid: false]
+    (acc.occurrenceStack as List) << [id: id, invalid: false, gaps: [] as Set]
     return true
 }
 
@@ -4290,9 +4299,16 @@ void webcoreCensusCloseOccurrence(Map acc) {
     List stack = acc.occurrenceStack as List
     Map top = stack.remove((int) (stack.size() - 1)) as Map
     Map occurrences = acc.occurrences as Map
-    Map entry = (occurrences[top.id] instanceof Map) ? (occurrences[top.id] as Map) : [structurallyValid: 0, structurallyInvalid: 0]
+    Map entry = (occurrences[top.id] instanceof Map) ? (occurrences[top.id] as Map) :
+        [structurallyValid: 0, structurallyInvalid: 0, evidenceGapped: 0, evidenceGaps: [:]]
     String field = (top.invalid == true) ? 'structurallyInvalid' : 'structurallyValid'
     entry[field] = (entry[field] as Integer) + 1
+    // Gaps count only on valid occurrences: an invalid one is already held below its ceiling.
+    if (top.invalid != true && (top.gaps as Set)) {
+        entry.evidenceGapped = (entry.evidenceGapped as Integer) + 1
+        Map gapCounts = entry.evidenceGaps as Map
+        (top.gaps as Set).each { Object g -> gapCounts[g] = ((gapCounts[g] ?: 0) as Integer) + 1 }
+    }
     occurrences[top.id] = entry
 }
 
@@ -4391,7 +4407,39 @@ Map webcoreCensusValidate(Map node, String context, String path, Map acc) {
         if (foreign.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'variant-foreign-key')
         else if (schemaKeys.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'unexpected-key')
     }
+    webcoreCensusEvidenceGaps(node, context, keys, shapeContext, acc)
     return shape
+}
+
+// A branch of the saved shape that the committed fixtures do not canonically evidence holds its
+// occurrence below the ceiling. Branches are derived as the evidence manifest derives them, and
+// only ids in the closed evidenceGaps map are recorded, so no saved value can reach an id.
+void webcoreCensusEvidenceGaps(Map node, String context, Map keys, String shapeContext, Map acc) {
+    Object declared = (acc.shapes as Map).evidenceGaps
+    if (!(declared instanceof Map) || !(declared as Map)) return
+    Map gaps = declared as Map
+    Map statementKeys = [:]
+    if (context == 'statement') {
+        statementKeys = (((acc.shapes as Map).statements as Map)['wc.statement.' + (node.t as String)] as Map).keys as Map
+    }
+    List stack = acc.occurrenceStack as List
+    Set recorded = (stack[stack.size() - 1] as Map).gaps as Set
+    keys.each { Object k, Object s ->
+        String key = "${k}"
+        Map spec = s as Map
+        String structure = (context == 'statement') ? (statementKeys.containsKey(key) ? 'wc.statement.' + (node.t as String) : 'statement') :
+            (shapeContext != null ? (node.t as String) : context)
+        boolean present = node.containsKey(key)
+        List branches = []
+        if (spec.persisted in ['unless-empty', 'user-optional', 'round-trip']) branches << (present ? 'present' : 'absent')
+        if (present && spec.persisted == 'when') branches << (webcoreCensusPredicate(spec.persistedWhen as Map, node, shapeContext) ? 'present' : 'retained')
+        if (present && spec.values instanceof List && spec.values != [true]) branches << ('value:' + node[key])
+        if (present && spec.consumedWhen instanceof Map) branches << (webcoreCensusPredicate(spec.consumedWhen as Map, node, shapeContext) ? 'consumed' : 'unconsumed')
+        branches.each { Object b ->
+            String id = structure + '/' + key + '/' + b
+            if (gaps.containsKey(id)) recorded << id
+        }
+    }
 }
 
 // Validation and meaning stay separate: a key outside the selected shape, a key the runtime
@@ -4436,14 +4484,15 @@ boolean webcoreCensusKindOk(String kind, Object v) {
 }
 
 // An L3 or higher ceiling holds only when every counted occurrence of the construct was
-// validated and none was invalid; otherwise the construct is reported at L2.
+// validated, none was invalid and none took an evidence gap; otherwise it is reported at L2.
 String webcoreCensusAchievedLevel(String ceiling, Object occurrence, Object count) {
     if (!(ceiling in ['L3', 'L4', 'L5'])) return ceiling
     if (!(occurrence instanceof Map) || !(count instanceof Number)) return 'L2'
     Object valid = (occurrence as Map).structurallyValid
     Object invalid = (occurrence as Map).structurallyInvalid
-    if (!(valid instanceof Number) || !(invalid instanceof Number)) return 'L2'
-    return ((invalid as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'
+    Object gapped = (occurrence as Map).evidenceGapped
+    if (!(valid instanceof Number) || !(invalid instanceof Number) || !(gapped instanceof Number)) return 'L2'
+    return ((invalid as Integer) == 0 && (gapped as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'
 }
 // --- webcore census walker: end ---
 
@@ -4625,18 +4674,18 @@ Map webcoreCensusRegistry() {
         'wc.preset.sunset': [level: 'L2'],
         'wc.preset.value-type.datetime': [level: 'L2'],
         'wc.preset.value-type.time': [level: 'L2'],
-        'wc.statement.action': [level: 'L2'],
-        'wc.statement.break': [level: 'L2'],
-        'wc.statement.do': [level: 'L2'],
-        'wc.statement.each': [level: 'L2'],
-        'wc.statement.every': [level: 'L2'],
-        'wc.statement.exit': [level: 'L2'],
-        'wc.statement.for': [level: 'L2'],
-        'wc.statement.if': [level: 'L2'],
-        'wc.statement.on': [level: 'L2'],
-        'wc.statement.repeat': [level: 'L2'],
-        'wc.statement.switch': [level: 'L2'],
-        'wc.statement.while': [level: 'L2'],
+        'wc.statement.action': [level: 'L3'],
+        'wc.statement.break': [level: 'L3'],
+        'wc.statement.do': [level: 'L3'],
+        'wc.statement.each': [level: 'L3'],
+        'wc.statement.every': [level: 'L3'],
+        'wc.statement.exit': [level: 'L3'],
+        'wc.statement.for': [level: 'L3'],
+        'wc.statement.if': [level: 'L3'],
+        'wc.statement.on': [level: 'L3'],
+        'wc.statement.repeat': [level: 'L3'],
+        'wc.statement.switch': [level: 'L3'],
+        'wc.statement.while': [level: 'L3'],
         'wc.task-parameter.unselected': [level: 'L2'],
         'wc.task.value-type.variable': [level: 'L2'],
         'wc.vcmd.adjustColorTemperature': [level: 'L2'],
@@ -4900,6 +4949,30 @@ Map webcoreStatementShapes() {
                     ]
                 ]
             ]
+        ],
+        evidenceGaps: [
+            'statement/$/absent': 'editor-authored-only',
+            'statement/tcp/absent': 'observed-at-capture',
+            'statement/sm/present': 'observed-at-capture',
+            'wc.statement.for/x/absent': 'not-in-matrix',
+            'elseif/$/absent': 'editor-authored-only',
+            'case/$/absent': 'editor-authored-only',
+            'event/$/absent': 'editor-authored-only',
+            'event/ct/absent': 'editor-authored-only',
+            'event/s/absent': 'editor-authored-only',
+            'task/$/absent': 'editor-authored-only',
+            'task/cm/present': 'needs-physical-device',
+            'task/a/present': 'observed-at-capture',
+            'condition/$/absent': 'editor-authored-only',
+            'condition/ct/absent': 'editor-authored-only',
+            'condition/ct/value:t': 'canonical-only',
+            'group/$/absent': 'editor-authored-only',
+            'group/wd/retained': 'not-in-matrix',
+            'group/wd/unconsumed': 'not-in-matrix',
+            'group/wt/retained': 'not-in-matrix',
+            'group/wt/value:l': 'not-in-matrix',
+            'group/wt/value:n': 'not-in-matrix',
+            'group/wt/unconsumed': 'not-in-matrix'
         ]
     ]
 }
@@ -4976,12 +5049,17 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
     // reported id carries its evidence level from the runtime registry, never
     // from the response body, and an id whose registered level falls outside the
     // closed L0 to L5 set is left out of both maps, so their keys always match.
-    // Structural validity is reported only for counted ids and can only lower an id below its
-    // registered ceiling; structurallyCapped names every id it lowered.
+    // Structural validity and evidence gaps are reported only for counted ids and can only lower an
+    // id below its registered ceiling. structurallyCapped names ids lowered by an invalid or
+    // unvalidated occurrence; evidenceCapped names ids whose occurrences are all valid but some take
+    // a branch the committed evidence does not cover. Gap ids outside the shipped closed set are dropped.
+    Object declaredGaps = webcoreStatementShapes().evidenceGaps
+    Map shapeGaps = (declaredGaps instanceof Map) ? (declaredGaps as Map) : [:]
     Map counts = [:]
     Map constructLevels = [:]
     Map occurrences = [:]
     List capped = []
+    List evidenceCapped = []
     Map occurrenceIn = (body.constructOccurrences instanceof Map) ? (body.constructOccurrences as Map) : [:]
     if (body.constructCounts instanceof Map) {
         (body.constructCounts as Map).keySet().collect { "${it}" }.sort().each { String id ->
@@ -4995,11 +5073,25 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
             if (occ instanceof Map) {
                 Integer valid = webcoreCoverageCount((occ as Map).structurallyValid)
                 Integer invalid = webcoreCoverageCount((occ as Map).structurallyInvalid)
-                if (valid != null && invalid != null) occurrences[id] = [structurallyValid: valid, structurallyInvalid: invalid]
+                Integer gapped = webcoreCoverageCount((occ as Map).evidenceGapped)
+                if (valid != null && invalid != null && gapped != null) {
+                    Map gapCounts = [:]
+                    Object rawGaps = (occ as Map).evidenceGaps
+                    if (rawGaps instanceof Map) {
+                        (rawGaps as Map).keySet().collect { "${it}" }.sort().each { String g ->
+                            Integer c = webcoreCoverageCount((rawGaps as Map)[g])
+                            if (shapeGaps.containsKey(g) && c != null && c > 0) gapCounts[g] = c
+                        }
+                    }
+                    occurrences[id] = [structurallyValid: valid, structurallyInvalid: invalid, evidenceGapped: gapped, evidenceGaps: gapCounts]
+                }
             }
             String achieved = webcoreCensusAchievedLevel(level, occurrences[id], n)
             constructLevels[id] = achieved
-            if (achieved != level) capped << id
+            if (achieved == level) return
+            Map o = occurrences[id] as Map
+            if (o != null && o.structurallyInvalid == 0 && o.structurallyValid == n && (o.evidenceGapped as Integer) > 0) evidenceCapped << id
+            else capped << id
         }
     }
 
@@ -5026,6 +5118,34 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
         }
     }
 
+    // evidenceGaps totals, per closed gap id, the valid statement occurrences held at L2 because they
+    // take a saved branch without canonical fixture evidence. It is not a structural or decoding failure.
+    Map gapTotals = [:]
+    occurrences.each { Object id, Object o ->
+        ((o as Map).evidenceGaps as Map).each { Object g, Object c -> gapTotals[g] = ((gapTotals[g] ?: 0) as Integer) + (c as Integer) }
+    }
+    List evidenceGaps = gapTotals.keySet().sort().collect { Object g ->
+        [id: g, reason: webcoreCoverageText(shapeGaps[g]), occurrences: gapTotals[g]]
+    }
+
+    // Two separate claims. statementAssessment is the lowest level across counted statement ids with
+    // their occurrence totals. nonStatementAssessment counts unrecognised positions outside every
+    // statement occurrence, which never lower a statement result.
+    List levelOrder = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']
+    List statementIds = counts.keySet().findAll { "${it}".startsWith('wc.statement.') } as List
+    Map statementAssessment = null
+    if (statementIds) {
+        Map totals = [occurrences: 0, structurallyValid: 0, structurallyInvalid: 0, evidenceGapped: 0]
+        statementIds.each { Object id ->
+            totals.occurrences = (totals.occurrences as Integer) + (counts[id] as Integer)
+            Map o = occurrences[id] as Map
+            if (o != null) ['structurallyValid', 'structurallyInvalid', 'evidenceGapped'].each { String f -> totals[f] = (totals[f] as Integer) + (o[f] as Integer) }
+        }
+        String lowest = statementIds.collect { constructLevels[it] as String }.min { levelOrder.indexOf(it) }
+        statementAssessment = [level: lowest] + totals
+    }
+    Map nonStatementAssessment = [unrecognised: webcoreCoverageCount(body.unrecognisedOutsideStatements)]
+
     Map out = [
         status: webcoreCoverageText(body.status),
         appId: webcoreCoverageText(body.appId),
@@ -5049,6 +5169,10 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
         constructLevels: constructLevels,
         constructOccurrences: occurrences,
         structurallyCapped: capped,
+        evidenceCapped: evidenceCapped,
+        evidenceGaps: evidenceGaps,
+        statementAssessment: statementAssessment,
+        nonStatementAssessment: nonStatementAssessment,
         levelCounts: [L0: webcoreCoverageCount(levels.L0), L1: webcoreCoverageCount(levels.L1),
                       L2: webcoreCoverageCount(levels.L2), L3: webcoreCoverageCount(levels.L3),
                       L4: webcoreCoverageCount(levels.L4), L5: webcoreCoverageCount(levels.L5)],
@@ -5164,6 +5288,7 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
             unrecognisedOverflow: census.unrecognisedOverflow,
             structureFindings: census.structureFindings,
             structureFindingsOverflow: census.structureFindingsOverflow,
+            unrecognisedOutsideStatements: census.unrecognisedOutsideStatements,
             truncation: census.truncation
         ]
         // Counts and timings only. resultBytes measures the response without
@@ -12402,6 +12527,14 @@ const COVERAGE_STRUCTURE_LABELS = {
   'unexpected-key': 'Field not expected here'
 };
 
+const COVERAGE_GAP_LABELS = {
+  'editor-authored-only': 'Editor save only, not yet seen after a hub reload',
+  'canonical-only': 'Seen after a hub reload, not in a matching editor save',
+  'observed-at-capture': 'The editor did not produce this when evidence was captured',
+  'needs-physical-device': 'Needs a physical device to capture',
+  'not-in-matrix': 'Not captured yet'
+};
+
 const COVERAGE_REASON_LABELS = {
   'unknown-statement-type': 'Unrecognised statement',
   'unknown-operand-type': 'Unrecognised operand',
@@ -12507,6 +12640,8 @@ function decodeCoverageResultHtml(body) {
   const occurrences = body.constructOccurrences || {};
   const capped = {};
   (body.structurallyCapped || []).forEach(function (id) { capped[id] = true; });
+  const evidenceCapped = {};
+  (body.evidenceCapped || []).forEach(function (id) { evidenceCapped[id] = true; });
 
   // A registry match is not recognition. Only occurrences of constructs at L2 or
   // above count as recognised; a match below L2 is reported on its own line and is
@@ -12550,6 +12685,22 @@ function decodeCoverageResultHtml(body) {
     html += '<p class="sub">' + extEsc(mismatchTotal) + ' structure ' + (mismatchTotal === 1 ? 'mismatch' : 'mismatches') +
       (mismatches.length ? (mismatchTotal > mismatches.length ? ', the first ' + extEsc(mismatches.length) + ' listed below' : ', listed below') : '') + '.</p>';
   }
+  // Statement confidence and whole-piston completeness are separate claims: an unrecognised
+  // position outside every statement never lowers the statement result.
+  const stmt = body.statementAssessment;
+  if (stmt && Number(stmt.occurrences) > 0 && Object.prototype.hasOwnProperty.call(COVERAGE_LEVEL_NAMES, stmt.level)) {
+    const stmtTotal = Number(stmt.occurrences) || 0;
+    const held = [];
+    if (Number(stmt.structurallyInvalid)) held.push(extEsc(Number(stmt.structurallyInvalid)) + ' structurally invalid');
+    if (Number(stmt.evidenceGapped)) held.push(extEsc(Number(stmt.evidenceGapped)) + ' held by an evidence gap');
+    html += '<p class="sub">Statements: ' + COVERAGE_LEVEL_NAMES[stmt.level] + ' (' + stmt.level + ') across ' + extEsc(stmtTotal) + ' ' +
+      (stmtTotal === 1 ? 'occurrence' : 'occurrences') + (held.length ? '; ' + held.join(', ') : '') + '.</p>';
+  }
+  const outside = body.nonStatementAssessment ? (Number(body.nonStatementAssessment.unrecognised) || 0) : 0;
+  if (outside) {
+    html += '<p class="sub">' + extEsc(outside) + ' unrecognised ' + (outside === 1 ? 'position is' : 'positions are') +
+      ' outside every statement and ' + (outside === 1 ? 'does' : 'do') + ' not lower the statement result.</p>';
+  }
 
   const provenance = body.provenance || {};
   if (provenance.compatibilityStatus === 'version-drift') {
@@ -12585,7 +12736,9 @@ function decodeCoverageResultHtml(body) {
         const valid = occ ? (Number(occ.structurallyValid) || 0) : 0;
         const structural = (capped[row.id] === true && occ) ? ' <span class="sub">' + extEsc(valid) + ' of ' +
           extEsc(valid + (Number(occ.structurallyInvalid) || 0)) + ' structurally valid</span>' : '';
-        html += '<tr><td>' + extEsc(row.name) + structural + '</td><td class="n">' + extEsc(counts[row.id]) + '</td>' +
+        const gappedLine = (evidenceCapped[row.id] === true && occ) ? ' <span class="sub">' + extEsc(Number(occ.evidenceGapped) || 0) +
+          ' held by an evidence gap</span>' : '';
+        html += '<tr><td>' + extEsc(row.name) + structural + gappedLine + '</td><td class="n">' + extEsc(counts[row.id]) + '</td>' +
           '<td class="n"><span class="dcLevel" title="' + COVERAGE_LEVEL_NAMES[row.level] + '">' + row.level + '</span></td></tr>';
       });
       html += '</tbody>';
@@ -12607,6 +12760,18 @@ function decodeCoverageResultHtml(body) {
     mismatches.forEach(function (m) {
       const label = Object.prototype.hasOwnProperty.call(COVERAGE_STRUCTURE_LABELS, m.category) ? COVERAGE_STRUCTURE_LABELS[m.category] : 'Structure not matched';
       html += '<li><span class="dcReason">' + extEsc(label) + '</span> <code>' + extEsc(m.path) + '</code></li>';
+    });
+    html += '</ul>';
+  }
+
+  const evidenceGaps = body.evidenceGaps || [];
+  if (evidenceGaps.length) {
+    html += '<h5>Evidence gaps</h5><p class="sub">These statement occurrences are structurally valid but take a saved form the committed evidence does not cover yet, so they are held at identified (L2). They are not decoding failures.</p><ul class="dcGaps">';
+    evidenceGaps.forEach(function (g) {
+      const n = Number(g.occurrences) || 0;
+      const label = Object.prototype.hasOwnProperty.call(COVERAGE_GAP_LABELS, g.reason) ? COVERAGE_GAP_LABELS[g.reason] : 'Evidence gap';
+      html += '<li><span class="dcReason">' + extEsc(label) + '</span> <code>' + extEsc(g.id) + '</code> <span class="sub">' +
+        extEsc(n) + ' ' + (n === 1 ? 'occurrence' : 'occurrences') + '</span></li>';
     });
     html += '</ul>';
   }

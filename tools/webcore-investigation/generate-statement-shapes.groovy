@@ -2,7 +2,7 @@
 //
 // Projects the reviewed statement evidence manifest down to what the census walker reads to
 // validate an occurrence: kinds, persistence, consumption, closed predicates, value sets, the
-// validated lists and the condition discriminator. Source evidence (readBy, writtenBy,
+// validated lists, the condition discriminator and the branches that are evidence gaps. Source evidence (readBy, writtenBy,
 // normalisedBy, source assertions, the inventory and exclusions) stays in the manifest.
 //
 // The projection is generated, never hand-edited, and tests/webcore-statement-shapes.groovy
@@ -72,7 +72,16 @@ out << (manifest.substructures as Map).collect { name, s ->
         '                discriminator: ' + lit(project(sub.discriminator as Map)) + ',\n' +
         '                variants: [\n' + variants + '\n                ]\n            ]'
 }.join(',\n')
-out << '\n        ]\n'
+out << '\n        ],\n'
+// Branches with no promoting fixture, keyed structure/key/branch, with only the gap reason.
+List gapRows = (manifest.branchEvidence as List).findAll { Map r -> r.gap != null }
+if (gapRows) {
+    out << '        evidenceGaps: [\n'
+    out << gapRows.collect { Map r -> '            ' + lit("${r.structure}/${r.key}/${r.branch}".toString()) + ': ' + lit(r.gap) }.join(',\n')
+    out << '\n        ]\n'
+} else {
+    out << '        evidenceGaps: [:]\n'
+}
 out << '    ]\n'
 out << '}\n'
 

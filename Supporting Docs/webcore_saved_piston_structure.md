@@ -128,6 +128,11 @@ is renumbered, and `subscribeAll` recomputes `s` everywhere and `ct` on conditio
 statements. Only an event's saved `ct` is kept, because the pass sets it only when absent, and its only
 value is `t`.
 
+A saved `ct` can therefore be stale. Editing a condition after the piston was opened keeps the `ct` it
+had when opened, so changing a condition's comparison to a trigger saves `ct: 'c'`, and only the next
+load and save writes `t`. Read a saved `ct` as what the last load computed, not as the current
+comparison type, and treat the settings saved after an unchanged reopen as the canonical form.
+
 ## 4. Statement grammar
 
 These are the keys each statement type uses, from `executeStatement`, `subscribeAll` and `cleanCode`.

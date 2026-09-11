@@ -39,11 +39,15 @@ Map expected = [
             ? [discriminator: project(sub.discriminator as Map),
                variants: (sub.variants as Map).collectEntries { vn, keys -> [(vn): projectKeys(keys as Map)] }]
             : [keys: projectKeys(sub.keys as Map)]]
-    }
+    },
+    evidenceGaps: (manifest.branchEvidence as List).findAll { Map r -> r.gap != null }
+        .collectEntries { Map r -> [("${r.structure}/${r.key}/${r.branch}".toString()): r.gap] }
 ]
-check(shapes == expected, 'the projection carries exactly the manifest shape and predicate data')
-check(shapes.keySet() == (['contexts', 'lists', 'common', 'statements', 'substructures'] as Set),
-    'the projection carries nothing beyond shapes, lists and contexts')
+check(shapes == expected, 'the projection carries exactly the manifest shape, predicate and gap data')
+check(shapes.keySet() == (['contexts', 'lists', 'common', 'statements', 'substructures', 'evidenceGaps'] as Set),
+    'the projection carries nothing beyond shapes, lists, contexts and evidence gaps')
+check((shapes.evidenceGaps as Map).values().every { (manifest.branchGaps as List).contains(it) } && !shapesText.contains('l3-0'),
+    'each projected gap carries only its closed reason, never a fixture name')
 
 List evidenceWords = ['readBy', 'writtenBy', 'normalisedBy', 'sourceAssertions', 'inventory', 'exclusions',
                       'supports', 'fixtures', 'provenance', 'executor.', 'editor.']
