@@ -53,7 +53,7 @@ function extractLineConst(name) {
 const functionNames = ['extEsc', 'coverageHubAppId', 'coverageConstructParts', 'coverageFamilyLabel',
     'decodeCoverageIdleHtml', 'decodeCoverageMessageHtml', 'decodeCoverageResultHtml', 'decodeCoverageOutcomeHtml',
     'renderDecodeCoverageCard', 'requestDecodeCoverage'];
-const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
+const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_STRUCTURE_LABELS','COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
     'COVERAGE_FAMILY_LABELS', 'COVERAGE_OPERAND_NAMES', 'COVERAGE_LEVEL_NAMES', 'COVERAGE_RECOGNISED_LEVELS'];
 
 const cardBlock = source.slice(source.indexOf('// Decode coverage card (v2.2.9).'),
@@ -74,7 +74,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed
 
 // ---- a sandbox wired to controllable fetch and selection state -------------
 
-function makeSandbox() {
+function makeSandbox(mutate) {
     const box = { innerHTML: '', hidden: true };
     const pending = [];
     const sandbox = {
@@ -98,8 +98,10 @@ function makeSandbox() {
         functionNames.map(extractFunction).join('\n') + '\n' +
         'function bumpSelection() { focusGenerationSeq++; }\n' +
         'function inFlight() { return coverageInFlight; }\n';
+    const run = mutate ? mutate(script) : script;
+    if (mutate && run === script) throw new Error('mutation did not apply');
     vm.createContext(sandbox);
-    vm.runInContext(script, sandbox);
+    vm.runInContext(run, sandbox);
     return sandbox;
 }
 
@@ -236,6 +238,84 @@ async function main() {
         assert(h.indexOf('L9') < 0 && h.indexOf('<script>') < 0, 'untrusted level rendered');
         assert(h.indexOf('<td>if</td>') < 0, 'row listed without a listable level');
         assert(h.indexOf('3 of 4 construct positions recognised at L2 or above') >= 0, 'unlisted construct counted as recognised');
+    });
+
+    check('a construct lowered by structural validity shows how many occurrences were valid', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.constructOccurrences = { 'wc.statement.if': { structurallyValid: 1, structurallyInvalid: 2 } };
+        body.structurallyCapped = ['wc.statement.if'];
+        const h = rendered(body);
+        assert(h.indexOf('<td>if <span class="sub">1 of 3 structurally valid</span></td>') >= 0, 'structural line missing');
+        assert(h.split('structurally valid').length - 1 === 1, 'structural line on an uncapped row');
+    });
+
+    check('an uncapped construct shows no structural line, even with occurrences reported', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.constructOccurrences = { 'wc.statement.if': { structurallyValid: 0, structurallyInvalid: 1 } };
+        body.structurallyCapped = [];
+        assert(rendered(body).indexOf('structurally valid') < 0, 'structural line shown for an uncapped row');
+    });
+
+    check('untrusted structural counts cannot inject markup', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.constructOccurrences = { 'wc.statement.if': { structurallyValid: '<b>x</b>', structurallyInvalid: '<i>' } };
+        body.structurallyCapped = ['wc.statement.if'];
+        const h = rendered(body);
+        assert(h.indexOf('<b>') < 0 && h.indexOf('<i>') < 0 && h.indexOf('0 of 0 structurally valid') >= 0, 'markup injected');
+    });
+
+    // ---- structural mismatches ----------------------------------------------------------
+
+    function withStructure(findings, overflow) {
+        const b = JSON.parse(JSON.stringify(completeBody));
+        b.structureFindings = findings;
+        b.structureFindingsOverflow = overflow;
+        return b;
+    }
+
+    check('a single structure finding withholds the percentage and is listed', function () {
+        const h = rendered(withStructure([{ path: '$.s[0].ok', category: 'unexpected-key' }], 0));
+        assert(h.indexOf('%') < 0, 'percentage shown with a structure finding');
+        assert(h.indexOf('Coverage incomplete. 4 construct positions recognised at L2 or above; 1 position not identified.') >= 0, 'incomplete line wrong');
+        assert(h.indexOf('0 unrecognised positions.') >= 0, 'unrecognised count not kept separate');
+        assert(h.indexOf('1 structure mismatch, listed below.') >= 0, 'singular mismatch line wrong');
+        assert(h.indexOf('<h5>Structure not matched</h5>') >= 0, 'no structure list');
+        assert(h.indexOf('<li><span class="dcReason">Field not expected here</span> <code>$.s[0].ok</code></li>') >= 0, 'finding not listed with its label');
+    });
+
+    check('unrecognised and structural totals combine, with both overflow counters and plural wording', function () {
+        const b = withStructure([{ path: '$.s[0].ok', category: 'unexpected-key' }, { path: '$.s[1].c[0].t', category: 'missing-discriminator' }], 3);
+        b.unrecognised = [{ path: '$.s[2].t', reason: 'unknown-statement-type', nodeKind: 'scalar' },
+                          { path: '$.s[3].t', reason: 'unknown-statement-type', nodeKind: 'scalar' }];
+        b.unrecognisedOverflow = 1;
+        const h = rendered(b);
+        assert(h.indexOf('%') < 0, 'percentage shown');
+        assert(h.indexOf('; 8 positions not identified.') >= 0, 'combined total wrong');
+        assert(h.indexOf('3 unrecognised positions, the first 2 listed below.') >= 0, 'unrecognised line wrong');
+        assert(h.indexOf('5 structure mismatches, the first 2 listed below.') >= 0, 'plural mismatch line wrong');
+        assert(h.indexOf('Condition type missing') >= 0, 'second label missing');
+    });
+
+    check('a truncated walk counts structure findings as not identified', function () {
+        const b = withStructure([{ path: '$.s[0].ok', category: 'unexpected-key' }], 0);
+        b.status = 'truncated';
+        assert(rendered(b).indexOf('; 1 position not identified') >= 0, 'truncated line ignores structure findings');
+    });
+
+    check('an unknown category renders only the fixed label, and markup in path or category is escaped', function () {
+        const h = rendered(withStructure([{ path: '<script>alert(1)</script>', category: '<img src=x onerror=1>' },
+                                          { path: '$.s[0].ok', category: 'constructor' }], 0));
+        assert(h.indexOf('<script>') < 0 && h.indexOf('<img') < 0, 'markup injected');
+        assert(h.indexOf('onerror') < 0 || h.indexOf('&lt;img') >= 0, 'category text rendered');
+        assert(h.split('<span class="dcReason">Structure not matched</span>').length - 1 === 2, 'unknown categories not given the generic label');
+    });
+
+    check('mutation: leaving structure findings out of the total restores a false percentage', function () {
+        const sb = makeSandbox(function (s) {
+            return s.replace('const unidentifiedTotal = unknownTotal + mismatchTotal;', 'const unidentifiedTotal = unknownTotal;');
+        });
+        const h = sb.decodeCoverageResultHtml(withStructure([{ path: '$.s[0].ok', category: 'unexpected-key' }], 0));
+        assert(h.indexOf('100%') >= 0, 'the mutant did not show the false percentage, so the rule is untested');
     });
 
     // ---- the evidence ladder ----------------------------------------------------------

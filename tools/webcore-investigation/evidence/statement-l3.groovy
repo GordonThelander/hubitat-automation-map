@@ -291,9 +291,8 @@
     [structures: ['restriction'], key: 'ro2', reason: 'restriction-member-outside-increment']
   ],
 
-  // Where the walker's routing disagrees with a manifest kind, to be aligned in A1b: it routes
-  // every statement's s as statements, but the round-trip s on a switch is a scalar.
-  walkerRoutingDifferences: ['switch.s kind scalar walker statement'],
+  // Where the walker's routing disagrees with a manifest kind. None remain.
+  walkerRoutingDifferences: [],
 
   // Registry regions that are not inventoried, each for a fixed reason.
   uninventoriedReasons: ['operand-internal', 'catalogue', 'generic-normalisation', 'round-trip-chain'],

@@ -280,8 +280,10 @@ st.each { String id, Map e -> String t = id - 'wc.statement.'; reconcile(t, [t: 
 Map discriminator = [t: (subs.condition as Map).discriminator]
 reconcile('condition', [t: 'condition'], 'condition', (variants.condition as Map) + discriminator)
 reconcile('group', [t: 'group'], 'condition', (variants.group as Map) + discriminator)
-reconcile('followed-by-step.condition', [t: 'condition'], 'followed-by-step', variants.condition as Map)
-reconcile('followed-by-step.group', [t: 'group'], 'followed-by-step', variants.group as Map)
+['followed-by-first-step', 'followed-by-later-step'].each { String ctx ->
+    reconcile("${ctx}.condition".toString(), [t: 'condition'], ctx, variants.condition as Map)
+    reconcile("${ctx}.group".toString(), [t: 'group'], ctx, variants.group as Map)
+}
 check(routing.sort() == ((manifest.walkerRoutingDifferences ?: []) as List).sort(),
     "the walker routes every manifest key by its kind, apart from the reviewed differences ${routing}")
 
@@ -322,7 +324,9 @@ Closure validateNode = { Map m, Map keySpecs, Set foreign, Map node, String ctx,
         if (spec.persisted == 'when' && !evalPredicate(spec.persistedWhen as Map, node, ctx)) {
             if (!present) return
             if (spec.outsideWhen != 'retained-unconsumed') { out << [code: 'outside-condition', path: at]; return }
-            out << [code: kindOk(spec.kind as String, v) ? 'retained-unconsumed' : 'wrong-kind', path: at]
+            String code = !kindOk(spec.kind as String, v) ? 'wrong-kind' :
+                ((spec.values != null && !(spec.values as List).contains(v)) ? 'bad-value' : 'retained-unconsumed')
+            out << [code: code, path: at]
             return
         }
         if (!present) {
@@ -396,6 +400,7 @@ List<Map> scenarios = [
     [name: 'a later followed-by step whose wd is not an operand', expect: ['wrong-kind'], run: { Map m -> validateStatement(m, followed([leaf(), leaf([wd: 'x', wt: 'l'])])) }],
     [name: 'wd on an ordinary condition is retained and not read as an operand', expect: ['retained-unconsumed'], run: { Map m -> validateStatement(m, ifStmt([leaf([wd: wdOp()])])) }],
     [name: 'a malformed retained wd still fails its container kind', expect: ['wrong-kind'], run: { Map m -> validateStatement(m, ifStmt([leaf([wd: 'not-an-operand'])])) }],
+    [name: 'a retained wt outside its value set still fails', expect: ['bad-value'], run: { Map m -> validateStatement(m, ifStmt([leaf([wt: 'x'])])) }],
     [name: 'wt alone on an ordinary condition is retained', expect: ['retained-unconsumed'], run: { Map m -> validateStatement(m, ifStmt([leaf([wt: 'l'])])) }],
     [name: 'wd on a condition inside an and group is retained', expect: ['retained-unconsumed'], run: { Map m -> validateStatement(m, ifStmt([group([leaf([wd: wdOp()])])])) }],
     [name: 'wd on an and group itself is retained', expect: ['retained-unconsumed'], run: { Map m -> validateStatement(m, ifStmt([group([leaf()], [wd: wdOp()])])) }],

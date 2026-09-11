@@ -3794,7 +3794,7 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
 
 Map webcoreCensusLimits() {
     return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50, maxPathLength: 200,
-            deadlineCheckInterval: 2000]
+            deadlineCheckInterval: 2000, maxStructureFindings: 50]
 }
 
 // A path grows two segments per nesting level, so the traversal depth bound does
@@ -3853,7 +3853,7 @@ String webcoreCensusNodeKind(Object value) {
     return 'scalar'
 }
 
-Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired = null) {
+Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired = null, Map shapes = null) {
     Map limits = webcoreCensusLimits()
     Map constructs = (registry != null && registry.constructs instanceof Map) ? (registry.constructs as Map) : [:]
     Map provenance = (registry != null && registry.provenance instanceof Map) ? (registry.provenance as Map) : [:]
@@ -3870,9 +3870,12 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
                      scalarsVisited: 0, constructCandidates: 0, constructsIdentified: 0,
                      defaultBranchOccurrences: 0],
         constructCounts: [:],
+        constructOccurrences: [:],
         levelCounts: [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0],
         unrecognised: [],
-        unrecognisedOverflow: 0
+        unrecognisedOverflow: 0,
+        structureFindings: [],
+        structureFindingsOverflow: 0
     ]
     if (!(document instanceof Map)) {
         result.status = 'error'
@@ -3890,7 +3893,10 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
         opaqueKeys: webcoreCensusOpaqueKeys() as Set,
         constructs: constructs,
         functionIndex: webcoreCensusFunctionIndex(constructs),
-        limits: limits
+        limits: limits,
+        shapes: shapes,
+        occurrenceStack: [], occurrences: [:],
+        structureFindings: [], structureSeen: [] as Set, structureOverflow: 0
     ]
     // The deadline is enforced at both boundaries as well as periodically. The
     // interval only keeps the clock cheap: a document smaller than one interval
@@ -3908,10 +3914,13 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
 
     Map counts = [:]
     (acc.counts as Map).keySet().sort().each { Object id -> counts[id] = (acc.counts as Map)[id] }
+    Map occurrences = [:]
+    (acc.occurrences as Map).keySet().sort().each { Object id -> occurrences[id] = (acc.occurrences as Map)[id] }
     Map levels = [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0]
     counts.keySet().each { Object id ->
         Object entry = constructs[id]
         String level = (entry instanceof Map && (entry as Map).level instanceof String) ? ((entry as Map).level as String) : 'L0'
+        if (shapes != null) level = webcoreCensusAchievedLevel(level, occurrences[id], counts[id])
         if (levels.containsKey(level)) levels[level] = (levels[level] as Integer) + 1
     }
 
@@ -3926,6 +3935,9 @@ Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired 
     result.levelCounts = levels
     result.unrecognised = acc.unrecognised
     result.unrecognisedOverflow = acc.overflow
+    result.constructOccurrences = occurrences
+    result.structureFindings = acc.structureFindings
+    result.structureFindingsOverflow = acc.structureOverflow
     if (acc.truncated != null) {
         result.status = 'truncated'
         result.truncation = [reason: acc.truncated, maxDepth: limits.maxDepth, maxValues: limits.maxValues]
@@ -3966,7 +3978,9 @@ void webcoreCensusWalk(Object value, String context, String path, int depth, Map
     if (value instanceof Map) {
         acc.objectsVisited = (acc.objectsVisited as Integer) + 1
         Map node = value as Map
+        boolean opened = webcoreCensusOpenOccurrence(node, context, acc)
         webcoreCensusClassify(node, context, path, acc)
+        Map shape = webcoreCensusValidate(node, context, path, acc)
         List entryKeys = node.keySet().toList()
         for (int i = 0; i < entryKeys.size(); i++) {
             acc.fieldsVisited = (acc.fieldsVisited as Integer) + 1
@@ -3985,9 +3999,11 @@ void webcoreCensusWalk(Object value, String context, String path, int depth, Map
             if (opaque) webcoreCensusRecord(acc, childPath, 'known-opaque-field', webcoreCensusNodeKind(child))
             else if (!known) webcoreCensusRecord(acc, childPath, 'unknown-key', webcoreCensusNodeKind(child))
             String childContext = opaque ? 'opaque' : (known ? webcoreCensusChildContext(node, context, key) : null)
+            if (known && childContext != null && shape != null) childContext = webcoreCensusShapeRoute(node, context, key, child, childContext, shape)
             webcoreCensusWalk(child, childContext, childPath, depth + 1, acc)
             if (acc.truncated != null) return
         }
+        if (opened) webcoreCensusCloseOccurrence(acc)
         return
     }
     if (value instanceof List) {
@@ -3995,7 +4011,7 @@ void webcoreCensusWalk(Object value, String context, String path, int depth, Map
         List list = value as List
         for (int i = 0; i < list.size(); i++) {
             acc.arrayElementsVisited = (acc.arrayElementsVisited as Integer) + 1
-            webcoreCensusWalk(list[i], context, "${path}[${i}]", depth + 1, acc)
+            webcoreCensusWalk(list[i], webcoreCensusElementContext(context, list[i], i), "${path}[${i}]", depth + 1, acc)
             if (acc.truncated != null) return
         }
         return
@@ -4021,7 +4037,9 @@ String webcoreCensusChildContext(Map node, String context, String key) {
             if (key == 'v') return 'operand'
             return null
         case 'statement':
-            if (key == 's' || key == 'e') return 'statement'
+            // A switch's s is the subscription flag subscribeAll writes, a scalar, never statements.
+            if (key == 's') return (t == 'switch') ? null : 'statement'
+            if (key == 'e') return 'statement'
             if (key == 'r') return 'restriction'
             if (key == 'ei') return 'elseif'
             if (key == 'cs') return 'case'
@@ -4043,10 +4061,11 @@ String webcoreCensusChildContext(Map node, String context, String key) {
             if (key == 'ro' || key == 'ro2') return 'operand'
             if (key == 's') return 'statement'
             return null
-        // A step of a followed-by list is an ordinary condition whose wait delay the
-        // ladder also evaluates (mevaluateOperand on cndtn.wd); nothing else reads wd.
-        case 'followed-by-step':
-            if (key == 'wd' && t == 'condition') return 'operand'
+        // A later step of a followed-by list, condition or group, has a wait delay the ladder
+        // evaluates (mevaluateOperand on cndtn.wd). The first step's wd is never read.
+        case 'followed-by-later-step':
+            if (key == 'wd') return 'operand'
+        case 'followed-by-first-step':
         case 'condition':
             // to and to2 are the comparison's offset operands: evalRO1 passes
             // cndtn.to straight to mevaluateOperand.
@@ -4082,7 +4101,8 @@ String webcoreCensusChildContext(Map node, String context, String key) {
     return null
 }
 
-// The conditions under a node whose operator is followed by (sFLWBY) are ladder steps.
+// The conditions under a node whose operator is followed by (sFLWBY) are ladder steps; the
+// list gives each element its first-step or later-step context.
 String webcoreCensusConditionListContext(Map node) {
     return (node.o instanceof String && (node.o as String) == 'followed by') ? 'followed-by-step' : 'condition'
 }
@@ -4215,6 +4235,7 @@ void webcoreCensusIdentify(Map acc, String id) {
 // Deduplicated on the full record before the cap is applied, so a repeated gap
 // cannot consume the budget a distinct gap needs.
 void webcoreCensusRecord(Map acc, String path, String reason, String nodeKind) {
+    webcoreCensusTaint(acc)
     String key = "${path}|${reason}|${nodeKind}"
     Set seen = acc.seen as Set
     if (seen.contains(key)) return
@@ -4226,6 +4247,203 @@ void webcoreCensusRecord(Map acc, String path, String reason, String nodeKind) {
     }
     records << [path: webcoreCensusBoundPath(path, (acc.limits as Map).maxPathLength as Integer),
                 reason: reason, nodeKind: nodeKind]
+}
+// ---- structural (L3) validation ----------------------------------------------
+// Shallow and per statement occurrence. It reads only the node being visited and records
+// fixed categories against the occurrence that owns the position. It never counts, skips or
+// reorders anything the walk visits, and structural validity can only lower a level.
+
+List<String> webcoreCensusStructureCategories() {
+    return ['missing-discriminator', 'unknown-variant', 'missing-key', 'missing-unconsumed-key',
+            'never-persisted', 'empty-persisted', 'wrong-kind', 'bad-value', 'outside-condition',
+            'variant-foreign-key', 'unexpected-key']
+}
+
+// A followed-by list gives its first element the first-step context and every other element
+// the later-step context. Only a Map can be a structure, so a list nested under a structure
+// context is walked without one.
+String webcoreCensusElementContext(String context, Object element, int index) {
+    if (context == 'followed-by-step') {
+        if (element instanceof List) return null
+        return index == 0 ? 'followed-by-first-step' : 'followed-by-later-step'
+    }
+    if (element instanceof List && context in ['statement', 'elseif', 'case', 'event', 'task', 'restriction',
+                                               'condition', 'followed-by-first-step', 'followed-by-later-step']) return null
+    return context
+}
+
+String webcoreCensusShapeContext(String context) {
+    if (context == 'condition') return 'condition-list-member'
+    if (context == 'followed-by-first-step' || context == 'followed-by-later-step') return context
+    return null
+}
+
+boolean webcoreCensusOpenOccurrence(Map node, String context, Map acc) {
+    if (acc.shapes == null || context != 'statement' || !(node.t instanceof String)) return false
+    String id = 'wc.statement.' + (node.t as String)
+    if (!(acc.constructs as Map).containsKey(id) || !(((acc.shapes as Map).statements as Map).containsKey(id))) return false
+    (acc.occurrenceStack as List) << [id: id, invalid: false]
+    return true
+}
+
+void webcoreCensusCloseOccurrence(Map acc) {
+    List stack = acc.occurrenceStack as List
+    Map top = stack.remove((int) (stack.size() - 1)) as Map
+    Map occurrences = acc.occurrences as Map
+    Map entry = (occurrences[top.id] instanceof Map) ? (occurrences[top.id] as Map) : [structurallyValid: 0, structurallyInvalid: 0]
+    String field = (top.invalid == true) ? 'structurallyInvalid' : 'structurallyValid'
+    entry[field] = (entry[field] as Integer) + 1
+    occurrences[top.id] = entry
+}
+
+// Any finding or mismatch while an occurrence is open makes it structurally invalid,
+// including the existing unknown and opaque findings beneath it.
+void webcoreCensusTaint(Map acc) {
+    List stack = acc.occurrenceStack as List
+    if (stack) (stack[stack.size() - 1] as Map).invalid = true
+}
+
+void webcoreCensusMismatch(Map acc, String path, String category) {
+    webcoreCensusTaint(acc)
+    String key = "${path}|${category}"
+    Set seen = acc.structureSeen as Set
+    if (seen.contains(key)) return
+    seen << key
+    List records = acc.structureFindings as List
+    if (records.size() >= ((acc.limits as Map).maxStructureFindings as Integer)) {
+        acc.structureOverflow = (acc.structureOverflow as Integer) + 1
+        return
+    }
+    records << [path: webcoreCensusBoundPath(path, (acc.limits as Map).maxPathLength as Integer), category: category]
+}
+
+// The keys a node must match in this context, with any other variant's keys, or null where
+// nothing is validated. A missing or unknown discriminator is recorded and blocks the node.
+Map webcoreCensusShapeKeys(Map node, String context, String path, Map acc) {
+    Map shapes = acc.shapes as Map
+    Map subs = shapes.substructures as Map
+    if (context == 'statement') {
+        Object entry = (node.t instanceof String) ? (shapes.statements as Map)['wc.statement.' + (node.t as String)] : null
+        return (entry instanceof Map) ? [keys: (shapes.common as Map) + ((entry as Map).keys as Map), foreign: [] as Set] : null
+    }
+    if (context in ['elseif', 'case', 'event', 'task']) return [keys: (subs[context] as Map).keys as Map, foreign: [] as Set]
+    if (webcoreCensusShapeContext(context) == null) return null
+    Map condition = subs.condition as Map
+    Map discriminator = condition.discriminator as Map
+    String dk = discriminator.key as String
+    Object variant = (node[dk] instanceof String) ? (condition.variants as Map)[node[dk] as String] : null
+    if (!(variant instanceof Map)) {
+        webcoreCensusMismatch(acc, path + '.' + dk, node.containsKey(dk) ? 'unknown-variant' : 'missing-discriminator')
+        return [keys: [:], foreign: [] as Set, blocked: true]
+    }
+    Set foreign = [] as Set
+    (condition.variants as Map).each { Object name, Object keys -> if (name != node[dk]) foreign.addAll((keys as Map).keySet()) }
+    foreign.removeAll((variant as Map).keySet())
+    return [keys: (variant as Map) + [(dk): discriminator], foreign: foreign]
+}
+
+Map webcoreCensusValidate(Map node, String context, String path, Map acc) {
+    if (acc.shapes == null || !(acc.occurrenceStack as List)) return null
+    Map shape = webcoreCensusShapeKeys(node, context, path, acc)
+    if (shape == null || shape.blocked == true) return shape
+    Map keys = shape.keys as Map
+    Map lists = (acc.shapes as Map).lists as Map
+    String shapeContext = webcoreCensusShapeContext(context)
+    keys.each { Object k, Object s ->
+        String key = "${k}"
+        Map spec = s as Map
+        String at = path + '.' + key
+        boolean present = node.containsKey(key)
+        Object v = node[key]
+        if (spec.persisted == 'when' && !webcoreCensusPredicate(spec.persistedWhen as Map, node, shapeContext)) {
+            if (!present) return
+            if (spec.outsideWhen != 'retained-unconsumed') webcoreCensusMismatch(acc, at, 'outside-condition')
+            else if (!webcoreCensusKindOk(spec.kind as String, v)) webcoreCensusMismatch(acc, at, 'wrong-kind')
+            else if (spec.values instanceof List && !(spec.values as List).contains(v)) webcoreCensusMismatch(acc, at, 'bad-value')
+            return
+        }
+        if (!present) {
+            if (spec.persisted == 'always' || spec.persisted == 'when') {
+                boolean unconsumed = spec.consumed == 'read' && spec.consumedWhen instanceof Map &&
+                    !webcoreCensusPredicate(spec.consumedWhen as Map, node, shapeContext)
+                webcoreCensusMismatch(acc, at, unconsumed ? 'missing-unconsumed-key' : 'missing-key')
+            }
+            return
+        }
+        if (spec.persisted == 'never') { webcoreCensusMismatch(acc, at, 'never-persisted'); return }
+        boolean empty = v == null || (v instanceof Boolean && !(v as Boolean)) || (v instanceof String && (v as String).isEmpty())
+        if (spec.persisted == 'unless-empty' && empty) { webcoreCensusMismatch(acc, at, 'empty-persisted'); return }
+        if (!webcoreCensusKindOk(spec.kind as String, v)) { webcoreCensusMismatch(acc, at, 'wrong-kind'); return }
+        if (spec.values instanceof List && !(spec.values as List).contains(v)) { webcoreCensusMismatch(acc, at, 'bad-value'); return }
+        if (lists.containsKey(spec.kind)) {
+            List items = v as List
+            for (int i = 0; i < items.size(); i++) {
+                if (!(items[i] instanceof Map)) webcoreCensusMismatch(acc, at + '[' + i + ']', 'wrong-kind')
+            }
+        }
+    }
+    // Opaque and unknown keys are already findings, which invalidate the occurrence.
+    Set foreign = shape.foreign as Set
+    Set schemaKeys = acc.schemaKeys as Set
+    node.keySet().each { Object k ->
+        String key = "${k}"
+        if (keys.containsKey(key)) return
+        if (foreign.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'variant-foreign-key')
+        else if (schemaKeys.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'unexpected-key')
+    }
+    return shape
+}
+
+// Validation and meaning stay separate: a key outside the selected shape, a key the runtime
+// does not read here, or a value that is not the declared container is still walked and
+// counted but manufactures no construct.
+String webcoreCensusShapeRoute(Map node, String context, String key, Object child, String childContext, Map shape) {
+    if (shape.blocked == true) return null
+    Object s = (shape.keys as Map)[key]
+    if (!(s instanceof Map)) return null
+    Map spec = s as Map
+    String shapeContext = webcoreCensusShapeContext(context)
+    if (!webcoreCensusKindOk(spec.kind as String, child)) return null
+    if (spec.persisted == 'when' && !webcoreCensusPredicate(spec.persistedWhen as Map, node, shapeContext)) return null
+    if (spec.consumed != 'read') return null
+    if (spec.consumedWhen instanceof Map && !webcoreCensusPredicate(spec.consumedWhen as Map, node, shapeContext)) return null
+    return childContext
+}
+
+boolean webcoreCensusPredicate(Map predicate, Map node, String shapeContext) {
+    if (predicate == null) return false
+    if (predicate.all instanceof List) return (predicate.all as List).every { webcoreCensusPredicate(it as Map, node, shapeContext) }
+    if (predicate.context instanceof List) return (predicate.context as List).contains(shapeContext)
+    Object v = node
+    for (String segment : (predicate.key as String).tokenize('.')) v = (v instanceof Map) ? (v as Map)[segment] : null
+    if (predicate.oneOf instanceof List) return (predicate.oneOf as List).contains(v)
+    if (predicate.noneOf instanceof List) return !(predicate.noneOf as List).contains(v)
+    return false
+}
+
+boolean webcoreCensusIsScalar(Object v) {
+    return v instanceof String || v instanceof Number || v instanceof Boolean
+}
+
+boolean webcoreCensusKindOk(String kind, Object v) {
+    switch (kind) {
+        case 'scalar': return webcoreCensusIsScalar(v)
+        case 'scalar-list': return v instanceof List && (v as List).every { webcoreCensusIsScalar(it) }
+        case 'operand': return v instanceof Map
+        case 'operand-list': return v instanceof List && (v as List).every { it instanceof Map }
+    }
+    return v instanceof List
+}
+
+// An L3 or higher ceiling holds only when every counted occurrence of the construct was
+// validated and none was invalid; otherwise the construct is reported at L2.
+String webcoreCensusAchievedLevel(String ceiling, Object occurrence, Object count) {
+    if (!(ceiling in ['L3', 'L4', 'L5'])) return ceiling
+    if (!(occurrence instanceof Map) || !(count instanceof Number)) return 'L2'
+    Object valid = (occurrence as Map).structurallyValid
+    Object invalid = (occurrence as Map).structurallyInvalid
+    if (!(valid instanceof Number) || !(invalid instanceof Number)) return 'L2'
+    return ((invalid as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'
 }
 // --- webcore census walker: end ---
 
@@ -4521,6 +4739,172 @@ Map webcoreCensusRegistry() {
 }
 // --- webcore runtime registry: end ---
 
+// --- webcore statement shapes: begin ---
+// GENERATED from tools/webcore-investigation/evidence/statement-l3.groovy
+// by tools/webcore-investigation/generate-statement-shapes.groovy. Do not hand-edit.
+// Shape and predicate data only. The reviewed manifest keeps the source evidence.
+Map webcoreStatementShapes() {
+    return [
+        contexts: ['condition-list-member', 'followed-by-first-step', 'followed-by-later-step'],
+        lists: [
+            'condition-list': ['element': 'condition', 'ownerKey': 'o', 'ownerOneOf': ['followed by'], 'first': 'followed-by-first-step', 'rest': 'followed-by-later-step', 'otherwise': 'condition-list-member'],
+            'event-list': ['element': 'event'],
+            'elseif-list': ['element': 'elseif'],
+            'case-list': ['element': 'case'],
+            'task-list': ['element': 'task']
+        ],
+        common: [
+            't': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+            '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+            'a': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['0', '1']],
+            'tep': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': ['c', 'p', 'b']],
+            'tsp': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': ['a']],
+            'tcp': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited', 'values': ['c', 'p', 'b']],
+            'r': ['kind': 'restriction-list', 'persisted': 'always', 'consumed': 'read'],
+            'rop': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+            'rn': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+            'di': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited', 'values': [true]],
+            'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+            'sm': ['kind': 'scalar', 'persisted': 'user-optional', 'consumed': 'not-cited']
+        ],
+        statements: [
+            'wc.statement.action': [keys: [
+                'd': ['kind': 'device-list', 'persisted': 'always', 'consumed': 'read'],
+                'k': ['kind': 'task-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.if': [keys: [
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                'ei': ['kind': 'elseif-list', 'persisted': 'always', 'consumed': 'read'],
+                'e': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.while': [keys: [
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.repeat': [keys: [
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.every': [keys: [
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'lo2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read', 'consumedWhen': ['key': 'lo.vt', 'oneOf': ['d', 'w', 'n', 'y']]],
+                'lo3': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read', 'consumedWhen': ['key': 'lo.vt', 'oneOf': ['d', 'w', 'n', 'y']]],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.on': [keys: [
+                'c': ['kind': 'event-list', 'persisted': 'always', 'consumed': 'read'],
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited', 'values': ['or']],
+                'n': ['kind': 'scalar', 'persisted': 'never', 'consumed': 'not-cited'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.each': [keys: [
+                'x': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read'],
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.for': [keys: [
+                'x': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read'],
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'lo2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'lo3': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.switch': [keys: [
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'cs': ['kind': 'case-list', 'persisted': 'always', 'consumed': 'read'],
+                'e': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                'ctp': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['i', 'e']],
+                'ct': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': ['c']],
+                's': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': [true]]
+            ]],
+            'wc.statement.do': [keys: [
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.break': [keys: [:]],
+            'wc.statement.exit': [keys: [
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read']
+            ]]
+        ],
+        substructures: [
+            'elseif': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'case': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                't': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['s', 'r']],
+                'ro': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'ro2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read', 'consumedWhen': ['key': 't', 'oneOf': ['r']]],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited']
+            ]],
+            'event': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                't': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['event']],
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'sm': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited'],
+                'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+                'ct': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'read', 'values': ['t']],
+                's': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': [true]]
+            ]],
+            'task': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                'c': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'cm': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited', 'values': [true]],
+                'p': ['kind': 'operand-list', 'persisted': 'always', 'consumed': 'read'],
+                'a': ['kind': 'scalar', 'persisted': 'user-optional', 'consumed': 'not-cited'],
+                'm': ['kind': 'scalar-list', 'persisted': 'user-optional', 'consumed': 'read'],
+                'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited']
+            ]],
+            'condition': [
+                discriminator: ['key': 't', 'kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                variants: [
+                    'condition': [
+                        '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                        'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'co': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                        'ro': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'ro2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'to': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'to2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'ts': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'fs': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'sm': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited'],
+                        'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+                        'ct': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': ['t', 'c']],
+                        's': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': [true]],
+                        'wd': ['kind': 'operand', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-later-step']]],
+                        'wt': ['kind': 'scalar', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-first-step', 'followed-by-later-step']], 'values': ['l', 's', 'n']]
+                    ],
+                    'group': [
+                        '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                        'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                        'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                        'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                        'ts': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'fs': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'sm': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited'],
+                        'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+                        'wd': ['kind': 'operand', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-later-step']]],
+                        'wt': ['kind': 'scalar', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-first-step', 'followed-by-later-step']], 'values': ['l', 's', 'n']]
+                    ]
+                ]
+            ]
+        ]
+    ]
+}
+// --- webcore statement shapes: end ---
+
 // ===================================================================================================================
 // webCoRE decode coverage endpoint (v2.2.9)
 //
@@ -4592,8 +4976,13 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
     // reported id carries its evidence level from the runtime registry, never
     // from the response body, and an id whose registered level falls outside the
     // closed L0 to L5 set is left out of both maps, so their keys always match.
+    // Structural validity is reported only for counted ids and can only lower an id below its
+    // registered ceiling; structurallyCapped names every id it lowered.
     Map counts = [:]
     Map constructLevels = [:]
+    Map occurrences = [:]
+    List capped = []
+    Map occurrenceIn = (body.constructOccurrences instanceof Map) ? (body.constructOccurrences as Map) : [:]
     if (body.constructCounts instanceof Map) {
         (body.constructCounts as Map).keySet().collect { "${it}" }.sort().each { String id ->
             if (!constructs.containsKey(id)) return
@@ -4602,7 +4991,27 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
             String level = (entry instanceof Map) ? webcoreCoverageText((entry as Map).level) : null
             if (n == null || !(level in ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'])) return
             counts[id] = n
-            constructLevels[id] = level
+            Object occ = occurrenceIn[id]
+            if (occ instanceof Map) {
+                Integer valid = webcoreCoverageCount((occ as Map).structurallyValid)
+                Integer invalid = webcoreCoverageCount((occ as Map).structurallyInvalid)
+                if (valid != null && invalid != null) occurrences[id] = [structurallyValid: valid, structurallyInvalid: invalid]
+            }
+            String achieved = webcoreCensusAchievedLevel(level, occurrences[id], n)
+            constructLevels[id] = achieved
+            if (achieved != level) capped << id
+        }
+    }
+
+    List structureRecords = []
+    if (body.structureFindings instanceof List) {
+        List categories = webcoreCensusStructureCategories()
+        int cap = webcoreCensusLimits().maxStructureFindings as Integer
+        (body.structureFindings as List).each { Object raw ->
+            if (!(raw instanceof Map) || structureRecords.size() >= cap) return
+            String category = webcoreCoverageText((raw as Map).category)
+            if (!(category in categories)) return
+            structureRecords << [path: webcoreCoverageText((raw as Map).path), category: category]
         }
     }
 
@@ -4638,11 +5047,15 @@ Map webcoreCoverageResponse(Map body, Map constructs) {
         ],
         constructCounts: counts,
         constructLevels: constructLevels,
+        constructOccurrences: occurrences,
+        structurallyCapped: capped,
         levelCounts: [L0: webcoreCoverageCount(levels.L0), L1: webcoreCoverageCount(levels.L1),
                       L2: webcoreCoverageCount(levels.L2), L3: webcoreCoverageCount(levels.L3),
                       L4: webcoreCoverageCount(levels.L4), L5: webcoreCoverageCount(levels.L5)],
         unrecognised: records,
         unrecognisedOverflow: webcoreCoverageCount(body.unrecognisedOverflow),
+        structureFindings: structureRecords,
+        structureFindingsOverflow: webcoreCoverageCount(body.structureFindingsOverflow),
         truncation: trunc == null ? null : [reason: webcoreCoverageText(trunc.reason)],
         meta: [elapsedMs: webcoreCoverageCount(meta.elapsedMs),
                resultBytes: webcoreCoverageCount(meta.resultBytes),
@@ -4661,8 +5074,9 @@ Map webcoreCoverageOutcome(String status, String code, int http, String appId) {
     Map body = [status: status, appId: appId, registryVersion: null,
                 provenance: [observedWebcoreVersion: null, referenceSourceCommit: null,
                              compatibilityStatus: 'unknown'],
-                accounting: null, constructCounts: [:], levelCounts: [:],
-                unrecognised: [], unrecognisedOverflow: 0, truncation: null, meta: [:]]
+                accounting: null, constructCounts: [:], constructOccurrences: [:], levelCounts: [:],
+                unrecognised: [], unrecognisedOverflow: 0, structureFindings: [], structureFindingsOverflow: 0,
+                truncation: null, meta: [:]]
     if (code != null) body.error = code
     return [http: http, body: body]
 }
@@ -4725,7 +5139,8 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
         // the loopback has already spent part of.
         Long analysisDeadline = Math.min(started + (limits.requestBudgetMs as Long),
                                          now() + (limits.analysisBudgetMs as Long))
-        Map census = collectWebcoreDecodeCoverage(decoded.document, registry, webcoreCoverageDeadline(analysisDeadline))
+        Map census = collectWebcoreDecodeCoverage(decoded.document, registry, webcoreCoverageDeadline(analysisDeadline),
+                                                  webcoreStatementShapes())
         decoded = null
 
         // A structural bound is a walker status. A request deadline is not: it
@@ -4743,9 +5158,12 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
             provenance: census.provenance,
             accounting: census.accounting,
             constructCounts: census.constructCounts,
+            constructOccurrences: census.constructOccurrences,
             levelCounts: census.levelCounts,
             unrecognised: census.unrecognised,
             unrecognisedOverflow: census.unrecognisedOverflow,
+            structureFindings: census.structureFindings,
+            structureFindingsOverflow: census.structureFindingsOverflow,
             truncation: census.truncation
         ]
         // Counts and timings only. resultBytes measures the response without
@@ -11970,6 +12388,20 @@ let coverageInFlight = false;
 
 const COVERAGE_FOOTER = 'Decode coverage shows what Automation Map understands; opaque constructs are not silently omitted.';
 
+const COVERAGE_STRUCTURE_LABELS = {
+  'missing-discriminator': 'Condition type missing',
+  'unknown-variant': 'Condition type not recognised',
+  'missing-key': 'Required field missing',
+  'missing-unconsumed-key': 'Editor field missing',
+  'never-persisted': 'Field the editor never saves',
+  'empty-persisted': 'Empty field the editor never saves',
+  'wrong-kind': 'Field has the wrong shape',
+  'bad-value': 'Value not allowed here',
+  'outside-condition': 'Field outside its position',
+  'variant-foreign-key': 'Field from the other condition type',
+  'unexpected-key': 'Field not expected here'
+};
+
 const COVERAGE_REASON_LABELS = {
   'unknown-statement-type': 'Unrecognised statement',
   'unknown-operand-type': 'Unrecognised operand',
@@ -12065,8 +12497,16 @@ function decodeCoverageResultHtml(body) {
   const truncated = body.status === 'truncated';
   const gaps = body.unrecognised || [];
   const unknownTotal = gaps.length + (body.unrecognisedOverflow || 0);
+  // A structural mismatch is an unidentified position for whole-piston coverage. Unknown and
+  // opaque fields that only invalidate an occurrence are already counted as unrecognised.
+  const mismatches = body.structureFindings || [];
+  const mismatchTotal = mismatches.length + (Number(body.structureFindingsOverflow) || 0);
+  const unidentifiedTotal = unknownTotal + mismatchTotal;
   const counts = body.constructCounts || {};
   const constructLevels = body.constructLevels || {};
+  const occurrences = body.constructOccurrences || {};
+  const capped = {};
+  (body.structurallyCapped || []).forEach(function (id) { capped[id] = true; });
 
   // A registry match is not recognition. Only occurrences of constructs at L2 or
   // above count as recognised; a match below L2 is reported on its own line and is
@@ -12086,12 +12526,12 @@ function decodeCoverageResultHtml(body) {
     ? 'A safety bound was reached before the whole piston was walked, so these counts are incomplete.'
     : 'Every part of the saved piston was visited and accounted for: ' + extEsc(values) + ' values across ' + extEsc(acc.fieldsVisited || 0) + ' fields.') + '</p>';
 
-  const notIdentified = unknownTotal ? '; ' + extEsc(unknownTotal) + ' ' + (unknownTotal === 1 ? 'position' : 'positions') + ' not identified' : '';
+  const notIdentified = unidentifiedTotal ? '; ' + extEsc(unidentifiedTotal) + ' ' + (unidentifiedTotal === 1 ? 'position' : 'positions') + ' not identified' : '';
   // A percentage reads as whole-piston coverage, so it is shown only for a complete walk with
   // nothing unidentified. Unrecognised fields are not construct positions.
   if (truncated) {
     html += '<p class="dcPartial">' + extEsc(recognised) + ' of ' + extEsc(cand) + ' visited construct positions recognised at L2 or above' + notIdentified + '</p>';
-  } else if (unknownTotal > 0) {
+  } else if (unidentifiedTotal > 0) {
     html += '<p class="dcPartial">Coverage incomplete. ' + extEsc(recognised) + ' construct ' + (recognised === 1 ? 'position' : 'positions') +
       ' recognised at L2 or above' + notIdentified + '.</p>';
   } else {
@@ -12106,6 +12546,10 @@ function decodeCoverageResultHtml(body) {
   // Stated even when it is zero. Retained records plus those past the cap.
   html += '<p class="sub">' + extEsc(unknownTotal) + ' unrecognised ' + (unknownTotal === 1 ? 'position' : 'positions') +
     (gaps.length ? (body.unrecognisedOverflow ? ', the first ' + extEsc(gaps.length) + ' listed below' : ', listed below') : '') + '.</p>';
+  if (mismatchTotal) {
+    html += '<p class="sub">' + extEsc(mismatchTotal) + ' structure ' + (mismatchTotal === 1 ? 'mismatch' : 'mismatches') +
+      (mismatches.length ? (mismatchTotal > mismatches.length ? ', the first ' + extEsc(mismatches.length) + ' listed below' : ', listed below') : '') + '.</p>';
+  }
 
   const provenance = body.provenance || {};
   if (provenance.compatibilityStatus === 'version-drift') {
@@ -12136,7 +12580,12 @@ function decodeCoverageResultHtml(body) {
     families.forEach(function (family) {
       html += '<tbody><tr class="dcFamily"><td colspan="3">' + extEsc(coverageFamilyLabel(family)) + '</td></tr>';
       groups[family].forEach(function (row) {
-        html += '<tr><td>' + extEsc(row.name) + '</td><td class="n">' + extEsc(counts[row.id]) + '</td>' +
+        // Shown only where structural validity lowered the level below the registry ceiling.
+        const occ = occurrences[row.id];
+        const valid = occ ? (Number(occ.structurallyValid) || 0) : 0;
+        const structural = (capped[row.id] === true && occ) ? ' <span class="sub">' + extEsc(valid) + ' of ' +
+          extEsc(valid + (Number(occ.structurallyInvalid) || 0)) + ' structurally valid</span>' : '';
+        html += '<tr><td>' + extEsc(row.name) + structural + '</td><td class="n">' + extEsc(counts[row.id]) + '</td>' +
           '<td class="n"><span class="dcLevel" title="' + COVERAGE_LEVEL_NAMES[row.level] + '">' + row.level + '</span></td></tr>';
       });
       html += '</tbody>';
@@ -12149,6 +12598,15 @@ function decodeCoverageResultHtml(body) {
     gaps.forEach(function (g) {
       html += '<li><span class="dcReason">' + extEsc(COVERAGE_REASON_LABELS[g.reason] || 'Not identified') + '</span> ' +
         '<code>' + extEsc(g.path) + '</code></li>';
+    });
+    html += '</ul>';
+  }
+
+  if (mismatches.length) {
+    html += '<h5>Structure not matched</h5><ul class="dcGaps">';
+    mismatches.forEach(function (m) {
+      const label = Object.prototype.hasOwnProperty.call(COVERAGE_STRUCTURE_LABELS, m.category) ? COVERAGE_STRUCTURE_LABELS[m.category] : 'Structure not matched';
+      html += '<li><span class="dcReason">' + extEsc(label) + '</span> <code>' + extEsc(m.path) + '</code></li>';
     });
     html += '</ul>';
   }
