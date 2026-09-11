@@ -78,14 +78,20 @@ else if (!remote.contains('imnotbob/webCoRE')) fail(failures, "remote is ${remot
 
 String PISTON_PATH = 'smartapps/ady624/webcore-piston.src/webcore-piston.groovy'
 String APP_PATH = 'smartapps/ady624/webcore.src/webcore.groovy'
+// The dashboard editor is what writes the saved document, so structural (L3)
+// evidence cites it alongside the executor that reads it. Same pinned commit.
+String EDITOR_PATH = 'dashboard/js/modules/piston.module.js'
 File pistonFile = new File(root, PISTON_PATH)
 File appFile = new File(root, APP_PATH)
+File editorFile = new File(root, EDITOR_PATH)
 if (!pistonFile.isFile()) fail(failures, "missing source file: ${pistonFile}")
 if (!appFile.isFile()) fail(failures, "missing source file: ${appFile}")
+if (!editorFile.isFile()) fail(failures, "missing source file: ${editorFile}")
 if (failures) { failures.each { System.err.println "GATE: ${it}" }; System.exit 1 }
 
 String piston = pistonFile.getText('UTF-8')
 String app = appFile.getText('UTF-8')
+String editor = editorFile.getText('UTF-8')
 
 // ------------------------------------------------------- constant resolution
 
@@ -642,6 +648,36 @@ regionSource['catalogue.virtual-commands']  = balancedRegion(app, 'private stati
 regionSource['catalogue.functions-fld']     = balancedRegion(app, '@Field final Map<String,Map> functionsFLD=[', '[' as char, ']' as char, failures, 'catalogue.functions-fld')
 regionSource['executor.functions']          = definitionCorpus(piston, 'func_', failures, 'executor.functions')
 regionSource['executor.virtual-commands']   = definitionCorpus(piston, 'vcmd_', failures, 'executor.virtual-commands')
+// Structural evidence regions: the executor paths that read statement, condition
+// and task positions, and the editor functions that write them.
+regionSource['executor.execute-action']      = balancedRegion(piston, 'private Boolean executeAction(', '{' as char, '}' as char, failures, 'executor.execute-action')
+regionSource['executor.schedule-timer']      = balancedRegion(piston, 'private void scheduleTimer(', '{' as char, '}' as char, failures, 'executor.schedule-timer')
+regionSource['executor.evaluate-conditions'] = balancedRegion(piston, 'private Boolean evaluateConditions(', '{' as char, '}' as char, failures, 'executor.evaluate-conditions')
+regionSource['executor.evaluate-condition']  = balancedRegion(piston, 'private Boolean evaluateCondition(', '{' as char, '}' as char, failures, 'executor.evaluate-condition')
+regionSource['executor.clean-code']          = balancedRegion(piston, 'private void cleanCode(', '{' as char, '}' as char, failures, 'executor.clean-code')
+regionSource['executor.stmt-num']            = balancedRegion(piston, 'private static Integer stmtNum(Map stmt){', '{' as char, '}' as char, failures, 'executor.stmt-num')
+regionSource['executor.set-ids']             = balancedRegion(piston, 'private Integer msetIds(', '{' as char, '}' as char, failures, 'executor.set-ids')
+regionSource['executor.clear-ids']           = balancedRegion(piston, 'private void clearMsetIds(', '{' as char, '}' as char, failures, 'executor.clear-ids')
+regionSource['executor.add-warning']         = balancedRegion(piston, 'private static addWarning(Map node,String msg){', '{' as char, '}' as char, failures, 'executor.add-warning')
+// The copy the IDE opens, re-saved by the editor: how hub-written keys reach a saved piston.
+regionSource['executor.get']                 = balancedRegion(piston, 'Map get(Boolean minimal=false){', '{' as char, '}' as char, failures, 'executor.get')
+regionSource['executor.runtime-data']        = balancedRegion(piston, 'private LinkedHashMap getRunTimeData(', '{' as char, '}' as char, failures, 'executor.runtime-data')
+regionSource['executor.recreate-piston']     = balancedRegion(piston, 'private LinkedHashMap recreatePiston(', '{' as char, '}' as char, failures, 'executor.recreate-piston')
+regionSource['editor.update-statement']      = balancedRegion(editor, '$scope.updateStatement = function(', '{' as char, '}' as char, failures, 'editor.update-statement')
+regionSource['editor.update-case']           = balancedRegion(editor, '$scope.updateCase = function(', '{' as char, '}' as char, failures, 'editor.update-case')
+regionSource['editor.update-condition']      = balancedRegion(editor, '$scope.updateCondition = function(', '{' as char, '}' as char, failures, 'editor.update-condition')
+regionSource['editor.edit-condition']        = balancedRegion(editor, '$scope.editCondition = function(', '{' as char, '}' as char, failures, 'editor.edit-condition')
+regionSource['editor.edit-condition-group']  = balancedRegion(editor, '$scope.editConditionGroup = function(', '{' as char, '}' as char, failures, 'editor.edit-condition-group')
+regionSource['editor.update-condition-group']= balancedRegion(editor, '$scope.updateConditionGroup = function(', '{' as char, '}' as char, failures, 'editor.update-condition-group')
+regionSource['editor.edit-task']             = balancedRegion(editor, '$scope.editTask = function(', '{' as char, '}' as char, failures, 'editor.edit-task')
+regionSource['editor.edit-statement']        = balancedRegion(editor, '$scope.editStatement = function(', '{' as char, '}' as char, failures, 'editor.edit-statement')
+regionSource['editor.edit-case']             = balancedRegion(editor, '$scope.editCase = function(', '{' as char, '}' as char, failures, 'editor.edit-case')
+// Deletes every false, null and empty-string property before the piston is sent.
+regionSource['editor.compile-piston']        = balancedRegion(editor, '$scope.compilePiston = function(', '{' as char, '}' as char, failures, 'editor.compile-piston')
+regionSource['editor.update-event']          = balancedRegion(editor, '$scope.updateEvent = function(', '{' as char, '}' as char, failures, 'editor.update-event')
+regionSource['editor.edit-event']            = balancedRegion(editor, '$scope.editEvent = function(', '{' as char, '}' as char, failures, 'editor.edit-event')
+regionSource['editor.load-piston']           = balancedRegion(editor, 'dataService.getPiston($scope.pistonId, true).then(function (response) {', '{' as char, '}' as char, failures, 'editor.load-piston')
+regionSource['editor.update-task']           = balancedRegion(editor, '$scope.updateTask = function(', '{' as char, '}' as char, failures, 'editor.update-task')
 
 // An empty or null region can never be hashed into the registry: that is how a
 // missing anchor previously became a stable hash of nothing.
@@ -866,7 +902,7 @@ sb << "// Reviewed as a diff before use. Not self-authorizing.\n"
 sb << "@Field static final Map WEBCORE_CONSTRUCT_REGISTRY = [\n"
 sb << "  provenance: [repo: '${remote}', branch: '${branch}', commit: '${sha}',\n"
 sb << "               generator: '${GENERATOR_VERSION}', registryVersion: '${REGISTRY_VERSION}',\n"
-sb << "               sourcePaths: ['${PISTON_PATH}', '${APP_PATH}'],\n"
+sb << "               sourcePaths: ['${PISTON_PATH}', '${APP_PATH}', '${EDITOR_PATH}'],\n"
 sb << "               sites: [\n"
 SITE_PROVENANCE.sort().each { String sid, Map pv ->
     sb << "                 '${sid}': [file:'${pv.file}', method:'${pv.method}', " +
