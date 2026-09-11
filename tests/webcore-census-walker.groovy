@@ -544,6 +544,213 @@ assertThat(periodic.status == 'truncated' &&
 assertThat(periodicCalls == 2,
     "the entry check and one periodic check are what ran, not an exit check (${periodicCalls})")
 
+// ---- A1b: structural validation per statement occurrence --------------------
+
+String shapesText = new File(repoRoot, 'tools/webcore-investigation/generated/webcore_statement_shapes.groovy').getText('UTF-8')
+Map shapes = new GroovyClassLoader(this.class.classLoader)
+        .parseClass("class ShapesForWalker {\n" + shapesText + "\n}").newInstance().webcoreStatementShapes() as Map
+
+def census = { Object w, Map doc, Map reg = registry -> w.collectWebcoreDecodeCoverage(doc, reg, null, shapes) as Map }
+def occurrence = { Map out, String id -> ((out.constructOccurrences as Map)[id] ?: [structurallyValid: 0, structurallyInvalid: 0]) as Map }
+def isValid = { Map out, String id -> occurrence(out, id).structurallyValid == 1 && occurrence(out, id).structurallyInvalid == 0 }
+def isInvalid = { Map out, String id -> occurrence(out, id).structurallyInvalid == 1 && occurrence(out, id).structurallyValid == 0 }
+def categoriesOf = { Map out -> (out.structureFindings as List).collect { it.category }.unique().sort() }
+
+def leafNode = { Map extra = [:] -> [t: 'condition', lo: [t: 'v', v: 'mode'], co: 'is', ro: [t: 'c', vt: 'string', c: 'x'],
+    ro2: [t: 'c', vt: 'string', c: 'y'], to: [t: 'c', vt: 'integer', c: 0], to2: [t: 'c', vt: 'integer', c: 0], ts: [], fs: [], sm: 'auto'] + extra }
+def groupNode = { List c, Map extra = [:] -> [t: 'group', c: c, o: 'and', ts: [], fs: [], sm: 'auto'] + extra }
+def stmtNode = { String t, Map extra -> [t: t, a: '0', r: [], rop: 'and'] + extra }
+def ifNode = { List c, Map extra = [:] -> stmtNode('if', [o: 'and', c: c, s: [], ei: [], e: []] + extra) }
+def waitOp = { [t: 'c', vt: 'm', c: 5] }
+def switchNode = { List cs, Map extra = [:] -> stmtNode('switch', [lo: [t: 'c', vt: 'integer', c: 1], cs: cs, e: [], ctp: 'i'] + extra) }
+def everyNode = { String unit -> stmtNode('every', [a: '1', lo: [t: 'c', vt: unit, c: 1], lo2: [t: 'c', vt: 'integer', c: 5],
+    lo3: [t: 'c', vt: 'integer', c: 0], s: []]) }
+
+Map validIf = census(walker, [s: [ifNode([leafNode()])]])
+assertThat(isValid(validIf, 'wc.statement.if') && (validIf.structureFindings as List).isEmpty() && (validIf.unrecognised as List).isEmpty(),
+    "an if in its current-editor shape is one structurally valid occurrence (${validIf.constructOccurrences} ${validIf.structureFindings})")
+
+// Invariants: validation never steers, counts or bounds the walk.
+Map richDoc = [s: [ifNode([leafNode(), groupNode([leafNode([ok: true])])], [ok: true, ei: [[o: 'and', c: [leafNode()], s: [[t: 'do', s: []]]]]]),
+                   switchNode([[t: 's', ro: [t: 'c', vt: 'integer', c: 1], s: []]], [s: [[t: 'action', k: []]]]),
+                   stmtNode('exit', [lo: [[t: 'c', vt: 'integer', c: 1]]]), everyNode('m')]]
+Map plain = walker.collectWebcoreDecodeCoverage(richDoc, registry) as Map
+Map shaped = census(walker, richDoc)
+List visitedFields = ['objectsVisited', 'arraysVisited', 'fieldsVisited', 'arrayElementsVisited', 'scalarsVisited']
+assertThat(visitedFields.every { (plain.accounting as Map)[it] == (shaped.accounting as Map)[it] } &&
+           plain.status == shaped.status && plain.truncation == shaped.truncation,
+    "structural validation leaves the visited-value accounting, status and truncation unchanged (${plain.accounting} ${shaped.accounting})")
+// Shape routing withholds classification from unconsumed or malformed positions, so construct
+// candidates can only fall, never rise, and no new unrecognised finding can appear.
+assertThat(((shaped.accounting as Map).constructCandidates as Integer) <= ((plain.accounting as Map).constructCandidates as Integer) &&
+           (plain.unrecognised as List).containsAll(shaped.unrecognised as List),
+    'validation only withholds classification: candidates do not rise and no unrecognised finding is added')
+Map deepShaped = [s: [[t: 'do', s: []]]]
+Map deepCursor = deepShaped.s[0] as Map
+(1..120).each { Map next = [t: 'do', s: []]; (deepCursor.s as List) << next; deepCursor = next }
+assertThat(census(walker, deepShaped).status == 'truncated' && (census(walker, deepShaped).truncation as Map).reason == 'depth-limit' &&
+           census(walker, deepShaped).accounting == (walker.collectWebcoreDecodeCoverage(deepShaped, registry) as Map).accounting,
+    'the depth bound truncates exactly as it does without validation')
+
+// Unexpected own-node keys cap the occurrence.
+Map unexpected = census(walker, [s: [ifNode([leafNode()], [ok: true])]])
+assertThat(isInvalid(unexpected, 'wc.statement.if') && categoriesOf(unexpected) == ['unexpected-key'] &&
+           (unexpected.structureFindings as List)[0].path == '$.s[0].ok',
+    "an allowlisted key the statement shape does not model is an unexpected-key mismatch (${unexpected.structureFindings})")
+Map unknownOwn = census(walker, [s: [ifNode([leafNode()], [CANARYkeyA1b: 'CANARYvalA1b'])]])
+assertThat(isInvalid(unknownOwn, 'wc.statement.if') && (unknownOwn.structureFindings as List).isEmpty() &&
+           !JsonOutput.toJson(unknownOwn).contains('CANARY'),
+    'an unknown own key is an existing unknown-key finding that invalidates the occurrence without leaking its name')
+Map opaqueOwn = census(walker, [s: [ifNode([leafNode()], [zc: 'a comment'])]])
+assertThat(isInvalid(opaqueOwn, 'wc.statement.if') && !JsonOutput.toJson(opaqueOwn).contains('a comment'),
+    'an opaque field on the statement invalidates the occurrence')
+
+// Validated child structures fail their owning statement.
+Map childElseIf = census(walker, [s: [ifNode([leafNode()], [ei: [[o: 'and', c: [leafNode()], s: [], ok: true]]])]])
+assertThat(isInvalid(childElseIf, 'wc.statement.if') && (childElseIf.structureFindings as List)*.path == ['$.s[0].ei[0].ok'],
+    'an unexpected key on an else-if fails the owning if')
+Map childCase = census(walker, [s: [switchNode([[t: 's', ro: [t: 'c', vt: 'integer', c: 1], ro2: [t: 'c', vt: 'integer', c: 2], s: [], ok: true]])]])
+assertThat(isInvalid(childCase, 'wc.statement.switch'), 'an unexpected key on a case fails the owning switch')
+Map childEvent = census(walker, [s: [stmtNode('on', [a: '1', o: 'or', s: [], c: [[t: 'event', lo: [t: 'v', v: 'mode'], sm: 'auto', ok: true]]])]])
+assertThat(isInvalid(childEvent, 'wc.statement.on'), 'an unexpected key on an event fails the owning on statement')
+Map childTask = census(walker, [s: [stmtNode('action', [d: [], k: [[c: 'on', p: [], ok: true]]])]])
+assertThat(isInvalid(childTask, 'wc.statement.action'), 'an unexpected key on a task fails the owning action')
+Map foreignVariant = census(walker, [s: [ifNode([groupNode([leafNode()], [lo: [t: 'v', v: 'mode']])])]])
+assertThat(isInvalid(foreignVariant, 'wc.statement.if') && categoriesOf(foreignVariant) == ['variant-foreign-key'],
+    "a leaf key on a group is a variant-foreign-key mismatch (${foreignVariant.structureFindings})")
+Map noDiscriminator = census(walker, [s: [ifNode([leafNode().findAll { k, v -> k != 't' }])]])
+assertThat(isInvalid(noDiscriminator, 'wc.statement.if') && categoriesOf(noDiscriminator) == ['missing-discriminator'] &&
+           !(noDiscriminator.constructCounts as Map).containsKey('wc.virtual-device.mode'),
+    'a condition without t is a missing-discriminator mismatch and nothing beneath it is classified')
+Map badDiscriminator = census(walker, [s: [ifNode([leafNode([t: 'bogus'])])]])
+assertThat(categoriesOf(badDiscriminator) == ['unknown-variant'], 'a condition with an unknown t is an unknown-variant mismatch')
+
+// Ownership: a nested statement owns its own findings; an operand or restriction finding belongs to its statement.
+Map nested = census(walker, [s: [ifNode([leafNode()], [s: [stmtNode('do', [s: [], ok: true])]])]])
+assertThat(isValid(nested, 'wc.statement.if') && isInvalid(nested, 'wc.statement.do'),
+    'an invalid nested statement does not invalidate the statement that contains it')
+Map operandFinding = census(walker, [s: [stmtNode('action', [d: [], k: [[c: 'on', p: [[t: 'no-such-operand-type']]]]])]])
+assertThat(isInvalid(operandFinding, 'wc.statement.action'), 'an unknown operand beneath a task invalidates the owning action')
+Map restrictionShape = census(walker, [s: [stmtNode('action', [d: [], k: [], r: [[t: 'restriction', co: 'is', lo: [t: 'v', v: 'mode'], ok: true]]])]])
+assertThat(isValid(restrictionShape, 'wc.statement.action') && (restrictionShape.structureFindings as List).isEmpty(),
+    'restriction members are outside this increment: their shape is not validated')
+Map restrictionFinding = census(walker, [s: [stmtNode('action', [d: [], k: [], r: [[t: 'restriction', co: 'is', lo: [t: 'no-such-operand-type']]]])]])
+assertThat(isInvalid(restrictionFinding, 'wc.statement.action'), 'an existing finding inside a restriction still invalidates the owning statement')
+
+// Persistence semantics.
+Map missingAlways = census(walker, [s: [ifNode([leafNode()]).findAll { k, v -> k != 'rop' }]])
+assertThat(categoriesOf(missingAlways) == ['missing-key'], 'a missing always key is missing-key')
+Map emptyKept = census(walker, [s: [ifNode([leafNode()], [n: false])]])
+assertThat(categoriesOf(emptyKept) == ['empty-persisted'], 'an unless-empty key kept as false is empty-persisted')
+Map neverKept = census(walker, [s: [stmtNode('on', [a: '1', o: 'or', n: true, s: [], c: []])]])
+assertThat(categoriesOf(neverKept) == ['never-persisted'], 'a never-persisted key that is present is never-persisted')
+Map optionalAbsent = census(walker, [s: [stmtNode('action', [d: [], k: [[c: 'on', p: []]]])]])
+assertThat(isValid(optionalAbsent, 'wc.statement.action'), 'user-optional and round-trip keys may be absent')
+Map roundTrip = census(walker, [s: [ifNode([leafNode(['$': 2, ct: 'c', s: true])], ['$': 1])]])
+assertThat(isValid(roundTrip, 'wc.statement.if'), 'hub-written round-trip keys are valid when present')
+Map laterMissingWd = census(walker, [s: [ifNode([leafNode(), leafNode([wt: 'l'])], [o: 'followed by'])]])
+assertThat(categoriesOf(laterMissingWd) == ['missing-key'], 'a later followed-by step without wd is missing-key')
+Map retainedOk = census(walker, [s: [ifNode([leafNode([wd: waitOp()])])]])
+assertThat(isValid(retainedOk, 'wc.statement.if'), 'a retained wd outside a later step is valid shape and not a mismatch')
+Map retainedMalformed = census(walker, [s: [ifNode([leafNode([wd: 'not-an-operand'])])]])
+assertThat(categoriesOf(retainedMalformed) == ['wrong-kind'], 'a malformed retained wd is still a wrong-kind mismatch')
+Map retainedBadValue = census(walker, [s: [ifNode([leafNode([wt: 'x'])])]])
+assertThat(categoriesOf(retainedBadValue) == ['bad-value'], 'a retained wt outside its value set is a bad-value mismatch')
+Map singleCase = census(walker, [s: [switchNode([[t: 's', ro: [t: 'c', vt: 'integer', c: 1], s: []]])]])
+assertThat(categoriesOf(singleCase) == ['missing-unconsumed-key'], 'a single-value case without ro2 is missing-unconsumed-key')
+
+// Validation and meaning stay separate.
+assertThat(count(retainedOk, 'wc.operand.c') == count(validIf, 'wc.operand.c'), 'a retained wd is not classified as an operand')
+Map firstStepWd = census(walker, [s: [ifNode([leafNode([wd: waitOp()]), leafNode([wd: waitOp(), wt: 'l'])], [o: 'followed by'])]])
+assertThat(count(firstStepWd, 'wc.operand.c') == count(validIf, 'wc.operand.c') * 2 + 1, "only the later step's wd is an operand (${count(firstStepWd, 'wc.operand.c')})")
+Map groupLaterWd = census(walker, [s: [ifNode([leafNode(), groupNode([leafNode()], [wd: waitOp(), wt: 'l'])], [o: 'followed by'])]])
+assertThat(isValid(groupLaterWd, 'wc.statement.if') && count(groupLaterWd, 'wc.operand.c') == count(validIf, 'wc.operand.c') * 2 + 1,
+    "a group's wd on a later step is an operand (${count(groupLaterWd, 'wc.operand.c')})")
+assertThat(count(census(walker, [s: [everyNode('m')]]), 'wc.operand.c') == 1 && count(census(walker, [s: [everyNode('d')]]), 'wc.operand.c') == 3,
+    'an every timer classifies lo2 and lo3 only for a calendar unit')
+Map singleWithRo2 = census(walker, [s: [switchNode([[t: 's', ro: [t: 'c', vt: 'integer', c: 1], ro2: [t: 'c', vt: 'integer', c: 2], s: []]])]])
+assertThat(count(singleWithRo2, 'wc.operand.c') == 2, "a single-value case's ro2 is not classified (${count(singleWithRo2, 'wc.operand.c')})")
+Map malformedLo = census(walker, [s: [stmtNode('exit', [lo: [[t: 'c', vt: 'integer', c: 1]]])]])
+assertThat(isInvalid(malformedLo, 'wc.statement.exit') && count(malformedLo, 'wc.operand.c') == 0 &&
+           (malformedLo.accounting as Map).objectsVisited == 3,
+    'a list where an operand belongs is walked and counted but classifies nothing')
+Map switchScalar = census(walker, [s: [switchNode([], [s: true, ct: 'c'])]])
+assertThat(isValid(switchScalar, 'wc.statement.switch'), "a switch's round-trip s scalar is valid")
+Map switchInjected = [s: [switchNode([], [s: [stmtNode('action', [d: [], k: []])]])]]
+assertThat(!(census(walker, switchInjected).constructCounts as Map).containsKey('wc.statement.action') &&
+           !((walker.collectWebcoreDecodeCoverage(switchInjected, registry) as Map).constructCounts as Map).containsKey('wc.statement.action') &&
+           isInvalid(census(walker, switchInjected), 'wc.statement.switch'),
+    "a list injected as a switch's s is not walked as statements, and fails the switch")
+
+Map breakLo = census(walker, [s: [stmtNode('break', [lo: [t: 'c', vt: 'integer', c: 1]])]])
+assertThat(isInvalid(breakLo, 'wc.statement.break') && categoriesOf(breakLo) == ['unexpected-key'] && count(breakLo, 'wc.operand.c') == 0,
+    "an operand injected under break is an unexpected key and is not counted (${breakLo.structureFindings} ${breakLo.constructCounts})")
+Map selectorDoc = [s: [ifNode([leafNode([d: [':0123456789abcdef0123456789abcdef:']])])]]
+Map conditionD = census(walker, selectorDoc)
+assertThat(isInvalid(conditionD, 'wc.statement.if') && categoriesOf(conditionD) == ['unexpected-key'] &&
+           !(conditionD.constructCounts as Map).keySet().any { "${it}".startsWith('wc.device-selector.') } &&
+           ((walker.collectWebcoreDecodeCoverage(selectorDoc, registry) as Map).constructCounts as Map).containsKey('wc.device-selector.direct-identifier'),
+    'an excluded condition d holding a selector produces no device-selector construct, though the unvalidated walk counts one')
+
+// Conservative levels: every ceiling is L2 today, and a raised ceiling needs every occurrence valid.
+assertThat(census(walker, richDoc).levelCounts == plain.levelCounts, 'with every ceiling at L2 the level counts are unchanged')
+Map raised = [provenance: registry.provenance, constructs: (registry.constructs as Map) + ['wc.statement.if': [level: 'L3']]]
+Map allValid = census(walker, [s: [ifNode([leafNode()]), ifNode([leafNode()])]], raised)
+Map mixed = census(walker, [s: [ifNode([leafNode()]), ifNode([leafNode()], [ok: true])]], raised)
+assertThat((allValid.levelCounts as Map).L3 == 1 && (mixed.levelCounts as Map).L3 == 0 && (mixed.levelCounts as Map).L2 == (allValid.levelCounts as Map).L2 + 1,
+    "a raised ceiling holds only when every occurrence is valid (${allValid.levelCounts} ${mixed.levelCounts})")
+assertThat(walker.webcoreCensusAchievedLevel('L3', [structurallyValid: 1, structurallyInvalid: 0], 2) == 'L2' &&
+           walker.webcoreCensusAchievedLevel('L3', null, 1) == 'L2' && walker.webcoreCensusAchievedLevel('L2', null, 1) == 'L2',
+    'an occurrence left unvalidated, as by truncation, or never recorded caps a raised ceiling at L2')
+
+// Bounded, fixed output.
+Map many = census(walker, [s: (1..60).collect { ifNode([leafNode()], [ok: true, CANARYkeyA1b: 'CANARYvalA1b']) }])
+assertThat((many.structureFindings as List).size() == 50 && many.structureFindingsOverflow == 10,
+    "structure findings are capped with an overflow count (${(many.structureFindings as List).size()} + ${many.structureFindingsOverflow})")
+Set allowedSegments = walker.webcoreCensusSchemaKeys() as Set
+assertThat((many.structureFindings as List).every { Map f ->
+        walker.webcoreCensusStructureCategories().contains(f.category) && (f.path as String).length() <= 200 &&
+        (f.path as String).tokenize('.').every { String seg -> String bare = seg.replaceAll(/\[\d+\]/, ''); bare == '$' || bare.startsWith('<') || allowedSegments.contains(bare) } } &&
+        !JsonOutput.toJson(many).contains('CANARY'),
+    'every structure finding is a closed category with a bounded path of reviewed key names, and no value or unknown key name')
+
+// Mutation evidence: each rule, removed from a copy of the walker source, lets a scenario above pass wrongly.
+def mutant = { String from, String to ->
+    assert block.contains(from): "mutation anchor not found: ${from}"
+    new GroovyClassLoader(this.class.classLoader).parseClass("class WebcoreCensusMutant {\n" + block.replace(from, to) + "\n}").newInstance()
+}
+def broadS = mutant("if (key == 's') return (t == 'switch') ? null : 'statement'", "if (key == 's') return 'statement'")
+assertThat(((broadS.collectWebcoreDecodeCoverage(switchInjected, registry) as Map).constructCounts as Map).containsKey('wc.statement.action'),
+    "mutation: restoring the broad s route walks an injected switch list as statements")
+def noUnexpected = mutant("else if (schemaKeys.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'unexpected-key')", "")
+assertThat(isValid(census(noUnexpected, [s: [ifNode([leafNode()], [ok: true])]]), 'wc.statement.if'),
+    'mutation: without the unexpected-key rule an extra own key no longer caps the occurrence')
+def noTaint = mutant("if (stack) (stack[stack.size() - 1] as Map).invalid = true", "if (false) (stack[stack.size() - 1] as Map).invalid = true")
+assertThat(isValid(census(noTaint, [s: [ifNode([leafNode()], [CANARYkeyA1b: 1])]]), 'wc.statement.if'),
+    'mutation: without taint an existing unknown finding no longer caps the occurrence')
+def noChildren = mutant("if (context in ['elseif', 'case', 'event', 'task']) return [keys: (subs[context] as Map).keys as Map, foreign: [] as Set]",
+                        "if (context in ['elseif', 'case', 'event', 'task']) return null")
+assertThat(isValid(census(noChildren, [s: [ifNode([leafNode()], [ei: [[o: 'and', c: [leafNode()], s: [], ok: true]]])]]), 'wc.statement.if'),
+    'mutation: without child shapes an unexpected else-if key no longer fails its if')
+def noRoute = mutant("if (known && childContext != null && shape != null) childContext = webcoreCensusShapeRoute(node, context, key, child, childContext, shape)", "")
+assertThat(count(census(noRoute, [s: [everyNode('m')]]), 'wc.operand.c') == 3,
+    'mutation: without shape routing an unconsumed every lo2 and lo3 are classified')
+def fallThroughRoute = mutant("if (!(s instanceof Map)) return null", "if (!(s instanceof Map)) return childContext")
+assertThat(count(census(fallThroughRoute, [s: [stmtNode('break', [lo: [t: 'c', vt: 'integer', c: 1]])]]), 'wc.operand.c') == 1 &&
+           (census(fallThroughRoute, selectorDoc).constructCounts as Map).containsKey('wc.device-selector.direct-identifier'),
+    'mutation: restoring the fall-through route counts the injected operand and the excluded selector')
+def noFirstStep = mutant("return index == 0 ? 'followed-by-first-step' : 'followed-by-later-step'", "return 'followed-by-later-step'")
+assertThat(count(census(noFirstStep, [s: [ifNode([leafNode([wd: waitOp()]), leafNode([wd: waitOp(), wt: 'l'])], [o: 'followed by'])]]), 'wc.operand.c') ==
+           count(firstStepWd, 'wc.operand.c') + 1,
+    "mutation: without the first-step context the first step's wd is classified")
+def noRetainedKind = mutant("else if (!webcoreCensusKindOk(spec.kind as String, v)) webcoreCensusMismatch(acc, at, 'wrong-kind')",
+                            "else if (false) webcoreCensusMismatch(acc, at, 'wrong-kind')")
+assertThat(isValid(census(noRetainedKind, [s: [ifNode([leafNode([wd: 'not-an-operand'])])]]), 'wc.statement.if'),
+    'mutation: without the retained kind check a malformed retained wd passes')
+def ceilingIgnored = mutant("return ((invalid as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'", "return ceiling")
+assertThat(((census(ceilingIgnored, [s: [ifNode([leafNode()]), ifNode([leafNode()], [ok: true])]], raised)).levelCounts as Map).L3 == 1,
+    'mutation: a level that ignores invalid occurrences reports L3 for a mixed construct')
+
 // ---- summary ---------------------------------------------------------------
 
 int total = results.size()
