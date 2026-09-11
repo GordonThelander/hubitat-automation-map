@@ -362,6 +362,11 @@ end state. That answer is currently unknown and is worth having either way.
 - **Custom command tasks (fixed on dev).** The editor saves `cm: true` on a task with a custom
   command. `cm` was missing from the walker's key allowlist, so such a task reported an unidentified
   key; it is now allowlisted after tracing it through the editor serializer.
+- **Piston option keys are unidentified.** A test piston's root options map saved `mps`, `pep`,
+  `dco`, `des`, `aps` and `ish` alongside the allowlisted `cto` and `ced`. They sit outside every
+  statement, so they do not affect structural validity, but any piston that saves them reads
+  "Coverage incomplete". Each needs tracing to the executor's piston-option reads before it is
+  allowlisted.
 - **Still to come.** The evidence work that raises constructs above identification, which is what
   eventually lets a piston draw its own flow with anything not yet understood shown as an explicit
   opaque block.
