@@ -516,6 +516,51 @@
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
+        },
+        {
+            "file": "l3-09-tasks.round-trip.json",
+            "piston": "zz-L3-09 tasks",
+            "capture": "round-trip",
+            "pistonBuild": 4,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "408c6b34190650a7772aba83d6bd81282839d29b3a907f82a645b285f4e1624b",
+            "statements": {
+                "wc.statement.action": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-10-targets.first-save.json",
+            "piston": "zz-L3-10 targets",
+            "capture": "first-save",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "011f6de5dc7028f611c28900a4508444a74f4ac51b9a6b2e27646069db7c52d7",
+            "statements": {
+                "wc.statement.action": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-10-targets.round-trip.json",
+            "piston": "zz-L3-10 targets",
+            "capture": "round-trip",
+            "pistonBuild": 3,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "dbe31083985cc011df6881c583b31552c51b6971f5950a5c2567d7aad6892c65",
+            "statements": {
+                "wc.statement.action": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
         }
     ]
 }
