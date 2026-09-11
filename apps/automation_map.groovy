@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.9'
+@Field static final String APP_VERSION = '2.3.0'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -12936,6 +12936,17 @@ function decodeCoverageResultHtml(body) {
     html += '<p class="sub">' + extEsc(outside) + ' unrecognised ' + (outside === 1 ? 'position is' : 'positions are') +
       ' outside every statement and ' + (outside === 1 ? 'does' : 'do') + ' not lower the statement result.</p>';
   }
+  // Meaning (L4) is a separate claim from structure, never folded into a level or the percentage.
+  const sem = body.semanticAssessment;
+  const semComplete = !!(sem && sem.status === 'complete' && Number(sem.occurrences) > 0);
+  if (semComplete) {
+    const semTotal = Number(sem.occurrences) || 0;
+    const semExplained = Number(sem.explained) || 0;
+    const semNoun = semTotal === 1 ? 'occurrence' : 'occurrences';
+    html += '<p class="sub">Meaning: ' + (sem.explainable === true && semExplained === semTotal
+      ? 'proven for all ' + extEsc(semTotal) + ' statement ' + semNoun
+      : 'proven for ' + extEsc(semExplained) + ' of ' + extEsc(semTotal) + ' statement ' + semNoun) + '.</p>';
+  }
 
   const provenance = body.provenance || {};
   if (provenance.compatibilityStatus === 'version-drift') {
@@ -13006,6 +13017,17 @@ function decodeCoverageResultHtml(body) {
       const n = Number(g.occurrences) || 0;
       const label = Object.prototype.hasOwnProperty.call(COVERAGE_GAP_LABELS, g.reason) ? COVERAGE_GAP_LABELS[g.reason] : 'Evidence gap';
       html += '<li><span class="dcReason">' + extEsc(label) + '</span> <code>' + extEsc(g.id) + '</code> <span class="sub">' +
+        extEsc(n) + ' ' + (n === 1 ? 'occurrence' : 'occurrences') + '</span></li>';
+    });
+    html += '</ul>';
+  }
+
+  const semGaps = (semComplete && Array.isArray(sem.gaps)) ? sem.gaps : [];
+  if (semGaps.length) {
+    html += '<h5>Meaning not yet proven</h5><ul class="dcGaps">';
+    semGaps.forEach(function (g) {
+      const n = Number(g.occurrences) || 0;
+      html += '<li><span class="dcReason">' + extEsc(g.reason || 'Not yet proven') + '</span> <code>' + extEsc(g.id) + '</code> <span class="sub">' +
         extEsc(n) + ' ' + (n === 1 ? 'occurrence' : 'occurrences') + '</span></li>';
     });
     html += '</ul>';
