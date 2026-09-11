@@ -9,10 +9,10 @@
   },
   "occurrences": {
     "$.s[0]": {
-      "construct": "wc.statement.switch", "role": "multi-way-decision",
+      "construct": "wc.statement.switch", "role": "multi-way-decision", "ctp": "e",
       "claims": ["statement.envelope.default.v1", "statement.switch.ordered-cases.v1", "statement.switch.default.v1"],
       "gaps": ["statement.switch.fast-forward-unresolved"],
-      "cite": {"role": "switch", "gaps": "switch", "envelope": "envelope"}
+      "cite": {"role": "switch", "ctp": "switch", "gaps": "switch", "envelope": "envelope"}
     },
     "$.s[0].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
@@ -27,10 +27,10 @@
     "$.s[0].e[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[1]": {
-      "construct": "wc.statement.switch", "role": "multi-way-decision",
+      "construct": "wc.statement.switch", "role": "multi-way-decision", "ctp": "i",
       "claims": ["statement.envelope.default.v1", "statement.switch.ordered-cases.v1"],
       "gaps": ["statement.switch.fast-forward-unresolved"],
-      "cite": {"role": "switch", "gaps": "switch", "envelope": "envelope"}
+      "cite": {"role": "switch", "ctp": "switch", "gaps": "switch", "envelope": "envelope"}
     },
     "$.s[1].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
       "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
