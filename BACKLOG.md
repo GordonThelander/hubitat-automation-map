@@ -536,6 +536,14 @@ keeping scan collection and authoritative normalization on the hub.
 Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
 breaking single-app Hubitat distribution.
 
+**Getting more urgent.** `validate.ps1`'s GString-size gate is now failing outright: the largest
+constant is measured at 88.8% of the 65535-byte JVM limit (leaving 7327 bytes), already past this
+project's own warning threshold before this backlog note was added. It will keep growing every time
+evidence or normaliser text is added anywhere in the file, not just in template code, since it is one
+compiled constant. The webCoRE L4 increment 6 deploy (2026-09-12) went out with `-SkipValidation`
+because of this pre-existing gate failure, unrelated to that change; the actual fix (a `${''}` split
+marker near the reported line, or the frontend separation this item already proposes) is still open.
+
 ### 14. Delta scanning
 
 Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
