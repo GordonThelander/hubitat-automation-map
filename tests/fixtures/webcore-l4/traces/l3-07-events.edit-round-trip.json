@@ -1,0 +1,18 @@
+{
+  "fixture": "l3-07-events.edit-round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "on": {"docs": "https://wiki.webcore.co/Piston links to an empty On construct page; undocumented, source only", "source": "executor.statement-dispatch"},
+    "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
+  },
+  "occurrences": {
+    "$.s[0]": {
+      "construct": "wc.statement.on", "role": "any-event-match",
+      "claims": ["statement.envelope.default.v1", "statement.on.any-event-match.v1"],
+      "gaps": ["statement.on.fast-forward-unresolved"],
+      "cite": {"role": "on", "gaps": "on", "envelope": "envelope"}
+    },
+    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
+  }
+}

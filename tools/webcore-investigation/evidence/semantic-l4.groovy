@@ -1,5 +1,6 @@
 // Semantic (L4) evidence manifest, increments 1 (if, do, condition lists, the default envelope),
-// 2 (switch, switch-scoped break, exit) and 3 (while, repeat, for, each, loop-scoped break).
+// 2 (switch, switch-scoped break, exit), 3 (while, repeat, for, each, loop-scoped break) and
+// 4 (on, every, the tep/tsp/tcp task policy vocabularies).
 //
 // A claim states what a saved construct means at runtime, never a live outcome. It is promoted only
 // when L4Promotion finds every contract item: the structure it rests on is L3, a documentation
@@ -139,7 +140,47 @@
      sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
      fixtures: ['l3-04-loops.edit-round-trip'],
      edges: [[fixture: 'l3-04-loops.edit-round-trip', path: '$.s[0].s[2]', exercises: 'a break whose nearest container is a while, alongside a nested do']],
-     negative: 'a break inside a loop terminates the whole piston, as exit does']
+     negative: 'a break inside a loop terminates the whole piston, as exit does'],
+
+    [id: 'statement.on.any-event-match.v1', structural: ['wc.statement.on'],
+     meaning: 'An on statement runs its body when any of its saved event matchers matches the event that triggered this execution; matching against the trigger itself is kept opaque.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the On construct page is empty']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-07-events.edit-round-trip'],
+     edges: [[fixture: 'l3-07-events.edit-round-trip', path: '$.s[0]', exercises: 'an on with two saved event matchers']],
+     negative: 'an on requires every saved event matcher to match, rather than any one of them'],
+
+    [id: 'statement.every.own-timer-only.v1', structural: ['wc.statement.every'],
+     meaning: 'An every statement runs its body only when its own scheduled timer event fires, never on any other trigger, and every occurrence of its own timer event, whether or not restrictions allowed the body to run, terminates the whole piston execution pass: no statement saved after it in the same execution runs.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the Every construct page is empty']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-06-timers.round-trip'],
+     edges: [[fixture: 'l3-06-timers.round-trip', path: '$.s[1]', exercises: 'a second every statement, unreachable if the first already terminated the pass']],
+     negative: 'an every continues to its following siblings after its own timer fires, the way an ordinary statement does'],
+
+    [id: 'statement.tep.execution-policy.v1', structural: ['wc.statement.action'],
+     meaning: 'A saved tep governs whether a statement re-executes its tasks on every trigger: absent means always, c means only on condition-state change, p means only on piston-state change, b means either.',
+     docs: [[page: 'https://wiki.webcore.co/Task_Execution_Policy', disposition: 'Documents all four options and that no limit, the default, always executes']],
+     sources: [[region: 'executor.execute-action', sha256: '49f61a9b3c3567a9e92772e550541824192d6b36268303b8ca99a0c4846aa9b4']],
+     fixtures: ['l3-08-policies.round-trip'],
+     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[0]', exercises: 'a saved tep of c']],
+     negative: 'an absent tep is read as never executing the tasks, rather than always'],
+
+    [id: 'statement.tsp.scheduling-policy.v1', structural: ['wc.statement.action'],
+     meaning: 'A saved tsp governs a new delayed task schedule for the same action: absent drops the earlier pending schedule and replaces it, a keeps the earlier one and adds the new schedule alongside it.',
+     docs: [[page: 'https://wiki.webcore.co/Task_Scheduling_Policy', disposition: 'Documents override (the default) versus allow multiple scheduled tasks']],
+     sources: [[region: 'executor.schedule-timer', sha256: '15b08d2aa476d10c17659bf0914bba738d1556aef4374054849140ea66f43d6e']],
+     fixtures: ['l3-08-policies.round-trip'],
+     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[0]', exercises: 'a saved tsp of a']],
+     negative: 'a saved tsp of a is read as override, dropping the earlier schedule, rather than allowing both'],
+
+    [id: 'statement.tcp.cancellation-policy.v1', structural: ['wc.statement.action'],
+     meaning: 'A saved tcp governs whether a pending delayed task is cancelled when its condition or piston state changes: absent means never cancel, c cancels on condition-state change and is the documented default, p cancels on piston-state change, b cancels on either.',
+     docs: [[page: 'https://wiki.webcore.co/Task_Cancellation_Policy', disposition: 'Documents all four options and states that cancel on condition-state change is the default']],
+     sources: [[region: 'executor.clean-code', sha256: '4522bc571384d95ee726e3e8a0b2fcad2a99553a96e866614e50e5515dc250e2']],
+     fixtures: ['l3-08-policies.round-trip'],
+     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[1]', exercises: 'a saved tcp of p']],
+     negative: 'a saved tcp of c is read as never cancel']
   ],
 
   // Named misreadings for the recorded limits. They cap occurrences and are never promoted.
@@ -158,8 +199,6 @@
     'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
     'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
     'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.every.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.unrecognised': 'The statement type is not recognised',
     'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
     'condition.operator-unproven': 'This condition operator is not yet proven',
@@ -173,6 +212,8 @@
     'statement.repeat.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
     'statement.for.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
     'statement.each.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.on.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.every.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
     'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
@@ -187,6 +228,11 @@
     'claim.statement.repeat.post-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.for.step-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.each.device-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-    'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+    'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.on.any-event-match.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.every.own-timer-only.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
   ]
 ]
