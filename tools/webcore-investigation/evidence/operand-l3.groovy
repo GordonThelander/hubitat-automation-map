@@ -35,7 +35,7 @@
   // event-match and empty forms the registry already carries separately.
   discriminatorValues: ['p', 'd', 'v', 's', 'x', 'c', 'e', 'u'],
 
-  kinds: ['constant', 'virtual', 'variable'],
+  kinds: ['constant', 'virtual', 'variable', 'expression'],
 
   // persisted, unless-empty, user-optional etc. carry the same meaning as the statement manifest.
   // exclusive: this key is stripped from every operand whose t is not the owning kind
@@ -112,6 +112,28 @@
                writtenBy: ['editor.edit-statement'],
                notes: 'stripped in memory only when vt is device and g is avg/any (ty==sX && vt!=sDEV branch is the one that applies here since vt is otherwise not device in every fixture occurrence seen); canonical-copy status unproven']
       ]
+    ],
+
+    'wc.operand.e': [
+      family: 'expression',
+      discriminator: [key: 't', value: 'e'],
+      keys: [
+        'vt':  [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+                writtenBy: ['editor.edit-statement'],
+                notes: 'evaluateOperand evaluates exp directly for this kind and does not read vt; value-type discriminator elsewhere, purpose here unproven'],
+        'exp': [kind: 'expression', persisted: 'always', consumed: 'read', exclusive: true,
+                readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+                notes: 'the only field evaluateOperand reads for this kind: mv=movt+evaluateExpression(r9,mMs(operand,sEXP)) - exp survives only for t in [e, c] (ListEC), same rule as operand.c.exp'],
+        'e':   [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+                writtenBy: ['editor.edit-statement'],
+                notes: 'saved alongside t: e but not read by evaluateOperand in the reviewed region; purpose unproven, possibly an editor-only display flag'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ]
     ]
   ],
 
@@ -138,7 +160,8 @@
     [region: 'executor.clean-code', contains: 'if(ty in ListC2 && item[sD] instanceof List) item.remove(sD)', supports: 'operand.v.d is unconditionally stripped, not inMem-guarded, but only on the path through recreatePiston/cleanCode'],
     [region: 'executor.recreate-piston', contains: 'msetIds(shorten,inMem,piston)', supports: 'cleanCode only runs reached from msetIds during recreatePiston (load), not from the editor compilePiston save path'],
     [region: 'executor.evaluate-operand', contains: 'if(operX.startsWith(sAT2)){', supports: 'operand.x.x: a leading @@ marks a superglobal variable name'],
-    [region: 'executor.evaluate-operand', contains: 'if(operX && operX.startsWith(sAT)){', supports: 'operand.x.x: a leading @ marks a global variable name']
+    [region: 'executor.evaluate-operand', contains: 'if(operX && operX.startsWith(sAT)){', supports: 'operand.x.x: a leading @ marks a global variable name'],
+    [region: 'executor.evaluate-operand', contains: 'mv=movt+evaluateExpression(r9,mMs(operand,sEXP))', supports: 'operand.e evaluates only its exp; e and vt are not read here']
   ],
 
   // Open questions this increment does not resolve. Recorded so the next increment starts from them
@@ -147,7 +170,8 @@
     'the closed vocabulary of vt (value-type) values is not yet reconciled against the executor',
     'whether f and g are ever absent on the saved IDE copy, or only stripped in memory, is unverified - needs the same IDE round-trip evidence the statement manifest built for statement keys',
     'expression item (exp.i[]) shape is undefined here: item kind, operator vocabulary, and nesting rules all remain open',
-    'the other nine operand constructs (p, d, s, e, u, the three event-match kinds, empty) have no manifest entry yet',
+    'the other six operand constructs (p, d, s, u, the three event-match kinds, empty) have no manifest entry yet - p, d and s in particular have zero occurrences anywhere in the current fixture corpus (every saved device list is empty, deliberately), the same gap blocking the L4.5 action-target claim; the new captures already requested (a multi-task action, a static device target) would also supply this evidence',
+    'operand.e.e has no proven purpose; not read by the one evaluateOperand region reviewed here',
     'the v value vocabulary is transcribed from the evaluateOperand switch cases but not yet cross-checked against a full source string dump the way the statement construct catalogue was',
     'whether cleanCode ever runs on a path other than recreatePiston (for example inside compilePiston itself) is asserted from call-site inspection, not yet proven exhaustively'
   ]
