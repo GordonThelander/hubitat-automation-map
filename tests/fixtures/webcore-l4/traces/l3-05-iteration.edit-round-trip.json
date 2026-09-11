@@ -1,0 +1,25 @@
+{
+  "fixture": "l3-05-iteration.edit-round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "exit": {"docs": "https://wiki.webcore.co/Piston links to an empty Exit construct page; undocumented, source only", "source": "executor.statement-dispatch"},
+    "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
+  },
+  "occurrences": {
+    "$.s[0]": {"construct": "wc.statement.for", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.for.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1]": {"construct": "wc.statement.each", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.each.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[2]": {
+      "construct": "wc.statement.exit", "role": "piston-terminate",
+      "claims": ["statement.envelope.default.v1", "statement.exit.terminate-piston.v1"],
+      "gaps": ["statement.exit.fast-forward-unresolved"],
+      "cite": {"role": "exit", "gaps": "exit", "envelope": "envelope"}
+    }
+  }
+}

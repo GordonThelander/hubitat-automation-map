@@ -1,0 +1,38 @@
+{
+  "fixture": "l3-03-switch.edit-round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "switch": {"docs": "https://wiki.webcore.co/Piston links to an empty Switch construct page; case order and ctp fall-through undocumented, source only", "source": "executor.statement-dispatch"},
+    "break": {"docs": "https://wiki.webcore.co/Piston links to an empty Break construct page; undocumented, source only", "source": "executor.statement-dispatch"},
+    "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
+  },
+  "occurrences": {
+    "$.s[0]": {
+      "construct": "wc.statement.switch", "role": "multi-way-decision",
+      "claims": ["statement.envelope.default.v1", "statement.switch.ordered-cases.v1", "statement.switch.default.v1"],
+      "gaps": ["statement.switch.fast-forward-unresolved"],
+      "cite": {"role": "switch", "gaps": "switch", "envelope": "envelope"}
+    },
+    "$.s[0].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].cs[0].s[1]": {
+      "construct": "wc.statement.break", "role": "switch-scoped-control-transfer",
+      "claims": ["statement.envelope.default.v1", "statement.break.switch-scope.v1"],
+      "gaps": ["statement.break.fast-forward-unresolved"],
+      "cite": {"role": "break", "gaps": "break", "envelope": "envelope"}
+    },
+    "$.s[0].cs[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].e[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1]": {
+      "construct": "wc.statement.switch", "role": "multi-way-decision",
+      "claims": ["statement.envelope.default.v1", "statement.switch.ordered-cases.v1"],
+      "gaps": ["statement.switch.fast-forward-unresolved"],
+      "cite": {"role": "switch", "gaps": "switch", "envelope": "envelope"}
+    },
+    "$.s[1].cs[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
+  }
+}

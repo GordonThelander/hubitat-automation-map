@@ -1,4 +1,5 @@
-// Semantic (L4) evidence manifest, first increment.
+// Semantic (L4) evidence manifest, increments 1 (if, do, condition lists, the default envelope) and
+// 2 (switch, switch-scoped break, exit).
 //
 // A claim states what a saved construct means at runtime, never a live outcome. It is promoted only
 // when L4Promotion finds every contract item: the structure it rests on is L3, a documentation
@@ -66,13 +67,46 @@
      fixtures: ['l3-01-conditional.edit-round-trip'],
      edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[0]', exercises: 'restrictions and explicit policies'],
              [fixture: 'l3-08-policies.round-trip', path: '$.s[2]', exercises: 'an execution policy with the default tcp']],
-     negative: 'a saved absent tcp, which is never cancel, is read as the default']
+     negative: 'a saved absent tcp, which is never cancel, is read as the default'],
+
+    [id: 'statement.switch.ordered-cases.v1', structural: ['wc.statement.switch'],
+     meaning: 'A switch tries each case in saved order against a single-value or range comparison, kept opaque. Ctp absent or i stops scanning after the first match; ctp e continues to later cases and the default until a break is reached.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'The Piston page links to a Switch construct page that is empty; case order and the ctp fall-through rule are undocumented, source only']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-03-switch.edit-round-trip'],
+     edges: [[fixture: 'l3-03-switch.edit-round-trip', path: '$.s[1]', exercises: 'ctp i with one case and no default']],
+     negative: 'every case is tried regardless of ctp, so fall-through and auto-break read the same'],
+
+    [id: 'statement.switch.default.v1', structural: ['wc.statement.switch'],
+     meaning: 'A switch default section, when saved, is eligible to run only when no case matched, or in fall-through mode when no break interrupted case execution first.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the Switch construct page is empty']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-03-switch.edit-round-trip'],
+     edges: [[fixture: 'l3-03-switch.edit-round-trip', path: '$.s[0]', exercises: 'a default section guarded by a break inside the matching case']],
+     negative: 'the default section always runs after the case list, whether or not a case matched or broke'],
+
+    [id: 'statement.break.switch-scope.v1', structural: ['wc.statement.break', 'wc.statement.switch'],
+     meaning: 'A break saved directly in a switch case or default statement list, with no loop between them, stops that switch: it suppresses the default section and execution continues after the switch.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the Break construct page is empty']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-03-switch.edit-round-trip'],
+     edges: [[fixture: 'l3-03-switch.edit-round-trip', path: '$.s[0].cs[0].s[1]', exercises: 'a break whose nearest container is a switch']],
+     negative: 'a break inside a switch case terminates the whole piston, as exit does'],
+
+    [id: 'statement.exit.terminate-piston.v1', structural: ['wc.statement.exit'],
+     meaning: 'An exit statement, when the piston is running normally, terminates the whole piston: every enclosing container stops. Its operand supplies the exit state and is kept opaque.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the Exit construct page is empty']],
+     sources: [[region: 'executor.statement-dispatch', sha256: 'a9eb246dda94cdd5d03d246ba51cd89d5c7e628f57b9d9fdaac88190c95cd643']],
+     fixtures: ['l3-05-iteration.edit-round-trip'],
+     edges: [[fixture: 'l3-05-iteration.edit-round-trip', path: '$.s[2]', exercises: 'an exit nested inside no loop or switch']],
+     negative: 'exit only exits its immediate containing statement, the way break does']
   ],
 
   // Named misreadings for the recorded limits. They cap occurrences and are never promoted.
   limits: [
     [gap: 'statement.if.automatic-piston-state-unresolved', negative: 'if has no side effect beyond branch selection', source: 'executor.statement-dispatch'],
-    [gap: 'condition.leaf-opaque', negative: 'a saved ct decides a condition leaf role', source: 'executor.evaluate-conditions']
+    [gap: 'condition.leaf-opaque', negative: 'a saved ct decides a condition leaf role', source: 'executor.evaluate-conditions'],
+    [gap: 'statement.break.container-unresolved', negative: 'a break with no switch as its nearest container is read as switch-scoped', source: 'executor.statement-dispatch']
   ],
 
   gaps: [
@@ -90,19 +124,24 @@
     'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.each.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.for.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.switch.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.break.not-in-increment': 'The meaning of this statement type is not yet proven',
-    'statement.exit.not-in-increment': 'The meaning of this statement type is not yet proven',
     'statement.unrecognised': 'The statement type is not recognised',
     'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
     'condition.operator-unproven': 'This condition operator is not yet proven',
     'condition.group-depth-unproven': 'A group inside a group is not yet proven',
     'condition.followed-by-timing-unproven': 'The timing of a followed-by sequence is not yet explained',
+    'statement.switch.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.break.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+    'statement.break.container-unresolved': 'This break statement is not directly inside a switch case or default, so its scope is not yet proven',
+    'statement.exit.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
     'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.condition.followed-by.opaque-group.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.do.sequential-block.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-    'claim.statement.envelope.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+    'claim.statement.envelope.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.switch.ordered-cases.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.switch.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.break.switch-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.exit.terminate-piston.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
   ]
 ]
