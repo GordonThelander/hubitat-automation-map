@@ -43,7 +43,8 @@ check(fixtures.every { (fixtureManifest.captureKinds as Map).containsKey(it.capt
 
 fixtures.each { Map fx ->
     File f = new File(dir, fx.file as String)
-    String text = f.isFile() ? f.getText('UTF-8') : ''
+    // Hashes are over LF text, so a CRLF checkout still verifies.
+    String text = f.isFile() ? f.getText('UTF-8').replace('\r\n', '\n') : ''
     Map census = f.isFile() ? sanitiser.support.collectWebcoreDecodeCoverage(new JsonSlurper().parseText(text), registry, null, shapes) as Map : [:]
     Map statements = new TreeMap(((census.constructCounts ?: [:]) as Map).findAll { k, v -> "${k}".startsWith('wc.statement.') })
     int invalid = ((census.constructOccurrences ?: [:]) as Map).values().collect { (it as Map).structurallyInvalid as int }.sum(0)
@@ -66,7 +67,7 @@ if (!rawDir.isDirectory()) {
         File rawFile = new File(rawDir, stem)
         if (!rawFile.isFile()) { drift << "${fx.file} (raw missing)"; return }
         String regenerated = sanitiser.render(sanitiser.sanitiseCapture(new JsonSlurper().parse(rawFile) as Map))
-        if (regenerated != new File(dir, fx.file as String).getText('UTF-8')) drift << fx.file
+        if (regenerated != new File(dir, fx.file as String).getText('UTF-8').replace('\r\n', '\n')) drift << fx.file
     }
     check(drift.isEmpty(), "regenerating every fixture from its raw capture is byte-identical ${drift}")
 }
