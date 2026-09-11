@@ -383,12 +383,13 @@ end state. That answer is currently unknown and is worth having either way.
   groups, followed-by groups kept opaque, `do` as a sequential block, the default statement settings,
   switch case order and its case-traversal policy, `while` as a pre-condition loop, `repeat` as a
   post-condition loop that stops once its condition becomes true, `for`/`each` as step/device
-  iteration, and a break scoped to its nearest switch or loop. Exit is a whole-piston terminate.
-  Everything else is an explicit gap per occurrence, so no current piston is yet reported as fully
-  explained.
-- **Still to come.** The remaining L4 steps (events and policies, actions, operands), then the flow
-  rendering that eventually lets a piston draw its own flow with anything not yet understood shown as
-  an explicit opaque block.
+  iteration, a break scoped to its nearest switch or loop, `on` as any-event matching, `every` as
+  own-timer-only and always ending the piston's execution pass, and the tep/tsp/tcp task policy
+  vocabularies. Exit is a whole-piston terminate. Everything else is an explicit gap per occurrence,
+  so no current piston is yet reported as fully explained.
+- **Still to come.** The remaining L4 steps (actions and targets, operands), then the flow rendering
+  that eventually lets a piston draw its own flow with anything not yet understood shown as an
+  explicit opaque block.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,

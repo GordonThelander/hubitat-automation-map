@@ -91,7 +91,8 @@ check(countDrift.isEmpty(), "every committed fixture is normalized without trunc
 
 Set closed = (['or', 'decision', 'sequential-block', 'then', 'else', 'group', 'opaque-condition', 'opaque-followed-by-group',
                'multi-way-decision', 'switch-scoped-control-transfer', 'piston-terminate', 'i', 'e',
-               'pre-condition-loop', 'post-condition-loop', 'step-iteration', 'device-iteration', 'loop-scoped-control-transfer'] +
+               'pre-condition-loop', 'post-condition-loop', 'step-iteration', 'device-iteration', 'loop-scoped-control-transfer',
+               'own-timer-only', 'any-event-match'] +
               (evidence.claims as Map).keySet() + (evidence.gaps as Map).keySet()) as Set
 def strings
 strings = { Object o, List acc ->
@@ -174,7 +175,17 @@ Map mutations = [
     'an each runs its body exactly once, ignoring the device list it saves':
         ["claims << 'statement.each.device-iteration.v1'", ''],
     'a break inside a loop terminates the whole piston, as exit does':
-        ["claims << 'statement.break.loop-scope.v1'", "claims << 'statement.exit.terminate-piston.v1'"]
+        ["claims << 'statement.break.loop-scope.v1'", "claims << 'statement.exit.terminate-piston.v1'"],
+    'an on requires every saved event matcher to match, rather than any one of them':
+        ["claims << 'statement.on.any-event-match.v1'", ''],
+    'an every continues to its following siblings after its own timer fires, the way an ordinary statement does':
+        ["claims << 'statement.every.own-timer-only.v1'", ''],
+    'an absent tep is read as never executing the tasks, rather than always':
+        ["if (node.containsKey('tep')) claims << 'statement.tep.execution-policy.v1'", "if (!node.containsKey('tep')) claims << 'statement.tep.execution-policy.v1'"],
+    'a saved tsp of a is read as override, dropping the earlier schedule, rather than allowing both':
+        ["if (node.containsKey('tsp')) claims << 'statement.tsp.scheduling-policy.v1'", ''],
+    'a saved tcp of c is read as never cancel':
+        ["if (node.tcp != null && node.tcp != 'c') claims << 'statement.tcp.cancellation-policy.v1'", "if (node.tcp != null) claims << 'statement.tcp.cancellation-policy.v1'"]
 ]
 List named = (manifest.claims as List).collect { (it as Map).negative } + (manifest.limits as List).collect { (it as Map).negative }
 check((mutations.keySet() as Set) == (named as Set), 'every named misreading in the manifest has a mutation here')

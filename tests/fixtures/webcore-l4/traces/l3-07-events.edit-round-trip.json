@@ -9,8 +9,8 @@
   "occurrences": {
     "$.s[0]": {
       "construct": "wc.statement.on", "role": "any-event-match",
-      "claims": ["statement.envelope.default.v1", "statement.on.any-event-match.v1"],
-      "gaps": ["statement.on.fast-forward-unresolved"],
+      "claims": ["statement.on.any-event-match.v1"],
+      "gaps": ["statement.envelope.async", "statement.on.fast-forward-unresolved"],
       "cite": {"role": "on", "gaps": "on", "envelope": "envelope"}
     },
     "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
