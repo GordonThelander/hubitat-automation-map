@@ -389,11 +389,15 @@ end state. That answer is currently unknown and is worth having either way.
   expanded once and shared by every task, distinguishing a static device target from the dynamic
   `$currentEventDevice` sentinel. Everything else is an explicit gap per occurrence, so no current
   piston is yet reported as fully explained.
-- **Task order still open.** Two new test pistons (`zz-L3-09 tasks`, a static device target already
-  covered above; `zz-L3-10 targets`) were captured to evidence action semantics. The multi-task
-  piston's only usable capture is a round trip with no matching first save in its lineage, so it
-  cannot meet the canonical-fixture rule; task order and per-task command meaning stay an explicit
-  gap (`statement.action.task-order-unresolved`) until a fresh capture supplies both.
+- **Task order proven.** The `zz-L3-09 tasks` piston was recaptured with a valid first-save/round-trip
+  lineage after the original round trip's only save was found unusable. A saved action runs its task
+  list `k` sequentially in saved list order, one task at a time, stopping the remaining tasks early
+  only when a task fails during a normal (non-fast-forward) run (`statement.action.task-order.v1`).
+  This claim, together with the earlier device-list target claim, means all twelve registered
+  statement types now have at least one proven L4 claim. Fast-forward resumption's effect on the
+  break-on-failure behaviour is a new, separate, explicit gap
+  (`statement.action.fast-forward-unresolved`); an action with one task or fewer still carries
+  `statement.action.task-order-unresolved`, since no capture exercises order for it.
 - **Operand structural (L3) evidence, first slice.** Four of the twelve registered operand kinds now
   have a reviewed, source-cited shape and a gate proving it against every occurrence in the fixture
   corpus: constant, virtual (mode/HSM/etc. reads), variable (Hub/global/local references) and
