@@ -13,13 +13,13 @@
       "gaps": ["statement.envelope.async", "statement.every.fast-forward-unresolved"],
       "cite": {"role": "every", "gaps": "every", "envelope": "envelope"}
     },
-    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[1]": {
       "construct": "wc.statement.every", "role": "own-timer-only",
       "claims": ["statement.every.own-timer-only.v1"],
       "gaps": ["statement.envelope.async", "statement.every.fast-forward-unresolved"],
       "cite": {"role": "every", "gaps": "every", "envelope": "envelope"}
     },
-    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
+    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
   }
 }

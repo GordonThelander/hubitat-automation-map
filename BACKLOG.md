@@ -385,11 +385,26 @@ end state. That answer is currently unknown and is worth having either way.
   post-condition loop that stops once its condition becomes true, `for`/`each` as step/device
   iteration, a break scoped to its nearest switch or loop, `on` as any-event matching, `every` as
   own-timer-only and always ending the piston's execution pass, and the tep/tsp/tcp task policy
-  vocabularies. Exit is a whole-piston terminate. Everything else is an explicit gap per occurrence,
-  so no current piston is yet reported as fully explained.
-- **Still to come.** The remaining L4 steps (actions and targets, operands), then the flow rendering
-  that eventually lets a piston draw its own flow with anything not yet understood shown as an
-  explicit opaque block.
+  vocabularies. Exit is a whole-piston terminate. An action's saved device list is now proven too:
+  expanded once and shared by every task, distinguishing a static device target from the dynamic
+  `$currentEventDevice` sentinel. Everything else is an explicit gap per occurrence, so no current
+  piston is yet reported as fully explained.
+- **Task order still open.** Two new test pistons (`zz-L3-09 tasks`, a static device target already
+  covered above; `zz-L3-10 targets`) were captured to evidence action semantics. The multi-task
+  piston's only usable capture is a round trip with no matching first save in its lineage, so it
+  cannot meet the canonical-fixture rule; task order and per-task command meaning stay an explicit
+  gap (`statement.action.task-order-unresolved`) until a fresh capture supplies both.
+- **Operand structural (L3) evidence, first slice.** Four of the twelve registered operand kinds now
+  have a reviewed, source-cited shape and a gate proving it against every occurrence in the fixture
+  corpus: constant, virtual (mode/HSM/etc. reads), variable (Hub/global/local references) and
+  expression. The remaining eight (physical device read, device list, preset, argument, the three
+  event-match kinds, and the empty/nothing-selected kind) have no fixture evidence yet; none of the
+  current captures exercises them. This is evidence only so far - it does not yet raise any
+  registry level or feed the runtime walker.
+- **Still to come.** The remaining operand kinds, wiring proven operand evidence into the registry
+  and walker, the rest of L4 (remaining action semantics, operand meaning once L3-proven), then the
+  flow rendering that eventually lets a piston draw its own flow with anything not yet understood
+  shown as an explicit opaque block.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,

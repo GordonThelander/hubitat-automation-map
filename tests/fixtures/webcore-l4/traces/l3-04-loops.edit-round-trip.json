@@ -18,10 +18,10 @@
       "condition": {"operator": null, "negated": true, "children": [{"kind": "opaque-condition"}]},
       "cite": {"role": "while", "condition": "condition", "gaps": "while", "envelope": "envelope"}
     },
-    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[0].s[1]": {"construct": "wc.statement.do", "role": "sequential-block", "claims": ["statement.do.sequential-block.v1", "statement.envelope.default.v1"], "gaps": [],
       "children": 1, "lowersStatementLevel": true, "cite": {"role": "do", "children": "do", "lowersStatementLevel": "do", "envelope": "envelope"}},
-    "$.s[0].s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[0].s[2]": {
       "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
       "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
@@ -35,7 +35,7 @@
       "condition": {"operator": null, "negated": false, "children": [{"kind": "opaque-condition"}]},
       "cite": {"role": "while", "condition": "condition", "gaps": "while", "envelope": "envelope"}
     },
-    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[1].s[1]": {
       "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
       "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
@@ -49,7 +49,7 @@
       "condition": {"operator": null, "negated": true, "children": [{"kind": "opaque-condition"}]},
       "cite": {"role": "repeat", "condition": "condition", "gaps": "repeat", "envelope": "envelope"}
     },
-    "$.s[2].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[2].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[2].s[1]": {
       "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
       "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],
@@ -63,7 +63,7 @@
       "condition": {"operator": null, "negated": false, "children": [{"kind": "opaque-condition"}]},
       "cite": {"role": "repeat", "condition": "condition", "gaps": "repeat", "envelope": "envelope"}
     },
-    "$.s[3].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[3].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.task-order-unresolved"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[3].s[1]": {
       "construct": "wc.statement.break", "role": "loop-scoped-control-transfer",
       "claims": ["statement.envelope.default.v1", "statement.break.loop-scope.v1"],

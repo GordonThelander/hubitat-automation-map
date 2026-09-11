@@ -44,7 +44,7 @@ check((manifest.limits as List).every { Map l -> gaps.containsKey(l.gap) && l.ne
 // ---- closed gap list -----------------------------------------------------------------
 
 List statementTypes = (registry.constructs as Map).keySet().findAll { "${it}".startsWith('wc.statement.') }.collect { "${it}".substring('wc.statement.'.length()) }
-List claimedTypes = ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each', 'on', 'every']
+List claimedTypes = ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each', 'on', 'every', 'action']
 Set expectedNotInIncrement = statementTypes.findAll { !(it in claimedTypes) }.collect { "statement.${it}.not-in-increment".toString() } as Set
 check(expectedNotInIncrement.every { gaps.containsKey(it) } && claimedTypes.every { !gaps.containsKey("statement.${it}.not-in-increment".toString()) },
     'every statement type outside this increment has a closed gap, and every claimed type does not')

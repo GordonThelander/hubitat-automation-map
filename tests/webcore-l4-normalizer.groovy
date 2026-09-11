@@ -92,7 +92,7 @@ check(countDrift.isEmpty(), "every committed fixture is normalized without trunc
 Set closed = (['or', 'decision', 'sequential-block', 'then', 'else', 'group', 'opaque-condition', 'opaque-followed-by-group',
                'multi-way-decision', 'switch-scoped-control-transfer', 'piston-terminate', 'i', 'e',
                'pre-condition-loop', 'post-condition-loop', 'step-iteration', 'device-iteration', 'loop-scoped-control-transfer',
-               'own-timer-only', 'any-event-match'] +
+               'own-timer-only', 'any-event-match', 'targeted-tasks', 'static', 'dynamic'] +
               (evidence.claims as Map).keySet() + (evidence.gaps as Map).keySet()) as Set
 def strings
 strings = { Object o, List acc ->
@@ -123,13 +123,13 @@ Map withdrawnEvidence = copy(evidence) as Map
 Map withdrawn = model(normalizer, doc('l3-01-conditional.edit-round-trip'), withdrawnEvidence).occurrences as Map
 check(!((withdrawn['$.s[0]'] as Map).claims as List).contains('statement.if.branch-order.v1') &&
       ((withdrawn['$.s[0]'] as Map).gaps as List).contains('claim.statement.if.branch-order.v1.not-promoted') &&
-      (withdrawn['$.s[0].s[0]'] as Map).gaps == ['statement.action.not-in-increment'],
+      (withdrawn['$.s[0].s[0]'] as Map).gaps == ['statement.action.task-order-unresolved'],
     'a claim the evidence withdraws becomes a gap on the occurrences that took it, and only those')
 
 Map assessed = normalizer.webcoreSemanticAssessment(model(normalizer, doc('l3-01-conditional.edit-round-trip')), evidence) as Map
 Map gapCount = (assessed.gaps as List).collectEntries { Map g -> [(g.id): g.occurrences] }
 check(assessed.status == 'complete' && assessed.occurrences == 7 && assessed.explained == 0 && assessed.explainable == false &&
-      gapCount['statement.action.not-in-increment'] == 5 && gapCount['condition.leaf-opaque'] == 2 &&
+      gapCount['statement.action.task-order-unresolved'] == 5 && gapCount['condition.leaf-opaque'] == 2 &&
       (assessed.gaps as List).every { Map g -> g.reason == (evidence.gaps as Map)[g.id] },
     "the assessment counts occurrences, explained occurrences and closed gaps with their fixed reasons (${assessed.occurrences}, ${gapCount})")
 Map shallow = normalizer.webcoreSemanticModel(doc('l3-01-conditional.edit-round-trip'), evidence, 1) as Map
@@ -185,7 +185,9 @@ Map mutations = [
     'a saved tsp of a is read as override, dropping the earlier schedule, rather than allowing both':
         ["if (node.containsKey('tsp')) claims << 'statement.tsp.scheduling-policy.v1'", ''],
     'a saved tcp of c is read as never cancel':
-        ["if (node.tcp != null && node.tcp != 'c') claims << 'statement.tcp.cancellation-policy.v1'", "if (node.tcp != null) claims << 'statement.tcp.cancellation-policy.v1'"]
+        ["if (node.tcp != null && node.tcp != 'c') claims << 'statement.tcp.cancellation-policy.v1'", "if (node.tcp != null) claims << 'statement.tcp.cancellation-policy.v1'"],
+    'a saved device list is expanded per task rather than once and shared by the whole action':
+        ["claims << 'statement.action.device-list.v1'", '']
 ]
 List named = (manifest.claims as List).collect { (it as Map).negative } + (manifest.limits as List).collect { (it as Map).negative }
 check((mutations.keySet() as Set) == (named as Set), 'every named misreading in the manifest has a mutation here')

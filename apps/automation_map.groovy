@@ -5003,7 +5003,8 @@ Map webcoreSemanticEvidence() {
             'statement.every.own-timer-only.v1': true,
             'statement.tep.execution-policy.v1': true,
             'statement.tsp.scheduling-policy.v1': true,
-            'statement.tcp.cancellation-policy.v1': true
+            'statement.tcp.cancellation-policy.v1': true,
+            'statement.action.device-list.v1': true
         ],
         gaps: [
             'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
@@ -5013,7 +5014,8 @@ Map webcoreSemanticEvidence() {
             'statement.envelope.tcp-non-default': 'The task cancellation policy is not the proven default',
             'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
             'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
-            'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
+            'statement.action.task-order-unresolved': 'Task order and per-task command meaning are not yet proven; the only multi-task capture has no committed first-save in its lineage',
+            'statement.action.device-list.dynamic-unresolved': 'A dynamic ($currentEventDevice) device target is not yet explained further than being dynamic',
             'statement.unrecognised': 'The statement type is not recognised',
             'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
             'condition.operator-unproven': 'This condition operator is not yet proven',
@@ -5048,7 +5050,8 @@ Map webcoreSemanticEvidence() {
             'claim.statement.every.own-timer-only.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-            'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+            'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.action.device-list.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
         ]
     ]
 }
@@ -5083,7 +5086,7 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String 
     Set claims = [] as Set
     Set gaps = [] as Set
     Map gapReasons = (((acc.evidence as Map).gaps ?: [:]) as Map)
-    boolean known = type in ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each', 'on', 'every'] ||
+    boolean known = type in ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each', 'on', 'every', 'action'] ||
         gapReasons.containsKey('statement.' + type + '.not-in-increment')
     Map entry = [construct: known ? 'wc.statement.' + type : 'wc.statement.unrecognised', role: null]
     // Saved tcp c is the default; a saved absent tcp is never cancel (editor option "", cleanCode).
@@ -5167,6 +5170,16 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String 
         entry.role = 'own-timer-only'
         claims << 'statement.every.own-timer-only.v1'
         gaps << 'statement.every.fast-forward-unresolved'
+    } else if (type == 'action') {
+        gaps << 'statement.action.task-order-unresolved'
+        List deviceList = (node.d instanceof List) ? (node.d as List) : []
+        if (deviceList) {
+            entry.role = 'targeted-tasks'
+            claims << 'statement.action.device-list.v1'
+            boolean dynamic = deviceList.size() == 1 && deviceList[0] == '$currentEventDevice'
+            entry.deviceTarget = dynamic ? 'dynamic' : 'static'
+            if (dynamic) gaps << 'statement.action.device-list.dynamic-unresolved'
+        }
     } else {
         String gap = 'statement.' + type + '.not-in-increment'
         gaps << ((((acc.evidence as Map).gaps ?: [:]) as Map).containsKey(gap) ? gap : 'statement.unrecognised')

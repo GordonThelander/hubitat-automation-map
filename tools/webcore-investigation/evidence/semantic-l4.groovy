@@ -1,6 +1,10 @@
 // Semantic (L4) evidence manifest, increments 1 (if, do, condition lists, the default envelope),
-// 2 (switch, switch-scoped break, exit), 3 (while, repeat, for, each, loop-scoped break) and
-// 4 (on, every, the tep/tsp/tcp task policy vocabularies).
+// 2 (switch, switch-scoped break, exit), 3 (while, repeat, for, each, loop-scoped break),
+// 4 (on, every, the tep/tsp/tcp task policy vocabularies) and 5 (the action device-list target,
+// the first claim from the newly captured l3-09/l3-10 pistons). Action task order is not yet
+// claimed: the only multi-task capture, l3-09-tasks, has no committed first-save in its lineage,
+// so it cannot meet the canonical-fixture contract item. That capture is still useful, structural
+// (L3) evidence; it is committed and counted, just not cited by any L4 claim yet.
 //
 // A claim states what a saved construct means at runtime, never a live outcome. It is promoted only
 // when L4Promotion finds every contract item: the structure it rests on is L3, a documentation
@@ -180,7 +184,15 @@
      sources: [[region: 'executor.clean-code', sha256: '4522bc571384d95ee726e3e8a0b2fcad2a99553a96e866614e50e5515dc250e2']],
      fixtures: ['l3-08-policies.round-trip'],
      edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[1]', exercises: 'a saved tcp of p, a non-default value']],
-     negative: 'a saved tcp of c is read as never cancel']
+     negative: 'a saved tcp of c is read as never cancel'],
+
+    [id: 'statement.action.device-list.v1', structural: ['wc.statement.action'],
+     meaning: 'An action expands its saved device list once and every task in its saved task list runs against that same shared set. A device list holding the single sentinel $currentEventDevice is a dynamic target, the device that triggered execution; any other saved identifier is a static target, kept opaque.',
+     docs: [[page: 'https://wiki.webcore.co/Piston', disposition: 'Undocumented, source only: the Action construct page is empty']],
+     sources: [[region: 'executor.execute-action', sha256: '49f61a9b3c3567a9e92772e550541824192d6b36268303b8ca99a0c4846aa9b4']],
+     fixtures: ['l3-10-targets.round-trip'],
+     edges: [[fixture: 'l3-10-targets.round-trip', path: '$.s[0]', exercises: 'a static, single-device target']],
+     negative: 'a saved device list is expanded per task rather than once and shared by the whole action']
   ],
 
   // Named misreadings for the recorded limits. They cap occurrences and are never promoted.
@@ -198,7 +210,8 @@
     'statement.envelope.tcp-non-default': 'The task cancellation policy is not the proven default',
     'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
     'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
-    'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
+    'statement.action.task-order-unresolved': 'Task order and per-task command meaning are not yet proven; the only multi-task capture has no committed first-save in its lineage',
+    'statement.action.device-list.dynamic-unresolved': 'A dynamic ($currentEventDevice) device target is not yet explained further than being dynamic',
     'statement.unrecognised': 'The statement type is not recognised',
     'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
     'condition.operator-unproven': 'This condition operator is not yet proven',
@@ -233,6 +246,7 @@
     'claim.statement.every.own-timer-only.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
     'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-    'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+    'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+    'claim.statement.action.device-list.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
   ]
 ]
