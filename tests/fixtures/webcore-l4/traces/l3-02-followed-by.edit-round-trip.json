@@ -1,0 +1,38 @@
+{
+  "fixture": "l3-02-followed-by.edit-round-trip",
+  "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
+  "citations": {
+    "if": {"docs": "https://wiki.webcore.co/Piston (If Block); else-if order undocumented, source only", "source": "executor.statement-dispatch"},
+    "conditions": {"docs": "https://wiki.webcore.co/Piston (Condition Group); negation undocumented, source only", "source": "executor.evaluate-conditions"},
+    "followed-by": {"docs": "https://community.webcore.co/t/if-this-then-wait-then-if/1393; https://community.webcore.co/t/sequence-of-events/5037", "source": "executor.evaluate-conditions"},
+    "leaves": {"docs": "undocumented, source only", "source": "executor.evaluate-conditions"},
+    "limits": {"docs": "undocumented, source only", "source": "executor.statement-dispatch"},
+    "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
+    "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
+  },
+  "occurrences": {
+    "$.s[0]": {
+      "construct": "wc.statement.if", "role": "decision",
+      "claims": ["condition.followed-by.opaque-group.v1", "condition.list.negation.v1", "statement.envelope.default.v1", "statement.if.branch-order.v1"],
+      "gaps": ["condition.followed-by-timing-unproven", "condition.operator-unproven", "statement.if.automatic-piston-state-unresolved", "statement.if.fast-forward-resumption-unresolved"],
+      "branches": [
+        {"name": "then", "condition": {"operator": null, "negated": false, "children": [{"kind": "opaque-followed-by-group"}]}}
+      ],
+      "cite": {"role": "if", "branches": "if", "condition": "conditions", "followedBy": "followed-by", "gaps": "limits", "envelope": "envelope"}
+    },
+    "$.s[0].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1]": {
+      "construct": "wc.statement.if", "role": "decision",
+      "claims": ["condition.list.negation.v1", "statement.envelope.default.v1", "statement.if.branch-order.v1"],
+      "gaps": ["condition.leaf-opaque", "condition.operator-unproven", "statement.if.automatic-piston-state-unresolved", "statement.if.fast-forward-resumption-unresolved"],
+      "branches": [
+        {"name": "then", "condition": {"operator": null, "negated": false, "children": [
+          {"kind": "group", "operator": null, "negated": false, "children": [{"kind": "opaque-condition"}, {"kind": "opaque-condition"}]}]}}
+      ],
+      "cite": {"role": "if", "branches": "if", "condition": "conditions", "leaves": "leaves", "gaps": "limits", "envelope": "envelope"}
+    },
+    "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"],
+      "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
+  }
+}
