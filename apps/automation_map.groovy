@@ -4989,7 +4989,11 @@ Map webcoreSemanticEvidence() {
             'condition.list.operator-or.v1': true,
             'condition.followed-by.opaque-group.v1': true,
             'statement.do.sequential-block.v1': true,
-            'statement.envelope.default.v1': true
+            'statement.envelope.default.v1': true,
+            'statement.switch.ordered-cases.v1': true,
+            'statement.switch.default.v1': true,
+            'statement.break.switch-scope.v1': true,
+            'statement.exit.terminate-piston.v1': true
         ],
         gaps: [
             'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
@@ -5006,20 +5010,25 @@ Map webcoreSemanticEvidence() {
             'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
             'statement.each.not-in-increment': 'The meaning of this statement type is not yet proven',
             'statement.for.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.switch.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.break.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.exit.not-in-increment': 'The meaning of this statement type is not yet proven',
             'statement.unrecognised': 'The statement type is not recognised',
             'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
             'condition.operator-unproven': 'This condition operator is not yet proven',
             'condition.group-depth-unproven': 'A group inside a group is not yet proven',
             'condition.followed-by-timing-unproven': 'The timing of a followed-by sequence is not yet explained',
+            'statement.switch.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.break.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.break.container-unresolved': 'This break statement is not directly inside a switch case or default, so its scope is not yet proven',
+            'statement.exit.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.followed-by.opaque-group.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.do.sequential-block.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-            'claim.statement.envelope.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+            'claim.statement.envelope.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.switch.ordered-cases.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.switch.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.break.switch-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.exit.terminate-piston.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
         ]
     ]
 }
@@ -5038,19 +5047,22 @@ Map webcoreSemanticModel(Object document, Map evidence, int maxDepth) {
     return [occurrences: acc.occurrences, truncated: acc.truncated]
 }
 
-void webcoreSemanticStatements(List list, String path, int depth, Map acc) {
+void webcoreSemanticStatements(List list, String path, int depth, Map acc, String container = 'block') {
     for (int i = 0; i < list.size(); i++) {
-        if (list[i] instanceof Map) webcoreSemanticStatement(list[i] as Map, path + '[' + i + ']', depth + 1, acc)
+        if (list[i] instanceof Map) webcoreSemanticStatement(list[i] as Map, path + '[' + i + ']', depth + 1, acc, container)
     }
 }
 
-void webcoreSemanticStatement(Map node, String path, int depth, Map acc) {
+// container names the immediate statement list a statement was reached through: 'switch-case' for a
+// switch's own case or default list, 'block' for every other list (root, if, do, loop, else-if). Only
+// a break whose nearest container is a switch case is claimed as switch-scoped.
+void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String container = 'block') {
     if (depth > (acc.maxDepth as Integer)) { acc.truncated = true; return }
     String type = (node.t instanceof String) ? (node.t as String) : ''
     Set claims = [] as Set
     Set gaps = [] as Set
     Map gapReasons = (((acc.evidence as Map).gaps ?: [:]) as Map)
-    boolean known = type in ['if', 'do'] || gapReasons.containsKey('statement.' + type + '.not-in-increment')
+    boolean known = type in ['if', 'do', 'switch', 'break', 'exit'] || gapReasons.containsKey('statement.' + type + '.not-in-increment')
     Map entry = [construct: known ? 'wc.statement.' + type : 'wc.statement.unrecognised', role: null]
     // Saved tcp c is the default; a saved absent tcp is never cancel (editor option "", cleanCode).
     boolean envelope = true
@@ -5078,6 +5090,25 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc) {
         claims << 'statement.do.sequential-block.v1'
         entry.children = (node.s instanceof List) ? (node.s as List).count { it instanceof Map } : 0
         entry.lowersStatementLevel = true
+    } else if (type == 'switch') {
+        entry.role = 'multi-way-decision'
+        // ctp absent or i stops at the first match; only an explicit e falls through.
+        entry.ctp = (node.ctp == 'e') ? 'e' : 'i'
+        claims << 'statement.switch.ordered-cases.v1'
+        if (node.e instanceof List && (node.e as List)) claims << 'statement.switch.default.v1'
+        gaps << 'statement.switch.fast-forward-unresolved'
+    } else if (type == 'break') {
+        if (container == 'switch-case') {
+            entry.role = 'switch-scoped-control-transfer'
+            claims << 'statement.break.switch-scope.v1'
+            gaps << 'statement.break.fast-forward-unresolved'
+        } else {
+            gaps << 'statement.break.container-unresolved'
+        }
+    } else if (type == 'exit') {
+        entry.role = 'piston-terminate'
+        claims << 'statement.exit.terminate-piston.v1'
+        gaps << 'statement.exit.fast-forward-unresolved'
     } else {
         String gap = 'statement.' + type + '.not-in-increment'
         gaps << ((((acc.evidence as Map).gaps ?: [:]) as Map).containsKey(gap) ? gap : 'statement.unrecognised')
@@ -5101,10 +5132,10 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc) {
     List cases = (node.cs instanceof List) ? (node.cs as List) : []
     for (int i = 0; i < cases.size(); i++) {
         if (cases[i] instanceof Map && (cases[i] as Map).s instanceof List) {
-            webcoreSemanticStatements((cases[i] as Map).s as List, path + '.cs[' + i + '].s', depth, acc)
+            webcoreSemanticStatements((cases[i] as Map).s as List, path + '.cs[' + i + '].s', depth, acc, type == 'switch' ? 'switch-case' : 'block')
         }
     }
-    if (node.e instanceof List) webcoreSemanticStatements(node.e as List, path + '.e', depth, acc)
+    if (node.e instanceof List) webcoreSemanticStatements(node.e as List, path + '.e', depth, acc, type == 'switch' ? 'switch-case' : 'block')
 }
 
 // An ordinary condition list or group: its operator only when proven, its negation, and its ordered

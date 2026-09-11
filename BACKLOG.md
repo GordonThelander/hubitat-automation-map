@@ -378,14 +378,15 @@ end state. That answer is currently unknown and is worth having either way.
   `wd`, and `wt` of `l` or `n`. Nodes
   saved before the piston was first reopened (`$`, `ct` or `s` absent) cannot be shown after a reload
   and stay held by design.
-- **Semantic evidence (L4), first step (on dev, not deployed).** The coverage check now also reports
-  what saved statements mean, separately from structure: the order in which an if tests its
-  branches, condition negation, `or` groups, followed-by groups kept opaque, `do` as a sequential
-  block, and the default statement settings. Everything else is an explicit gap per occurrence, so
-  no current piston is yet reported as fully explained. It is not shown on the card yet.
-- **Still to come.** The remaining L4 steps (switch and exit, loops, events and policies, actions,
-  operands), then the flow rendering that eventually lets a piston draw its own flow with anything
-  not yet understood shown as an explicit opaque block.
+- **Semantic evidence (L4), on hub dev v2.3.0.** The coverage card shows what saved statements mean,
+  separately from structure: the order in which an if tests its branches, condition negation, `or`
+  groups, followed-by groups kept opaque, `do` as a sequential block, the default statement settings,
+  switch case order and its case-traversal policy, a break scoped to its nearest switch, and exit as
+  a whole-piston terminate. Everything else is an explicit gap per occurrence, so no current piston is
+  yet reported as fully explained.
+- **Still to come.** The remaining L4 steps (loops, events and policies, actions, operands), then the
+  flow rendering that eventually lets a piston draw its own flow with anything not yet understood
+  shown as an explicit opaque block.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,

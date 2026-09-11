@@ -89,7 +89,8 @@ check(countDrift.isEmpty(), "every committed fixture is normalized without trunc
 
 // ---- privacy -------------------------------------------------------------------------
 
-Set closed = (['or', 'decision', 'sequential-block', 'then', 'else', 'group', 'opaque-condition', 'opaque-followed-by-group'] +
+Set closed = (['or', 'decision', 'sequential-block', 'then', 'else', 'group', 'opaque-condition', 'opaque-followed-by-group',
+               'multi-way-decision', 'switch-scoped-control-transfer', 'piston-terminate', 'i', 'e'] +
               (evidence.claims as Map).keySet() + (evidence.gaps as Map).keySet()) as Set
 def strings
 strings = { Object o, List acc ->
@@ -152,7 +153,17 @@ Map mutations = [
     'a saved absent tcp, which is never cancel, is read as the default': ["if (node.tcp != 'c') {", "if (node.containsKey('tcp') && node.tcp != 'c') {"],
     'if has no side effect beyond branch selection': ["gaps << 'statement.if.automatic-piston-state-unresolved'", ''],
     'a saved ct decides a condition leaf role': ["(out.children as List) << [kind: 'opaque-condition']",
-        "(out.children as List) << ((k instanceof Map && (k as Map).ct) ? [kind: 'condition', role: (k as Map).ct] : [kind: 'opaque-condition'])"]
+        "(out.children as List) << ((k instanceof Map && (k as Map).ct) ? [kind: 'condition', role: (k as Map).ct] : [kind: 'opaque-condition'])"],
+    'every case is tried regardless of ctp, so fall-through and auto-break read the same':
+        ["entry.ctp = (node.ctp == 'e') ? 'e' : 'i'", "entry.ctp = 'i'"],
+    'the default section always runs after the case list, whether or not a case matched or broke':
+        ["if (node.e instanceof List && (node.e as List)) claims << 'statement.switch.default.v1'", ''],
+    'a break inside a switch case terminates the whole piston, as exit does':
+        ["claims << 'statement.break.switch-scope.v1'", "claims << 'statement.exit.terminate-piston.v1'"],
+    'exit only exits its immediate containing statement, the way break does':
+        ["claims << 'statement.exit.terminate-piston.v1'", "claims << 'statement.break.switch-scope.v1'"],
+    'a break with no switch as its nearest container is read as switch-scoped':
+        ["if (container == 'switch-case') {", 'if (true) {']
 ]
 List named = (manifest.claims as List).collect { (it as Map).negative } + (manifest.limits as List).collect { (it as Map).negative }
 check((mutations.keySet() as Set) == (named as Set), 'every named misreading in the manifest has a mutation here')
