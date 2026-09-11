@@ -103,11 +103,29 @@ saved configuration sees keys the executor never uses:
 - `str` and `ok` on expressions;
 - a string `l` on operands;
 - `z` and `zc` comments;
-- `w` warnings;
 - default policies such as `ctp: 'i'`;
 - empty lists.
 
 Treat these as expected editor content, not corruption.
+
+### Opening a piston in the IDE changes what a later save persists
+
+The IDE never edits the stored settings directly. Opening a piston asks the child app for it, and the
+copy Hubitat returns has already been processed:
+
+- `recreatePiston` rebuilds the piston from its settings and numbers every node with `msetIds`, so
+  statements, else-ifs, cases, tasks, conditions, groups, events and restrictions all carry `$`;
+- the subscription pass, `subscribeAll`, then writes `ct` (trigger or condition) on conditions, events
+  and switch statements, a subscription flag `s` on subscribed nodes, and `w` warnings.
+
+The editor keeps what it received. Its serializer, `compilePiston`, deletes `w` and every false, null or
+empty value before saving, so a later save persists `$`, `ct` and a true `s` on every node that existed
+when the piston was opened. A node added since then has none of them, and `w` is never saved.
+
+None of these saved values is trusted on the next load. `clearMsetIds` nulls every `$` before the tree
+is renumbered, and `subscribeAll` recomputes `s` everywhere and `ct` on conditions and switch
+statements. Only an event's saved `ct` is kept, because the pass sets it only when absent, and its only
+value is `t`.
 
 ## 4. Statement grammar
 
