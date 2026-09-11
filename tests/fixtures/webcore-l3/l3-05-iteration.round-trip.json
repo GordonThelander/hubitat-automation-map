@@ -1,0 +1,197 @@
+{
+    "id": ":00000000000000000000000000000001:",
+    "o": {
+        "ced": 1,
+        "cto": 1
+    },
+    "s": [
+        {
+            "$": 1,
+            "a": "0",
+            "lo": {
+                "c": 2,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "decimal",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 2,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "1",
+                    "ok": true
+                }
+            },
+            "lo2": {
+                "c": 3,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "decimal",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 3,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "<string#1>",
+                    "ok": true
+                }
+            },
+            "lo3": {
+                "c": 2,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "decimal",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 2,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "1",
+                    "ok": true
+                }
+            },
+            "r": [
+                
+            ],
+            "rop": "<string#2>",
+            "s": [
+                {
+                    "$": 2,
+                    "a": "0",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "$": 3,
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ],
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#2>",
+                    "t": "action",
+                    "tcp": "c"
+                }
+            ],
+            "t": "for",
+            "tcp": "c",
+            "x": "i"
+        },
+        {
+            "$": 4,
+            "a": "0",
+            "lo": {
+                "f": "l",
+                "g": "avg",
+                "t": "x",
+                "vt": "device",
+                "x": [
+                    "<string#3>"
+                ]
+            },
+            "r": [
+                
+            ],
+            "rop": "<string#2>",
+            "s": [
+                {
+                    "$": 5,
+                    "a": "0",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "$": 6,
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ],
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#2>",
+                    "t": "action",
+                    "tcp": "c"
+                }
+            ],
+            "t": "each",
+            "tcp": "c"
+        },
+        {
+            "$": 7,
+            "a": "0",
+            "lo": {
+                "c": "<string#4>",
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "string",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "string",
+                            "v": "<string#4>",
+                            "l": "<string#5>",
+                            "ok": true
+                        }
+                    ],
+                    "str": "<string#4>",
+                    "ok": true
+                }
+            },
+            "r": [
+                
+            ],
+            "rop": "<string#2>",
+            "t": "exit",
+            "tcp": "c"
+        }
+    ],
+    "v": [
+        {
+            "a": "d",
+            "n": "i",
+            "t": "integer"
+        },
+        {
+            "a": "d",
+            "n": "<string#3>",
+            "t": "device"
+        }
+    ],
+    "r": [
+        
+    ],
+    "rop": "<string#2>",
+    "n": "<string#6>",
+    "l": {
+        
+    }
+}

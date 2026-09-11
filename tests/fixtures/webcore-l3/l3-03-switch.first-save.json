@@ -1,0 +1,317 @@
+{
+    "id": ":00000000000000000000000000000001:",
+    "o": {
+        "ced": 1,
+        "cto": 1
+    },
+    "s": [
+        {
+            "t": "switch",
+            "a": "0",
+            "tcp": "c",
+            "z": "<string#1>",
+            "r": [
+                
+            ],
+            "rop": "<string#2>",
+            "lo": {
+                "t": "e",
+                "e": "n",
+                "d": [
+                    
+                ],
+                "g": "avg",
+                "f": "l",
+                "vt": "string",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "variable",
+                            "x": "n",
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "n",
+                    "ok": true
+                }
+            },
+            "cs": [
+                {
+                    "t": "s",
+                    "s": [
+                        {
+                            "t": "action",
+                            "a": "0",
+                            "tcp": "c",
+                            "r": [
+                                
+                            ],
+                            "rop": "<string#2>",
+                            "d": [
+                                
+                            ],
+                            "k": [
+                                {
+                                    "c": "noop",
+                                    "p": [
+                                        
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "t": "break",
+                            "a": "0",
+                            "tcp": "c",
+                            "r": [
+                                
+                            ],
+                            "rop": "<string#2>"
+                        }
+                    ],
+                    "ro": {
+                        "c": "1",
+                        "d": [
+                            
+                        ],
+                        "g": "avg",
+                        "f": "l",
+                        "t": "c",
+                        "vt": "string",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                {
+                                    "t": "integer",
+                                    "v": 2,
+                                    "l": "0",
+                                    "ok": true
+                                }
+                            ],
+                            "str": "1",
+                            "ok": true
+                        }
+                    },
+                    "ro2": {
+                        "d": [
+                            
+                        ],
+                        "g": "avg",
+                        "f": "l",
+                        "t": "c",
+                        "vt": "string",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                
+                            ],
+                            "str": "",
+                            "ok": true
+                        }
+                    }
+                },
+                {
+                    "t": "r",
+                    "s": [
+                        {
+                            "t": "action",
+                            "a": "0",
+                            "tcp": "c",
+                            "r": [
+                                
+                            ],
+                            "rop": "<string#2>",
+                            "d": [
+                                
+                            ],
+                            "k": [
+                                {
+                                    "c": "noop",
+                                    "p": [
+                                        
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    "ro": {
+                        "c": "<string#3>",
+                        "d": [
+                            
+                        ],
+                        "g": "avg",
+                        "f": "l",
+                        "t": "c",
+                        "vt": "string",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                {
+                                    "t": "integer",
+                                    "v": 3,
+                                    "l": "0",
+                                    "ok": true
+                                }
+                            ],
+                            "str": "<string#3>",
+                            "ok": true
+                        }
+                    },
+                    "ro2": {
+                        "c": "<string#4>",
+                        "d": [
+                            
+                        ],
+                        "g": "avg",
+                        "f": "l",
+                        "t": "c",
+                        "vt": "string",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                {
+                                    "t": "integer",
+                                    "v": 4,
+                                    "l": "0",
+                                    "ok": true
+                                }
+                            ],
+                            "str": "<string#4>",
+                            "ok": true
+                        }
+                    }
+                }
+            ],
+            "e": [
+                {
+                    "t": "action",
+                    "a": "0",
+                    "tcp": "c",
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#2>",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "ctp": "i"
+        },
+        {
+            "t": "switch",
+            "a": "0",
+            "tcp": "c",
+            "r": [
+                
+            ],
+            "rop": "<string#2>",
+            "lo": {
+                "t": "v",
+                "v": "mode",
+                "d": [
+                    
+                ],
+                "g": "avg",
+                "f": "l",
+                "vt": "string"
+            },
+            "cs": [
+                {
+                    "t": "s",
+                    "s": [
+                        {
+                            "t": "action",
+                            "a": "0",
+                            "tcp": "c",
+                            "r": [
+                                
+                            ],
+                            "rop": "<string#2>",
+                            "d": [
+                                
+                            ],
+                            "k": [
+                                {
+                                    "c": "noop",
+                                    "p": [
+                                        
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    "ro": {
+                        "c": "<string#5>",
+                        "d": [
+                            
+                        ],
+                        "g": "avg",
+                        "f": "l",
+                        "t": "c",
+                        "vt": "string",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                {
+                                    "t": "string",
+                                    "v": "<string#5>",
+                                    "l": "<string#6>",
+                                    "ok": true
+                                }
+                            ],
+                            "str": "<string#5>",
+                            "ok": true
+                        }
+                    },
+                    "ro2": {
+                        "d": [
+                            
+                        ],
+                        "g": "avg",
+                        "f": "l",
+                        "t": "c",
+                        "vt": "string",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                
+                            ],
+                            "str": "",
+                            "ok": true
+                        }
+                    }
+                }
+            ],
+            "e": [
+                
+            ],
+            "ctp": "i"
+        }
+    ],
+    "v": [
+        {
+            "t": "integer",
+            "n": "n",
+            "a": "d"
+        }
+    ],
+    "r": [
+        
+    ],
+    "rop": "<string#2>",
+    "n": "<string#7>",
+    "l": {
+        
+    }
+}

@@ -1,0 +1,678 @@
+{
+    "id": ":00000000000000000000000000000001:",
+    "o": {
+        "ced": 1,
+        "cto": 1,
+        "<key#1>": 1,
+        "<key#2>": 1,
+        "<key#3>": 1,
+        "<key#4>": 1,
+        "<key#5>": 1,
+        "<key#6>": 1
+    },
+    "s": [
+        {
+            "t": "if",
+            "a": "0",
+            "tcp": "c",
+            "r": [
+                
+            ],
+            "rop": "<string#1>",
+            "o": "<string#1>",
+            "c": [
+                {
+                    "t": "group",
+                    "c": [
+                        {
+                            "t": "condition",
+                            "lo": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "<string#3>",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "string",
+                                            "v": "<string#3>",
+                                            "l": "<string#4>",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "<string#3>",
+                                    "ok": true
+                                }
+                            },
+                            "co": "<string#5>",
+                            "ro": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "<string#3>",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "string",
+                                            "v": "<string#3>",
+                                            "l": "<string#4>",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "<string#3>",
+                                    "ok": true
+                                }
+                            },
+                            "ro2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "sm": "<string#6>",
+                            "ts": [
+                                
+                            ],
+                            "fs": [
+                                
+                            ]
+                        },
+                        {
+                            "t": "condition",
+                            "lo": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "1",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "integer",
+                                            "v": 2,
+                                            "l": "0",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "1",
+                                    "ok": true
+                                }
+                            },
+                            "co": "<string#5>",
+                            "ro": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "1",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "integer",
+                                            "v": 2,
+                                            "l": "0",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "1",
+                                    "ok": true
+                                }
+                            },
+                            "ro2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "sm": "<string#6>",
+                            "ts": [
+                                
+                            ],
+                            "fs": [
+                                
+                            ]
+                        }
+                    ],
+                    "o": "or",
+                    "n": true,
+                    "sm": "<string#7>",
+                    "ts": [
+                        
+                    ],
+                    "fs": [
+                        
+                    ],
+                    "z": "<string#8>"
+                },
+                {
+                    "t": "condition",
+                    "lo": {
+                        "t": "v",
+                        "d": [
+                            
+                        ],
+                        "g": "<string#2>",
+                        "v": "mode",
+                        "f": "l",
+                        "vt": "string"
+                    },
+                    "co": "<string#5>",
+                    "ro": {
+                        "t": "c",
+                        "d": [
+                            
+                        ],
+                        "g": "<string#2>",
+                        "c": ":00000000000000000000000000000002:",
+                        "f": "l",
+                        "vt": "enum",
+                        "exp": {
+                            "t": "expression",
+                            "i": [
+                                {
+                                    "t": "string",
+                                    "v": ":00000000000000000000000000000002:",
+                                    "l": "<string#9>",
+                                    "ok": true
+                                }
+                            ],
+                            "str": ":00000000000000000000000000000002:",
+                            "ok": true
+                        }
+                    },
+                    "ro2": {
+                        "t": "c",
+                        "d": [
+                            
+                        ],
+                        "g": "<string#2>"
+                    },
+                    "to": {
+                        "t": "c",
+                        "d": [
+                            
+                        ],
+                        "g": "<string#2>"
+                    },
+                    "to2": {
+                        "t": "c",
+                        "d": [
+                            
+                        ],
+                        "g": "<string#2>"
+                    },
+                    "sm": "<string#6>",
+                    "ts": [
+                        
+                    ],
+                    "fs": [
+                        
+                    ],
+                    "z": "<string#10>"
+                }
+            ],
+            "s": [
+                {
+                    "t": "action",
+                    "a": "0",
+                    "tcp": "c",
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#1>",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "ei": [
+                {
+                    "o": "<string#1>",
+                    "c": [
+                        {
+                            "t": "group",
+                            "c": [
+                                {
+                                    "t": "condition",
+                                    "lo": {
+                                        "t": "c",
+                                        "d": [
+                                            
+                                        ],
+                                        "g": "<string#2>",
+                                        "c": "<string#11>",
+                                        "f": "l",
+                                        "vt": "string",
+                                        "exp": {
+                                            "t": "expression",
+                                            "i": [
+                                                {
+                                                    "t": "integer",
+                                                    "v": 3,
+                                                    "l": "0",
+                                                    "ok": true
+                                                }
+                                            ],
+                                            "str": "<string#11>",
+                                            "ok": true
+                                        }
+                                    },
+                                    "co": "<string#5>",
+                                    "ro": {
+                                        "t": "c",
+                                        "d": [
+                                            
+                                        ],
+                                        "g": "<string#2>",
+                                        "c": "<string#11>",
+                                        "f": "l",
+                                        "vt": "string",
+                                        "exp": {
+                                            "t": "expression",
+                                            "i": [
+                                                {
+                                                    "t": "integer",
+                                                    "v": 3,
+                                                    "l": "0",
+                                                    "ok": true
+                                                }
+                                            ],
+                                            "str": "<string#11>",
+                                            "ok": true
+                                        }
+                                    },
+                                    "ro2": {
+                                        "t": "c",
+                                        "d": [
+                                            
+                                        ],
+                                        "g": "<string#2>"
+                                    },
+                                    "to": {
+                                        "t": "c",
+                                        "d": [
+                                            
+                                        ],
+                                        "g": "<string#2>"
+                                    },
+                                    "to2": {
+                                        "t": "c",
+                                        "d": [
+                                            
+                                        ],
+                                        "g": "<string#2>"
+                                    },
+                                    "sm": "<string#6>",
+                                    "ts": [
+                                        
+                                    ],
+                                    "fs": [
+                                        
+                                    ]
+                                }
+                            ],
+                            "o": "<string#1>",
+                            "n": true,
+                            "sm": "<string#6>",
+                            "ts": [
+                                
+                            ],
+                            "fs": [
+                                
+                            ]
+                        }
+                    ],
+                    "s": [
+                        {
+                            "t": "action",
+                            "a": "0",
+                            "tcp": "c",
+                            "r": [
+                                
+                            ],
+                            "rop": "<string#1>",
+                            "d": [
+                                
+                            ],
+                            "k": [
+                                {
+                                    "c": "noop",
+                                    "p": [
+                                        
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "o": "<string#1>",
+                    "c": [
+                        {
+                            "t": "condition",
+                            "lo": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "<string#12>",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "integer",
+                                            "v": 4,
+                                            "l": "0",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "<string#12>",
+                                    "ok": true
+                                }
+                            },
+                            "co": "<string#5>",
+                            "ro": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "<string#12>",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "integer",
+                                            "v": 4,
+                                            "l": "0",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "<string#12>",
+                                    "ok": true
+                                }
+                            },
+                            "ro2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "sm": "<string#6>",
+                            "ts": [
+                                
+                            ],
+                            "fs": [
+                                
+                            ]
+                        }
+                    ],
+                    "s": [
+                        {
+                            "t": "action",
+                            "a": "0",
+                            "tcp": "c",
+                            "r": [
+                                
+                            ],
+                            "rop": "<string#1>",
+                            "d": [
+                                
+                            ],
+                            "k": [
+                                {
+                                    "c": "noop",
+                                    "p": [
+                                        
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "e": [
+                {
+                    "t": "action",
+                    "a": "0",
+                    "tcp": "c",
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#1>",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "t": "if",
+            "a": "0",
+            "tcp": "c",
+            "r": [
+                
+            ],
+            "rop": "<string#1>",
+            "o": "<string#1>",
+            "c": [
+                {
+                    "t": "group",
+                    "c": [
+                        {
+                            "t": "condition",
+                            "lo": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "<string#13>",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "integer",
+                                            "v": 5,
+                                            "l": "0",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "<string#13>",
+                                    "ok": true
+                                }
+                            },
+                            "co": "<string#5>",
+                            "ro": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>",
+                                "c": "<string#13>",
+                                "f": "l",
+                                "vt": "string",
+                                "exp": {
+                                    "t": "expression",
+                                    "i": [
+                                        {
+                                            "t": "integer",
+                                            "v": 5,
+                                            "l": "0",
+                                            "ok": true
+                                        }
+                                    ],
+                                    "str": "<string#13>",
+                                    "ok": true
+                                }
+                            },
+                            "ro2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "to2": {
+                                "t": "c",
+                                "d": [
+                                    
+                                ],
+                                "g": "<string#2>"
+                            },
+                            "sm": "<string#6>",
+                            "ts": [
+                                
+                            ],
+                            "fs": [
+                                
+                            ]
+                        }
+                    ],
+                    "o": "<string#1>",
+                    "n": true,
+                    "sm": "<string#6>",
+                    "ts": [
+                        
+                    ],
+                    "fs": [
+                        
+                    ]
+                }
+            ],
+            "s": [
+                {
+                    "t": "action",
+                    "a": "0",
+                    "tcp": "c",
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#1>",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "ei": [
+                
+            ],
+            "e": [
+                
+            ]
+        }
+    ],
+    "v": [
+        
+    ],
+    "r": [
+        
+    ],
+    "rop": "<string#1>",
+    "z": "<string#14>",
+    "n": "<string#15>",
+    "l": {
+        
+    }
+}

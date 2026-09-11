@@ -1,0 +1,208 @@
+{
+    "id": ":00000000000000000000000000000001:",
+    "o": {
+        "ced": 1,
+        "cto": 1
+    },
+    "s": [
+        {
+            "$": 1,
+            "a": "1",
+            "lo": {
+                "c": 2,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "<string#1>",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 2,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "<string#2>",
+                    "ok": true
+                }
+            },
+            "lo2": {
+                "c": 3,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "time",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 3,
+                            "l": "<string#3>",
+                            "ok": true
+                        }
+                    ],
+                    "str": "<string#4>",
+                    "ok": true
+                }
+            },
+            "lo3": {
+                "c": 1,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "<string#1>",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 1,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "0",
+                    "ok": true
+                }
+            },
+            "r": [
+                
+            ],
+            "rop": "<string#5>",
+            "s": [
+                {
+                    "$": 2,
+                    "a": "0",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "$": 3,
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ],
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#5>",
+                    "t": "action",
+                    "tcp": "c"
+                }
+            ],
+            "t": "every",
+            "tcp": "c"
+        },
+        {
+            "$": 4,
+            "a": "1",
+            "lo": {
+                "c": 4,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "d",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 4,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "1",
+                    "ok": true
+                }
+            },
+            "lo2": {
+                "c": 5,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "time",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 5,
+                            "l": "<string#3>",
+                            "ok": true
+                        }
+                    ],
+                    "str": "<string#6>",
+                    "ok": true
+                }
+            },
+            "lo3": {
+                "c": 1,
+                "f": "l",
+                "g": "avg",
+                "t": "c",
+                "vt": "<string#1>",
+                "exp": {
+                    "t": "expression",
+                    "i": [
+                        {
+                            "t": "integer",
+                            "v": 1,
+                            "l": "0",
+                            "ok": true
+                        }
+                    ],
+                    "str": "0",
+                    "ok": true
+                }
+            },
+            "r": [
+                
+            ],
+            "rop": "<string#5>",
+            "s": [
+                {
+                    "$": 5,
+                    "a": "0",
+                    "d": [
+                        
+                    ],
+                    "k": [
+                        {
+                            "$": 6,
+                            "c": "noop",
+                            "p": [
+                                
+                            ]
+                        }
+                    ],
+                    "r": [
+                        
+                    ],
+                    "rop": "<string#5>",
+                    "t": "action",
+                    "tcp": "c"
+                }
+            ],
+            "t": "every",
+            "tcp": "c"
+        }
+    ],
+    "v": [
+        
+    ],
+    "r": [
+        
+    ],
+    "rop": "<string#5>",
+    "n": "<string#7>",
+    "l": {
+        
+    }
+}
