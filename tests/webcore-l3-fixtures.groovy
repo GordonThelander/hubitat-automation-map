@@ -41,6 +41,9 @@ check(listed == present && listed.size() == fixtures.size(), "every fixture file
 check(fixtures.every { (fixtureManifest.captureKinds as Map).containsKey(it.capture) && (it.file as String).endsWith(".${it.capture}.json") },
     'every fixture names a declared capture kind')
 
+// The walker's runtime gaps must agree with the evidence table on real captures: the statement
+// occurrences of each fixture take exactly the gap branches the table attributes to that fixture.
+List gapDrift = []
 fixtures.each { Map fx ->
     File f = new File(dir, fx.file as String)
     // Hashes are over LF text, so a CRLF checkout still verifies.
@@ -52,7 +55,14 @@ fixtures.each { Map fx ->
           statements == new TreeMap(fx.statements as Map) && invalid == 0 && fx.structurallyInvalid == 0 &&
           (census.structureFindings as List)?.isEmpty() && (census.unrecognised as List)?.size() == fx.unrecognised,
         "${fx.file}: hash, inert capture, statement counts ${fx.statements} all structurally valid")
+    String name = (fx.file as String).replaceFirst(/\.json$/, '')
+    Set walkerGaps = ((census.constructOccurrences ?: [:]) as Map).values().collectMany { (((it as Map).evidenceGaps ?: [:]) as Map).keySet() } as Set
+    Set tableGaps = (evidence.branchEvidence as List).findAll { Map r ->
+        r.gap != null && (((r.editorAuthored ?: []) as List) + ((r.canonicalOnly ?: []) as List)).contains(name)
+    }.collect { Map r -> "${r.structure}/${r.key}/${r.branch}".toString() } as Set
+    if (walkerGaps != tableGaps) gapDrift << "${name}: walker only ${walkerGaps - tableGaps}, table only ${tableGaps - walkerGaps}".toString()
 }
+check(gapDrift.isEmpty(), "on every fixture the walker records exactly the evidence gaps the table attributes to it ${gapDrift.take(3)}")
 
 Set covered = fixtures.collectMany { ((it.statements ?: [:]) as Map).keySet().collect { k -> k.toString() } } as Set
 check(covered == (evidence.statements as Map).keySet().collect { it.toString() } as Set, "the fixtures cover all twelve statement types ${covered.size()}")

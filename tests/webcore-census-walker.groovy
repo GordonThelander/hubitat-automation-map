@@ -704,16 +704,60 @@ assertThat(isValid(firstSaveOut, 'wc.statement.if') && isValid(firstSaveOut, 'wc
            isValid(roundTripOut, 'wc.statement.if') && isValid(roundTripOut, 'wc.statement.action'),
     "a first-save shape and its round-trip shape are both structurally valid (${firstSaveOut.structureFindings} ${roundTripOut.structureFindings})")
 
-// Conservative levels: every ceiling is L2 today, and a raised ceiling needs every occurrence valid.
-assertThat(census(walker, richDoc).levelCounts == plain.levelCounts, 'with every ceiling at L2 the level counts are unchanged')
-Map raised = [provenance: registry.provenance, constructs: (registry.constructs as Map) + ['wc.statement.if': [level: 'L3']]]
-Map allValid = census(walker, [s: [ifNode([leafNode()]), ifNode([leafNode()])]], raised)
-Map mixed = census(walker, [s: [ifNode([leafNode()]), ifNode([leafNode()], [ok: true])]], raised)
-assertThat((allValid.levelCounts as Map).L3 == 1 && (mixed.levelCounts as Map).L3 == 0 && (mixed.levelCounts as Map).L2 == (allValid.levelCounts as Map).L2 + 1,
-    "a raised ceiling holds only when every occurrence is valid (${allValid.levelCounts} ${mixed.levelCounts})")
-assertThat(walker.webcoreCensusAchievedLevel('L3', [structurallyValid: 1, structurallyInvalid: 0], 2) == 'L2' &&
+// Levels: statement ceilings are L3, and one holds only when every occurrence is valid and takes no
+// evidence gap. Round-trip shaped nodes carry the hub-written keys, so they take no gap.
+def rtLeaf = { Map extra = [:] -> leafNode(['$': 2, ct: 'c'] + extra) }
+def rtStmt = { String t, Map extra -> stmtNode(t, ['$': 1, tcp: 'c'] + extra) }
+def rtIf = { List c, Map extra = [:] -> rtStmt('if', [o: 'and', c: c, s: [], ei: [], e: []] + extra) }
+def rtAction = { Map taskExtra = [:] -> rtStmt('action', [d: [], k: [[c: 'on', p: [], '$': 3] + taskExtra]]) }
+def levelOf = { Object w, Map out, String id ->
+    w.webcoreCensusAchievedLevel(((registry.constructs as Map)[id] as Map).level as String, (out.constructOccurrences as Map)[id], (out.constructCounts as Map)[id])
+}
+def gapsOf = { Map out, String id -> (occurrence(out, id).evidenceGaps ?: [:]) as Map }
+assertThat(((registry.constructs as Map).findAll { k, v -> "${k}".startsWith('wc.statement.') }.values()*.level as Set) == (['L3'] as Set),
+    'every statement ceiling in the registry is L3')
+Map allValid = census(walker, [s: [rtIf([rtLeaf()]), rtIf([rtLeaf()])]])
+Map mixed = census(walker, [s: [rtIf([rtLeaf()]), rtIf([rtLeaf()], [ok: true])]])
+assertThat(levelOf(walker, allValid, 'wc.statement.if') == 'L3' && levelOf(walker, mixed, 'wc.statement.if') == 'L2' &&
+           (mixed.levelCounts as Map).L3 == (allValid.levelCounts as Map).L3 - 1,
+    "an L3 ceiling holds only when every occurrence is valid (${allValid.levelCounts} ${mixed.levelCounts})")
+assertThat(walker.webcoreCensusAchievedLevel('L3', [structurallyValid: 1, structurallyInvalid: 0, evidenceGapped: 0], 2) == 'L2' &&
+           walker.webcoreCensusAchievedLevel('L3', [structurallyValid: 1, structurallyInvalid: 0], 1) == 'L2' &&
            walker.webcoreCensusAchievedLevel('L3', null, 1) == 'L2' && walker.webcoreCensusAchievedLevel('L2', null, 1) == 'L2',
-    'an occurrence left unvalidated, as by truncation, or never recorded caps a raised ceiling at L2')
+    'an occurrence left unvalidated, never recorded, or without a gap count caps an L3 ceiling at L2')
+
+// Evidence gaps hold only the occurrence that takes an uncovered branch, never the family.
+Map closedGaps = shapes.evidenceGaps as Map
+assertThat(occurrence(roundTripOut, 'wc.statement.if').evidenceGapped == 0 && occurrence(roundTripOut, 'wc.statement.action').evidenceGapped == 0 &&
+           levelOf(walker, roundTripOut, 'wc.statement.if') == 'L3' && levelOf(walker, roundTripOut, 'wc.statement.action') == 'L3',
+    "a round-trip shape takes no evidence gap and reaches L3 (${roundTripOut.constructOccurrences})")
+assertThat(gapsOf(firstSaveOut, 'wc.statement.if').containsKey('statement/$/absent') &&
+           (gapsOf(firstSaveOut, 'wc.statement.if').keySet() + gapsOf(firstSaveOut, 'wc.statement.action').keySet()).every { closedGaps[it] == 'editor-authored-only' } &&
+           levelOf(walker, firstSaveOut, 'wc.statement.if') == 'L2',
+    "a first-save shape is valid but held at L2 by editor-authored-only branches alone (${firstSaveOut.constructOccurrences})")
+Map cmMixed = census(walker, [s: [rtAction(), rtAction([cm: true])]])
+assertThat(occurrence(cmMixed, 'wc.statement.action').structurallyValid == 2 && occurrence(cmMixed, 'wc.statement.action').evidenceGapped == 1 &&
+           gapsOf(cmMixed, 'wc.statement.action') == ['task/cm/present': 1] && levelOf(walker, cmMixed, 'wc.statement.action') == 'L2' &&
+           levelOf(walker, census(walker, [s: [rtAction(), rtAction()]]), 'wc.statement.action') == 'L3',
+    "a task carrying cm holds its own occurrence, and ordinary actions reach L3 (${cmMixed.constructOccurrences})")
+Map smIf = census(walker, [s: [rtIf([rtLeaf()], [sm: 'CANARYsm'])]])
+assertThat(gapsOf(smIf, 'wc.statement.if') == ['statement/sm/present': 1] && levelOf(walker, smIf, 'wc.statement.if') == 'L2' &&
+           !JsonOutput.toJson(smIf).contains('CANARY'),
+    "an if carrying sm is held by a gap id that names the branch, never the saved value (${smIf.constructOccurrences})")
+Map triggerIf = census(walker, [s: [rtIf([rtLeaf([ct: 't'])])]])
+assertThat(gapsOf(triggerIf, 'wc.statement.if') == ['condition/ct/value:t': 1],
+    "a condition whose reloaded ct is a trigger is held by the canonical-only gap (${triggerIf.constructOccurrences})")
+Map nestedGap = census(walker, [s: [rtIf([rtLeaf()], [s: [rtStmt('do', [s: [], sm: 'always'])]])]])
+assertThat(occurrence(nestedGap, 'wc.statement.if').evidenceGapped == 0 && gapsOf(nestedGap, 'wc.statement.do') == ['statement/sm/present': 1],
+    'a gap in a nested statement belongs to that statement, not the one containing it')
+Map invalidGap = census(walker, [s: [rtIf([rtLeaf()], [sm: 'always', ok: true])]])
+assertThat(occurrence(invalidGap, 'wc.statement.if').structurallyInvalid == 1 && occurrence(invalidGap, 'wc.statement.if').evidenceGapped == 0 &&
+           gapsOf(invalidGap, 'wc.statement.if').isEmpty(),
+    'an invalid occurrence records no gap: it is already held below its ceiling')
+Map outsideDoc = census(walker, [s: [rtIf([rtLeaf()], [CANARYinside: 1])], CANARYroot: 1])
+assertThat(outsideDoc.unrecognisedOutsideStatements == 1 && (outsideDoc.unrecognised as List).size() == 2 &&
+           (walker.collectWebcoreDecodeCoverage([s: [], CANARYroot: 1], registry) as Map).unrecognisedOutsideStatements == null,
+    'unrecognised positions outside every statement occurrence are counted apart, and only when statements are validated')
 
 // Bounded, fixed output.
 Map many = census(walker, [s: (1..60).collect { ifNode([leafNode()], [ok: true, CANARYkeyA1b: 'CANARYvalA1b']) }])
@@ -759,9 +803,18 @@ def noRetainedKind = mutant("else if (!webcoreCensusKindOk(spec.kind as String, 
                             "else if (false) webcoreCensusMismatch(acc, at, 'wrong-kind')")
 assertThat(isValid(census(noRetainedKind, [s: [ifNode([leafNode([wd: 'not-an-operand'])])]]), 'wc.statement.if'),
     'mutation: without the retained kind check a malformed retained wd passes')
-def ceilingIgnored = mutant("return ((invalid as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'", "return ceiling")
-assertThat(((census(ceilingIgnored, [s: [ifNode([leafNode()]), ifNode([leafNode()], [ok: true])]], raised)).levelCounts as Map).L3 == 1,
+def ceilingIgnored = mutant("return ((invalid as Integer) == 0 && (gapped as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'", "return ceiling")
+assertThat(levelOf(ceilingIgnored, census(ceilingIgnored, [s: [rtIf([rtLeaf()]), rtIf([rtLeaf()], [ok: true])]]), 'wc.statement.if') == 'L3',
     'mutation: a level that ignores invalid occurrences reports L3 for a mixed construct')
+def gapsIgnoredByLevel = mutant("(invalid as Integer) == 0 && (gapped as Integer) == 0 &&", "(invalid as Integer) == 0 &&")
+assertThat(levelOf(gapsIgnoredByLevel, census(gapsIgnoredByLevel, [s: [rtAction([cm: true])]]), 'wc.statement.action') == 'L3',
+    'mutation: a level that ignores evidence gaps reports L3 for an action whose task carries cm')
+def noGapRecording = mutant("if (gaps.containsKey(id)) recorded << id", "")
+assertThat(occurrence(census(noGapRecording, [s: [rtAction([cm: true])]]), 'wc.statement.action').evidenceGapped == 0,
+    'mutation: without gap recording a task carrying cm is no longer held')
+def gapsOnInvalid = mutant("if (top.invalid != true && (top.gaps as Set)) {", "if ((top.gaps as Set)) {")
+assertThat(occurrence(census(gapsOnInvalid, [s: [rtIf([rtLeaf()], [sm: 'always', ok: true])]]), 'wc.statement.if').evidenceGapped == 1,
+    'mutation: counting gaps on an invalid occurrence reports a held occurrence twice')
 
 // ---- summary ---------------------------------------------------------------
 

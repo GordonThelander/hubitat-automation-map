@@ -53,7 +53,7 @@ function extractLineConst(name) {
 const functionNames = ['extEsc', 'coverageHubAppId', 'coverageConstructParts', 'coverageFamilyLabel',
     'decodeCoverageIdleHtml', 'decodeCoverageMessageHtml', 'decodeCoverageResultHtml', 'decodeCoverageOutcomeHtml',
     'renderDecodeCoverageCard', 'requestDecodeCoverage'];
-const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_STRUCTURE_LABELS','COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
+const objectConsts = ['COVERAGE_REASON_LABELS', 'COVERAGE_STRUCTURE_LABELS', 'COVERAGE_GAP_LABELS', 'COVERAGE_ERROR_TEXT', 'COVERAGE_FINAL_ERRORS',
     'COVERAGE_FAMILY_LABELS', 'COVERAGE_OPERAND_NAMES', 'COVERAGE_LEVEL_NAMES', 'COVERAGE_RECOGNISED_LEVELS'];
 
 const cardBlock = source.slice(source.indexOf('// Decode coverage card (v2.2.9).'),
@@ -262,6 +262,63 @@ async function main() {
         body.structurallyCapped = ['wc.statement.if'];
         const h = rendered(body);
         assert(h.indexOf('<b>') < 0 && h.indexOf('<i>') < 0 && h.indexOf('0 of 0 structurally valid') >= 0, 'markup injected');
+    });
+
+    // ---- statement confidence and evidence gaps ------------------------------------------
+
+    check('statement confidence is stated apart from unrecognised positions outside statements', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.statementAssessment = { level: 'L3', occurrences: 14, structurallyValid: 14, structurallyInvalid: 0, evidenceGapped: 0 };
+        body.nonStatementAssessment = { unrecognised: 6 };
+        const h = rendered(body);
+        assert(h.indexOf('<p class="sub">Statements: structural (L3) across 14 occurrences.</p>') >= 0, 'statement line missing');
+        assert(h.indexOf('6 unrecognised positions are outside every statement and do not lower the statement result.') >= 0, 'outside line missing');
+    });
+
+    check('held statement occurrences are counted by cause, and one outside position reads singular', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.statementAssessment = { level: 'L2', occurrences: 3, structurallyValid: 2, structurallyInvalid: 1, evidenceGapped: 1 };
+        body.nonStatementAssessment = { unrecognised: 1 };
+        const h = rendered(body);
+        assert(h.indexOf('Statements: identified (L2) across 3 occurrences; 1 structurally invalid, 1 held by an evidence gap.') >= 0, 'held line wrong');
+        assert(h.indexOf('1 unrecognised position is outside every statement and does not lower the statement result.') >= 0, 'singular outside line wrong');
+    });
+
+    check('no statement or outside line without a listable level or a count', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.statementAssessment = { level: 'L9<b>', occurrences: 2 };
+        body.nonStatementAssessment = { unrecognised: 0 };
+        const h = rendered(body);
+        assert(h.indexOf('Statements:') < 0 && h.indexOf('<b>') < 0 && h.indexOf('outside every statement') < 0, 'line rendered without a level or count');
+    });
+
+    check('evidence gaps are listed with a fixed label, the gap id and an occurrence count', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.evidenceGaps = [{ id: 'task/cm/present', reason: 'needs-physical-device', occurrences: 2 },
+                             { id: 'condition/ct/value:t', reason: 'canonical-only', occurrences: 1 }];
+        const h = rendered(body);
+        assert(h.indexOf('<h5>Evidence gaps</h5>') >= 0, 'no gap heading');
+        assert(h.indexOf('<li><span class="dcReason">Needs a physical device to capture</span> <code>task/cm/present</code> <span class="sub">2 occurrences</span></li>') >= 0, 'gap row wrong');
+        assert(h.indexOf('<code>condition/ct/value:t</code> <span class="sub">1 occurrence</span>') >= 0, 'singular gap count wrong');
+        assert(h.indexOf('3 of 4 construct positions') >= 0 || h.indexOf('%') >= 0, 'an evidence gap must not count as an unidentified position');
+    });
+
+    check('an evidence-capped row says how many occurrences are held, with no structural line', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.constructOccurrences = { 'wc.statement.if': { structurallyValid: 2, structurallyInvalid: 0, evidenceGapped: 1 } };
+        body.structurallyCapped = [];
+        body.evidenceCapped = ['wc.statement.if'];
+        const h = rendered(body);
+        assert(h.indexOf('<td>if <span class="sub">1 held by an evidence gap</span></td>') >= 0, 'held phrase missing');
+        assert(h.indexOf('structurally valid') < 0, 'structural line on an evidence-capped row');
+    });
+
+    check('untrusted gap reasons, ids and counts cannot inject markup', function () {
+        const body = JSON.parse(JSON.stringify(completeBody));
+        body.evidenceGaps = [{ id: '<img src=x>', reason: '<script>', occurrences: '<i>' }];
+        const h = rendered(body);
+        assert(h.indexOf('<img') < 0 && h.indexOf('<script>') < 0 && h.indexOf('<i>') < 0, 'markup injected');
+        assert(h.indexOf('<span class="dcReason">Evidence gap</span>') >= 0 && h.indexOf('0 occurrences') >= 0, 'unknown reason not given the fixed label');
     });
 
     // ---- structural mismatches ----------------------------------------------------------

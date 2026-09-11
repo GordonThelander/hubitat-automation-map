@@ -158,6 +158,30 @@ Map webcoreStatementShapes() {
                     ]
                 ]
             ]
+        ],
+        evidenceGaps: [
+            'statement/$/absent': 'editor-authored-only',
+            'statement/tcp/absent': 'observed-at-capture',
+            'statement/sm/present': 'observed-at-capture',
+            'wc.statement.for/x/absent': 'not-in-matrix',
+            'elseif/$/absent': 'editor-authored-only',
+            'case/$/absent': 'editor-authored-only',
+            'event/$/absent': 'editor-authored-only',
+            'event/ct/absent': 'editor-authored-only',
+            'event/s/absent': 'editor-authored-only',
+            'task/$/absent': 'editor-authored-only',
+            'task/cm/present': 'needs-physical-device',
+            'task/a/present': 'observed-at-capture',
+            'condition/$/absent': 'editor-authored-only',
+            'condition/ct/absent': 'editor-authored-only',
+            'condition/ct/value:t': 'canonical-only',
+            'group/$/absent': 'editor-authored-only',
+            'group/wd/retained': 'not-in-matrix',
+            'group/wd/unconsumed': 'not-in-matrix',
+            'group/wt/retained': 'not-in-matrix',
+            'group/wt/value:l': 'not-in-matrix',
+            'group/wt/value:n': 'not-in-matrix',
+            'group/wt/unconsumed': 'not-in-matrix'
         ]
     ]
 }
