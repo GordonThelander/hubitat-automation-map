@@ -3,6 +3,7 @@
   "authored": "Hand-authored from the cited documentation and pinned source before the normaliser existed. Never generated or refreshed by tooling.",
   "citations": {
     "do": {"docs": "https://wiki.webcore.co/Piston (Do); statement-level effect undocumented, source only", "source": "executor.statement-dispatch"},
+    "break": {"docs": "https://wiki.webcore.co/Piston links to an empty Break construct page; undocumented, source only", "source": "executor.statement-dispatch"},
     "envelope": {"docs": "https://wiki.webcore.co/Execution_Method; https://wiki.webcore.co/Task_Cancellation_Policy", "source": "executor.clean-code"},
     "not-in-increment": {"docs": "none: no claim is made", "source": "executor.statement-dispatch"}
   },
@@ -12,15 +13,15 @@
     "$.s[0].s[1]": {"construct": "wc.statement.do", "role": "sequential-block", "claims": ["statement.do.sequential-block.v1", "statement.envelope.default.v1"], "gaps": [],
       "children": 1, "lowersStatementLevel": true, "cite": {"role": "do", "children": "do", "lowersStatementLevel": "do", "envelope": "envelope"}},
     "$.s[0].s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[0].s[2]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[0].s[2]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}},
     "$.s[1]": {"construct": "wc.statement.while", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.while.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[1].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[1].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[1].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}},
     "$.s[2]": {"construct": "wc.statement.repeat", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.repeat.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[2].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[2].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
+    "$.s[2].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}},
     "$.s[3]": {"construct": "wc.statement.repeat", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.repeat.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
     "$.s[3].s[0]": {"construct": "wc.statement.action", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.action.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}},
-    "$.s[3].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.not-in-increment"], "cite": {"gaps": "not-in-increment", "envelope": "envelope"}}
+    "$.s[3].s[1]": {"construct": "wc.statement.break", "role": null, "claims": ["statement.envelope.default.v1"], "gaps": ["statement.break.container-unresolved"], "cite": {"gaps": "break", "envelope": "envelope"}}
   }
 }

@@ -44,9 +44,10 @@ check((manifest.limits as List).every { Map l -> gaps.containsKey(l.gap) && l.ne
 // ---- closed gap list -----------------------------------------------------------------
 
 List statementTypes = (registry.constructs as Map).keySet().findAll { "${it}".startsWith('wc.statement.') }.collect { "${it}".substring('wc.statement.'.length()) }
-Set expectedNotInIncrement = statementTypes.findAll { !(it in ['if', 'do']) }.collect { "statement.${it}.not-in-increment".toString() } as Set
-check(expectedNotInIncrement.every { gaps.containsKey(it) } && !gaps.containsKey('statement.if.not-in-increment') && !gaps.containsKey('statement.do.not-in-increment'),
-    'every statement type outside this increment has a closed gap, and if and do do not')
+List claimedTypes = ['if', 'do', 'switch', 'break', 'exit']
+Set expectedNotInIncrement = statementTypes.findAll { !(it in claimedTypes) }.collect { "statement.${it}.not-in-increment".toString() } as Set
+check(expectedNotInIncrement.every { gaps.containsKey(it) } && claimedTypes.every { !gaps.containsKey("statement.${it}.not-in-increment".toString()) },
+    'every statement type outside this increment has a closed gap, and every claimed type does not')
 check(claimIds.every { gaps.containsKey("claim.${it}.not-promoted".toString()) }, 'every claim has a closed not-promoted gap')
 check(gaps.every { k, v -> "${k}" ==~ /[a-z0-9.-]+/ && v instanceof String && v && !(v as String).contains('\u2014') },
     'gap ids are closed tokens and every reason is fixed plain text')
