@@ -171,7 +171,7 @@
      docs: [[page: 'https://wiki.webcore.co/Task_Scheduling_Policy', disposition: 'Documents override (the default) versus allow multiple scheduled tasks']],
      sources: [[region: 'executor.schedule-timer', sha256: '15b08d2aa476d10c17659bf0914bba738d1556aef4374054849140ea66f43d6e']],
      fixtures: ['l3-08-policies.round-trip'],
-     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[0]', exercises: 'a saved tsp of a']],
+     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[0]', exercises: 'a saved tsp of a, the only occurrence where tsp is saved']],
      negative: 'a saved tsp of a is read as override, dropping the earlier schedule, rather than allowing both'],
 
     [id: 'statement.tcp.cancellation-policy.v1', structural: ['wc.statement.action'],
@@ -179,7 +179,7 @@
      docs: [[page: 'https://wiki.webcore.co/Task_Cancellation_Policy', disposition: 'Documents all four options and states that cancel on condition-state change is the default']],
      sources: [[region: 'executor.clean-code', sha256: '4522bc571384d95ee726e3e8a0b2fcad2a99553a96e866614e50e5515dc250e2']],
      fixtures: ['l3-08-policies.round-trip'],
-     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[1]', exercises: 'a saved tcp of p']],
+     edges: [[fixture: 'l3-08-policies.round-trip', path: '$.s[1]', exercises: 'a saved tcp of p, a non-default value']],
      negative: 'a saved tcp of c is read as never cancel']
   ],
 

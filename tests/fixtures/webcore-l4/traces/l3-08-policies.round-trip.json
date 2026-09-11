@@ -19,8 +19,8 @@
       "gaps": ["statement.action.not-in-increment", "statement.envelope.tep-present", "statement.envelope.tcp-non-default"],
       "cite": {"gaps": "not-in-increment", "tep": "tep", "tcp": "tcp"}},
     "$.s[2]": {"construct": "wc.statement.action", "role": null,
-      "claims": ["statement.tep.execution-policy.v1", "statement.envelope.default.v1"],
+      "claims": ["statement.tep.execution-policy.v1"],
       "gaps": ["statement.action.not-in-increment", "statement.envelope.tep-present"],
-      "cite": {"gaps": "not-in-increment", "tep": "tep", "envelope": "envelope"}}
+      "cite": {"gaps": "not-in-increment", "tep": "tep"}}
   }
 }

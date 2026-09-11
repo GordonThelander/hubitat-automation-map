@@ -18,7 +18,12 @@ Map webcoreSemanticEvidence() {
             'statement.repeat.post-condition-loop.v1': true,
             'statement.for.step-iteration.v1': true,
             'statement.each.device-iteration.v1': true,
-            'statement.break.loop-scope.v1': true
+            'statement.break.loop-scope.v1': true,
+            'statement.on.any-event-match.v1': true,
+            'statement.every.own-timer-only.v1': true,
+            'statement.tep.execution-policy.v1': true,
+            'statement.tsp.scheduling-policy.v1': true,
+            'statement.tcp.cancellation-policy.v1': true
         ],
         gaps: [
             'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
@@ -29,8 +34,6 @@ Map webcoreSemanticEvidence() {
             'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
             'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
             'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.every.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
             'statement.unrecognised': 'The statement type is not recognised',
             'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
             'condition.operator-unproven': 'This condition operator is not yet proven',
@@ -44,6 +47,8 @@ Map webcoreSemanticEvidence() {
             'statement.repeat.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'statement.for.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'statement.each.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.on.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.every.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
@@ -58,7 +63,12 @@ Map webcoreSemanticEvidence() {
             'claim.statement.repeat.post-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.for.step-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.each.device-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-            'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+            'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.on.any-event-match.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.every.own-timer-only.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
         ]
     ]
 }

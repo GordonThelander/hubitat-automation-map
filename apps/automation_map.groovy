@@ -4998,7 +4998,12 @@ Map webcoreSemanticEvidence() {
             'statement.repeat.post-condition-loop.v1': true,
             'statement.for.step-iteration.v1': true,
             'statement.each.device-iteration.v1': true,
-            'statement.break.loop-scope.v1': true
+            'statement.break.loop-scope.v1': true,
+            'statement.on.any-event-match.v1': true,
+            'statement.every.own-timer-only.v1': true,
+            'statement.tep.execution-policy.v1': true,
+            'statement.tsp.scheduling-policy.v1': true,
+            'statement.tcp.cancellation-policy.v1': true
         ],
         gaps: [
             'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
@@ -5009,8 +5014,6 @@ Map webcoreSemanticEvidence() {
             'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
             'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
             'statement.action.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.every.not-in-increment': 'The meaning of this statement type is not yet proven',
-            'statement.on.not-in-increment': 'The meaning of this statement type is not yet proven',
             'statement.unrecognised': 'The statement type is not recognised',
             'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
             'condition.operator-unproven': 'This condition operator is not yet proven',
@@ -5024,6 +5027,8 @@ Map webcoreSemanticEvidence() {
             'statement.repeat.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'statement.for.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'statement.each.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.on.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.every.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
             'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
@@ -5038,7 +5043,12 @@ Map webcoreSemanticEvidence() {
             'claim.statement.repeat.post-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.for.step-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
             'claim.statement.each.device-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
-            'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+            'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.on.any-event-match.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.every.own-timer-only.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
         ]
     ]
 }
@@ -5073,7 +5083,7 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String 
     Set claims = [] as Set
     Set gaps = [] as Set
     Map gapReasons = (((acc.evidence as Map).gaps ?: [:]) as Map)
-    boolean known = type in ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each'] ||
+    boolean known = type in ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each', 'on', 'every'] ||
         gapReasons.containsKey('statement.' + type + '.not-in-increment')
     Map entry = [construct: known ? 'wc.statement.' + type : 'wc.statement.unrecognised', role: null]
     // Saved tcp c is the default; a saved absent tcp is never cancel (editor option "", cleanCode).
@@ -5084,6 +5094,12 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String 
     if (node.containsKey('tsp')) { gaps << 'statement.envelope.tsp-present'; envelope = false }
     if (node.tcp != 'c') { gaps << 'statement.envelope.tcp-non-default'; envelope = false }
     if (envelope) claims << 'statement.envelope.default.v1'
+    // The three task policy vocabularies apply to any statement that saves them. Absent tep and tsp
+    // are the documented default and are not separately claimed; a saved tcp of c is that default too,
+    // so only a non-default tcp is claimed, matching the fixture evidence.
+    if (node.containsKey('tep')) claims << 'statement.tep.execution-policy.v1'
+    if (node.containsKey('tsp')) claims << 'statement.tsp.scheduling-policy.v1'
+    if (node.tcp != null && node.tcp != 'c') claims << 'statement.tcp.cancellation-policy.v1'
     if (type == 'if') {
         entry.role = 'decision'
         claims << 'statement.if.branch-order.v1'
@@ -5143,6 +5159,14 @@ void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String 
         entry.role = 'device-iteration'
         claims << 'statement.each.device-iteration.v1'
         gaps << 'statement.each.fast-forward-unresolved'
+    } else if (type == 'on') {
+        entry.role = 'any-event-match'
+        claims << 'statement.on.any-event-match.v1'
+        gaps << 'statement.on.fast-forward-unresolved'
+    } else if (type == 'every') {
+        entry.role = 'own-timer-only'
+        claims << 'statement.every.own-timer-only.v1'
+        gaps << 'statement.every.fast-forward-unresolved'
     } else {
         String gap = 'statement.' + type + '.not-in-increment'
         gaps << ((((acc.evidence as Map).gaps ?: [:]) as Map).containsKey(gap) ? gap : 'statement.unrecognised')
