@@ -161,7 +161,7 @@ Map webcoreStatementShapes() {
         ],
         evidenceGaps: [
             'statement/$/absent': 'editor-authored-only',
-            'statement/tcp/absent': 'observed-at-capture',
+            'statement/tcp/absent': 'not-in-matrix',
             'statement/sm/present': 'observed-at-capture',
             'wc.statement.for/x/absent': 'not-in-matrix',
             'elseif/$/absent': 'editor-authored-only',

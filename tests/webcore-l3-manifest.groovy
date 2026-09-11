@@ -798,10 +798,13 @@ def branchGate = { Map m, Map meta, Map docs ->
 List branchProblems = branchGate(manifest, fixtureMeta, fixtureDocs)
 check(branchProblems.isEmpty(), "every branch cites exactly its promoting saves, records save and round-trip differences, and otherwise carries one matching gap ${branchProblems.take(3)}")
 Map observedGaps = (fixtureManifest.observedEditorGaps as List).collectEntries { [(it.branch): it.observation] }
-check(['statement sm present', 'statement tcp absent'].every { String b ->
-        List p = b.tokenize(' ')
-        observedGaps.containsKey(b) && (manifest.branchEvidence as List).find { Map r -> r.structure == p[0] && r.key == p[1] && r.branch == p[2] }?.gap == 'observed-at-capture' },
-    'the two editor refusals recorded at capture are observed-at-capture gaps')
+Map smPresent = (manifest.branchEvidence as List).find { Map r -> r.structure == 'statement' && r.key == 'sm' && r.branch == 'present' } as Map
+Map tcpAbsent = (manifest.branchEvidence as List).find { Map r -> r.structure == 'statement' && r.key == 'tcp' && r.branch == 'absent' } as Map
+check(observedGaps.containsKey('statement sm present') && smPresent?.gap == 'observed-at-capture',
+    'the hosted-editor sm refusal remains an observed-at-capture gap')
+check(observedGaps['statement tcp absent']?.contains('Original A2 observation was misattributed') &&
+      observedGaps['statement tcp absent']?.contains('not yet been captured') && tcpAbsent?.gap == 'not-in-matrix',
+    'the corrected tcp history records an editor-producible branch not yet in the capture matrix')
 Map triggerRow = (manifest.branchEvidence as List).find { Map r -> r.structure == 'condition' && r.key == 'ct' && r.branch == 'value:t' } as Map
 check(triggerRow?.gap == null && triggerRow?.fixtures == ['l3-02-followed-by.edit-round-trip'] &&
       triggerRow?.canonicalOnly == ['l3-02-followed-by.edit-round-trip'],
