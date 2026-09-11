@@ -90,7 +90,8 @@ check(countDrift.isEmpty(), "every committed fixture is normalized without trunc
 // ---- privacy -------------------------------------------------------------------------
 
 Set closed = (['or', 'decision', 'sequential-block', 'then', 'else', 'group', 'opaque-condition', 'opaque-followed-by-group',
-               'multi-way-decision', 'switch-scoped-control-transfer', 'piston-terminate', 'i', 'e'] +
+               'multi-way-decision', 'switch-scoped-control-transfer', 'piston-terminate', 'i', 'e',
+               'pre-condition-loop', 'post-condition-loop', 'step-iteration', 'device-iteration', 'loop-scoped-control-transfer'] +
               (evidence.claims as Map).keySet() + (evidence.gaps as Map).keySet()) as Set
 def strings
 strings = { Object o, List acc ->
@@ -162,14 +163,27 @@ Map mutations = [
         ["claims << 'statement.break.switch-scope.v1'", "claims << 'statement.exit.terminate-piston.v1'"],
     'exit only exits its immediate containing statement, the way break does':
         ["claims << 'statement.exit.terminate-piston.v1'", "claims << 'statement.break.switch-scope.v1'"],
-    'a break with no switch as its nearest container is read as switch-scoped':
-        ["if (container == 'switch-case') {", 'if (true) {']
+    'a break with neither a switch nor a loop as its nearest container is read as scoped to one anyway':
+        ["gaps << 'statement.break.container-unresolved'", "claims << 'statement.break.loop-scope.v1'"],
+    'a while runs its body once unconditionally before checking the condition, the way repeat does':
+        ["entry.role = 'pre-condition-loop'", "entry.role = 'post-condition-loop'"],
+    'a repeat continues running while its condition holds, the same as while':
+        ["entry.role = 'post-condition-loop'", "entry.role = 'pre-condition-loop'"],
+    'a for runs its body exactly once, ignoring its start, end and step operands':
+        ["claims << 'statement.for.step-iteration.v1'", ''],
+    'an each runs its body exactly once, ignoring the device list it saves':
+        ["claims << 'statement.each.device-iteration.v1'", ''],
+    'a break inside a loop terminates the whole piston, as exit does':
+        ["claims << 'statement.break.loop-scope.v1'", "claims << 'statement.exit.terminate-piston.v1'"]
 ]
 List named = (manifest.claims as List).collect { (it as Map).negative } + (manifest.limits as List).collect { (it as Map).negative }
 check((mutations.keySet() as Set) == (named as Set), 'every named misreading in the manifest has a mutation here')
 def detected = { Object n ->
     Map absentTcp = (model(n, [s: [[t: 'action', a: '0']]]).occurrences as Map)['$.s[0]'] as Map
-    !traceMismatches(n).isEmpty() || !((absentTcp.gaps as List).contains('statement.envelope.tcp-non-default'))
+    Map topLevelBreak = (model(n, [s: [[t: 'break', a: '0', tcp: 'c']]]).occurrences as Map)['$.s[0]'] as Map
+    !traceMismatches(n).isEmpty() || !((absentTcp.gaps as List).contains('statement.envelope.tcp-non-default')) ||
+        !((topLevelBreak.gaps as List).contains('statement.break.container-unresolved')) ||
+        (topLevelBreak.claims as List).any { it in ['statement.break.switch-scope.v1', 'statement.break.loop-scope.v1'] }
 }
 mutations.each { String misreading, List fromTo ->
     check(detected(mutant(fromTo[0] as String, fromTo[1] as String)), "mutation: the misreading '${misreading}' fails the gates")
