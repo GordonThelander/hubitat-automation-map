@@ -48,7 +48,7 @@ check(scan('{"s": [{"t": "if", "d": [":00000000000000000000000000000001:"], "c":
 }
 
 File dir = new File(repoRoot, 'tests/fixtures/webcore-l3')
-List<File> fixtures = dir.isDirectory() ? dir.listFiles().findAll { it.name ==~ /.+\.(first-save|round-trip)\.json/ }.sort { it.name } : []
+List<File> fixtures = dir.isDirectory() ? dir.listFiles().findAll { it.name ==~ /.+\.(first-save|round-trip|edit-save|edit-round-trip)\.json/ }.sort { it.name } : []
 if (fixtures.isEmpty()) {
     println 'SKIP  no L3 fixtures are committed yet'
 } else {
