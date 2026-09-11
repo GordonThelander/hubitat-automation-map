@@ -13109,8 +13109,9 @@ function pickOptionText(n, group) {
       });
     }
 
-    // Filter on title only, keep the current selection visible even when it
-    // no longer matches - same contract fillSelect() used to guarantee.
+    // Filter on the text each row shows, so a visible tag such as [WCP] is
+    // searchable. Keep the current selection visible even when it no longer
+    // matches - same contract fillSelect() used to guarantee.
     function computeRows(term) {
       var q = (term || '').toLowerCase();
       var out = [];
@@ -13121,10 +13122,11 @@ function pickOptionText(n, group) {
       var shown = 0;
       for (var i = 0; i < items.length; i++) {
         var n = items[i];
-        if (q && String(n.title).toLowerCase().indexOf(q) < 0) { continue; }
+        var rowText = n.optionText != null ? n.optionText : n.title;
+        if (q && String(rowText).toLowerCase().indexOf(q) < 0) { continue; }
         out.push({
           value: n.id,
-          label: n.optionText != null ? n.optionText : n.title,
+          label: rowText,
           disabled: !!(n.disabled || n.paused)
         });
         seen[n.id] = true;
