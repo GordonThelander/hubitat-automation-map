@@ -321,6 +321,44 @@ async function main() {
         assert(h.indexOf('<span class="dcReason">Evidence gap</span>') >= 0 && h.indexOf('0 occurrences') >= 0, 'unknown reason not given the fixed label');
     });
 
+    // ---- meaning (L4) ---------------------------------------------------------------------
+
+    function withMeaning(sem) {
+        const b = JSON.parse(JSON.stringify(completeBody));
+        b.semanticAssessment = sem;
+        return b;
+    }
+
+    check('meaning is stated apart from structure, with the proven count', function () {
+        const h = rendered(withMeaning({ status: 'complete', occurrences: 7, explained: 2, explainable: false,
+            gaps: [{ id: 'condition.leaf-opaque', reason: 'A condition comparison is shown as opaque until its meaning is proven', occurrences: 2 }], claims: [] }));
+        assert(h.indexOf('<p class="sub">Meaning: proven for 2 of 7 statement occurrences.</p>') >= 0, 'meaning line missing');
+        assert(h.indexOf('<h5>Meaning not yet proven</h5>') >= 0, 'no meaning gap heading');
+        assert(h.indexOf('<li><span class="dcReason">A condition comparison is shown as opaque until its meaning is proven</span> <code>condition.leaf-opaque</code> <span class="sub">2 occurrences</span></li>') >= 0, 'meaning gap row wrong');
+    });
+
+    check('a fully explained piston says so, and meaning never changes the percentage', function () {
+        const plain = rendered(completeBody);
+        const h = rendered(withMeaning({ status: 'complete', occurrences: 1, explained: 1, explainable: true, gaps: [], claims: [] }));
+        assert(h.indexOf('Meaning: proven for all 1 statement occurrence.') >= 0, 'fully proven line wrong');
+        assert(h.indexOf('Meaning not yet proven') < 0, 'gap heading shown with no gaps');
+        const pct = function (s) { const m = s.match(/(\d+(\.\d+)?)% /); return m ? m[1] : null; };
+        assert(pct(h) === pct(plain), 'meaning changed the percentage');
+    });
+
+    check('no meaning line or list when the assessment was not evaluated or is absent', function () {
+        const skipped = rendered(withMeaning({ status: 'not-evaluated', occurrences: 3, explained: 0, explainable: false,
+            gaps: [{ id: 'condition.leaf-opaque', reason: 'x', occurrences: 1 }], claims: [] }));
+        assert(skipped.indexOf('Meaning') < 0, 'meaning shown for a not-evaluated assessment');
+        assert(rendered(completeBody).indexOf('Meaning') < 0, 'meaning shown with no assessment');
+    });
+
+    check('untrusted meaning reasons, ids and counts cannot inject markup', function () {
+        const h = rendered(withMeaning({ status: 'complete', occurrences: '<b>', explained: 1, explainable: false,
+            gaps: [{ id: '<img src=x>', reason: '<script>', occurrences: '<i>' }], claims: [] }));
+        assert(h.indexOf('<img') < 0 && h.indexOf('<script>') < 0 && h.indexOf('<i>') < 0 && h.indexOf('<b>') < 0, 'markup injected');
+    });
+
     // ---- structural mismatches ----------------------------------------------------------
 
     function withStructure(findings, overflow) {
