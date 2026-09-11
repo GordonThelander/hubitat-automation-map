@@ -221,6 +221,40 @@ webCoRE does not have, and saving, stores:
 
 No item has `t: 'function'`. The editor warns but saves.
 
+### Operand grammar
+
+Every operand discriminates on `t`, against a closed vocabulary the executor itself validates on
+`cleanCode` (`ListAL`): `p`, `d`, `v`, `s`, `x`, `c`, `e`, `u`, plus the empty (nothing-selected) form,
+nine values at the general `evaluateOperand` dispatch. A separate `on`-statement event matcher
+discriminates the same way on `p`, `v`, `x` again, but at a distinct saved parent position, so those
+three are tracked as three further registered kinds rather than folded into the general nine. Twelve
+operand kinds in total.
+
+Structural (L3) evidence exists for four of the twelve so far: constant (`t: 'c'`), virtual (`t: 'v'`),
+variable (`t: 'x'`) and expression (`t: 'e'`). The other eight, physical-device (`t: 'p'`), device-list
+(`t: 'd'`), preset (`t: 's'`), argument (`t: 'u'`), the three event-match forms, and the empty form,
+have zero occurrences anywhere in the captured fixture corpus and remain unverified; every saved device
+list observed so far is either empty or the single static target added for the action-targeting
+increment (section 4, `action`). This is evidence only. It does not yet raise any operand's registry
+level, which stays L2 pending the same save/reload promotion gate the statement grammar uses.
+
+| Kind | Discriminator | Always-persisted keys | Notes |
+| --- | --- | --- | --- |
+| constant | `t: 'c'` | `vt`, `c`, `exp` | `c` is exclusive to constant; `exp` is shared with expression only |
+| virtual | `t: 'v'` | `vt`, `v` | `v` is one of a closed ~24-value case list (mode, HSM, system events, and similar); exclusive to virtual |
+| variable | `t: 'x'` | `vt`, `x` | `x` is the referenced variable name; a leading `@` names a webCoRE global, `@@` a Hubitat Hub Variable, confirmed again here at `evaluateOperand`; exclusive to variable |
+| expression | `t: 'e'` | `vt`, `exp` | shares `exp` with constant; its own `e` key is saved but not read by `evaluateOperand` in the reviewed region, purpose unproven |
+
+Each kind also carries `f` (format) and `g` (grouping function) when non-default, and `vt` itself is a
+value-type discriminator whose closed vocabulary is not yet reconciled against the executor. All four
+follow the same exclusivity rule already established for statement keys: a key belongs to exactly one
+`t`, stripped unconditionally from every other kind by `cleanCode`, except `exp`, which two kinds share
+(`ListEC = [e, c]`). As with statement keys, this exclusivity is proven for `cleanCode`'s unconditional
+strip on load (`recreatePiston`), not for the editor's own save; a `d` list has been observed left over
+on both a `v`-type and a `c`-type operand in an `edit-save` capture, absent again after the next
+round-trip. Treat a stray key on an editor-save-only capture as expected cruft, not as a broken
+exclusivity claim.
+
 ## 5. How Automation Map classifies evidence
 
 ### 5.1 Variables
@@ -393,5 +427,12 @@ Measured on a Hubitat C-8 development hub, 2026-09.
   Coverage results are not cached. The endpoint applies fixed traversal, output and time bounds.
   Measured on the development hub, results were under 1KB and returned within a second; that is
   observed evidence, not a guarantee.
-- **In progress:** raising statement constructs from L2 to L3, meaning structural grammar and child
-  positions proven against the pinned executor and editor source and against editor-saved fixtures.
+- **Statement structural and semantic evidence:** all twelve registered statement types (`action`,
+  `if`, `while`, `repeat`, `every`, `on`, `each`, `for`, `switch`, `do`, `break`, `exit`) have
+  source-cited structural (L3) evidence and at least one proven semantic (L4) claim, each gated on a
+  hand-authored trace, a hashed pinned-source region and a canonical (round-trip) fixture with proven
+  save/reload lineage.
+- **In progress:** operand structural evidence, first slice (four of twelve kinds; see "Operand
+  grammar" above). Not yet started: wiring proven operand evidence into the construct registry's level
+  field and into the runtime coverage walker, the remaining eight operand kinds, and operand semantic
+  (L4) meaning once an operand kind is L3-proven.
