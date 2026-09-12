@@ -91,6 +91,47 @@ Map noElse = [s: [[t: 'if', c: [[t: 'condition']], s: [[t: 'action', k: [[c: 'on
 check(ctrlSequence(builder.buildWebcoreFlow(noElse)) == ['if', 'endif'],
     'an if with no else still closes')
 
+// ---- condition text: transcribed from saved structure, never invented -------
+
+Map realShape = [s: [[t: 'if', o: 'and', c: [
+    [t: 'condition', co: 'changes',
+     lo: [t: 'p', a: 'motion', d: [':13e33296864215646891b31480c3d6ec:']], ro: [t: 'c']],
+    [t: 'condition', co: 'is',
+     lo: [t: 'p', a: 'contact', d: [':db15e9deb12d0d5146b933146f7fd15a:']],
+     ro: [t: 'c', c: 'closed']]],
+    s: [[t: 'action', k: [[c: 'noop']]]]]]]
+Map realParts = builder.buildWebcoreFlow(realShape)[0]
+check(realParts.conditionJoiner == 'and', 'the saved condition joiner is carried')
+check((realParts.conditionParts as List).size() == 2, 'both conditions are carried as parts')
+check(String.valueOf(realParts.cond) == '2 conditions not decoded',
+    'the builder itself still cannot name a device, so the fallback stands')
+
+Map names = [':13e33296864215646891b31480c3d6ec:': 'Entrance Hall Motion Sensor',
+             ':db15e9deb12d0d5146b933146f7fd15a:': 'Patio Door']
+check(String.valueOf(builder.webcoreFlowConditionText(realParts.conditionParts as List, 'and', names)) ==
+        "Entrance Hall Motion Sensor's motion changes and Patio Door's contact is closed",
+    'a resolved condition reads the way the piston editor writes it')
+check(String.valueOf(builder.webcoreFlowConditionText(realParts.conditionParts as List, 'or', names))
+        .contains(' or '), 'the joiner is the saved one, not a fixed and')
+check(builder.webcoreFlowConditionText(realParts.conditionParts as List, 'and', [:]) == '',
+    'an unresolvable device yields no text at all, never half a condition')
+check(builder.webcoreFlowConditionText([[opaque: true]], 'and', names) == '',
+    'a group collapses the whole label rather than being flattened')
+check(builder.webcoreFlowConditionText([], 'and', names) == '', 'no parts yields no text')
+
+check(String.valueOf(builder.webcoreFlowConditionText(
+        [[opaque: false, deviceTokens: [], subject: 'mode', op: 'is', value: 'Home']], 'and', [:])) ==
+        'mode is Home', 'a non-device operand needs no resolution')
+check(String.valueOf(builder.webcoreFlowConditionText(
+        [[opaque: false, deviceTokens: [], subject: '@@TestNumber', op: 'is greater than', value: '5']],
+        'and', [:])) == '@@TestNumber is greater than 5',
+    'an underscored operator is transcribed with spaces, not reinterpreted')
+
+check(String.valueOf(builder.webcoreFlowOperandText([t: 'c', c: 'closed'])) == 'closed' &&
+      String.valueOf(builder.webcoreFlowOperandText([t: 'x', x: '@@GT1'])) == '@@GT1' &&
+      builder.webcoreFlowOperandText([t: 'e']) == '' && builder.webcoreFlowOperandText([:]) == '',
+    'operand text is transcribed for known kinds and blank for the rest')
+
 // ---- switch renders as an ordered decision chain, with no invented default ---
 
 Map switchPiston = [s: [[t: 'switch', cs: [
