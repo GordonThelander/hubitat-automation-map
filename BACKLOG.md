@@ -655,18 +655,32 @@ commit landed.
 waste is a second full `buildGraph()` across 143 apps and 221 devices immediately after the scan
 already built one, plus two warnings that read as faults when they are a mitigation working.
 
-**Open question, deliberately not guessed.** Which re-render races the commit. The page has three
-that could: a 60 second fallback `refreshInterval` while a scan is active (line 554), the
-`/scan-status` progress poll, and a one-time `location.reload()` four seconds after the poll sees
-completion (line 964). The observed gap is under one second rather than four, which does not match
-the reload path, so this needs establishing rather than assuming before anything is changed.
+**Answered on the hub, 2026-09-12 16:57.** The `lockVsState()` trace added for this settled it in one
+scan. The scan completed at `22.594`, and at `25.003` a page render logged
+`graph=false appInfo=143 appResultsReady=true graphVersion=15`. That combination is only reachable
+from a snapshot taken between the app-phase commit and the graph commit, and it was logged 2.4
+seconds AFTER completion. So the racing execution is a page render that STARTED before `finishScan`
+committed and ENDED after it. Its own end-of-run write-back nulls the graph, and the self-heal in the
+same execution rebuilds it.
 
-**The evidence now exists.** A `lockVsState()` snapshot is logged at the self-heal and at all three
-recovery branches, behind `diagOn()`. It reports the live static lock and the durable state this
-execution can see, which are exactly the two values that disagree when a recovery fires: lock and
-generation token tails, `scanRunning`, `scanPhase`, whether `state.graph` is present, the graph
-version, the `appInfo` size and `appResultsReady`. One scan with diagnostic logging on should settle
-which render raced the commit.
+**Why it is not simply fixed.** Hubitat writes the whole state snapshot back when an execution
+returns (see the comment at the app-phase commit), so a stale render cannot be stopped from
+clobbering `state.graph` from inside that render. Rebuilding is the correct response, not a
+workaround. Avoiding it entirely would mean moving the graph out of `state`, which the scan-start
+comment rejects on measured peak-memory grounds, so that is a real design change and not a tidy-up.
+
+**What was changed instead.** The mitigation no longer reports itself as a fault. Every graph commit
+now writes a paired marker, `state.graphCommittedAtLocal` alongside `atomicState.graphCommittedAt`,
+with the same value. `atomicState` commits on every write and cannot go stale, which is the same
+property `shouldAutoScan()` already relies on, so the two disagreeing is proof of a stale snapshot
+rather than an inference from timing. The self-heal logs at info when staleness is proven and keeps
+its warning otherwise, because a graph missing for any other reason still deserves one. The pair is
+deliberately not overloaded onto `state.scanHeartbeat`, which feeds `clearAbandonedScan`'s
+90-second freshness check.
+
+**Still open.** The second full rebuild per scan remains, and is inherent to the platform's snapshot
+semantics rather than to this app's logic. Closing it needs the graph held somewhere a stale snapshot
+cannot overwrite.
 
 **Not a regression.** Pre-existing, and unrelated to the v2.3.0 webCoRE work: it fired at 07:20 and
 07:53, before any of that day's changes were deployed. The source comments date the underlying race

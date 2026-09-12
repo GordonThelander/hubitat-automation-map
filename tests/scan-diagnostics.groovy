@@ -54,6 +54,33 @@ diag.stubNow = 1_000_000L
 check(diag.phaseElapsedSeconds(1_000_000L - 31_000L) == 31, 'elapsed seconds are computed from the stamp')
 check(diag.phaseElapsedSeconds(1_000_000L - 999L) == 0, 'under a second reads as zero, never as missing')
 
+// ---- snapshotPredatesGraphCommit ---------------------------------------------
+
+// Both halves are written together at every commit site, so equal means this
+// execution's snapshot already contains that commit.
+diag.state = [graphCommittedAtLocal: 500L]
+diag.atomicState = [graphCommittedAt: 500L]
+check(!diag.snapshotPredatesGraphCommit(), 'a snapshot holding the latest commit is not stale')
+
+// The case from the hub log: a render whose snapshot predates finishScan.
+diag.state = [graphCommittedAtLocal: 400L]
+diag.atomicState = [graphCommittedAt: 500L]
+check(diag.snapshotPredatesGraphCommit(), 'a snapshot older than the last commit is stale')
+
+// Never treat an app that has simply never committed a graph as stale: that is
+// a genuinely missing graph and must keep its warning.
+diag.state = [:]
+diag.atomicState = [:]
+check(!diag.snapshotPredatesGraphCommit(), 'no commit marker at all is not stale, it is a real gap')
+
+diag.state = [:]
+diag.atomicState = [graphCommittedAt: 500L]
+check(diag.snapshotPredatesGraphCommit(), 'a snapshot predating the first ever marker is stale')
+
+diag.state = [graphCommittedAtLocal: 500L]
+diag.atomicState = [:]
+check(!diag.snapshotPredatesGraphCommit(), 'a missing atomic marker never reports stale')
+
 // ---- webcoreDecodeSummary ----------------------------------------------------
 
 check(String.valueOf(diag.webcoreDecodeSummary()) ==
