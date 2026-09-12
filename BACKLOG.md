@@ -13,19 +13,662 @@ not a release commitment.
 Every active item states its next action. Detailed research belongs in Supporting Docs or commit
 history, not in this delivery list.
 
-## Release gate
-
-**Closed, and superseded by an actual release.** Steve retested the original missing
-component-device scenario on his own hub: Hubitat reported 351 devices and Automation Map matched
-it at 351; he specifically checked Aqara, Bond, Harmony, and Shelly devices and confirmed all were
-present, and described the release as "spot on" with nothing else discovered on his end. That
-defect, along with everything else accumulated on `dev` through 2026-09-02, shipped to production
-as v2.2.0 (2026-09-03) - see item 16 in Hold/closed for the release path. This section is now a
-historical record, not an open gate.
-
 ## Now
 
-### 29. Screen audit on the dev hub, 2026-09-10
+### 32. Narrow windows were never checked
+
+Carried out of the closed screen audit (item 29), which fixed everything else it found. The map was
+never assessed below a full desktop width, and item 23 records a related concern from the independent
+assessment: at 1024x768 the fixed 375px legend plus the ~300px control rail leaves a narrow central
+strip, while the small-screen fallback message only triggers below 820px. So 1024px is currently
+treated as a fully supported layout without anyone having looked at it.
+
+**Next action:** resize the browser window, or override the viewport, and record what actually breaks
+before deciding whether the 820px breakpoint is in the right place.
+
+### 33. Supporting Docs have drifted from what shipped
+
+**Found by audit, 2026-09-12.** The design and research material is no longer a reliable description
+of the app, and it is the material an AI consumer or a future contributor reads first.
+
+- `Supporting Docs/README.md` is the index and misdescribes shipped work: it called
+  `hub_variable_first_class_spec.md` "implementation not yet authorized" and
+  `hub_variable_v2014_implementation_spec.md` "not authorized for implementation" when both shipped,
+  and described `ai_assessment_export_extension.md` as "proposed, not implemented" and delivered in
+  the same row. Six files were missing from the table entirely.
+- `ai_export_spec.md` carried "Export schema: 12" in its own header while the app emitted 13.
+- `ai_assessment_export_extension.md` and `ai_bad_rule_assessment_framework.md` are written against
+  **export schema 3** and have not been revised since; the export is now 13.
+- Eight documents share a single 2026-08-26 housekeeping commit and have had no substantive update
+  since, which is how the above went unnoticed.
+- `production_build_methodology.md` is a duplicate. The maintained copy is in the `production-protocol`
+  repository and this one was left behind by the move.
+
+The index and the schema headers were corrected as part of this audit. The schema-3 assessment
+documents were **not** rewritten, and the duplicate was **not** deleted.
+
+**Next action:** decide whether the two schema-3 assessment documents are revised to the current
+contract, marked historical, or removed, and whether the duplicated methodology document is deleted
+here in favour of the `production-protocol` copy. Both are judgement calls about what the material is
+for, not mechanical fixes.
+
+### 26. Contested devices: compute the trigger overlap instead of asking the user to
+
+**The gap.** The contested-device finding lists every automation that can leave a device in a lasting
+state, then says: *"Check whether their triggers can overlap and which automation should win when
+they do."* The first half of that is work the app already holds the data to do. `trigger` edges
+(app to device) are on the graph for every app with decoded triggers, so shared trigger sources
+between the controlling apps are a straight derivation, not new information.
+
+**Evidence, from a real scan on the dev hub.** One device had 10 controlling automations. Nine
+distinct trigger sources across them, except that **four shared a single trigger device**, and those
+four were near-duplicates (an import, a second import, and a clone of the same rule) all firing from
+the same source onto the same light. That is the actionable signal, and it was invisible under a flat
+list of ten names that the user was asked to cross-reference by hand.
+
+**Proposed change.** Group the controlling apps by shared trigger source and surface the clusters,
+leaving "which should win" as the question it genuinely is.
+
+**The honesty constraint, which cuts both ways and shapes the wording:**
+
+- A shared trigger device is **positive evidence** that two automations can fire from the same event.
+  Safe to state.
+- Not sharing one **proves nothing**. Time, mode, variable and rule-invoked triggers produce no
+  device edge at all, so "these cannot overlap" would present a decoding gap as proven emptiness. The
+  finding must surface the positive signal and stay explicitly silent on the negative.
+- An app with no decoded trigger at all is a **third state**, undetermined, not absent. In the sample
+  above one Basic Rule fell in this category and must be reported as such rather than folded into
+  either group.
+
+**Scope.** A derivation over existing `trigger` edges plus a rewrite of the one guidance string. No
+new scan work, no new decoding, no schema change. Small and self-contained enough to be a **Now**
+candidate rather than Next, if prioritised.
+
+**Status.** Not started, not authorized. Behaviour confirmed against a real export before writing this
+entry; the underlying edges are already present and sufficient.
+
+### 31. A dead constraint on a device that also has a live relationship
+
+Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression
+names any more, so those devices are drawn as constraints even though nothing evaluates them. The
+map now tags a device `UNUSED` when every relationship visible in the current view is one of these,
+which covers the case that prompted the work (Perimeter Open's orphaned illuminance condition on the
+two Back Garden lights).
+
+What it does not cover: a device holding both a dead constraint and a live relationship. Perimeter
+Closed is the example - its five door contacts are live triggers and also sit in an abandoned contact
+condition, so they keep an unexplained constraint line with no tag. A node tag cannot say this
+without falsely calling the device unused, since the device genuinely is in use.
+
+**Next action:** decide whether to mark the edge rather than the node (dimming or dashing a dead
+constraint line), and whether to add a matching neutral Insights finding alongside
+`disabledDevicesStillUsed`. Detection already exists and is exposed as `unused` on constraint edges;
+this is a presentation decision, not new analysis. Hub-wide there were 20 such edges across 6 rules
+when this was measured (2026-09-09).
+
+## Next
+
+### 23. Remaining findings from the independent UI assessment (2026-09-07)
+
+Full report: `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`. The three concrete
+bugs it found are item 22 in Hold/closed below; everything here needs an actual design/implementation
+decision, not just a wording fix. Spot-verified against source (line citations, opacity/stabilization
+timing, `#status`/`#legend` 375px and `#controls` 300px fixed widths, the 820px small-screen
+breakpoint, close buttons using generic `title="Close"` with no `aria-label`) - all checked claims
+matched current code.
+
+- Narrowing the relationship filter (e.g. "External systems only") blanks the graph for roughly
+  1.5s with no busy indicator before the narrowed layout appears - the network's opacity is
+  deliberately zeroed during physics stabilization (`apps/automation_map.groovy` `settle()`) with a
+  1500ms fallback reveal, and nothing tells the user layout is still running during that window.
+- Duplicate visible labels in Quick Search results are indistinguishable - no room, parent, or ID
+  discriminator shown when two nodes share a label, only a hidden internal id.
+- Panels (Insights, External systems, Pivot tables, Device icons, flow/details, release activity)
+  have no `role="dialog"`/`aria-labelledby`, close buttons expose only "x" with no `aria-label`, and
+  focus does not move into an opened panel or return to the launching control on close. The graph
+  canvas has no keyboard-accessible node structure.
+- At 1024x768 the fixed 375px legend plus ~300px control rail leaves a narrow central strip for a
+  large map, but the small-screen fallback message only triggers below 820px - so 1024px is treated
+  as a fully supported desktop graph layout while being difficult to read in practice.
+- Panel-internal action styling is inconsistent - the main tool rail uses large rounded buttons,
+  but External systems/Device icons render Save, backup/restore, and similar actions as small
+  browser-default buttons, and Pivot tables/Export CSV use yet another compact treatment.
+- The initial whole-map view packs ~386 nodes into a small central cluster with unreadable labels
+  until the user searches or focuses; overlaps with item 1's existing "search-first" direction below.
+
+**Next action:** each bullet needs its own scoped design decision before implementation (matches
+item 1's review scope for the layout/styling ones) - not a batch to fix blind. Raise with Gordon
+which to schedule and in what order.
+
+### 1. Desktop UI review and map workspace modernisation
+
+**Why now:** the desktop map is powerful but visually dense. Important actions compete with raw
+data, panels use space inconsistently, and several views are difficult to scan. This is a product
+usability issue, not cosmetic polish.
+
+**Review scope:**
+
+- Test at 1440 x 900 and 1920 x 1080, including browser zoom at 100% and 125%.
+- Review the map canvas, top-level actions, legend, search, focus views, Insights, External Systems,
+  Community Utilities, baseline comparison and export entry points.
+- Identify duplicated controls, competing visual emphasis, undersized text, overly long labels,
+  weak grouping and panels that expose detail before the user asks for it.
+- Check keyboard focus, close behaviour, scrolling, resize behaviour and restoration of the map
+  after a panel closes.
+
+**Preferred direction:**
+
+- Keep the map as the dominant desktop surface.
+- Replace scattered controls with a compact, clearly labelled tool rail or toolbar.
+- Use one consistent panel shell with a stable header, close control and content region.
+- Use progressive disclosure: summary first, supporting detail on demand.
+- Maintain a practical 14 to 16 px text floor for ordinary content.
+- Give primary actions, navigation and status distinct visual roles.
+- Keep the legend compact and contextual rather than permanently consuming map space.
+- Use concise tables, counts, filters and ranked findings instead of long prose lists.
+- Preserve graph context when switching tools or opening detail.
+
+**Deliverables:**
+
+1. Annotated desktop UI audit with specific problems and affected views.
+2. A low-risk layout proposal that can be delivered incrementally.
+3. A desktop wireframe for the map, tool rail and shared panel shell.
+4. An implementation sequence separating structural changes from visual refinement.
+5. Acceptance checks for desktop readability, navigation and panel behaviour.
+
+**Done when:** a user can quickly identify Search, Insights, External Systems, Community Utilities
+and Export; only one primary panel is open at a time; ordinary text is comfortably readable; and
+the graph remains useful while tools are opened and closed.
+
+**Status:** audit, low-risk proposal, desktop wireframe and acceptance matrix completed on
+2026-08-31 in `WIP/desktop_ui_review_and_modernisation.md`. The next implementation gate is Phase 1,
+the structural workspace shell. Source implementation, Dev deployment, commit, push and production
+promotion remain separately authorised actions.
+
+**Live feedback from Gordon's own testing (2026-09-02) - implemented ahead of the fuller audit/
+wireframe, all three confirmed live on Automation Map (Dev) / Apps Code 1210:**
+
+- The External Systems "Community information" card (e.g. the LIFX Light Manager tile) is narrower
+  (`#communityCard` max-width). Done.
+- Spacing added between the top Focus dropdowns and the "Show" relationship filter below them
+  (`#showFilterLabel` margin-top). Done.
+- The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single combined
+  combobox each, replacing the old search-input-stacked-above-a-select pair. Proven standalone first
+  in `Bucket/combobox-harness/` (31 automated checks) before porting, then iterated live against
+  Gordon's own feedback: a non-editable closed control (label + arrow) opens a popup whose first row
+  is a dedicated, auto-focused search field, with the filtered options list directly below it and no
+  pinned "All X" row once a filter term is typed. `#controls` widened 150px -> 300px and the hub
+  watermark image repositioning tracks the panel's own right-anchored geometry (`right:` instead of
+  a fixed `left:` percentage) so the two cannot drift out of alignment again the way they did when
+  the panel first widened. Done.
+
+### 4. Include Dashboard usage in cleanup findings
+
+Device cleanup advice should account for devices referenced by Hubitat Dashboard, not only rules and
+apps already represented by the map.
+
+**Next action:** confirm a reliable read-only source for dashboard device references, model the
+relationship, then suppress false unused-device findings.
+
+### 24. Variable usage from apps and platforms Automation Map cannot decode (webCoRE, Dashboard)
+
+Community feedback from thebearmay (Hubitat forum, replying to Gordon re: the Hub Variable identity
+work) on the current Rule Machine variable handling: "the variables look correct" - but flags two
+gaps in coverage:
+
+- webCoRE has its own variable ecosystem, which at the time was entirely invisible to Automation Map:
+  webCoRE local variables, webCoRE global variables (a dynamic table, names hashed - "still working
+  out the specifics" even from his side), and webCoRE's own use of Hub Variables.
+  **Largely delivered since.** Piston local variables are first-class owner-scoped nodes, `@@` Hub
+  Variable use is decoded with proven read/write direction, and pistons now also carry decoded device
+  relationships and a drawn flow. What remains from his list is the webCoRE **global** (`@`) table,
+  whose hashed names are still undecoded.
+- Dashboard's use of Hub Variables specifically - item 4 above already covers Dashboard's *device*
+  references, but not Hub Variable usage. **Still open**, and now the larger half of this item.
+
+The more promising lead in his message: he believes Hubitat itself may maintain some registry of
+"what uses this Hub Variable," visible on the platform's own Hub Variables page, though he does not
+know where it is sourced from ("can see it on the Hub Variables page so I know it exists"). If real
+and read-accessible, this would be a single, authoritative source covering webCoRE, Dashboard and any
+other third-party consumer at once, rather than needing bespoke per-platform decoding for each one -
+consistent with how Hub Variable identity itself is already sourced authoritatively via
+`getAllGlobalVars()` rather than purely inferred from decoded flows.
+
+**Registry interface finding (2026-09-07):** the registry is real but
+not a viable production data source. Confirmed live with a test webCoRE piston referencing a Hub
+Variable directly (no Connector device) - the Hub Variables page did list it as a consumer, and kept
+listing it even after the piston was paused and its runtime subscriptions/controls removed, meaning
+the registry reflects saved app *configuration*, not current runtime activity. No safe read-only
+interface to it was found on firmware 2.5.1.181: the Hub Variables app's own status JSON does not
+carry it, and the one endpoint that returns per-variable consumers
+(`/installedapp/configure/json/<id>/hubVar`) only answers for whichever variable is currently
+selected in that built-in app's own UI state - switching variables means POSTing to the undocumented
+generic `/installedapp/btn` handler, which is not an appropriate thing for Automation Map to depend
+on in production.
+
+**Independent re-verification (2026-09-07), same conclusion via a different route:**
+decompiled the Hub Variables page's own client-side `buttonClick()` function directly rather than
+inferring from network traffic - confirms the original finding: showing a variable's consumers
+calls `$.post('/installedapp/btn', {id, name, stateAttribute:'inUse', ...})`, a stateful call against
+the built-in app's own session, with no stateless GET or URL-parameterized equivalent. The caution
+against depending on it stands, now confirmed two independent ways.
+
+**But found a working alternative for webCoRE specifically, with real decoded data, not just a
+plan:** a webCoRE piston's own settings are readable through the exact same generic per-app
+config fetch Automation Map already uses for every other app (`hub_get_app_config`/
+`installedapp/statusJson` - no special endpoint, no POST, fully read-only). Built a real test piston
+(`__AM Hub Variable Registry Test`) referencing `AMGateA_HubOnly` directly with no Connector device,
+fetched its own settings, and found the piston's compiled logic in a base64-encoded JSON field
+(`chunk:0`) with the variable reference sitting in cleartext:
+`{"t":"condition","lo":{"t":"x","x":"@@AMGateA_HubOnly","f":"l","vt":"string"},"co":"changes",...}`.
+`chunk:` prefixed settings confirmed as the real, general mechanism against webCoRE's own public
+source (`ady624/webCoRE`, `webcore-piston.groovy`, `setup()`) - large pistons split across multiple
+`chunk:N` fields when a single one would exceed the platform's per-setting size limit.
+
+**Hubitat-port namespace correction, verified against the exact installed source version:** the
+generic webCoRE documentation describes `@@` as a Superglobal and `@` as a Global, but the current
+Hubitat port deliberately maps Hub Variables into that `@@` namespace. Its `AddHeGlobals()` reads
+`getAllGlobalVars()` and publishes every entry as `@@<name>`; its read and write paths strip the two
+prefix characters and call Hubitat's `getGlobalVar()` / `setGlobalVar()`. Plain `@<name>` remains a
+webCoRE global. The checked source constants exactly match the installed built-in webCoRE and piston
+versions, so for this Hubitat implementation a typed variable operand (`t:"x"`) whose `x` begins
+`@@` is a Hub Variable reference. The adjacent `f:"l"` field is not needed to distinguish a legacy
+webCoRE Superglobal. Any extracted name must still be reconciled against Automation Map's
+authoritative Hub Variable inventory before creating a relationship.
+
+**webCoRE's own usage report, now checked:** "Dump global variables in use" is safely readable with
+the existing read-only app-config fetch (`pageDumpGlob`); it does not require a state-changing button
+POST. Matching source shows that it renders a static in-memory `globalVarsUseFLD` cache populated by
+piston analysis/execution paths, rather than decoding each piston's saved settings at request time.
+The live report currently still lists the paused test piston, disproving the absolute claim that a
+paused piston will not appear, but the cache can still be incomplete or stale across lifecycle/code
+reload boundaries. It is useful corroboration, not an authoritative replacement for `chunk:N`
+configuration decoding.
+
+**Prototype result:**
+`tmp/webcore-variable-decoder-prototype.groovy` mirrors the matching Hubitat-port implementation:
+contiguous chunk assembly, Base64/UTF-8 and emoji decoding, JSON parsing, and typed variable-operand
+classification for Hub Variables (`@@`), webCoRE globals (`@`), and declared piston locals. Nine
+targeted checks pass, including arbitrary multi-chunk boundaries and fail-closed malformed-input
+cases; a sanitized read-only decode of the installed test piston also matches. The hub currently has
+no representative real pistons beyond that synthetic fixture, so real-world diversity remains
+untested. The prototype proves consumer-reference discovery only, not read/write role or full flow
+reconstruction.
+
+**v2.2.5 implementation reviewed and verified on Dev:** Automation Map now decodes each
+webCoRE piston's saved `chunk:N` configuration during its existing app scan, reconciles `@@` names
+against the authoritative Hub Variable inventory, and emits a distinct `usesVar` relationship with
+direction explicitly unknown. The graph, focused-app card, fixed and custom pivot tables, Insights,
+scan-quality status, and AI export all preserve that distinction rather than manufacturing a read or
+write. Malformed configuration produces only a fixed error code, keeps every other app relationship,
+and marks the scan complete-with-gaps; decoded documents and values are never retained or exported.
+The export contract moves to schema 9 and the cached graph to schema 11. Targeted source-bound tests
+cover chunking, malformed input, privacy, reconciliation, inert-app handling, rendering/pivots,
+Insights and export semantics. Dashboard and other community apps remain open. The Hub Variables
+page and webCoRE usage report stay manual corroboration, not production data sources. Absence from
+decoded configuration still cannot prove non-use where a reference is constructed dynamically.
+
+**v2.2.8 implementation reviewed and verified on Dev: the webCoRE portion of this item is now
+closed.** Two further additions, both decoded from the same saved piston configuration the v2.2.5
+work already reads: owner-scoped webCoRE piston local variables (declaration plus proven read/write,
+feeding the same generic Local Variable machinery Rule Machine's own locals already use), and direct
+physical-device reads and actions, resolved only against the specific webCoRE parent's own
+permitted-device list using webCoRE's own device hash construction - never guessed, never inferred
+from permissions alone. Each piston reports real per-piston device relationship coverage
+(complete/partial/none/error) rather than a fixed placeholder. A form the decoder cannot resolve (a
+variable-backed device list, webCoRE's own current-triggering-device placeholder, a location/virtual
+operand) produces a counted coverage gap, never a guessed relationship. The export contract moves to
+schema 12 and the cached graph to schema 14; `Supporting Docs/webcore_piston_devices_and_local_variables_spec.md`
+holds the full specification and acceptance detail. Dashboard's Hub and Local Variable usage remains
+the only open part of this item.
+
+### 25. webCoRE decode coverage: account for the whole piston, not just the parts we read
+
+**The original gap, now closed.** The webCoRE decoder was a targeted extractor: it hunted three
+specific shapes and silently discarded everything else, so absence of a relationship had two
+indistinguishable causes, the piston genuinely not having one or the decoder never having looked.
+Phase A set out to make a piston account for itself, and it did. The accounting invariant, the
+separation of `visited` from `identified`, the source-pinned construct registry with version-drift
+reporting, per-construct evidence levels, on-demand per-piston running, and the structure-and-paths
+privacy boundary are all built and gated; the detail is in Hold/closed.
+
+**Still in force.** No translation to Rule Machine or Visual Rule Builder, no destination
+recommendation, no judgement that a piston is simple or safe to convert, no write path of any kind.
+Automation Map continues to describe and never to change the hub.
+
+**What the answer turned out to be.** The open question was whether fuller webCoRE decoding was
+practical at all, or whether permanent partial coverage with explicit gaps was the truthful end
+state. It proved practical: pistons now draw a flow with real condition text, task parameters and
+device roles. Partial coverage remains, but it is now a named and shrinking list rather than an
+unbounded unknown.
+
+**Status: the coverage work itself is delivered.** The construct registry, census walker,
+read-only endpoint, coverage card, statement and operand evidence ladders, the drawn piston flow
+and its condition text all shipped on dev through v2.3.0; that record is in Hold/closed. What is
+left below is the part that is genuinely still open.
+
+- **Piston option keys are unidentified.** A test piston's root options map saved `mps`, `pep`,
+  `dco`, `des`, `aps` and `ish` alongside the allowlisted `cto` and `ced`. They sit outside every
+  statement, so they do not affect structural validity, but any piston that saves them reads
+  "Coverage incomplete". Each needs tracing to the executor's piston-option reads before it is
+  allowlisted.
+
+- **Statement evidence gaps to close.** The twelve statement families are structural (L3), but an
+  occurrence that takes a saved branch without a matching editor save and reload in the fixtures is
+  held at identified (L2). Open: `sm` on a statement; an absent `tcp`, which the editor can produce
+  but the capture matrix does not yet contain; a task carrying `cm` or `a`; a `for` without `x`; and a
+  group's retained or unconsumed
+  `wd`, and `wt` of `l` or `n`. Nodes
+  saved before the piston was first reopened (`$`, `ct` or `s` absent) cannot be shown after a reload
+  and stay held by design.
+
+- **Found during that work, not yet actioned.** Two items. First, nothing actually verifies
+  `operand-l3.groovy`'s `sourceAssertions`: repo-wide, only `tests/webcore-l3-manifest.groovy` reads
+  them and it loads the *statement* manifest, so every operand citation is currently unchecked despite a
+  comment in that file claiming otherwise. Second, `wc.task-parameter.unselected` now has a clean,
+  inert, round-tripped capture, but promoting it needs generator work rather than a data addition:
+  structural forms are emitted with a hardcoded `level: 'L2'` and consult no evidence manifest, and the
+  operand gate's own id pattern does not match `wc.task-parameter.*`.
+
+- **Still to come.** Operand semantic (L4) meaning: what a comparison actually *means*, as opposed to
+  the saved spelling the chart now transcribes. Transcription already gave the user the readable
+  sentence, so this rung is no longer the visible win it was described as here; it is what would let
+  the app reason about a condition rather than only print it. Then the runtime walker using the
+  raised operand levels for anything at all, the rest of L4 (remaining action semantics), and
+  webCoRE's own display templates (`"Wait {0}"`, `Send notification "{0}"`) to replace raw command
+  names with worded labels, which is roughly a hundred entries to transcribe.
+
+The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
+real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
+which covers webCoRE variable usage specifically.
+
+### 5. Add runtime activity and performance context
+
+Users want help finding automations that may contribute to hub load, but configuration structure is
+not execution evidence.
+
+**Next action:** define a conservative metric model using available app statistics and timestamps,
+label observations as evidence rather than conclusions, and prototype a ranked diagnostic view.
+
+### 6. Expand a focused map one hop at a time
+
+Allow users to reveal immediate neighbours without returning to the full graph.
+
+**Next action:** specify one-hop expansion, duplicate suppression, reset behaviour and visible
+provenance. This replaces the overlapping multi-select and extend-map backlog requests.
+
+### 7. Export and import configured app data for migration
+
+Provide a safe, portable representation of user-maintained settings such as external-system
+overrides and icon choices.
+
+**Next action:** define a versioned schema, conflict rules, preview step and validation behaviour.
+Never import scan results or secrets as configuration.
+
+### 10. Live Hubitat platform update check
+
+The existing "Hubitat release activity" panel only shows historical Community Utilities/Hubitat
+release data; it never tells the user whether their own hub currently has an update available.
+
+Investigated two approaches on 2026-08-27. Hubitat's own live update-check
+(`/hub/cloud/checkForUpdate`) is real and confirmed working - a status read via the hub-rules MCP
+server reported `UPDATE_AVAILABLE` (2.5.1.172 -> 2.5.1.174) with version, release-notes URL and beta
+flag, and a second call actually triggered the install (download, apply, reboot). But that path is
+only reachable from outside the app sandbox (via the MCP server's admin access), not from a Hubitat
+app's own code, and it bundles the check together with the install - there is no way to ask "is one
+available" without also committing to install if the answer is yes.
+
+Better direction found the same day: `HPM_Manifest_Crawl`'s own feature-tracker dataset
+(`site/feature-tracker/data/hubitat_release_features.json`, publicly fetchable, confirmed live)
+already tracks every Hubitat release with a `version` and `releasedAt`. A sandboxed app can safely
+read `location.hub.firmwareVersionString` (standard, documented) and compare it against that
+dataset's latest entry - no undocumented endpoint, no admin access, no risk. The limit: this is a
+scheduled crawl of the community forum, not a live Hubitat query, so it lags real releases by up to
+one crawl cycle - confirmed directly, since at the moment 2.5.1.174 was installing on Gordon's hub,
+the dataset's last harvest (2026-08-26) still only knew about 2.5.1.172.
+
+**Next action:** publish a small derived `latest.json` (`{version, releasedAt}`) from the
+`HPM_Manifest_Crawl` pipeline instead of shipping the full ~4 MB dataset to a Hubitat app, fetch it
+from Automation Map, compare against `location.hub.firmwareVersionString`, and label the result
+honestly as "latest known as of `releasedAt`" rather than "latest available" so the crawl lag stays
+visible. Report only - never trigger an install from within Automation Map itself.
+
+### 30. The graph is rebuilt a second time after most scans
+
+**The symptom.** Every completed scan on the dev hub is followed within a second by this pair in the
+log, at 07:20, 07:53, 13:37, 15:24 and 16:25 on 2026-09-12 alone:
+
+```
+clearing resurrected scan flags for an already-completed generation
+state.graph was missing after a completed scan - rebuilding from existing scan data
+```
+
+**What is established.** Both lines come from the same execution, a render of the main page:
+`clearAbandonedScan()` is called at line 513 and `selfHealGraphIfNeeded()` at line 536 of the same
+method. `startScan()` deliberately sets `state.graph = null` to free memory, `finishScan()` commits
+the rebuilt graph, and the self-heal fires when a page render sees a null graph alongside a non-null
+`atomicState.graphVersion`. At 16:25 the scan committed at `.264`, the flag clear logged at `.293`,
+and the self-heal at `1.007`, so the render was working from a state snapshot taken before the
+commit landed.
+
+**The cost.** The map itself is correct, because the self-heal rebuilds from the same `appInfo`. The
+waste is a second full `buildGraph()` across 143 apps and 221 devices immediately after the scan
+already built one, plus two warnings that read as faults when they are a mitigation working.
+
+**Answered on the hub, 2026-09-12 16:57.** The `lockVsState()` trace added for this settled it in one
+scan. The scan completed at `22.594`, and at `25.003` a page render logged
+`graph=false appInfo=143 appResultsReady=true graphVersion=15`. That combination is only reachable
+from a snapshot taken between the app-phase commit and the graph commit, and it was logged 2.4
+seconds AFTER completion. So the racing execution is a page render that STARTED before `finishScan`
+committed and ENDED after it. Its own end-of-run write-back nulls the graph, and the self-heal in the
+same execution rebuilds it.
+
+**Why it is not simply fixed.** Hubitat writes the whole state snapshot back when an execution
+returns (see the comment at the app-phase commit), so a stale render cannot be stopped from
+clobbering `state.graph` from inside that render. Rebuilding is the correct response, not a
+workaround. Avoiding it entirely would mean moving the graph out of `state`, which the scan-start
+comment rejects on measured peak-memory grounds, so that is a real design change and not a tidy-up.
+
+**What was changed instead.** The mitigation no longer reports itself as a fault. Every graph commit
+now writes a paired marker, `state.graphCommittedAtLocal` alongside `atomicState.graphCommittedAt`,
+with the same value. `atomicState` commits on every write and cannot go stale, which is the same
+property `shouldAutoScan()` already relies on, so the two disagreeing is proof of a stale snapshot
+rather than an inference from timing. The self-heal logs at info when staleness is proven and keeps
+its warning otherwise, because a graph missing for any other reason still deserves one. The pair is
+deliberately not overloaded onto `state.scanHeartbeat`, which feeds `clearAbandonedScan`'s
+90-second freshness check.
+
+**Still open.** The second full rebuild per scan remains, and is inherent to the platform's snapshot
+semantics rather than to this app's logic. Closing it needs the graph held somewhere a stale snapshot
+cannot overwrite.
+
+**Not a regression.** Pre-existing, and unrelated to the v2.3.0 webCoRE work: it fired at 07:20 and
+07:53, before any of that day's changes were deployed. The source comments date the underlying race
+to 2026-08-30, and `selfHealGraphIfNeeded()` was written for it as a recovery, not a cure.
+
+**Worth weighing before fixing.** The self-heal is doing its job and the user sees a correct map, so
+the case for touching a known-delicate scan lifecycle is efficiency and log honesty, not correctness.
+A cheaper first step may be to stop logging at WARN when the self-heal succeeds, since a working
+mitigation should not look like a failure.
+
+## Later / v3
+
+### 11. Move graph derivation into the browser
+
+Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
+deriving view-specific graph structures client-side.
+
+### 12. Move remaining display shaping into the browser
+
+After graph derivation is stable, migrate filtering, grouping, styling and panel preparation while
+keeping scan collection and authoritative normalization on the hub.
+
+### 13. Separate the frontend from the Groovy GString
+
+Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
+breaking single-app Hubitat distribution.
+
+**GString-size gate fixed 2026-09-12, but the root cause is still this item.** The gate had reached
+88.8% of the 65535-byte JVM limit and was failing outright. The flagged span turned out to hold no
+HTML/JS template content at all: it was the webCoRE L3/L4 evidence and normaliser code (construct
+registry, statement shapes, semantic evidence, semantic normaliser), thousands of bytes of ordinary
+Groovy business logic with no `${...}` anywhere in it. `validate.ps1`'s gate measures the largest run
+of raw file text between any two literal `${` occurrences, whole file, not scoped to an actual GString
+region, so a long stretch of unrelated Groovy code between two incidental interpolations elsewhere in
+the file counts against the same 65535-byte ceiling as a real HTML template constant. Fixed by turning
+one existing empty-string literal in the hand-written normaliser
+(`webcoreSemanticStatement`'s `: ''` fallback) into `: "${''}"`, a same-value GString that splits the
+heuristic's count without changing behaviour; the evidence/normaliser span dropped from 58208 bytes to
+two pieces of roughly 41800 and 16400. The new largest segment measured anywhere in the file is 50938
+bytes (77.7% of the limit), a different, pre-existing span this note has not located yet, most likely
+inside the real HTML/JS template content the gate was originally written for. This is a stopgap, not a
+structural fix: every future evidence or normaliser addition still grows the same measured span, and
+either that or the newly-largest 50938-byte span will need another split marker eventually. The frontend
+separation this item already proposes remains the real fix, since it would remove the actual large
+HTML/JS GString constants (the reason this gate exists at all) rather than just the code that happens
+to share a compiled-constant boundary with them.
+
+### 14. Delta scanning
+
+Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
+but incomplete map is not acceptable.
+
+### 15. Same-hub warm-start cache
+
+Investigate a bounded cache that can restore a recent map quickly while clearly showing its age and
+never presenting stale data as a completed current scan.
+
+## Hold / closed
+
+- **webCoRE decode coverage, the delivered part (item 25).** Shipped on dev in reviewed
+  increments through v2.3.0. Kept in full because each entry records what was proven and how.
+
+  <details>
+  <summary>Item 25 delivered detail</summary>
+
+- **Construct registry (done).** A registry of 279 constructs generated from a pinned webCoRE source
+  commit, with per-region evidence hashes, gates that refuse to emit on a provenance or membership
+  failure, and a determinism test proving the checked-in file is byte-identical to a fresh
+  generation. The app ships a projection of it carrying construct identity and evidence level only.
+
+- **Census walker (done).** A pure traversal with five independent counters balanced against an
+  independent oracle, context-sensitive classification that never steers traversal, safe paths from
+  a reviewed key allowlist, fixed reason codes, and deterministic depth, value, path-length and
+  retained-list bounds.
+
+- **Read-only endpoint (v2.2.9).** One authenticated route that runs the census for a single piston
+  on request. It refuses while a scan is active, accepts only an ID this app has already scanned
+  whose type is a webCoRE piston, permits one operation per piston at a time, bounds the request,
+  the loopback and the analysis with fixed time limits, and builds its response field by field from
+  an explicit allowlist at every level.
+
+- **Decode coverage card (v2.2.9, collapsed on dev).** A card in the focused panel of a webCoRE
+  piston. It began as a construct table behind a Check coverage button. Once the flow chart started
+  drawing anything it could not decode as a visible block, the table no longer told the user
+  anything the map was not already showing, so the card was cut to a single line: the check runs on
+  selection and the card stays hidden unless the decoder meets a field it has never seen, which is a
+  webCoRE version saving something new rather than anything a person can act on. Outcomes that are
+  not a completed walk say nothing.
+
+- **No cache.** The endpoint applies fixed traversal, output and time bounds. Measured on the dev hub,
+  results were under 1KB and returned within a second, so a cache would add hub state for no
+  meaningful saving there; that is observed evidence, not a guarantee for every hub.
+
+- **Custom command tasks (fixed on dev).** The editor saves `cm: true` on a task with a custom
+  command. `cm` was missing from the walker's key allowlist, so such a task reported an unidentified
+  key; it is now allowlisted after tracing it through the editor serializer.
+
+- **Semantic evidence (L4), on hub dev v2.3.0.** The evidence ladder records what saved statements
+  mean, separately from structure: the order in which an if tests its branches, condition negation, `or`
+  groups, followed-by groups kept opaque, `do` as a sequential block, the default statement settings,
+  switch case order and its case-traversal policy, `while` as a pre-condition loop, `repeat` as a
+  post-condition loop that stops once its condition becomes true, `for`/`each` as step/device
+  iteration, a break scoped to its nearest switch or loop, `on` as any-event matching, `every` as
+  own-timer-only and always ending the piston's execution pass, and the tep/tsp/tcp task policy
+  vocabularies. Exit is a whole-piston terminate. An action's saved device list is now proven too:
+  expanded once and shared by every task, distinguishing a static device target from the dynamic
+  `$currentEventDevice` sentinel. Everything else is an explicit gap per occurrence, so no current
+  piston is yet reported as fully explained.
+
+- **Task order proven.** The `zz-L3-09 tasks` piston was recaptured with a valid first-save/round-trip
+  lineage after the original round trip's only save was found unusable. A saved action runs its task
+  list `k` sequentially in saved list order, one task at a time, stopping the remaining tasks early
+  only when a task fails during a normal (non-fast-forward) run (`statement.action.task-order.v1`).
+  This claim, together with the earlier device-list target claim, means all twelve registered
+  statement types now have at least one proven L4 claim. Fast-forward resumption's effect on the
+  break-on-failure behaviour is a new, separate, explicit gap
+  (`statement.action.fast-forward-unresolved`); an action with one task or fewer still carries
+  `statement.action.task-order-unresolved`, since no capture exercises order for it.
+
+- **Operand structural (L3) evidence, eleven of twelve, wired into the registry.** Constant, virtual
+  (mode/HSM/etc. reads), variable (Hub/global/local references), expression, physical-device (a device
+  attribute read), preset (a named time-of-day value), a bare device-list operand, an argument operand,
+  and all three event-match forms (virtual, physical and variable - the operand inside an `on`
+  statement's own trigger list, saved like the ordinary operand of the same kind but read by a
+  separate, simpler consumer) all have a reviewed, source-cited shape and a gate proving it against
+  every occurrence in the fixture corpus. Four new test pistons were built and captured directly (not
+  delegated) to close the remaining kinds: an `if` condition using the Argument operand type
+  (`zz-L3-13`), a Device-typed piston-local variable (`zz-L3-14`), a physical-device `on` trigger
+  (`zz-L3-15`) and a variable-change `on` trigger (`zz-L3-16`) - each built paused, saved twice
+  (first-save and an unchanged round-trip) and verified inert before capture. A real registry gap
+  surfaced along the way and was fixed: the census walker's flat allowlist of recognised field names
+  (`webcoreCensusSchemaKeys()`) was missing `u`, so every argument operand's own value key read as an
+  unrecognised field even though the construct itself was registered; `saved-position-map.md`'s
+  allowlist section is updated to match. As of 2026-09-12 all eleven proven kinds are promoted to L3 in
+  the construct registry itself, through the same committed-metadata promotion gate the statement
+  manifest already used. The twelfth kind stays L2, and as of 2026-09-12 that is a settled finding
+  rather than an open gap: a direct capture (`zz-L3-18`, a `Make a web request` task with its three
+  optional parameters left untouched, paused throughout) showed the editor holds an empty-string `t` in
+  memory and renders it as "(no value set)", but the empty string never reaches storage - both the first
+  save and the round trip stored those parameters with no `t` key at all. That is a different registered
+  construct (`wc.task-parameter.unselected`), not `wc.operand.empty`. The empty operand is therefore
+  source-proven, since the executor carries a real dispatch case for it, but not editor-producible.
+
+- **webCoRE piston flow now draws (dev, 2026-09-12).** A piston decodes into the same step list
+  `mermaidFor()` already renders for Rule Machine, Notifier and Visual Rule Builder 2.0, so it draws
+  through the existing rendering path rather than a new one, and `showFlow` needed no change because it
+  gates only on a step list existing. Statement order and branch structure only: a condition is emitted
+  as an explicitly undecoded step rather than invented comparison text, an unrecognised statement
+  becomes a visible not-decoded block rather than being dropped, and a switch default is not drawn at
+  all because where its body is stored is unproven. Device tokens stay unresolved until graph assembly,
+  the first point the owning parent's hash index exists, reusing the existing never-guess resolver.
+  Verified by lifting the builder out of the hub's own deployed source and running it against committed
+  captures: the conditional fixture yields a full if/elseif/elseif/else/endif chain, the switch fixture
+  an ordered case chain, the events fixture its two triggers. **Confirmed on the dev hub**: a scan took
+  `graph.flows` from 68 entries with no piston among them to 93 entries including all 25 pistons, in 38
+  seconds, with no errors logged. Device-token resolution - the one path unit tests cannot reach, since
+  it runs only inside buildGraph - resolved correctly to real names (`setColor` on Gordon Study Desk, a
+  three-device toggle, a switch trigger on _Test Switch) with no unresolved markers. Pistons whose `if`
+  has an empty saved body correctly draw as a decision with no branch content rather than inventing one.
+
+- **Conditions now read as text (dev, 2026-09-12).** A decision that said `2 conditions not decoded` now
+  reads `Entrance Hall Motion Sensor's motion changes and Patio Door's contact is closed` - the same
+  wording the piston editor shows. Nothing new had to be proven: the physical operand already carried its
+  attribute and device tokens, the constant operand its value, and the comparison its own stored
+  spelling, so this transcribes rather than interprets (underscores spaced, no operator meaning claimed -
+  the same basis on which a task transcribes its own saved command and parameters). Composed during graph
+  assembly, because a device name only exists once the owning parent index does and `mermaidFor` does not
+  append a device list to a diamond. Anything that cannot be named in full - an unresolved device, an
+  operand kind with no transcription, a group too deeply nested to follow - collapses back to the
+  undecoded fallback rather than printing half a sentence. Sanitised fixtures cannot cover this (the sanitiser placeholders
+  operator and joiner strings), so it is covered by synthetic tests plus live hub verification.
+
+  </details>
+
+- **Release gate (closed 2026-09-03).** Steve retested the original missing component-device scenario
+  on his own hub: Hubitat reported 351 devices and Automation Map matched it at 351. He specifically
+  checked Aqara, Bond, Harmony and Shelly devices, confirmed all were present, and described the
+  release as "spot on" with nothing else discovered on his end. That defect, along with everything
+  else accumulated on `dev` through 2026-09-02, shipped to production as v2.2.0 (2026-09-03); see
+  item 16 below for the release path. This was still sitting at the top of the file as an open gate
+  long after it closed, which is what moved it here.
+- **Screen audit on the dev hub (item 29, closed).** Accepted in review and verified across dev hub
+  revisions 143 to 177. Every finding from the 2026-09-10 audit is fixed except the narrow-window
+  check, which is carried forward as its own item in Now. The full fixed list, including the
+  2026-09-12 flow and map work, is preserved below.
+
+  <details>
+  <summary>Item 29 detail</summary>
 
 Found by stepping through every Focus entry type, Insights, the large panels, the full legend and all
 twelve Show filters on dev hub revision 136, measured in the browser.
@@ -166,599 +809,7 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **Repeated variable card rows.** A rule that writes the same Local Variable from two fields showed
   "[LOC] Overloadcount - writes" twice. Identical visible rows now merge by scope, name, operation and
   read role in the Local, Hub and Needs review lists; the saved references stay one per field.
-
-## Next
-
-### 23. Remaining findings from the independent UI assessment (2026-09-07)
-
-Full report: `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`. The three concrete
-bugs it found are item 22 in Hold/closed below; everything here needs an actual design/implementation
-decision, not just a wording fix. Spot-verified against source (line citations, opacity/stabilization
-timing, `#status`/`#legend` 375px and `#controls` 300px fixed widths, the 820px small-screen
-breakpoint, close buttons using generic `title="Close"` with no `aria-label`) - all checked claims
-matched current code.
-
-- Narrowing the relationship filter (e.g. "External systems only") blanks the graph for roughly
-  1.5s with no busy indicator before the narrowed layout appears - the network's opacity is
-  deliberately zeroed during physics stabilization (`apps/automation_map.groovy` `settle()`) with a
-  1500ms fallback reveal, and nothing tells the user layout is still running during that window.
-- Duplicate visible labels in Quick Search results are indistinguishable - no room, parent, or ID
-  discriminator shown when two nodes share a label, only a hidden internal id.
-- Panels (Insights, External systems, Pivot tables, Device icons, flow/details, release activity)
-  have no `role="dialog"`/`aria-labelledby`, close buttons expose only "x" with no `aria-label`, and
-  focus does not move into an opened panel or return to the launching control on close. The graph
-  canvas has no keyboard-accessible node structure.
-- At 1024x768 the fixed 375px legend plus ~300px control rail leaves a narrow central strip for a
-  large map, but the small-screen fallback message only triggers below 820px - so 1024px is treated
-  as a fully supported desktop graph layout while being difficult to read in practice.
-- Panel-internal action styling is inconsistent - the main tool rail uses large rounded buttons,
-  but External systems/Device icons render Save, backup/restore, and similar actions as small
-  browser-default buttons, and Pivot tables/Export CSV use yet another compact treatment.
-- The initial whole-map view packs ~386 nodes into a small central cluster with unreadable labels
-  until the user searches or focuses; overlaps with item 1's existing "search-first" direction below.
-
-**Next action:** each bullet needs its own scoped design decision before implementation (matches
-item 1's review scope for the layout/styling ones) - not a batch to fix blind. Raise with Gordon
-which to schedule and in what order.
-
-### 1. Desktop UI review and map workspace modernisation
-
-**Why now:** the desktop map is powerful but visually dense. Important actions compete with raw
-data, panels use space inconsistently, and several views are difficult to scan. This is a product
-usability issue, not cosmetic polish.
-
-**Review scope:**
-
-- Test at 1440 x 900 and 1920 x 1080, including browser zoom at 100% and 125%.
-- Review the map canvas, top-level actions, legend, search, focus views, Insights, External Systems,
-  Community Utilities, baseline comparison and export entry points.
-- Identify duplicated controls, competing visual emphasis, undersized text, overly long labels,
-  weak grouping and panels that expose detail before the user asks for it.
-- Check keyboard focus, close behaviour, scrolling, resize behaviour and restoration of the map
-  after a panel closes.
-
-**Preferred direction:**
-
-- Keep the map as the dominant desktop surface.
-- Replace scattered controls with a compact, clearly labelled tool rail or toolbar.
-- Use one consistent panel shell with a stable header, close control and content region.
-- Use progressive disclosure: summary first, supporting detail on demand.
-- Maintain a practical 14 to 16 px text floor for ordinary content.
-- Give primary actions, navigation and status distinct visual roles.
-- Keep the legend compact and contextual rather than permanently consuming map space.
-- Use concise tables, counts, filters and ranked findings instead of long prose lists.
-- Preserve graph context when switching tools or opening detail.
-
-**Deliverables:**
-
-1. Annotated desktop UI audit with specific problems and affected views.
-2. A low-risk layout proposal that can be delivered incrementally.
-3. A desktop wireframe for the map, tool rail and shared panel shell.
-4. An implementation sequence separating structural changes from visual refinement.
-5. Acceptance checks for desktop readability, navigation and panel behaviour.
-
-**Done when:** a user can quickly identify Search, Insights, External Systems, Community Utilities
-and Export; only one primary panel is open at a time; ordinary text is comfortably readable; and
-the graph remains useful while tools are opened and closed.
-
-**Status:** audit, low-risk proposal, desktop wireframe and acceptance matrix completed on
-2026-08-31 in `WIP/desktop_ui_review_and_modernisation.md`. The next implementation gate is Phase 1,
-the structural workspace shell. Source implementation, Dev deployment, commit, push and production
-promotion remain separately authorised actions.
-
-**Live feedback from Gordon's own testing (2026-09-02) - implemented ahead of the fuller audit/
-wireframe, all three confirmed live on Automation Map (Dev) / Apps Code 1210:**
-
-- The External Systems "Community information" card (e.g. the LIFX Light Manager tile) is narrower
-  (`#communityCard` max-width). Done.
-- Spacing added between the top Focus dropdowns and the "Show" relationship filter below them
-  (`#showFilterLabel` margin-top). Done.
-- The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single combined
-  combobox each, replacing the old search-input-stacked-above-a-select pair. Proven standalone first
-  in `Bucket/combobox-harness/` (31 automated checks) before porting, then iterated live against
-  Gordon's own feedback: a non-editable closed control (label + arrow) opens a popup whose first row
-  is a dedicated, auto-focused search field, with the filtered options list directly below it and no
-  pinned "All X" row once a filter term is typed. `#controls` widened 150px -> 300px and the hub
-  watermark image repositioning tracks the panel's own right-anchored geometry (`right:` instead of
-  a fixed `left:` percentage) so the two cannot drift out of alignment again the way they did when
-  the panel first widened. Done.
-
-### 4. Include Dashboard usage in cleanup findings
-
-Device cleanup advice should account for devices referenced by Hubitat Dashboard, not only rules and
-apps already represented by the map.
-
-**Next action:** confirm a reliable read-only source for dashboard device references, model the
-relationship, then suppress false unused-device findings.
-
-### 24. Variable usage from apps and platforms Automation Map cannot decode (webCoRE, Dashboard)
-
-Community feedback from thebearmay (Hubitat forum, replying to Gordon re: the Hub Variable identity
-work) on the current Rule Machine variable handling: "the variables look correct" - but flags two
-gaps in coverage:
-
-- webCoRE has its own variable ecosystem entirely invisible to Automation Map today: webCoRE local
-  variables (his read: easy to locate), webCoRE global variables (a dynamic table, names hashed -
-  "still working out the specifics" even from his side), and webCoRE's own use of Hub Variables.
-  Discovery currently only decodes Rule Machine/Notifier/VRB2 flows, so none of this is captured.
-- Dashboard's use of Hub Variables specifically - item 4 above already covers Dashboard's *device*
-  references, but not Hub Variable usage.
-
-The more promising lead in his message: he believes Hubitat itself may maintain some registry of
-"what uses this Hub Variable," visible on the platform's own Hub Variables page, though he does not
-know where it is sourced from ("can see it on the Hub Variables page so I know it exists"). If real
-and read-accessible, this would be a single, authoritative source covering webCoRE, Dashboard and any
-other third-party consumer at once, rather than needing bespoke per-platform decoding for each one -
-consistent with how Hub Variable identity itself is already sourced authoritatively via
-`getAllGlobalVars()` rather than purely inferred from decoded flows.
-
-**Registry interface finding (2026-09-07):** the registry is real but
-not a viable production data source. Confirmed live with a test webCoRE piston referencing a Hub
-Variable directly (no Connector device) - the Hub Variables page did list it as a consumer, and kept
-listing it even after the piston was paused and its runtime subscriptions/controls removed, meaning
-the registry reflects saved app *configuration*, not current runtime activity. No safe read-only
-interface to it was found on firmware 2.5.1.181: the Hub Variables app's own status JSON does not
-carry it, and the one endpoint that returns per-variable consumers
-(`/installedapp/configure/json/<id>/hubVar`) only answers for whichever variable is currently
-selected in that built-in app's own UI state - switching variables means POSTing to the undocumented
-generic `/installedapp/btn` handler, which is not an appropriate thing for Automation Map to depend
-on in production.
-
-**Independent re-verification (2026-09-07), same conclusion via a different route:**
-decompiled the Hub Variables page's own client-side `buttonClick()` function directly rather than
-inferring from network traffic - confirms the original finding: showing a variable's consumers
-calls `$.post('/installedapp/btn', {id, name, stateAttribute:'inUse', ...})`, a stateful call against
-the built-in app's own session, with no stateless GET or URL-parameterized equivalent. The caution
-against depending on it stands, now confirmed two independent ways.
-
-**But found a working alternative for webCoRE specifically, with real decoded data, not just a
-plan:** a webCoRE piston's own settings are readable through the exact same generic per-app
-config fetch Automation Map already uses for every other app (`hub_get_app_config`/
-`installedapp/statusJson` - no special endpoint, no POST, fully read-only). Built a real test piston
-(`__AM Hub Variable Registry Test`) referencing `AMGateA_HubOnly` directly with no Connector device,
-fetched its own settings, and found the piston's compiled logic in a base64-encoded JSON field
-(`chunk:0`) with the variable reference sitting in cleartext:
-`{"t":"condition","lo":{"t":"x","x":"@@AMGateA_HubOnly","f":"l","vt":"string"},"co":"changes",...}`.
-`chunk:` prefixed settings confirmed as the real, general mechanism against webCoRE's own public
-source (`ady624/webCoRE`, `webcore-piston.groovy`, `setup()`) - large pistons split across multiple
-`chunk:N` fields when a single one would exceed the platform's per-setting size limit.
-
-**Hubitat-port namespace correction, verified against the exact installed source version:** the
-generic webCoRE documentation describes `@@` as a Superglobal and `@` as a Global, but the current
-Hubitat port deliberately maps Hub Variables into that `@@` namespace. Its `AddHeGlobals()` reads
-`getAllGlobalVars()` and publishes every entry as `@@<name>`; its read and write paths strip the two
-prefix characters and call Hubitat's `getGlobalVar()` / `setGlobalVar()`. Plain `@<name>` remains a
-webCoRE global. The checked source constants exactly match the installed built-in webCoRE and piston
-versions, so for this Hubitat implementation a typed variable operand (`t:"x"`) whose `x` begins
-`@@` is a Hub Variable reference. The adjacent `f:"l"` field is not needed to distinguish a legacy
-webCoRE Superglobal. Any extracted name must still be reconciled against Automation Map's
-authoritative Hub Variable inventory before creating a relationship.
-
-**webCoRE's own usage report, now checked:** "Dump global variables in use" is safely readable with
-the existing read-only app-config fetch (`pageDumpGlob`); it does not require a state-changing button
-POST. Matching source shows that it renders a static in-memory `globalVarsUseFLD` cache populated by
-piston analysis/execution paths, rather than decoding each piston's saved settings at request time.
-The live report currently still lists the paused test piston, disproving the absolute claim that a
-paused piston will not appear, but the cache can still be incomplete or stale across lifecycle/code
-reload boundaries. It is useful corroboration, not an authoritative replacement for `chunk:N`
-configuration decoding.
-
-**Prototype result:**
-`tmp/webcore-variable-decoder-prototype.groovy` mirrors the matching Hubitat-port implementation:
-contiguous chunk assembly, Base64/UTF-8 and emoji decoding, JSON parsing, and typed variable-operand
-classification for Hub Variables (`@@`), webCoRE globals (`@`), and declared piston locals. Nine
-targeted checks pass, including arbitrary multi-chunk boundaries and fail-closed malformed-input
-cases; a sanitized read-only decode of the installed test piston also matches. The hub currently has
-no representative real pistons beyond that synthetic fixture, so real-world diversity remains
-untested. The prototype proves consumer-reference discovery only, not read/write role or full flow
-reconstruction.
-
-**v2.2.5 implementation reviewed and verified on Dev:** Automation Map now decodes each
-webCoRE piston's saved `chunk:N` configuration during its existing app scan, reconciles `@@` names
-against the authoritative Hub Variable inventory, and emits a distinct `usesVar` relationship with
-direction explicitly unknown. The graph, focused-app card, fixed and custom pivot tables, Insights,
-scan-quality status, and AI export all preserve that distinction rather than manufacturing a read or
-write. Malformed configuration produces only a fixed error code, keeps every other app relationship,
-and marks the scan complete-with-gaps; decoded documents and values are never retained or exported.
-The export contract moves to schema 9 and the cached graph to schema 11. Targeted source-bound tests
-cover chunking, malformed input, privacy, reconciliation, inert-app handling, rendering/pivots,
-Insights and export semantics. Dashboard and other community apps remain open. The Hub Variables
-page and webCoRE usage report stay manual corroboration, not production data sources. Absence from
-decoded configuration still cannot prove non-use where a reference is constructed dynamically.
-
-**v2.2.8 implementation reviewed and verified on Dev: the webCoRE portion of this item is now
-closed.** Two further additions, both decoded from the same saved piston configuration the v2.2.5
-work already reads: owner-scoped webCoRE piston local variables (declaration plus proven read/write,
-feeding the same generic Local Variable machinery Rule Machine's own locals already use), and direct
-physical-device reads and actions, resolved only against the specific webCoRE parent's own
-permitted-device list using webCoRE's own device hash construction - never guessed, never inferred
-from permissions alone. Each piston reports real per-piston device relationship coverage
-(complete/partial/none/error) rather than a fixed placeholder. A form the decoder cannot resolve (a
-variable-backed device list, webCoRE's own current-triggering-device placeholder, a location/virtual
-operand) produces a counted coverage gap, never a guessed relationship. The export contract moves to
-schema 12 and the cached graph to schema 14; `Supporting Docs/webcore_piston_devices_and_local_variables_spec.md`
-holds the full specification and acceptance detail. Dashboard's Hub and Local Variable usage remains
-the only open part of this item.
-
-### 25. webCoRE decode coverage: account for the whole piston, not just the parts we read
-
-**The gap.** The webCoRE decoder is a targeted extractor. It walks each piston's saved configuration
-hunting for three specific shapes (typed variable operands, physical-device reads, direct device
-actions) and silently discards everything else. That was the right scope for what v2.2.5 to v2.2.8
-set out to do, and it produced real relationships, but it means the app cannot answer a question
-users reasonably ask: *what else is in this piston, and how much of it can the map actually read?*
-
-Absence of a relationship currently has two indistinguishable causes: the piston genuinely does not
-have one, or the decoder never looked. The app should be able to tell those apart and say so.
-
-**Proposed Phase A, decode coverage.** A complete traversal that visits every node and field and
-accounts for all of it, reported per piston:
-
-- A hard accounting invariant. Traversal counters (objects, arrays, fields, array elements, scalars)
-  must balance against an independent oracle. Nothing may be dropped silently.
-- `visited` kept strictly separate from `identified`, so complete traversal never implies complete
-  understanding. Recognition is measured over construct candidates, never over every JSON value.
-- An in-source construct registry pinned to a webCoRE source commit, covering its statement types,
-  expression functions, virtual commands and execution policy flags. Version drift against the
-  installed webCoRE is reported and downgrades confidence rather than being assumed away.
-- Per-construct evidence levels rather than a recognised/not-recognised flag, so partial
-  understanding is visible and cannot silently regress.
-- Run per piston on demand from its panel, not on every scan. Most hubs do not run webCoRE and should
-  bear no scan cost for this.
-- Structure and paths only. No literal values, command parameters, messages, URLs or variable values
-  leave the decoder, preserving the existing export privacy commitment. Enforced by a path allowlist
-  and canary tests rather than asserted.
-
-**Explicitly not in scope.** No translation to Rule Machine or Visual Rule Builder, no destination
-recommendation, no judgement that a piston is simple or safe to convert, no write path of any kind.
-Automation Map continues to describe and never to change the hub.
-
-**Why it is worth doing.** It closes the honesty gap above, it tells a user which
-parts of a piston the map is reading, and its output would establish whether fuller webCoRE flow
-decoding is practical at all or whether permanent partial coverage with explicit gaps is the truthful
-end state. That answer is currently unknown and is worth having either way.
-
-**Status.** Building on the dev channel, in reviewed increments.
-
-- **Construct registry (done).** A registry of 279 constructs generated from a pinned webCoRE source
-  commit, with per-region evidence hashes, gates that refuse to emit on a provenance or membership
-  failure, and a determinism test proving the checked-in file is byte-identical to a fresh
-  generation. The app ships a projection of it carrying construct identity and evidence level only.
-- **Census walker (done).** A pure traversal with five independent counters balanced against an
-  independent oracle, context-sensitive classification that never steers traversal, safe paths from
-  a reviewed key allowlist, fixed reason codes, and deterministic depth, value, path-length and
-  retained-list bounds.
-- **Read-only endpoint (v2.2.9).** One authenticated route that runs the census for a single piston
-  on request. It refuses while a scan is active, accepts only an ID this app has already scanned
-  whose type is a webCoRE piston, permits one operation per piston at a time, bounds the request,
-  the loopback and the analysis with fixed time limits, and builds its response field by field from
-  an explicit allowlist at every level.
-- **Decode coverage card (v2.2.9, collapsed on dev).** A card in the focused panel of a webCoRE
-  piston. It began as a construct table behind a Check coverage button. Once the flow chart started
-  drawing anything it could not decode as a visible block, the table no longer told the user
-  anything the map was not already showing, so the card was cut to a single line: the check runs on
-  selection and the card stays hidden unless the decoder meets a field it has never seen, which is a
-  webCoRE version saving something new rather than anything a person can act on. Outcomes that are
-  not a completed walk say nothing.
-- **No cache.** The endpoint applies fixed traversal, output and time bounds. Measured on the dev hub,
-  results were under 1KB and returned within a second, so a cache would add hub state for no
-  meaningful saving there; that is observed evidence, not a guarantee for every hub.
-- **Custom command tasks (fixed on dev).** The editor saves `cm: true` on a task with a custom
-  command. `cm` was missing from the walker's key allowlist, so such a task reported an unidentified
-  key; it is now allowlisted after tracing it through the editor serializer.
-- **Piston option keys are unidentified.** A test piston's root options map saved `mps`, `pep`,
-  `dco`, `des`, `aps` and `ish` alongside the allowlisted `cto` and `ced`. They sit outside every
-  statement, so they do not affect structural validity, but any piston that saves them reads
-  "Coverage incomplete". Each needs tracing to the executor's piston-option reads before it is
-  allowlisted.
-- **Statement evidence gaps to close.** The twelve statement families are structural (L3), but an
-  occurrence that takes a saved branch without a matching editor save and reload in the fixtures is
-  held at identified (L2). Open: `sm` on a statement; an absent `tcp`, which the editor can produce
-  but the capture matrix does not yet contain; a task carrying `cm` or `a`; a `for` without `x`; and a
-  group's retained or unconsumed
-  `wd`, and `wt` of `l` or `n`. Nodes
-  saved before the piston was first reopened (`$`, `ct` or `s` absent) cannot be shown after a reload
-  and stay held by design.
-- **Semantic evidence (L4), on hub dev v2.3.0.** The evidence ladder records what saved statements
-  mean, separately from structure: the order in which an if tests its branches, condition negation, `or`
-  groups, followed-by groups kept opaque, `do` as a sequential block, the default statement settings,
-  switch case order and its case-traversal policy, `while` as a pre-condition loop, `repeat` as a
-  post-condition loop that stops once its condition becomes true, `for`/`each` as step/device
-  iteration, a break scoped to its nearest switch or loop, `on` as any-event matching, `every` as
-  own-timer-only and always ending the piston's execution pass, and the tep/tsp/tcp task policy
-  vocabularies. Exit is a whole-piston terminate. An action's saved device list is now proven too:
-  expanded once and shared by every task, distinguishing a static device target from the dynamic
-  `$currentEventDevice` sentinel. Everything else is an explicit gap per occurrence, so no current
-  piston is yet reported as fully explained.
-- **Task order proven.** The `zz-L3-09 tasks` piston was recaptured with a valid first-save/round-trip
-  lineage after the original round trip's only save was found unusable. A saved action runs its task
-  list `k` sequentially in saved list order, one task at a time, stopping the remaining tasks early
-  only when a task fails during a normal (non-fast-forward) run (`statement.action.task-order.v1`).
-  This claim, together with the earlier device-list target claim, means all twelve registered
-  statement types now have at least one proven L4 claim. Fast-forward resumption's effect on the
-  break-on-failure behaviour is a new, separate, explicit gap
-  (`statement.action.fast-forward-unresolved`); an action with one task or fewer still carries
-  `statement.action.task-order-unresolved`, since no capture exercises order for it.
-- **Operand structural (L3) evidence, eleven of twelve, wired into the registry.** Constant, virtual
-  (mode/HSM/etc. reads), variable (Hub/global/local references), expression, physical-device (a device
-  attribute read), preset (a named time-of-day value), a bare device-list operand, an argument operand,
-  and all three event-match forms (virtual, physical and variable - the operand inside an `on`
-  statement's own trigger list, saved like the ordinary operand of the same kind but read by a
-  separate, simpler consumer) all have a reviewed, source-cited shape and a gate proving it against
-  every occurrence in the fixture corpus. Four new test pistons were built and captured directly (not
-  delegated) to close the remaining kinds: an `if` condition using the Argument operand type
-  (`zz-L3-13`), a Device-typed piston-local variable (`zz-L3-14`), a physical-device `on` trigger
-  (`zz-L3-15`) and a variable-change `on` trigger (`zz-L3-16`) - each built paused, saved twice
-  (first-save and an unchanged round-trip) and verified inert before capture. A real registry gap
-  surfaced along the way and was fixed: the census walker's flat allowlist of recognised field names
-  (`webcoreCensusSchemaKeys()`) was missing `u`, so every argument operand's own value key read as an
-  unrecognised field even though the construct itself was registered; `saved-position-map.md`'s
-  allowlist section is updated to match. As of 2026-09-12 all eleven proven kinds are promoted to L3 in
-  the construct registry itself, through the same committed-metadata promotion gate the statement
-  manifest already used. The twelfth kind stays L2, and as of 2026-09-12 that is a settled finding
-  rather than an open gap: a direct capture (`zz-L3-18`, a `Make a web request` task with its three
-  optional parameters left untouched, paused throughout) showed the editor holds an empty-string `t` in
-  memory and renders it as "(no value set)", but the empty string never reaches storage - both the first
-  save and the round trip stored those parameters with no `t` key at all. That is a different registered
-  construct (`wc.task-parameter.unselected`), not `wc.operand.empty`. The empty operand is therefore
-  source-proven, since the executor carries a real dispatch case for it, but not editor-producible.
-- **Found during that work, not yet actioned.** Two items. First, nothing actually verifies
-  `operand-l3.groovy`'s `sourceAssertions`: repo-wide, only `tests/webcore-l3-manifest.groovy` reads
-  them and it loads the *statement* manifest, so every operand citation is currently unchecked despite a
-  comment in that file claiming otherwise. Second, `wc.task-parameter.unselected` now has a clean,
-  inert, round-tripped capture, but promoting it needs generator work rather than a data addition:
-  structural forms are emitted with a hardcoded `level: 'L2'` and consult no evidence manifest, and the
-  operand gate's own id pattern does not match `wc.task-parameter.*`.
-- **webCoRE piston flow now draws (dev, 2026-09-12).** A piston decodes into the same step list
-  `mermaidFor()` already renders for Rule Machine, Notifier and Visual Rule Builder 2.0, so it draws
-  through the existing rendering path rather than a new one, and `showFlow` needed no change because it
-  gates only on a step list existing. Statement order and branch structure only: a condition is emitted
-  as an explicitly undecoded step rather than invented comparison text, an unrecognised statement
-  becomes a visible not-decoded block rather than being dropped, and a switch default is not drawn at
-  all because where its body is stored is unproven. Device tokens stay unresolved until graph assembly,
-  the first point the owning parent's hash index exists, reusing the existing never-guess resolver.
-  Verified by lifting the builder out of the hub's own deployed source and running it against committed
-  captures: the conditional fixture yields a full if/elseif/elseif/else/endif chain, the switch fixture
-  an ordered case chain, the events fixture its two triggers. **Confirmed on the dev hub**: a scan took
-  `graph.flows` from 68 entries with no piston among them to 93 entries including all 25 pistons, in 38
-  seconds, with no errors logged. Device-token resolution - the one path unit tests cannot reach, since
-  it runs only inside buildGraph - resolved correctly to real names (`setColor` on Gordon Study Desk, a
-  three-device toggle, a switch trigger on _Test Switch) with no unresolved markers. Pistons whose `if`
-  has an empty saved body correctly draw as a decision with no branch content rather than inventing one.
-- **Conditions now read as text (dev, 2026-09-12).** A decision that said `2 conditions not decoded` now
-  reads `Entrance Hall Motion Sensor's motion changes and Patio Door's contact is closed` - the same
-  wording the piston editor shows. Nothing new had to be proven: the physical operand already carried its
-  attribute and device tokens, the constant operand its value, and the comparison its own stored
-  spelling, so this transcribes rather than interprets (underscores spaced, no operator meaning claimed -
-  the same basis on which a task transcribes its own saved command and parameters). Composed during graph
-  assembly, because a device name only exists once the owning parent index does and `mermaidFor` does not
-  append a device list to a diamond. Anything that cannot be named in full - an unresolved device, an
-  operand kind with no transcription, a group too deeply nested to follow - collapses back to the
-  undecoded fallback rather than printing half a sentence. Sanitised fixtures cannot cover this (the sanitiser placeholders
-  operator and joiner strings), so it is covered by synthetic tests plus live hub verification.
-- **Still to come.** Operand semantic (L4) meaning: what a comparison actually *means*, as opposed to
-  the saved spelling the chart now transcribes. Transcription already gave the user the readable
-  sentence, so this rung is no longer the visible win it was described as here; it is what would let
-  the app reason about a condition rather than only print it. Then the runtime walker using the
-  raised operand levels for anything at all, the rest of L4 (remaining action semantics), and
-  webCoRE's own display templates (`"Wait {0}"`, `Send notification "{0}"`) to replace raw command
-  names with worded labels, which is roughly a hundred entries to transcribe.
-
-The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
-real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
-which covers webCoRE variable usage specifically.
-
-### 26. Contested devices: compute the trigger overlap instead of asking the user to
-
-**The gap.** The contested-device finding lists every automation that can leave a device in a lasting
-state, then says: *"Check whether their triggers can overlap and which automation should win when
-they do."* The first half of that is work the app already holds the data to do. `trigger` edges
-(app to device) are on the graph for every app with decoded triggers, so shared trigger sources
-between the controlling apps are a straight derivation, not new information.
-
-**Evidence, from a real scan on the dev hub.** One device had 10 controlling automations. Nine
-distinct trigger sources across them, except that **four shared a single trigger device**, and those
-four were near-duplicates (an import, a second import, and a clone of the same rule) all firing from
-the same source onto the same light. That is the actionable signal, and it was invisible under a flat
-list of ten names that the user was asked to cross-reference by hand.
-
-**Proposed change.** Group the controlling apps by shared trigger source and surface the clusters,
-leaving "which should win" as the question it genuinely is.
-
-**The honesty constraint, which cuts both ways and shapes the wording:**
-
-- A shared trigger device is **positive evidence** that two automations can fire from the same event.
-  Safe to state.
-- Not sharing one **proves nothing**. Time, mode, variable and rule-invoked triggers produce no
-  device edge at all, so "these cannot overlap" would present a decoding gap as proven emptiness. The
-  finding must surface the positive signal and stay explicitly silent on the negative.
-- An app with no decoded trigger at all is a **third state**, undetermined, not absent. In the sample
-  above one Basic Rule fell in this category and must be reported as such rather than folded into
-  either group.
-
-**Scope.** A derivation over existing `trigger` edges plus a rewrite of the one guidance string. No
-new scan work, no new decoding, no schema change. Small and self-contained enough to be a **Now**
-candidate rather than Next, if prioritised.
-
-**Status.** Not started, not authorized. Behaviour confirmed against a real export before writing this
-entry; the underlying edges are already present and sufficient.
-
-### 5. Add runtime activity and performance context
-
-Users want help finding automations that may contribute to hub load, but configuration structure is
-not execution evidence.
-
-**Next action:** define a conservative metric model using available app statistics and timestamps,
-label observations as evidence rather than conclusions, and prototype a ranked diagnostic view.
-
-### 6. Expand a focused map one hop at a time
-
-Allow users to reveal immediate neighbours without returning to the full graph.
-
-**Next action:** specify one-hop expansion, duplicate suppression, reset behaviour and visible
-provenance. This replaces the overlapping multi-select and extend-map backlog requests.
-
-### 7. Export and import configured app data for migration
-
-Provide a safe, portable representation of user-maintained settings such as external-system
-overrides and icon choices.
-
-**Next action:** define a versioned schema, conflict rules, preview step and validation behaviour.
-Never import scan results or secrets as configuration.
-
-### 10. Live Hubitat platform update check
-
-The existing "Hubitat release activity" panel only shows historical Community Utilities/Hubitat
-release data; it never tells the user whether their own hub currently has an update available.
-
-Investigated two approaches on 2026-08-27. Hubitat's own live update-check
-(`/hub/cloud/checkForUpdate`) is real and confirmed working - a status read via the hub-rules MCP
-server reported `UPDATE_AVAILABLE` (2.5.1.172 -> 2.5.1.174) with version, release-notes URL and beta
-flag, and a second call actually triggered the install (download, apply, reboot). But that path is
-only reachable from outside the app sandbox (via the MCP server's admin access), not from a Hubitat
-app's own code, and it bundles the check together with the install - there is no way to ask "is one
-available" without also committing to install if the answer is yes.
-
-Better direction found the same day: `HPM_Manifest_Crawl`'s own feature-tracker dataset
-(`site/feature-tracker/data/hubitat_release_features.json`, publicly fetchable, confirmed live)
-already tracks every Hubitat release with a `version` and `releasedAt`. A sandboxed app can safely
-read `location.hub.firmwareVersionString` (standard, documented) and compare it against that
-dataset's latest entry - no undocumented endpoint, no admin access, no risk. The limit: this is a
-scheduled crawl of the community forum, not a live Hubitat query, so it lags real releases by up to
-one crawl cycle - confirmed directly, since at the moment 2.5.1.174 was installing on Gordon's hub,
-the dataset's last harvest (2026-08-26) still only knew about 2.5.1.172.
-
-**Next action:** publish a small derived `latest.json` (`{version, releasedAt}`) from the
-`HPM_Manifest_Crawl` pipeline instead of shipping the full ~4 MB dataset to a Hubitat app, fetch it
-from Automation Map, compare against `location.hub.firmwareVersionString`, and label the result
-honestly as "latest known as of `releasedAt`" rather than "latest available" so the crawl lag stays
-visible. Report only - never trigger an install from within Automation Map itself.
-
-### 24. A dead constraint on a device that also has a live relationship
-
-Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression
-names any more, so those devices are drawn as constraints even though nothing evaluates them. The
-map now tags a device `UNUSED` when every relationship visible in the current view is one of these,
-which covers the case that prompted the work (Perimeter Open's orphaned illuminance condition on the
-two Back Garden lights).
-
-What it does not cover: a device holding both a dead constraint and a live relationship. Perimeter
-Closed is the example - its five door contacts are live triggers and also sit in an abandoned contact
-condition, so they keep an unexplained constraint line with no tag. A node tag cannot say this
-without falsely calling the device unused, since the device genuinely is in use.
-
-**Next action:** decide whether to mark the edge rather than the node (dimming or dashing a dead
-constraint line), and whether to add a matching neutral Insights finding alongside
-`disabledDevicesStillUsed`. Detection already exists and is exposed as `unused` on constraint edges;
-this is a presentation decision, not new analysis. Hub-wide there were 20 such edges across 6 rules
-when this was measured (2026-09-09).
-
-### 30. The graph is rebuilt a second time after most scans
-
-**The symptom.** Every completed scan on the dev hub is followed within a second by this pair in the
-log, at 07:20, 07:53, 13:37, 15:24 and 16:25 on 2026-09-12 alone:
-
-```
-clearing resurrected scan flags for an already-completed generation
-state.graph was missing after a completed scan - rebuilding from existing scan data
-```
-
-**What is established.** Both lines come from the same execution, a render of the main page:
-`clearAbandonedScan()` is called at line 513 and `selfHealGraphIfNeeded()` at line 536 of the same
-method. `startScan()` deliberately sets `state.graph = null` to free memory, `finishScan()` commits
-the rebuilt graph, and the self-heal fires when a page render sees a null graph alongside a non-null
-`atomicState.graphVersion`. At 16:25 the scan committed at `.264`, the flag clear logged at `.293`,
-and the self-heal at `1.007`, so the render was working from a state snapshot taken before the
-commit landed.
-
-**The cost.** The map itself is correct, because the self-heal rebuilds from the same `appInfo`. The
-waste is a second full `buildGraph()` across 143 apps and 221 devices immediately after the scan
-already built one, plus two warnings that read as faults when they are a mitigation working.
-
-**Answered on the hub, 2026-09-12 16:57.** The `lockVsState()` trace added for this settled it in one
-scan. The scan completed at `22.594`, and at `25.003` a page render logged
-`graph=false appInfo=143 appResultsReady=true graphVersion=15`. That combination is only reachable
-from a snapshot taken between the app-phase commit and the graph commit, and it was logged 2.4
-seconds AFTER completion. So the racing execution is a page render that STARTED before `finishScan`
-committed and ENDED after it. Its own end-of-run write-back nulls the graph, and the self-heal in the
-same execution rebuilds it.
-
-**Why it is not simply fixed.** Hubitat writes the whole state snapshot back when an execution
-returns (see the comment at the app-phase commit), so a stale render cannot be stopped from
-clobbering `state.graph` from inside that render. Rebuilding is the correct response, not a
-workaround. Avoiding it entirely would mean moving the graph out of `state`, which the scan-start
-comment rejects on measured peak-memory grounds, so that is a real design change and not a tidy-up.
-
-**What was changed instead.** The mitigation no longer reports itself as a fault. Every graph commit
-now writes a paired marker, `state.graphCommittedAtLocal` alongside `atomicState.graphCommittedAt`,
-with the same value. `atomicState` commits on every write and cannot go stale, which is the same
-property `shouldAutoScan()` already relies on, so the two disagreeing is proof of a stale snapshot
-rather than an inference from timing. The self-heal logs at info when staleness is proven and keeps
-its warning otherwise, because a graph missing for any other reason still deserves one. The pair is
-deliberately not overloaded onto `state.scanHeartbeat`, which feeds `clearAbandonedScan`'s
-90-second freshness check.
-
-**Still open.** The second full rebuild per scan remains, and is inherent to the platform's snapshot
-semantics rather than to this app's logic. Closing it needs the graph held somewhere a stale snapshot
-cannot overwrite.
-
-**Not a regression.** Pre-existing, and unrelated to the v2.3.0 webCoRE work: it fired at 07:20 and
-07:53, before any of that day's changes were deployed. The source comments date the underlying race
-to 2026-08-30, and `selfHealGraphIfNeeded()` was written for it as a recovery, not a cure.
-
-**Worth weighing before fixing.** The self-heal is doing its job and the user sees a correct map, so
-the case for touching a known-delicate scan lifecycle is efficiency and log honesty, not correctness.
-A cheaper first step may be to stop logging at WARN when the self-heal succeeds, since a working
-mitigation should not look like a failure.
-
-## Later / v3
-
-### 11. Move graph derivation into the browser
-
-Reduce Groovy-side rendering work and make UI iteration easier by sending normalized records and
-deriving view-specific graph structures client-side.
-
-### 12. Move remaining display shaping into the browser
-
-After graph derivation is stable, migrate filtering, grouping, styling and panel preparation while
-keeping scan collection and authoritative normalization on the hub.
-
-### 13. Separate the frontend from the Groovy GString
-
-Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
-breaking single-app Hubitat distribution.
-
-**GString-size gate fixed 2026-09-12, but the root cause is still this item.** The gate had reached
-88.8% of the 65535-byte JVM limit and was failing outright. The flagged span turned out to hold no
-HTML/JS template content at all: it was the webCoRE L3/L4 evidence and normaliser code (construct
-registry, statement shapes, semantic evidence, semantic normaliser), thousands of bytes of ordinary
-Groovy business logic with no `${...}` anywhere in it. `validate.ps1`'s gate measures the largest run
-of raw file text between any two literal `${` occurrences, whole file, not scoped to an actual GString
-region, so a long stretch of unrelated Groovy code between two incidental interpolations elsewhere in
-the file counts against the same 65535-byte ceiling as a real HTML template constant. Fixed by turning
-one existing empty-string literal in the hand-written normaliser
-(`webcoreSemanticStatement`'s `: ''` fallback) into `: "${''}"`, a same-value GString that splits the
-heuristic's count without changing behaviour; the evidence/normaliser span dropped from 58208 bytes to
-two pieces of roughly 41800 and 16400. The new largest segment measured anywhere in the file is 50938
-bytes (77.7% of the limit), a different, pre-existing span this note has not located yet, most likely
-inside the real HTML/JS template content the gate was originally written for. This is a stopgap, not a
-structural fix: every future evidence or normaliser addition still grows the same measured span, and
-either that or the newly-largest 50938-byte span will need another split marker eventually. The frontend
-separation this item already proposes remains the real fix, since it would remove the actual large
-HTML/JS GString constants (the reason this gate exists at all) rather than just the code that happens
-to share a compiled-constant boundary with them.
-
-### 14. Delta scanning
-
-Only pursue partial scans if a cheap, reliable app or device change signal can be proven. A faster
-but incomplete map is not acceptable.
-
-### 15. Same-hub warm-start cache
-
-Investigate a bounded cache that can restore a recent map quickly while clearly showing its age and
-never presenting stale data as a completed current scan.
-
-## Hold / closed
+  </details>
 
 - **Fix the three real bugs found by independent UI assessment (item 22):** completed and verified
   live on the Dev hub, 2026-09-07 (v2.2.5, local-only, not yet pushed). Full report:
