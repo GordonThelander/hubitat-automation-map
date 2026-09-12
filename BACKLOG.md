@@ -398,21 +398,21 @@ end state. That answer is currently unknown and is worth having either way.
   break-on-failure behaviour is a new, separate, explicit gap
   (`statement.action.fast-forward-unresolved`); an action with one task or fewer still carries
   `statement.action.task-order-unresolved`, since no capture exercises order for it.
-- **Operand structural (L3) evidence, first slice, now wired into the registry.** Four of the twelve
-  registered operand kinds have a reviewed, source-cited shape and a gate proving it against every
-  occurrence in the fixture corpus: constant, virtual (mode/HSM/etc. reads), variable (Hub/global/local
-  references) and expression. As of 2026-09-12 these four are promoted to L3 in the construct registry
-  itself, through the same committed-metadata promotion gate the statement manifest already used,
-  reused via a small shim rather than duplicated. The registry generator now needs a local checkout of
-  the pinned webCoRE source to run (`tools/webcore-investigation/generate-construct-registry.groovy
-  <source-root> --emit`); one was cloned read-only to `Hubitat Apps/_webcore-source` for this. The
-  remaining eight kinds (physical device read, device list, preset, argument, the three event-match
-  kinds, and the empty/nothing-selected kind) have no fixture evidence yet and stay L2; none of the
-  current captures exercises them. Two more captures (physical device, preset) are in flight to unblock
-  two of the eight; the other six remain open.
-- **Still to come.** The remaining operand kinds, the runtime walker actually using the raised operand
-  levels for anything (currently only the registry level itself changed; no L4 operand-meaning claim
-  exists yet to make use of it), the rest of L4 (remaining action semantics, operand meaning once
+- **Operand structural (L3) evidence, six of twelve, wired into the registry.** Constant, virtual
+  (mode/HSM/etc. reads), variable (Hub/global/local references), expression, physical-device (a device
+  attribute read) and preset (a named time-of-day value) all have a reviewed, source-cited shape and a
+  gate proving it against every occurrence in the fixture corpus. As of 2026-09-12 all six are promoted
+  to L3 in the construct registry itself, through the same committed-metadata promotion gate the
+  statement manifest already used, reused via a small shim rather than duplicated. The registry
+  generator now needs a local checkout of the pinned webCoRE source to run
+  (`tools/webcore-investigation/generate-construct-registry.groovy <source-root> --emit`); one was
+  cloned read-only to `Hubitat Apps/_webcore-source` for this. The remaining four kinds (a bare
+  device-list operand, an argument operand, the three event-match forms inside an `on` statement's
+  trigger, and the empty/nothing-selected form) have no fixture evidence yet and stay L2; none of the
+  current captures exercises them.
+- **Still to come.** The remaining four operand kinds, the runtime walker actually using the raised
+  operand levels for anything (currently only the registry level itself changed; no L4 operand-meaning
+  claim exists yet to make use of it), the rest of L4 (remaining action semantics, operand meaning once
   L3-proven), then the flow rendering that eventually lets a piston draw its own flow with anything not
   yet understood shown as an explicit opaque block.
 

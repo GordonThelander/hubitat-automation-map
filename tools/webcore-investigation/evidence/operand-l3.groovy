@@ -10,9 +10,10 @@
 //
 // Second and third increments add the virtual operand (t: 'v': hub/location-level readings such as
 // mode, power source and HSM status) and the variable operand (t: 'x': a Hub, global, superglobal or
-// piston-local variable reference). Not yet covered, deliberately: p, d, s, e, u, the three
-// event-match kinds, and the empty (nothing-selected) kind. Each needs its own reviewed slice the
-// same way these three do.
+// piston-local variable reference). A fourth adds the expression operand (t: 'e'). A fifth adds the
+// physical-device operand (t: 'p': a device attribute read) and the preset operand (t: 's': a named
+// time-of-day value). Not yet covered, deliberately: d, u, the three event-match kinds, and the empty
+// (nothing-selected) kind. Each needs its own reviewed slice the same way these do.
 //
 // A canonical-persistence finding carried over from the statement work: cleanCode's exclusivity and
 // default-stripping rules run only during recreatePiston (executor.recreate-piston, called on load),
@@ -35,7 +36,7 @@
   // event-match and empty forms the registry already carries separately.
   discriminatorValues: ['p', 'd', 'v', 's', 'x', 'c', 'e', 'u'],
 
-  kinds: ['constant', 'virtual', 'variable', 'expression'],
+  kinds: ['constant', 'virtual', 'variable', 'expression', 'physical', 'preset'],
 
   // Same lineage and named-test shape the statement manifest uses, reused by the registry
   // generator's operand-level promotion (L3Promotion.derive against a shim pointing at
@@ -148,6 +149,55 @@
       ],
       fixtures: ['l3-03-switch.first-save'],
       tests: ['operand-l3-manifest']
+    ],
+
+    'wc.operand.p': [
+      family: 'physical',
+      discriminator: [key: 't', value: 'p'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'value-type discriminator; not read by evaluateOperand for this kind, which reads the attribute catalogue instead'],
+        'a':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['p'],
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               notes: 'the device attribute name, looked up in the Attributes() catalogue; exclusive to t: p'],
+        'd':  [kind: 'device-list', persisted: 'always', consumed: 'read',
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               notes: 'the device list read, expanded through expandDeviceList the same way an action target is; not exclusive to p, since cleanCode only strips d for t in ListC2, which excludes both p and d'],
+        'p':  [kind: 'scalar', persisted: 'user-optional', consumed: 'read',
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               notes: 'physical/digital/any read preference, read only when the Attributes() catalogue entry for a names a physical/digital distinction; absent in the one capture reviewed here, so its saved shape when present is unproven'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ],
+      fixtures: ['l3-11-physical.first-save'],
+      tests: ['operand-l3-manifest']
+    ],
+
+    'wc.operand.s': [
+      family: 'preset',
+      discriminator: [key: 't', value: 's'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'read',
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               notes: 'value-type discriminator; only time and datetime route through the named-preset switch (sunset/sunrise/midnight/noon), every other vt reads s as a plain passthrough value'],
+        's':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['s'],
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               values: ['sunset', 'sunrise', 'midnight', 'noon'],
+               notes: 'the closed preset name case list of the frozen preset.evaluate.name site, proven here only for sunset; only meaningful when vt is time or datetime, otherwise passed through unvalidated'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ],
+      fixtures: ['l3-12-preset.first-save'],
+      tests: ['operand-l3-manifest']
     ]
   ],
 
@@ -175,7 +225,10 @@
     [region: 'executor.recreate-piston', contains: 'msetIds(shorten,inMem,piston)', supports: 'cleanCode only runs reached from msetIds during recreatePiston (load), not from the editor compilePiston save path'],
     [region: 'executor.evaluate-operand', contains: 'if(operX.startsWith(sAT2)){', supports: 'operand.x.x: a leading @@ marks a superglobal variable name'],
     [region: 'executor.evaluate-operand', contains: 'if(operX && operX.startsWith(sAT)){', supports: 'operand.x.x: a leading @ marks a global variable name'],
-    [region: 'executor.evaluate-operand', contains: 'mv=movt+evaluateExpression(r9,mMs(operand,sEXP))', supports: 'operand.e evaluates only its exp; e and vt are not read here']
+    [region: 'executor.evaluate-operand', contains: 'mv=movt+evaluateExpression(r9,mMs(operand,sEXP))', supports: 'operand.e evaluates only its exp; e and vt are not read here'],
+    [region: 'executor.clean-code', contains: 'if(ty!=sP && item[sA]!=null) item.remove(sA)', supports: 'operand.p.a is exclusive to t: p, unconditional, holds on the saved copy'],
+    [region: 'executor.clean-code', contains: 'if(ty!=sS && item[sS]!=null) item.remove(sS)', supports: 'operand.s.s is exclusive to t: s, unconditional, holds on the saved copy'],
+    [region: 'executor.evaluate-operand', contains: 'case sSUNSET: v= getSunsetTime(r9,dayBasis); break', supports: 'operand.s.s: sunset is a member of the closed preset-name case list, proven for this one value']
   ],
 
   // Open questions this increment does not resolve. Recorded so the next increment starts from them
@@ -184,9 +237,11 @@
     'the closed vocabulary of vt (value-type) values is not yet reconciled against the executor',
     'whether f and g are ever absent on the saved IDE copy, or only stripped in memory, is unverified - needs the same IDE round-trip evidence the statement manifest built for statement keys',
     'expression item (exp.i[]) shape is undefined here: item kind, operator vocabulary, and nesting rules all remain open',
-    'the other six operand constructs (p, d, s, u, the three event-match kinds, empty) have no manifest entry yet - p, d and s in particular have zero occurrences anywhere in the current fixture corpus (every saved device list is empty, deliberately), the same gap blocking the L4.5 action-target claim; the new captures already requested (a multi-task action, a static device target) would also supply this evidence',
+    'the remaining four operand constructs (d, u, the three event-match kinds, empty) have no manifest entry yet and no fixture evidence; each needs its own reviewed slice and capture',
     'operand.e.e has no proven purpose; not read by the one evaluateOperand region reviewed here',
     'the v value vocabulary is transcribed from the evaluateOperand switch cases but not yet cross-checked against a full source string dump the way the statement construct catalogue was',
+    'the s (preset) value vocabulary is proven for sunset only; sunrise, midnight and noon are transcribed from the same switch but not independently captured',
+    'operand.p.p (the physical/digital/any read preference) has no captured occurrence; its saved shape when present, and which attributes actually offer the choice, are both unproven',
     'whether cleanCode ever runs on a path other than recreatePiston (for example inside compilePiston itself) is asserted from call-site inspection, not yet proven exhaustively'
   ]
 ]
