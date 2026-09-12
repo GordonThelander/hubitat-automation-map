@@ -267,15 +267,27 @@ has been observed left over on both a `v`-type and a `c`-type operand in an `edi
 again after the next round-trip. Treat a stray key on an editor-save-only capture as expected cruft, not
 as a broken exclusivity claim.
 
-**The empty (nothing-selected) operand, a new lead not yet captured.** `cleanCode` (executor.clean-code,
-around the `ty==sNL` guard) carries a distinct cleanup branch for an operand with no discriminator at
-all: when the operand's `g` is `avg`/`any`, its `f` is `l` and its `vt` is non-null, the branch strips
-`x`, `xi`, `e`, `c`, `v`, `s`, `u` and `exp`, and additionally zeroes out a device list rather than
-removing it outright. The accompanying source comment reads "task parameters (`sP`) with 'Nothing
-selected'", suggesting this is what an unselected slot inside a task's own parameter list saves as, not
-an unselected condition or trigger operand. Not yet reproduced from the hosted editor; worth a direct,
-hands-on attempt (a task parameter left as "Nothing selected") before concluding it needs a different
-approach.
+**The empty (nothing-selected) operand: a real source lead, not yet reproduced.** `cleanCode`
+(executor.clean-code, around the `ty==sNL` guard) carries a distinct cleanup branch for an operand with
+no discriminator at all: when the operand's `g` is `avg`/`any`, its `f` is `l` and its `vt` is non-null,
+the branch strips `x`, `xi`, `e`, `c`, `v`, `s`, `u` and `exp`, and additionally zeroes out a device list
+rather than removing it outright. The accompanying source comment reads "task parameters (`sP`) with
+'Nothing selected'".
+
+A direct, hands-on attempt (2026-09-12, an unsaved `zz-L3-17` exploration on the hosted editor) did not
+reach this shape. A Set Variable task's value parameter does expose "Nothing selected" as one of its own
+type-dropdown options (alongside Physical device(s)/Virtual device/Value/Variable/Expression/Argument),
+but: choosing it fresh (no prior value) saved as `t: 'c'` with an empty-string `exp`, not as typeless;
+completing a real physical-device pick and then reopening it to re-choose "Nothing selected" left the
+saved shape completely unchanged (`t: 'p'` with the device still attached) - the dropdown can *display*
+"Nothing selected" without it taking effect on a parameter that already has a concrete value. Whether
+that is a genuine editor limitation (no path back to unselected once a parameter is set) or an artifact
+of the browser automation used to drive it is unresolved either way. The `ty==sNL` branch most likely
+describes a parameter cleared by some other path (an older UI version, a direct API/backup edit, or a
+different sequence of choices) rather than the ordinary type-dropdown interaction tried here. Next
+attempt: look for a parameter position that can be cleared back to blank after being set, or check the
+webCoRE wiki/community forum for how this state is described, before spending further live hub time on
+it.
 
 The event-match virtual operand also illustrates a gap the reconciliation gate test used to have: a
 discriminator value alone (`t`) is not always a unique key, since an event-match operand shares its `t`
