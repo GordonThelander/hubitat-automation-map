@@ -3894,7 +3894,10 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
             // renderer has no back edge to express the loop itself.
             steps << webcoreFlowNode('action', webcoreFlowLoopLabel(type), webcoreFlowDeviceTokens(st))
             webcoreFlowStatements(body, steps, depth + 1)
-            steps << webcoreFlowNode('action', "end ${type}", [])
+            // Closer mirrors the opener, so a nested chart reads "for each device
+            // (loop) ... end for each device" rather than closing with a bare
+            // statement type that does not match what opened it.
+            steps << webcoreFlowNode('action', 'end ' + webcoreFlowLoopLabel(type).replace(' (loop)', ''), [])
             break
         case 'action':
             // One box per task, in saved order, each carrying the statement's own

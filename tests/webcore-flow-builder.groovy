@@ -105,10 +105,15 @@ check(builder.buildWebcoreFlow([s: [[t: 'switch', cs: []]]]) == [],
 
 // ---- loops are delimited, never drawn as a decision --------------------------
 
+// Stated outright rather than derived from the builder, so a closer that stops
+// matching its own opener is caught instead of mirrored.
+Map loopEnds = ['while': 'end while', 'repeat': 'end repeat',
+                'for': 'end for each step', 'each': 'end for each device']
 ['while', 'repeat', 'for', 'each'].each { String type ->
     List loopSteps = builder.buildWebcoreFlow([s: [[t: type, s: [[t: 'action', k: [[c: 'noop']]]]]]])
-    check(loopSteps.size() == 3 && loopSteps[0].ctrl == null && "${loopSteps[2].label}" == "end ${type}",
-        "${type} is delimited by enter and exit blocks")
+    check(loopSteps.size() == 3 && loopSteps[0].ctrl == null &&
+          String.valueOf(loopSteps[2].label) == loopEnds[type],
+        "${type} is delimited by enter and exit blocks that match ${labels(loopSteps)}")
     check(ctrlSequence(loopSteps) == [], "${type} draws no decision diamond")
 }
 
