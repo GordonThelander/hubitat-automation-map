@@ -267,27 +267,39 @@ has been observed left over on both a `v`-type and a `c`-type operand in an `edi
 again after the next round-trip. Treat a stray key on an editor-save-only capture as expected cruft, not
 as a broken exclusivity claim.
 
-**The empty (nothing-selected) operand: a real source lead, not yet reproduced.** `cleanCode`
-(executor.clean-code, around the `ty==sNL` guard) carries a distinct cleanup branch for an operand with
-no discriminator at all: when the operand's `g` is `avg`/`any`, its `f` is `l` and its `vt` is non-null,
-the branch strips `x`, `xi`, `e`, `c`, `v`, `s`, `u` and `exp`, and additionally zeroes out a device list
-rather than removing it outright. The accompanying source comment reads "task parameters (`sP`) with
-'Nothing selected'".
+**The empty operand versus the unselected task parameter: two different saved states.** These are easy to
+conflate and earlier notes here did conflate them. They are separate registered constructs:
 
-A direct, hands-on attempt (2026-09-12, an unsaved `zz-L3-17` exploration on the hosted editor) did not
-reach this shape. A Set Variable task's value parameter does expose "Nothing selected" as one of its own
-type-dropdown options (alongside Physical device(s)/Virtual device/Value/Variable/Expression/Argument),
-but: choosing it fresh (no prior value) saved as `t: 'c'` with an empty-string `exp`, not as typeless;
-completing a real physical-device pick and then reopening it to re-choose "Nothing selected" left the
-saved shape completely unchanged (`t: 'p'` with the device still attached) - the dropdown can *display*
-"Nothing selected" without it taking effect on a parameter that already has a concrete value. Whether
-that is a genuine editor limitation (no path back to unselected once a parameter is set) or an artifact
-of the browser automation used to drive it is unresolved either way. The `ty==sNL` branch most likely
-describes a parameter cleared by some other path (an older UI version, a direct API/backup edit, or a
-different sequence of choices) rather than the ordinary type-dropdown interaction tried here. Next
-attempt: look for a parameter position that can be cleared back to blank after being set, or check the
-webCoRE wiki/community forum for how this state is described, before spending further live hub time on
-it.
+| Construct | Saved shape | Source basis |
+| --- | --- | --- |
+| `wc.operand.empty` | `t` is the **empty string** | a real dispatch member: `evaluateOperand`'s `switch(sMt(operand))` opens with `case sBLK: //optional, nothing selected`, returning `rtnMap(ovt, null)`. `sBLK` is declared as the empty string. The only key consumed is `vt`, read as `ovt = sMvt(operand)` |
+| `wc.task-parameter.unselected` | **no `t` key at all** | the state `cleanCode`'s `ty==sNL` branch addresses (`sNL` is declared as `(String)null`); `evaluateOperand` matches no case and yields a dynamic null, which the consumers read as "unselected" |
+
+The hosted editor produces the second, never the first. `validateOperand` assigns an empty-string `t` only
+when the operand is **optional**, and a command parameter is optional exactly when it is non-bool and
+carries a description (`d`) in its definition; the editor then renders that state as `(no value set)`. So
+in memory the operand really does sit at `t: ''`. But the empty string does not survive to storage.
+
+Captured directly on 2026-09-12 (`zz-L3-18`, paused throughout, never executed): a `Make a web request`
+task has three optional parameters (`Send variables`, `Request body`, `Authorization header`). Left
+untouched, they save - on both the first save and the unchanged round trip - as:
+
+```json
+{"d": [], "f": "l", "g": "avg", "vt": "variable"}
+{"d": [], "f": "l", "g": "avg", "vt": "string"}
+```
+
+with no `t` key. The walker scores that capture as `wc.task-parameter.unselected` three times and
+`wc.operand.empty` zero times, with nothing unrecognised and nothing structurally invalid.
+
+So `wc.operand.empty` is **source-proven but not editor-producible**: the executor has a genuine dispatch
+case for it, but the current editor never writes that shape. It stays L2, which the operand gate already
+enforces independently. Evidence for it would have to come from an older saved piston or a non-editor
+write path, not from the hosted editor.
+
+One incidental confirmation from the same capture: `d` and `g` both survive the canonical reload on those
+typeless parameters, so `cleanCode`'s `item.remove(sD)` / `item.remove(sG)` really is `inMem`-guarded and
+does not reach the stored copy.
 
 The event-match virtual operand also illustrates a gap the reconciliation gate test used to have: a
 discriminator value alone (`t`) is not always a unique key, since an event-match operand shares its `t`
