@@ -700,6 +700,84 @@
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
+        },
+        {
+            "file": "l3-11-physical.first-save.json",
+            "piston": "zz-L3-11 physical",
+            "capture": "first-save",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "a06d2dacdc8949597bf44dfefac87b4a4e35f06b1cfb3a9c488c87714d74547f",
+            "statements": {
+                "wc.statement.if": 1
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.p": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-11-physical.round-trip.json",
+            "piston": "zz-L3-11 physical",
+            "capture": "round-trip",
+            "pistonBuild": 3,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "3affac020c8054f3b5590405784e99e10bbf6b66be790a3b82a4cb55176843c8",
+            "statements": {
+                "wc.statement.if": 1
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.p": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-12-preset.first-save.json",
+            "piston": "zz-L3-12 preset",
+            "capture": "first-save",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "2a0062f6f0e4c7d962de53dad8f76bea32e7f80b12532bf2c95442105d7f59df",
+            "statements": {
+                "wc.statement.if": 1
+            },
+            "operands": {
+                "wc.operand.c": 3,
+                "wc.operand.s": 1,
+                "wc.operand.v": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-12-preset.round-trip.json",
+            "piston": "zz-L3-12 preset",
+            "capture": "round-trip",
+            "pistonBuild": 3,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "12986e5f6bb205c9a2989cafa701f5433dff420af6f9973fc9fc07351911c7f7",
+            "statements": {
+                "wc.statement.if": 1
+            },
+            "operands": {
+                "wc.operand.c": 3,
+                "wc.operand.s": 1,
+                "wc.operand.v": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
         }
     ]
 }
