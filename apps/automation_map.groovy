@@ -3434,9 +3434,10 @@ Map collectWebcorePistonDeviceReferences(Object document) {
     return [reads: reads, actions: actions, unsupported: unsupported]
 }
 
-void walkWebcoreDeviceNodes(Object value, List<Map> reads, List<Map> actions, Map<String, Integer> unsupported) {
+void walkWebcoreDeviceNodes(Object value, List<Map> reads, List<Map> actions, Map<String, Integer> unsupported,
+                            String role = null) {
     if (value instanceof List) {
-        (value as List).each { Object child -> walkWebcoreDeviceNodes(child, reads, actions, unsupported) }
+        (value as List).each { Object child -> walkWebcoreDeviceNodes(child, reads, actions, unsupported, role) }
         return
     }
     if (!(value instanceof Map)) return
@@ -3446,7 +3447,7 @@ void walkWebcoreDeviceNodes(Object value, List<Map> reads, List<Map> actions, Ma
     if (itemType == 'p') {
         String attribute = item.a instanceof String ? item.a as String : null
         classifyWebcoreDeviceList(item.d, unsupported).each { String token ->
-            reads << [token: token, attribute: attribute]
+            reads << [token: token, attribute: attribute, role: role]
         }
     } else if (itemType == 'action') {
         List<String> commands = (item.k instanceof List ? item.k as List : []).findResults { Object task ->
@@ -3457,13 +3458,41 @@ void walkWebcoreDeviceNodes(Object value, List<Map> reads, List<Map> actions, Ma
         }
     }
 
-    item.values().each { Object child ->
+    // A `c` list holds events under `on` and conditions everywhere else, so its
+    // entries say their own kind and the parent statement does not have to be
+    // recognised for this to work - an else-if branch, which carries no `t` of
+    // its own, is covered by the same rule. A device read reached through one
+    // of those entries is read as a trigger or as a condition, which is what
+    // the map needs to colour it the way the flowchart already does. Anything
+    // else (an expression, a task parameter) keeps role null and stays an
+    // unattributed read. A group passes its own role down to its subconditions.
+    item.each { Object rawKey, Object child ->
+        String key = String.valueOf(rawKey)
+        if (key == 'c' && child instanceof List) {
+            (child as List).each { Object entry ->
+                walkWebcoreDeviceNodes(entry, reads, actions, unsupported,
+                        webcoreDeviceReadRole(entry, role))
+            }
+            return
+        }
         if (child instanceof List) {
-            (child as List).each { Object listChild -> walkWebcoreDeviceNodes(listChild, reads, actions, unsupported) }
+            (child as List).each { Object listChild -> walkWebcoreDeviceNodes(listChild, reads, actions, unsupported, role) }
         } else if (child instanceof Map) {
-            walkWebcoreDeviceNodes(child, reads, actions, unsupported)
+            walkWebcoreDeviceNodes(child, reads, actions, unsupported, role)
         }
     }
+}
+
+// The role a `c` entry reads its devices in. An event is always a trigger; a
+// condition or group is whichever comparison block webCoRE itself put the
+// operator in. Anything else is left unattributed rather than guessed.
+String webcoreDeviceReadRole(Object entry, String inherited) {
+    if (!(entry instanceof Map)) return inherited
+    Map node = entry as Map
+    String type = String.valueOf(node.t ?: '')
+    if (type == 'event') return 'trigger'
+    if (type == 'condition' || type == 'group') return webcoreFlowIsTrigger(node) ? 'trigger' : 'constraint'
+    return inherited
 }
 
 // A "p"/"action" node's own d list holds its target device references. Each
@@ -3498,6 +3527,44 @@ List<String> classifyWebcoreDeviceList(Object dList, Map<String, Integer> unsupp
     }
     return tokens
 }
+
+// --- webcore trigger classifier: begin ---
+// webCoRE defines every comparison in one of two blocks, conditions or triggers
+// (parent.getChildComparisons), and the executor stores which one applied as the
+// first letter of that block name in ct - subscribeAll: cndtn[sCT] =
+// cmpTyp.take(i1). ct is therefore only present once a piston has subscribed, so
+// a paused piston carries none and the operator name is the reliable source.
+// This is the trigger block's own membership, transcribed, not a judgement about
+// which comparisons "feel like" events.
+//
+// Why it sits in the decoder region rather than in the flow builder block: the
+// device walker above needs the same answer. A device read has to know whether
+// the piston read it as a trigger or as a condition to be drawn in the colour
+// the flowchart already gives it. One copy, lifted by both tests.
+List webcoreFlowTriggerComparisons() {
+    return ['arrives', 'becomes_even', 'becomes_odd', 'changes', 'changes_away_from',
+            'changes_away_from_any_of', 'changes_to', 'changes_to_any_of', 'does_not_drop',
+            'does_not_rise', 'drops', 'drops_below', 'drops_to_or_below', 'enters_range',
+            'event_occurs', 'executes', 'exits_range', 'gets', 'gets_any', 'happens_daily_at',
+            'receives', 'remains_above', 'remains_above_or_equal_to', 'remains_below',
+            'remains_below_or_equal_to', 'remains_even', 'remains_inside_of_range', 'remains_odd',
+            'remains_outside_of_range', 'rises', 'rises_above', 'rises_to_or_above', 'stays',
+            'stays_any_of', 'stays_away_from', 'stays_away_from_any_of', 'stays_different_than',
+            'stays_equal_to', 'stays_even', 'stays_greater_than', 'stays_greater_than_or_equal_to',
+            'stays_inside_of_range', 'stays_less_than', 'stays_less_than_or_equal_to', 'stays_not',
+            'stays_odd', 'stays_outside_of_range', 'stays_unchanged']
+}
+
+// ct when the piston has subscribed, the comparison block otherwise. Both answer
+// the same question, so the stored value wins where it exists.
+boolean webcoreFlowIsTrigger(Map condition) {
+    // String.valueOf, not a GString: Groovy's == coerces the two but List.contains
+    // is a plain Java call where a GString never equals a String.
+    String ct = String.valueOf(condition?.ct ?: '')
+    if (ct) return ct == 't'
+    return webcoreFlowTriggerComparisons().contains(String.valueOf(condition?.co ?: ''))
+}
+// --- webcore trigger classifier: end ---
 
 // Pure processing, split out of fetchAppRelationships so the async scan
 // pipeline's callback can run it directly on data it already has, with no
@@ -3991,37 +4058,6 @@ String webcoreFlowEventLabel(Map event) {
             return variable ? "When ${variable} changes" : 'When a variable changes'
     }
     return 'When an event fires'
-}
-
-// webCoRE defines every comparison in one of two blocks, conditions or triggers
-// (parent.getChildComparisons), and the executor stores which one applied as the
-// first letter of that block name in ct - subscribeAll: cndtn[sCT] =
-// cmpTyp.take(i1). ct is therefore only present once a piston has subscribed, so
-// a paused piston carries none and the operator name is the reliable source.
-// This is the trigger block's own membership, transcribed, not a judgement about
-// which comparisons "feel like" events.
-List webcoreFlowTriggerComparisons() {
-    return ['arrives', 'becomes_even', 'becomes_odd', 'changes', 'changes_away_from',
-            'changes_away_from_any_of', 'changes_to', 'changes_to_any_of', 'does_not_drop',
-            'does_not_rise', 'drops', 'drops_below', 'drops_to_or_below', 'enters_range',
-            'event_occurs', 'executes', 'exits_range', 'gets', 'gets_any', 'happens_daily_at',
-            'receives', 'remains_above', 'remains_above_or_equal_to', 'remains_below',
-            'remains_below_or_equal_to', 'remains_even', 'remains_inside_of_range', 'remains_odd',
-            'remains_outside_of_range', 'rises', 'rises_above', 'rises_to_or_above', 'stays',
-            'stays_any_of', 'stays_away_from', 'stays_away_from_any_of', 'stays_different_than',
-            'stays_equal_to', 'stays_even', 'stays_greater_than', 'stays_greater_than_or_equal_to',
-            'stays_inside_of_range', 'stays_less_than', 'stays_less_than_or_equal_to', 'stays_not',
-            'stays_odd', 'stays_outside_of_range', 'stays_unchanged']
-}
-
-// ct when the piston has subscribed, the comparison block otherwise. Both answer
-// the same question, so the stored value wins where it exists.
-boolean webcoreFlowIsTrigger(Map condition) {
-    // String.valueOf, not a GString: Groovy's == coerces the two but List.contains
-    // is a plain Java call where a GString never equals a String.
-    String ct = String.valueOf(condition?.ct ?: '')
-    if (ct) return ct == 't'
-    return webcoreFlowTriggerComparisons().contains(String.valueOf(condition?.co ?: ''))
 }
 
 // Fallback only, used when a condition cannot be transcribed in full. Counts the
@@ -8588,7 +8624,15 @@ Map buildGraph() {
                 Map resolved = resolveWebcoreDeviceToken(ref.token as String, parentAppId, webcoreDeviceHashIndexes, labels)
                 if (resolved.issue) { deviceIssueCodes << (resolved.issue as String); return }
                 String devNodeId = "d${resolved.deviceId}"
-                String key = "${appNodeId}|${devNodeId}|deviceRead"
+                // The flowchart already proves whether the piston read this
+                // device as a trigger or as a condition, so the map draws it in
+                // the same colour Rule Machine uses for the same thing rather
+                // than one undifferentiated blue that contradicts the chart
+                // beside it. deviceRead stays for a read that could not be
+                // attributed to either - an expression or a task parameter.
+                String readKind = "${ref.role ?: ''}" == 'trigger' ? 'trigger'
+                        : ("${ref.role ?: ''}" == 'constraint' ? 'constraint' : 'deviceRead')
+                String key = "${appNodeId}|${devNodeId}|${readKind}"
                 if (seen.contains(key)) return
                 seen << key
                 // from: app, to: device - matching the existing generic
@@ -8596,7 +8640,7 @@ Map buildGraph() {
                 // stored app->device regardless of visual arrow direction,
                 // which the client's own inbound/arrows logic controls
                 // separately), not device->app.
-                edges << [from: appNodeId, to: devNodeId, kind: 'deviceRead', attribute: ref.attribute]
+                edges << [from: appNodeId, to: devNodeId, kind: readKind, attribute: ref.attribute]
             }
             ((appMap.webcoreDeviceActions ?: []) as List).each { Map ref ->
                 deviceOperandCount++
@@ -10681,7 +10725,7 @@ const LEGEND_EDGE_ROWS = [
   { key: 'write', html: '<span class="line" style="border-color:' + roleColors.write + '"></span>Write - rule sets the value of a Hub or Local Variable' },
   { key: 'read', html: '<span class="line" style="border-color:' + roleColors.read + '"></span>Read - rule uses a Hub or Local Variable in its decoded logic' },
   { key: 'usesVar', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.usesVar + ' 0 5px,transparent 5px 9px)"></span>Uses - webCoRE piston references a Hub Variable; direction is unknown' },
-  { key: 'deviceRead', html: '<span class="swatch sw-dot" style="background:' + roleColors.deviceRead + '"></span><span class="line" style="border-color:' + roleColors.deviceRead + '"></span>Device read - webCoRE piston reads this device; exact trigger/condition role is not decoded' },
+  { key: 'deviceRead', html: '<span class="swatch sw-dot" style="background:' + roleColors.deviceRead + '"></span><span class="line" style="border-color:' + roleColors.deviceRead + '"></span>Device read - webCoRE piston reads this device somewhere its role could not be attributed, such as an expression or a task parameter' },
   { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs the actions of another rule' },
   { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels a pending Wait/Delay on another rule' },
   { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets the Private Boolean of another rule' },
@@ -10785,7 +10829,7 @@ const KIND_LABEL = {
   trigger: 'Trigger', constraint: 'Constraint', monitor: 'Monitor', action: 'Action',
   exposed: 'Exposed', owns: 'Owns', hasComponent: 'Has component', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
   setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read',
-  usesVar: 'Uses (direction unknown)', deviceRead: 'Device read (role not decoded)'
+  usesVar: 'Uses (direction unknown)', deviceRead: 'Device read (role not attributed)'
 };
 const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
 
@@ -12378,6 +12422,12 @@ function startFlowItemIfNew() {
   flowItemId = flowShownItemId;
   flowUserPosition = null;
   flowUserSize = null;
+  // Zoom is part of the default layout, exactly as resetFlowPanelLayout()
+  // treats it. Without this a new item kept the previous item's zoom, which
+  // looks like the panel failing to go back to its default size - the chosen
+  // size was cleared but the content was still being scaled.
+  flowZoom = 1;
+  clearFlowZoomStyle();
   clearFlowInlineSize();
   panelCustomPosition.delete(flowPanel);
   return true;
@@ -12432,9 +12482,10 @@ window.addEventListener('resize', function () {
   applyFlowUserSize();
 });
 // Panel zoom. Ctrl with the mouse wheel over the normal flow view zooms its
-// content instead of the whole page, which a large flowchart needs. Held for the
-// page session like a chosen size, reset by the header double-click, and not
-// applied to the full-area Insights view. The zoom sits on a wrapper inside the
+// content instead of the whole page, which a large flowchart needs. Held while
+// the same item stays open and cleared when a new one is picked, exactly like a
+// chosen size, reset by the header double-click, and not applied to the
+// full-area Insights view. The zoom sits on a wrapper inside the
 // scrolling body: zooming the body itself would grow the panel, not its content.
 var flowZoom = 1;
 const FLOW_ZOOM_MIN = 0.5;
@@ -12615,7 +12666,7 @@ function webcorePistonDeviceCoverageMessage(node) {
     return 'This piston device configuration could not be decoded safely. Saved Hub Variable and local variable relationships, when present, are still shown below.';
   }
   if (coverage === 'complete') {
-    return 'Direct device reads and actions below are decoded from saved configuration. Which exact trigger, condition or action role each read plays is not decoded.';
+    return 'Direct device reads and actions below are decoded from saved configuration. A read in an event or a condition is shown under the trigger or constraint role the piston decoded it in; a read anywhere else, such as an expression or a task parameter, is shown as an unattributed device read.';
   }
   if (coverage === 'partial') {
     return 'Some direct device reads or actions below are decoded from saved configuration. At least one device reference in this piston could not be resolved and is not shown - see Insights for the coverage gap.';
@@ -15654,10 +15705,12 @@ function buildExportPayload(ext, icons, failedFetches) {
       // both fields.
       usageRole: e.usageRole || null,
       writeSource: e.writeSource || null,
-      // v2.2.8: bounded evidence only - the saved attribute a deviceRead
-      // decoded, or the command names a webCoRE action decoded. Never task
-      // parameter values, never raw hashes. null on every other edge kind.
-      attribute: e.kind === 'deviceRead' ? (e.attribute || null) : null,
+      // v2.2.8: bounded evidence only - the saved attribute a piston device
+      // read decoded, or the command names a webCoRE action decoded. Never task
+      // parameter values, never raw hashes. null on every other edge kind. A
+      // piston read now carries the trigger or constraint role it was decoded
+      // in, so the attribute rides those kinds too, not deviceRead alone.
+      attribute: (e.kind === 'deviceRead' || e.kind === 'trigger' || e.kind === 'constraint') ? (e.attribute || null) : null,
       commands: (e.kind === 'action' && e.commands) ? e.commands : null
     };
   });
@@ -15909,7 +15962,7 @@ function buildExportPayload(ext, icons, failedFetches) {
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below); its exact trigger/condition/monitor role is not decoded. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',

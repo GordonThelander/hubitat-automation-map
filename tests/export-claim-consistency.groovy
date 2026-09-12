@@ -29,8 +29,13 @@ check(source.contains('piston-to-device relationships ARE decoded from saved con
     'export limitations state that piston device relationships are decoded')
 passed += 2
 
-// 2. deviceRead exists as an edge kind, so it must be documented as one.
-check(source.contains("kind: 'deviceRead'"), 'the graph emits deviceRead edges')
+// 2. deviceRead exists as an edge kind, so it must be documented as one. A
+// piston read now takes the trigger or constraint role the flowchart proves,
+// so deviceRead is the fallback for a read that could not be attributed to
+// either - still emitted, no longer the only outcome.
+check(source.contains("'constraint' : 'deviceRead'"), 'the graph still emits deviceRead edges as the unattributed fallback')
+check(source.contains('kind: readKind, attribute: ref.attribute'),
+    'a piston device read is emitted under the role it was decoded in')
 check(source.contains('deviceRead (graph schema 14, export schema 12, v2.2.8)'),
     'schema.edges documents the deviceRead relationship')
 passed += 2

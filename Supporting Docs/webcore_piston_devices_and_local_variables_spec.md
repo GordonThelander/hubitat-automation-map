@@ -194,12 +194,20 @@ For every `t: "p"` map, inspect `d` only for direct hash tokens. Each uniquely r
 one `deviceRead` relationship from the piston app to the device, carrying the saved attribute from
 `a` as evidence metadata.
 
-`deviceRead` is a new relationship kind. It must not be labelled `trigger`, `constraint`, or
-`monitor`, because the operand proves an attribute read but this bounded decoder does not prove why
-the piston reads it. In the rendered graph its arrow points from the device toward the piston. The
-legend text is:
+`deviceRead` is a relationship kind for a read this decoder cannot attribute to a role.
 
-> Device read - webCoRE piston reads this device; exact trigger/condition role is not decoded
+**Superseded in part at v2.3.0.** A read reached through an `on` event, or through a condition on an
+`if`, `while`, `repeat` or else-if branch, IS labelled `trigger` or `constraint`. webCoRE itself
+decides which of its two comparison blocks an operator belongs to
+(`parent.getChildComparisons`, stored in `ct` once the piston has subscribed), so this is the
+piston's own classification being read back, not an inference about why the piston reads the device.
+It is what makes the map agree with the piston flowchart, which already draws that same read as a
+trigger: leaving both as one undifferentiated `deviceRead` had the map contradicting the chart beside
+it. A read anywhere else, inside an expression or a task parameter, stays `deviceRead`, and no read
+is ever labelled `monitor`. In the rendered graph its arrow points from the device toward the piston.
+The legend text is:
+
+> Device read - webCoRE piston reads this device somewhere its role could not be attributed, such as an expression or a task parameter
 
 Deduplicate by piston ID, device ID, relationship kind, and attribute. Multiple attributes may be
 retained as evidence while the default map draws at most one visually parallel `deviceRead` edge per

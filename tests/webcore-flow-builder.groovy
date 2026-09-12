@@ -21,12 +21,18 @@ def check = { boolean cond, String label ->
 // ---- load the builder straight out of the app ------------------------------
 
 String source = new File(repoRoot, 'apps/automation_map.groovy').getText('UTF-8')
-String beginMarker = '// --- webcore flow builder: begin ---'
-String endMarker = '// --- webcore flow builder: end ---'
-int begin = source.indexOf(beginMarker)
-int end = source.indexOf(endMarker)
-assert begin >= 0 && end > begin: 'flow builder block not found in app source'
-String block = source.substring(begin + beginMarker.length(), end)
+def liftBlock = { String name ->
+    String beginMarker = "// --- ${name}: begin ---"
+    String endMarker = "// --- ${name}: end ---"
+    int begin = source.indexOf(beginMarker)
+    int end = source.indexOf(endMarker)
+    assert begin >= 0 && end > begin: "${name} block not found in app source"
+    return source.substring(begin + beginMarker.length(), end)
+}
+// Two blocks, because the trigger classifier lives in the decoder region: the
+// device walker there needs the same answer this builder does, and one copy
+// read by both beats two that can drift.
+String block = liftBlock('webcore trigger classifier') + '\n' + liftBlock('webcore flow builder')
 def builder = new GroovyClassLoader(this.class.classLoader)
         .parseClass("class WebcoreFlowUnderTest {\n" + block + "\n}").newInstance()
 
