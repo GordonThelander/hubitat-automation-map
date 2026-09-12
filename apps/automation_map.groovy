@@ -337,6 +337,56 @@ boolean diagOn() {
     return expiresAt > 0 && now() < expiresAt
 }
 
+// Compact scan-lifecycle snapshot for the recovery paths, restoring the part of
+// the removed AM-TRACE facility that mattered: when a recovery fires, the live
+// static lock and the durable state THIS execution can see disagree, and
+// neither value alone says which. Only the token tails are logged, never a
+// whole token, and it is only ever built behind a diagOn() check.
+String lockVsState() {
+    String lock = SCAN_LOCKS.get("${app.id}") as String
+    String gen = (state.activeGenerationToken ?: '') as String
+    return "lock=${lock ? lock.tokenize('-').last() : 'none'}" +
+           " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
+           " running=${state.scanRunning == true} phase=${state.scanPhase ?: '-'}" +
+           " graph=${state.graph != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
+           " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
+           " appResultsReady=${state.appResultsReady == true}"
+}
+
+// Seconds since a phase timestamp. Returns -1 when the phase never stamped one
+// (an app update mid-scan, or a path that skipped the phase), so a missing
+// measurement reads as missing rather than as a suspiciously fast phase.
+int phaseElapsedSeconds(Object startedAt) {
+    Long started = (startedAt ?: 0) as Long
+    if (started <= 0) return -1
+    return ((now() - started) / 1000).intValue()
+}
+
+// What the webCoRE decoder actually achieved this scan, counted off appInfo.
+// Decoded flows are deliberately NOT counted here: finishScan moves them out of
+// appInfo into graph.flows, so a count at the log site would depend on that
+// ordering. Four numbers that can be stood behind beat five with a guess in it.
+String webcoreDecodeSummary() {
+    Map appInfo = (state.appInfo instanceof Map) ? state.appInfo as Map : [:]
+    int pistons = 0
+    int errored = 0
+    int withReads = 0
+    int unsupported = 0
+    appInfo.each { Object id, Object raw ->
+        if (!(raw instanceof Map)) return
+        Map a = raw as Map
+        if ("${a.type ?: ''}".trim() != 'webCoRE Piston') return
+        pistons++
+        if ("${a.webcoreVariableDecodeStatus ?: ''}" == 'error') errored++
+        if (((a.webcoreDeviceReads ?: []) as List)) withReads++
+        ((a.webcoreUnsupportedDeviceRefs ?: [:]) as Map).each { Object code, Object count ->
+            unsupported += (count ?: 0) as Integer
+        }
+    }
+    return "pistons=${pistons} withDeviceReads=${withReads} decodeErrors=${errored}" +
+           " unresolvedDeviceRefs=${unsupported}"
+}
+
 // Sets the durable deadline ONCE, on the off-to-on transition, and never
 // pushes it out again - review 392: pressing Done for an unrelated
 // setting while this stays on must not silently extend the window past
@@ -824,6 +874,10 @@ void selfHealGraphIfNeeded() {
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
     if (!(state.appInfo)) return
+    // Backlog item 30: this fires after most scans, and the log gave no way to
+    // tell WHICH re-render raced the commit. The snapshot below is the evidence
+    // that question needs.
+    if (diagOn()) log.info "${app.label}: self-heal rebuilding the graph - ${lockVsState()}"
     log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
     state.hubVariableInventory = fetchHubVariableInventory()
     state.graph = buildGraph()
@@ -1154,6 +1208,7 @@ void clearAbandonedScan() {
     String currentLock = SCAN_LOCKS.get("${app.id}") as String
     boolean tombstoned = activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))
     if (tombstoned) {
+        if (diagOn()) log.info "${app.label}: recovery, tombstoned generation - ${lockVsState()}"
         log.warn "${app.label}: clearing resurrected scan flags for an already-completed generation"
         state.scanRunning = false
         return
@@ -1274,12 +1329,16 @@ void clearAbandonedScan() {
             // logicalGen so this termination's own tombstone (should this
             // really be the first time this generation finishes) lands on
             // the right identity rather than the substitute recovery token.
+            if (diagOn()) log.info "${app.label}: recovery, finishing a published-but-unfinalized scan - ${lockVsState()}"
             log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
             finishScan([lockToken: currentToken, logicalGen: activeGen])
         } else {
             // The async results lived only in the lost static accumulator and
             // cannot be reconstructed safely. Terminate truthfully and require
             // a new scan rather than publish a valid-looking empty/partial map.
+            // The branch that fired on the dev hub at 16:11:58 on 2026-09-12,
+            // when a deploy replaced the app code under a running scan.
+            if (diagOn()) log.info "${app.label}: recovery, working data lost - ${lockVsState()}"
             log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
             markScanFinished(currentToken,
                 'The scan working data was lost before it could be published. Press Scan to run it again.',
@@ -1753,6 +1812,9 @@ Map startScan() {
     state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
+    // Phase start, so the finalize below can report how long the phase took.
+    // Durable rather than static: the finalize runs in a different execution.
+    state.devicePhaseStartedAt = now()
     state.scanRunning = true
     // Stamped here as well as in the async callbacks, so a scan that never
     // manages to land a single callback still has a timestamp for
@@ -2215,6 +2277,10 @@ void finalizeDevicePhase(String scanId) {
 
         state.scanDone = scan.total as Integer
         state.scanHeartbeat = now()
+        if (diagOn()) {
+            log.info "${app.label}: device phase done in ${phaseElapsedSeconds(state.devicePhaseStartedAt)}s" +
+                     " - ${scan.total} representative type(s), ${unreadable.size()} unreadable"
+        }
     } catch (Exception ex) {
         log.warn "${app.label}: device-phase finalization failed: ${ex.message}"
         markScanFinished(scan.lockToken as String, "${ex.message}")
@@ -2268,6 +2334,9 @@ void startAppPhase(String lockToken) {
     state.appIds = appIds as List
 
     state.scanPhase = 'apps'
+    // Same reasoning as the device phase: stamped at the start so the finalize,
+    // which runs in a later execution, can report the phase duration.
+    state.appPhaseStartedAt = now()
     state.scanTotal = appIds.size()
     state.scanDone = 0
     state.scanQueue = []
@@ -2635,6 +2704,11 @@ void finalizeAppPhase(String scanId) {
         // can never observe true with only a partial appInfo publication.
         state.appResultsReady = true
         state.scanHeartbeat = now()
+        if (diagOn()) {
+            log.info "${app.label}: app phase done in ${phaseElapsedSeconds(state.appPhaseStartedAt)}s" +
+                     " - ${state.appsDecoded} decoded, ${state.appsUnreadable} unreadable," +
+                     " ${state.rulesDecoded} rule(s) decoded, ${state.rulesSkipped} skipped"
+        }
     } catch (Exception ex) {
         log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
         markScanFinished(scan.lockToken as String, "${ex.message}")
@@ -2852,16 +2926,22 @@ void finishScan(data = null) {
         // above are, rather than recomputed at page-render time.
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
-        if (diagOn()) log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
-
         // durationSeconds reads the start time already embedded in lockToken
         // ("lock-<epochMillis>-<random>", see its own acquisition comment)
         // rather than adding a new state field for it - the token already IS
         // the scan's start timestamp, just formatted for lock identity.
         Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
         // Durable, so main()'s "Last scan" line can show it on a later,
-        // separate page-render execution.
+        // separate page-render execution. Computed BEFORE the completion log
+        // rather than after it, so the log can report the duration it already
+        // has instead of a second scan being needed to find out.
         state.lastScanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
+
+        if (diagOn()) {
+            log.info "${app.label}: scan complete in ${state.lastScanDurationSeconds}s - " +
+                     "${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+            log.info "${app.label}: webCoRE decode - ${webcoreDecodeSummary()}"
+        }
     }
     if (!finished) {
         // The claim is now checked before buildGraph() runs, so a
