@@ -489,3 +489,19 @@ Measured on a Hubitat C-8 development hub, 2026-09.
   (a lead identified but not yet reproduced from the hosted editor), and operand semantic (L4) meaning
   once an operand kind is L3-proven. Not yet started: the runtime coverage walker doing anything with
   the raised operand levels beyond reporting them.
+- **Automation Map Dev v2.3.0:**
+  - a piston's device read carries the role it was decoded in. A read reached through an `on` event,
+    or through a condition on an `if`, `while`, `repeat` or else-if branch, becomes a `trigger` or
+    `constraint` edge rather than a `deviceRead` one, so the map draws it in the same colour the
+    piston's own flowchart does. The classification is webCoRE's own comparison-block membership
+    (`parent.getChildComparisons`, and `ct` where the subscription pass has written it), read back
+    rather than inferred. `deviceRead` remains for a read that could not be attributed, such as one
+    inside an expression or a task parameter, and no read is ever labelled `monitor`. The staleness
+    caveat on a saved `ct` recorded above applies: it is preferred over the operator name where
+    present, the same way the flowchart does it;
+  - nested condition groups are composed as bracketed sub-sentences joined by their own saved
+    operator, bounded at six levels of nesting, instead of collapsing the statement they belong to;
+  - a task transcribes its saved parameters beside its command name, shown only when every parameter
+    yields text.
+
+  Graph schema 15, export schema 13.

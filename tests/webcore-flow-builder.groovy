@@ -185,6 +185,30 @@ Map deepDecision = builder.buildWebcoreFlow(deepIf)[0]
 check(builder.webcoreFlowConditionText(deepDecision.conditionParts as List, 'and', [:]) == '',
     'runaway group nesting is bounded and left opaque rather than followed')
 
+// ---- a task shows its own parameters, not a bare command name ---------------
+
+check(String.valueOf(builder.webcoreFlowTaskLabel(
+        [c: 'setVariable', p: [[t: 'x', x: 'localCounter'], [t: 'x', x: '@@AMGateA_NumShared']]])) ==
+        'setVariable(localCounter, @@AMGateA_NumShared)',
+    'a task renders its saved parameters beside its command')
+check(String.valueOf(builder.webcoreFlowTaskLabel([c: 'on'])) == 'on',
+    'a task with no parameters is still just its command')
+check(String.valueOf(builder.webcoreFlowTaskLabel([c: 'setLevel', p: [[t: 'c', c: 40]]])) ==
+        'setLevel(40)', 'a constant parameter is printed as stored')
+// All-or-nothing, the same rule a condition uses: a device-selection parameter
+// has no transcription, so the whole list is dropped rather than printing a
+// gap where a real value was.
+check(String.valueOf(builder.webcoreFlowTaskLabel(
+        [c: 'setColor', p: [[t: 'c', c: 'red'], [t: 'd', d: [':f142209a9087c18092a59ef88e2b5b6a:']]]])) ==
+        'setColor', 'a parameter with no transcription drops the whole list, never half of it')
+check(String.valueOf(builder.webcoreFlowTaskLabel([:])) == 'task',
+    'a task with no command at all still draws as something')
+
+Map paramPiston = [s: [[t: 'action', d: [':f142209a9087c18092a59ef88e2b5b6a:'],
+    k: [[c: 'setVariable', p: [[t: 'x', x: 'localCounter'], [t: 'c', c: 7]]]]]]]
+check(labels(builder.buildWebcoreFlow(paramPiston)) == ['setVariable(localCounter, 7)'],
+    'the parameters reach the drawn step, not just the helper')
+
 check(String.valueOf(builder.webcoreFlowOperandText([t: 'c', c: 'closed'])) == 'closed' &&
       String.valueOf(builder.webcoreFlowOperandText([t: 'x', x: '@@GT1'])) == '@@GT1' &&
       builder.webcoreFlowOperandText([t: 'e']) == '' && builder.webcoreFlowOperandText([:]) == '',
