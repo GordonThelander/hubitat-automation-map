@@ -100,20 +100,35 @@ Map realShape = [s: [[t: 'if', o: 'and', c: [
      lo: [t: 'p', a: 'contact', d: [':db15e9deb12d0d5146b933146f7fd15a:']],
      ro: [t: 'c', c: 'closed']]],
     s: [[t: 'action', k: [[c: 'noop']]]]]]]
-Map realParts = builder.buildWebcoreFlow(realShape)[0]
-check(realParts.conditionJoiner == 'and', 'the saved condition joiner is carried')
-check((realParts.conditionParts as List).size() == 2, 'both conditions are carried as parts')
-check(String.valueOf(realParts.cond) == '2 conditions not decoded',
-    'the builder itself still cannot name a device, so the fallback stands')
+// The real shape splits: its "motion changes" is a trigger and its "contact is
+// closed" is a condition, so the two clauses live on two different steps.
+List realSteps = builder.buildWebcoreFlow(realShape)
+Map realTrigger = realSteps[0]
+Map realDecision = realSteps[1]
+check(realTrigger.conditionJoiner == 'and' && realDecision.conditionJoiner == 'and',
+    'the saved condition joiner is carried onto both halves')
+check((realTrigger.conditionParts as List).size() == 1 && (realDecision.conditionParts as List).size() == 1,
+    'each half carries exactly the clause it owns')
+check(String.valueOf(realTrigger.label) == 'trigger not decoded' &&
+      String.valueOf(realDecision.cond) == 'condition not decoded',
+    'the builder itself still cannot name a device, so both fallbacks stand')
 
 Map names = [':13e33296864215646891b31480c3d6ec:': 'Entrance Hall Motion Sensor',
              ':db15e9deb12d0d5146b933146f7fd15a:': 'Patio Door']
-check(String.valueOf(builder.webcoreFlowConditionText(realParts.conditionParts as List, 'and', names)) ==
-        "Entrance Hall Motion Sensor's motion changes and Patio Door's contact is closed",
-    'a resolved condition reads the way the piston editor writes it')
-check(String.valueOf(builder.webcoreFlowConditionText(realParts.conditionParts as List, 'or', names))
-        .contains(' or '), 'the joiner is the saved one, not a fixed and')
-check(builder.webcoreFlowConditionText(realParts.conditionParts as List, 'and', [:]) == '',
+String composed = [realTrigger, realDecision].collect {
+    String.valueOf(builder.webcoreFlowConditionText(it.conditionParts as List, 'and', names))
+}.join(' then ')
+check(composed == "Entrance Hall Motion Sensor's motion changes then Patio Door's contact is closed",
+    "both halves read the way the piston editor writes them (${composed})")
+
+Map twoConditions = [s: [[t: 'if', o: 'or', c: [
+    [t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Home']],
+    [t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Away']]]]]]
+Map orDecision = builder.buildWebcoreFlow(twoConditions)[0]
+check(String.valueOf(builder.webcoreFlowConditionText(orDecision.conditionParts as List, 'or', [:])) ==
+        'mode is Home or mode is Away',
+    'two real conditions join with the saved joiner, not a fixed and')
+check(builder.webcoreFlowConditionText(realTrigger.conditionParts as List, 'and', [:]) == '',
     'an unresolvable device yields no text at all, never half a condition')
 check(builder.webcoreFlowConditionText([[opaque: true]], 'and', names) == '',
     'a group collapses the whole label rather than being flattened')
@@ -131,6 +146,48 @@ check(String.valueOf(builder.webcoreFlowOperandText([t: 'c', c: 'closed'])) == '
       String.valueOf(builder.webcoreFlowOperandText([t: 'x', x: '@@GT1'])) == '@@GT1' &&
       builder.webcoreFlowOperandText([t: 'e']) == '' && builder.webcoreFlowOperandText([:]) == '',
     'operand text is transcribed for known kinds and blank for the rest')
+
+// ---- triggers are split out of an if, the way webCoRE itself splits them ----
+
+check(builder.webcoreFlowIsTrigger([co: 'changes']) && builder.webcoreFlowIsTrigger([co: 'rises_above']) &&
+      builder.webcoreFlowIsTrigger([co: 'stays_equal_to']),
+    'comparisons from the trigger block are triggers')
+check(!builder.webcoreFlowIsTrigger([co: 'is']) && !builder.webcoreFlowIsTrigger([co: 'is_equal_to']) &&
+      !builder.webcoreFlowIsTrigger([co: 'is_between']),
+    'comparisons from the condition block are not triggers')
+check(builder.webcoreFlowIsTrigger([co: 'is', ct: 't']) &&
+      !builder.webcoreFlowIsTrigger([co: 'changes', ct: 'c']),
+    'a stored ct wins over the operator name, since the executor wrote it')
+check(!builder.webcoreFlowIsTrigger([:]), 'an unknown comparison is not assumed to be a trigger')
+
+List mixed = builder.buildWebcoreFlow(realShape)
+check(mixed[0].kind == 'trigger' && mixed[1].ctrl == 'if',
+    "a trigger is lifted out ahead of the decision ${mixed.collect { it.ctrl ?: it.kind }}")
+check((mixed[0].conditionParts as List).size() == 1 && (mixed[1].conditionParts as List).size() == 1,
+    'the trigger and the condition each carry only their own part')
+check(String.valueOf(builder.webcoreFlowConditionText(mixed[0].conditionParts as List, 'and', names)) ==
+        "Entrance Hall Motion Sensor's motion changes",
+    'the lifted trigger reads as its own sentence')
+check(String.valueOf(builder.webcoreFlowConditionText(mixed[1].conditionParts as List, 'and', names)) ==
+        "Patio Door's contact is closed",
+    'the remaining decision holds only the real condition')
+check(String.valueOf(mixed[1].cond) == 'condition not decoded',
+    "the fallback counts only what the decision kept (${mixed[1].cond})")
+
+Map allTriggers = [s: [[t: 'if', o: 'and',
+    c: [[t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], ro: [t: 'c']]],
+    s: [[t: 'action', k: [[c: 'noop']]]]]]]
+List trigOnly = builder.buildWebcoreFlow(allTriggers)
+check(ctrlSequence(trigOnly) == [],
+    "an if of only triggers draws no decision at all ${trigOnly.collect { it.ctrl ?: it.kind }}")
+check(trigOnly[0].kind == 'trigger' && labels(trigOnly).contains('noop'),
+    'a trigger-only if still draws its trigger and its body')
+
+Map groupedIf = [s: [[t: 'if', o: 'and',
+    c: [[t: 'group', c: []], [t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], ro: [t: 'c']]],
+    s: [[t: 'action', k: [[c: 'noop']]]]]]]
+check(ctrlSequence(builder.buildWebcoreFlow(groupedIf)) == ['if', 'endif'],
+    'a group stays with the decision rather than vanishing from both halves')
 
 // ---- switch renders as an ordered decision chain, with no invented default ---
 
