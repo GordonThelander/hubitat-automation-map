@@ -1,6 +1,9 @@
 # Automation Map AI assessment extension
 
-**Status:** proposed feature contract  
+**Status:** **Historical design record.** Delivered 2026-08-23 and written against **export schema
+3**; the export is now schema 13. Deliberately *not* rewritten to the current contract - read
+`ai_export_spec.md` for that, and treat this as the reasoning behind the original design. The
+"proposed feature contract" and "not reasoned through or scoped" wording below is original text.  
 **Purpose:** augment the AI-friendly export with evidence an AI can assess directly  
 **Boundary:** read-only analysis only, no device or app control  
 **Source:** delivered on

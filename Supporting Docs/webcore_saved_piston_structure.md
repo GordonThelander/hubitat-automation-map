@@ -402,7 +402,8 @@ permissions are never rendered as device use.
 | --- | --- | --- |
 | Evaluated Hub or Local Variable | Read | Variable to piston |
 | Hub or Local Variable destination | Write | Piston to variable |
-| `t: "p"` physical-device operand | Device read | Device to piston |
+| `t: "p"` physical-device operand, in an event or condition | Trigger or Constraint (v2.3.0) | Device to piston |
+| `t: "p"` physical-device operand, role not attributable | Device read | Device to piston |
 | `t: "action"` direct target | Action | Piston to device |
 
 When one piston both reads and acts on a device, or both reads and writes a variable, both
@@ -421,8 +422,11 @@ Automation Map does not create a fixed relationship for:
 - an unrecognised or malformed node;
 - a hash that cannot be reconciled uniquely with the correct parent inventory.
 
-It does not infer complete IF/ELSE flow, evaluation order, schedules, delays, cancellation behaviour, or
-the exact role of a physical read.
+It does not infer schedules, delays, cancellation behaviour, or runtime values. As of v2.3.0 it does
+decode IF/ELSE structure and statement order into a drawn flow, and it does attribute the role of a
+physical read where webCoRE's own comparison blocks establish it, leaving the read as `deviceRead`
+where they do not. Evaluation order in the runtime sense - which branch actually ran - remains
+outside scope; what is decoded is the saved structure, not an execution trace.
 
 Unsupported static forms produce bounded coverage information. Malformed encoding or JSON produces a
 fixed decoder error and a `complete-with-gaps` scan. One malformed piston never stops other apps being
@@ -436,8 +440,17 @@ The decoder needs structure, not values. Automation Map does not log, cache, ren
 - raw Base64 chunks;
 - unmatched device hashes;
 - Hub, global or local variable values;
-- action parameter values;
 - local network details.
+
+**Changed in v2.3.0, and stated here rather than left implied: selected parameter and condition text
+is now rendered and exported.** A task transcribes its saved parameters into its flow label, for
+example `setLevel(40)` or `setVariable(localCounter, 7)`, and a condition transcribes its operands,
+for example `Patio Door's contact is closed`. Those labels are held in `graph.flows`, drawn on the
+map, and carried into the export as `ruleFlows[].steps[]`. Only operands the transcriber can print
+are included (constant, variable, virtual and argument); a device selection, or any kind it cannot
+print, drops the whole parameter list back to the bare command name. A variable's *value* is still
+never read - a variable operand prints its name, not its contents - and the decoded document, raw
+chunks and unmatched hashes remain unlogged and unexported.
 
 The decoded document exists only in memory during classification. Discovery uses read-only Hubitat
 data and adds no state-changing endpoint. Coverage results carry no piston values, and nothing decoded
@@ -497,8 +510,8 @@ Measured on a Hubitat C-8 development hub, 2026-09.
     (`parent.getChildComparisons`, and `ct` where the subscription pass has written it), read back
     rather than inferred. `deviceRead` remains for a read that could not be attributed, such as one
     inside an expression or a task parameter, and no read is ever labelled `monitor`. The staleness
-    caveat on a saved `ct` recorded above applies: it is preferred over the operator name where
-    present, the same way the flowchart does it;
+    caveat on a saved `ct` recorded above is why neither source ranks the other: agreement, or an
+    absent `ct`, publishes a role, while a conflict or an unrecognised operator publishes none;
   - nested condition groups are composed as bracketed sub-sentences joined by their own saved
     operator, bounded at six levels of nesting, instead of collapsing the statement they belong to;
   - a task transcribes its saved parameters beside its command name, shown only when every parameter

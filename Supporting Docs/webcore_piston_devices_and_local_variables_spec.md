@@ -15,6 +15,12 @@ pistons are stored and decoded now lives in the canonical reference,
 This is not a webCoRE flow decoder. It does not reconstruct IF/ELSE structure, timing, execution
 order, or runtime values.
 
+> **Historical scope note.** The sentence above describes the v2.2.8 increment this document records,
+> and is no longer true of the app. v2.3.0 added a piston flow decoder: statement order, branching,
+> condition text and task parameters. This document is retained as the implementation record for the
+> device and local-variable work; `webcore_saved_piston_structure.md` is authoritative for current
+> capability.
+
 ## 1. Evidence basis
 
 The implementation rests only on the pinned Hubitat webCoRE source and the installed piston's saved
@@ -157,7 +163,8 @@ owner-scoped Local Variable definitions across supported engines. Each entry con
 ```
 
 Existing `ruleFlows[].localVariables` remains as the Rule Machine compatibility projection. It is not
-extended to webCoRE because a piston still has no decoded `steps` flow. Variable edges target the
+extended to webCoRE because a piston still has no decoded `steps` flow. (**Superseded at v2.3.0**: a
+piston does now decode into `steps` and appears in `ruleFlows[]`.) Variable edges target the
 top-level definition's `identity`. `summary.localVariableCount` and
 `insights.unreferencedLocalVariables` are recalculated from the new cross-engine collection.
 
@@ -292,12 +299,14 @@ The export must not include:
 - decoded piston JSON;
 - raw Base64 chunks;
 - raw unmatched hashes;
-- local, Hub, or global variable values;
-- action parameter values;
-- a claim that webCoRE flow steps were decoded.
+- local, Hub, or global variable values.
 
-`apps[].hasDecodedFlow` remains `false` for webCoRE pistons. Device and variable relationship
-decoding is independent of step-by-step flow decoding.
+**Superseded at v2.3.0.** Two statements in this section were true for the v2.2.8 increment this
+document records and are no longer current. Action parameter text *is* now exported, transcribed into
+a task's flow label (`setLevel(40)`), as is condition text; see section 8 of
+`webcore_saved_piston_structure.md` for the current boundary. And `apps[].hasDecodedFlow` is now
+`true` for a piston that decoded into steps - pistons appear in `ruleFlows[]` alongside Rule Machine,
+per section 27 of `ai_export_spec.md`. A variable's value is still never read or exported.
 
 ## 8. Failure and privacy rules
 

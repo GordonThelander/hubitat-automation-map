@@ -1,7 +1,8 @@
 # Local, Hub, and Connector Variable Identity Proposal
 
-**Status:** Implemented (Gate C, v2.1.4) and extended (v2.1.6) - completed and verified on Dev,
-pending production release. See BACKLOG.md's Hold/closed entry for the current summary.
+**Status:** **Shipped to production.** Implemented (Gate C, v2.1.4) and extended (v2.1.6). The
+"pending production release" qualifier was the status at the time of writing and is no longer
+current. See BACKLOG.md's Hold/closed entry for the disposition.
 **Date:** 2026-08-28 (original proposal)  
 **Scope:** Rule Machine variable decoding, graph identity, pivots, rule detail, diagnostics, baseline
 comparison, and AI-friendly export

@@ -1015,11 +1015,16 @@ prompt for the rescan that fixes it.
 
 **Why this is not an inference.** webCoRE defines every comparison in one of exactly two blocks,
 conditions or triggers (`parent.getChildComparisons`), and its own subscription pass records which
-one applied in `ct`. The decoder reads that classification back: `ct` where the piston has subscribed
-to its events, and the operator's own block membership otherwise, since a paused piston carries no
-`ct`. No judgement is made about which comparisons feel like events. One caveat a consumer should
-know: a saved `ct` can be stale if a condition was edited after the piston was last opened, and it is
-still preferred over the operator name where present, the same way the piston flowchart does it.
+one applied in `ct`. The decoder reads that classification back and treats the two as corroborating
+sources rather than ranking them, because neither can arbitrate the other: `subscribeAll` can
+legitimately downgrade a trigger comparison to a condition before writing `ct`, and a saved `ct` can
+be stale if a condition was edited after the piston was last opened.
+
+The rule is therefore tri-state. When `ct` agrees with the operator's own block membership, or when
+`ct` is absent (a paused piston carries none), that role is published. When they conflict, when the
+operator is not in either block, or when `ct` is not a value this decoder recognises, no role is
+published and the read stays `deviceRead`. No judgement is made about which comparisons feel like
+events, and a role that might be false is never published in preference to admitting the gap.
 
 **What stays `deviceRead`.** A read this decoder cannot attribute to either role, such as one inside
 an expression or a task parameter. No read is ever reported as `monitor`.

@@ -1,7 +1,9 @@
 # Automation Map backlog
 
-This file tracks agreed work that has not shipped. It is not included in the HPM package and is
-not a release commitment.
+The active sections (Now, Next, Later/v3) track agreed work that has not shipped. Hold/closed is
+deliberately the opposite: a historical record of what was delivered, rejected or deferred, kept
+so a decision can be traced later. It is not included in the HPM package and is not a release
+commitment.
 
 ## How this backlog is organised
 
@@ -41,51 +43,22 @@ of the app, and it is the material an AI consumer or a future contributor reads 
   **export schema 3** and have not been revised since; the export is now 13.
 - Eight documents share a single 2026-08-26 housekeeping commit and have had no substantive update
   since, which is how the above went unnoticed.
-- `production_build_methodology.md` is a duplicate. The maintained copy is in the `production-protocol`
-  repository and this one was left behind by the move.
+- `production_build_methodology.md` is a 253-byte **redirect stub** to the canonical copy in the
+  private `production-protocol` repository. It is kept deliberately so existing links resolve and
+  must not be deleted. An earlier draft of this item wrongly called it a duplicate.
 
-The index and the schema headers were corrected as part of this audit. The schema-3 assessment
-documents were **not** rewritten, and the duplicate was **not** deleted.
+**This audit was declared complete before it was.** The first pass changed only the index and one
+header line, and independent review then found current documents still contradicting shipped
+behaviour. The most serious was a privacy statement: two documents said action parameter values are
+never rendered or exported, while v2.3.0 transcribes them into flow labels that reach the map and
+the export. That is a change to the declared privacy boundary, and it shipped undeclared.
+Corrected since, along with the stale `ct` precedence text, the relationship table, the v2.2.8
+scope statements, and eight stale status headers.
 
-**Next action:** decide whether the two schema-3 assessment documents are revised to the current
-contract, marked historical, or removed, and whether the duplicated methodology document is deleted
-here in favour of the `production-protocol` copy. Both are judgement calls about what the material is
-for, not mechanical fixes.
-
-### 26. Contested devices: compute the trigger overlap instead of asking the user to
-
-**The gap.** The contested-device finding lists every automation that can leave a device in a lasting
-state, then says: *"Check whether their triggers can overlap and which automation should win when
-they do."* The first half of that is work the app already holds the data to do. `trigger` edges
-(app to device) are on the graph for every app with decoded triggers, so shared trigger sources
-between the controlling apps are a straight derivation, not new information.
-
-**Evidence, from a real scan on the dev hub.** One device had 10 controlling automations. Nine
-distinct trigger sources across them, except that **four shared a single trigger device**, and those
-four were near-duplicates (an import, a second import, and a clone of the same rule) all firing from
-the same source onto the same light. That is the actionable signal, and it was invisible under a flat
-list of ten names that the user was asked to cross-reference by hand.
-
-**Proposed change.** Group the controlling apps by shared trigger source and surface the clusters,
-leaving "which should win" as the question it genuinely is.
-
-**The honesty constraint, which cuts both ways and shapes the wording:**
-
-- A shared trigger device is **positive evidence** that two automations can fire from the same event.
-  Safe to state.
-- Not sharing one **proves nothing**. Time, mode, variable and rule-invoked triggers produce no
-  device edge at all, so "these cannot overlap" would present a decoding gap as proven emptiness. The
-  finding must surface the positive signal and stay explicitly silent on the negative.
-- An app with no decoded trigger at all is a **third state**, undetermined, not absent. In the sample
-  above one Basic Rule fell in this category and must be reported as such rather than folded into
-  either group.
-
-**Scope.** A derivation over existing `trigger` edges plus a rewrite of the one guidance string. No
-new scan work, no new decoding, no schema change. Small and self-contained enough to be a **Now**
-candidate rather than Next, if prioritised.
-
-**Status.** Not started, not authorized. Behaviour confirmed against a real export before writing this
-entry; the underlying edges are already present and sufficient.
+**Next action:** nothing outstanding on the documents themselves. The two schema-3 assessment
+documents are labelled historical rather than rewritten, and the redirect stub is kept. What
+remains is a habit rather than a task: a change that alters what the app renders or exports must be
+checked against the privacy and scope statements in Supporting Docs in the same pass that ships it.
 
 ### 31. A dead constraint on a device that also has a live relationship
 
@@ -219,12 +192,12 @@ gaps in coverage:
 - webCoRE has its own variable ecosystem, which at the time was entirely invisible to Automation Map:
   webCoRE local variables, webCoRE global variables (a dynamic table, names hashed - "still working
   out the specifics" even from his side), and webCoRE's own use of Hub Variables.
-  **Largely delivered since.** Piston local variables are first-class owner-scoped nodes, `@@` Hub
-  Variable use is decoded with proven read/write direction, and pistons now also carry decoded device
-  relationships and a drawn flow. What remains from his list is the webCoRE **global** (`@`) table,
-  whose hashed names are still undecoded.
+  **Partly delivered.** Piston local variables are first-class owner-scoped nodes, `@@` Hub Variable
+  use is decoded with proven read/write direction, and pistons carry decoded device relationships
+  and a drawn flow. **Still open in this bullet:** the webCoRE **global** (`@`) table, whose hashed
+  names remain undecoded. This item therefore has two open scopes, not one.
 - Dashboard's use of Hub Variables specifically - item 4 above already covers Dashboard's *device*
-  references, but not Hub Variable usage. **Still open**, and now the larger half of this item.
+  references, but not Hub Variable usage. **Still open**, and the second of the two scopes.
 
 The more promising lead in his message: he believes Hubitat itself may maintain some registry of
 "what uses this Hub Variable," visible on the platform's own Hub Variables page, though he does not
@@ -381,6 +354,44 @@ left below is the part that is genuinely still open.
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
 which covers webCoRE variable usage specifically.
+
+### 26. Contested devices: surface shared trigger sources instead of asking the user to cross-reference
+
+**The gap.** The contested-device finding lists every automation that can leave a device in a lasting
+state, then says: *"Check whether their triggers can overlap and which automation should win when
+they do."* The first half of that is work the app already holds the data to do. `trigger` edges
+(app to device) are on the graph for every app with decoded triggers, so shared trigger sources
+between the controlling apps are a straight derivation, not new information.
+
+**Evidence, from a real scan on the dev hub.** One device had 10 controlling automations. Nine
+distinct trigger sources across them, except that **four shared a single trigger device**, and those
+four were near-duplicates (an import, a second import, and a clone of the same rule) all firing from
+the same source onto the same light. That is the actionable signal, and it was invisible under a flat
+list of ten names that the user was asked to cross-reference by hand.
+
+**Proposed change.** Group the controlling apps by shared trigger source and surface the clusters,
+leaving "which should win" as the question it genuinely is.
+
+**The honesty constraint, which cuts both ways and shapes the wording:**
+
+- A shared trigger device is positive evidence that two automations **read the same source device**.
+  It is NOT evidence that they can fire from the same event: they may subscribe to different
+  attributes or event predicates, and a constraint may stop either acting. The safe result is
+  "shared trigger-source device detected", explicitly not "trigger overlap computed". Raising that
+  to overlap needs per-attribute or predicate evidence the graph does not currently carry.
+- Not sharing one **proves nothing**. Time, mode, variable and rule-invoked triggers produce no
+  device edge at all, so "these cannot overlap" would present a decoding gap as proven emptiness. The
+  finding must surface the positive signal and stay explicitly silent on the negative.
+- An app with no decoded trigger at all is a **third state**, undetermined, not absent. In the sample
+  above one Basic Rule fell in this category and must be reported as such rather than folded into
+  either group.
+
+**Scope.** A derivation over existing `trigger` edges plus a rewrite of the one guidance string. No
+new scan work, no new decoding, no schema change.
+
+**Status.** Not started, not authorized. Held in Next rather than Now: the headline claim is
+stronger than the evidence until the graph distinguishes attributes and predicates. Behaviour confirmed against a real export before writing this
+entry; the underlying edges are already present and sufficient.
 
 ### 5. Add runtime activity and performance context
 
@@ -794,9 +805,7 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   marker list at `validate.ps1:162` is deliberately exact, so the comment was reworded rather than
   the gate bypassed. Both `validate.ps1 -BuildProfile Dev` and `-SelfTest` now pass.
 
-**Still open, waiting on Gordon:**
-
-- **Narrow windows:** not yet checked. It needs the browser window resized or the viewport overridden.
+**Carried forward:** the narrow-window check is now item 32 in Now.
 
 **Decided by Gordon, 2026-09-11:**
 
@@ -812,7 +821,8 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   </details>
 
 - **Fix the three real bugs found by independent UI assessment (item 22):** completed and verified
-  live on the Dev hub, 2026-09-07 (v2.2.5, local-only, not yet pushed). Full report:
+  live on the Dev hub, 2026-09-07 (v2.2.5; "local-only, not yet pushed" was the status at the time,
+  since shipped). Full report:
   `Supporting Docs/desktop_ui_independent_assessment_2026-09-07.md`.
   - Focusing the Automation Map app itself used to falsely claim "Nothing at all: no children, no
     schedule, no subscriptions... it is not configured yet, or has been removed" despite genuinely
@@ -901,8 +911,8 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **Open Automation Map in a normal browser tab (was item 2):** dropped as infeasible within the
   Hubitat-generated app UI, which controls the map link's small pop-out window. Do not pursue a link
   rewrite unless Hubitat later exposes a supported way for the app to choose normal-tab behaviour.
-- **Show disabled devices distinctly on the map (was item 18):** completed and verified on Dev,
-  pending production release (2026-08-31) - disabled devices and paused/disabled rules get a
+- **Show disabled devices distinctly on the map (was item 18):** completed and verified on Dev (2026-08-31; "pending production release" was the status at the
+  time, since shipped) - disabled devices and paused/disabled rules get a
   canonical label suffix, structured export fields (`devices[].disabled`, `apps[].status`
   distinguishing `disabled`/`paused`), and coloured Focus dropdown entries. Also fixed the
   duplicate-suffix bug noted under item 9. The canvas-level red-suffix piece was deliberately left
@@ -953,14 +963,13 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   This is a narrower, immediately-authorised slice of item 16 below, not a substitute for it -
   item 16's structured Dev-only race trace and its comment-stripping production build remain
   separate, still gated on Gordon starting that phase explicitly.
-- **Component-device (parent/child) discovery and rendering:** completed and verified on Dev,
-  pending production release (2026-08-31) - `/hub2/devicesList`'s hierarchical response (a
+- **Component-device (parent/child) discovery and rendering:** completed and verified on Dev (2026-08-31; "pending production release" was the status at the
+  time, since shipped) - `/hub2/devicesList`'s hierarchical response (a
   device-owned component, e.g. a Shelly/Bond/Matter-bridge child, nested inside its parent's own
   `children` rather than as a top-level sibling) is now fully walked during discovery and rendered
   as a `hasComponent` relationship on the graph and in the AI export, including correct
   focus-expansion behaviour for an app that touches a child but not its parent directly.
-- **Revalidate Local Variable handling (was item 3):** completed and verified on Dev, pending
-  production release - identical names are not guessed or merged. A proven Local identity remains
+- **Revalidate Local Variable handling (was item 3):** completed and verified on Dev (status at the time; since shipped) - identical names are not guessed or merged. A proven Local identity remains
   owner-scoped to its rule, a proven Hub identity remains hub-scoped, and an indistinguishable
   same-rule reference (persisted Rule Machine storage cannot always prove which was intended) is
   reported as ambiguous rather than assigned to either scope. Gate C shipped in v2.1.4 with live Dev

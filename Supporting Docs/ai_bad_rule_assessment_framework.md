@@ -1,6 +1,8 @@
 # AI framework for assessing Hubitat Automation Map exports
 
 > Superseded as an Automation Map augmentation design by `ai_assessment_export_extension.md`. This document remains the detailed reasoning catalogue behind that machine-readable feature contract.
+>
+> **Historical background document.** Written against export schema 3; the export is now schema 13. It is deliberately not rewritten. `ai_export_spec.md` is authoritative for the current contract, and the deference rule stated below is what keeps this safe to read against a newer export.
 
 ## Purpose
 

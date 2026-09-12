@@ -1,6 +1,7 @@
 # Community Release Activity Embed for Automation Map
 
-**Status:** Proposed specification for joint review  
+**Status:** **Shipped**, the feature is on `main`. Historical design record; the original "proposed
+specification for joint review" wording predates delivery.  
 **Target:** Iteration after the Community Context Card  
 **Repositories:** `hubitat-automation-map` and `HPM_Manifest_Crawl`  
 **Primary outcome:** Give Automation Map users a useful preview of Hubitat release activity that
