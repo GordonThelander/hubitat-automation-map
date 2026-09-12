@@ -337,6 +337,12 @@ boolean diagOn() {
     return expiresAt > 0 && now() < expiresAt
 }
 
+// --- scan diagnostics: begin ---
+// Lifted whole by tests/scan-diagnostics.groovy. Everything here reads state,
+// atomicState, SCAN_LOCKS, app.id or now() and nothing else, so the test can
+// supply all five as plain properties and exercise the real code rather than a
+// copy of it. These only ever run behind a diagOn() check.
+
 // Compact scan-lifecycle snapshot for the recovery paths, restoring the part of
 // the removed AM-TRACE facility that mattered: when a recovery fires, the live
 // static lock and the durable state THIS execution can see disagree, and
@@ -386,6 +392,7 @@ String webcoreDecodeSummary() {
     return "pistons=${pistons} withDeviceReads=${withReads} decodeErrors=${errored}" +
            " unresolvedDeviceRefs=${unsupported}"
 }
+// --- scan diagnostics: end ---
 
 // Sets the durable deadline ONCE, on the off-to-on transition, and never
 // pushes it out again - review 392: pressing Done for an unrelated
