@@ -3855,22 +3855,37 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
             webcoreFlowStatements(body, steps, depth + 1)
             break
         case 'if':
-            steps << webcoreFlowControl('if', webcoreFlowConditionLabel(st),
-                    webcoreFlowConditionParts(st), "${st.o ?: 'and'}")
+            // webCoRE splits an if's own condition list into event triggers and
+            // state conditions. A trigger is what makes the piston run, so it is
+            // drawn as a trigger node like every other engine's, and only the
+            // genuine conditions remain to be decided. When every entry is a
+            // trigger there is nothing left to test, so no decision is drawn.
+            List triggerParts = webcoreFlowConditionParts(st, true)
+            List conditionParts = webcoreFlowConditionParts(st, false)
+            triggerParts.each { Object part ->
+                steps << webcoreFlowTrigger(part as Map, "${st.o ?: 'and'}")
+            }
+            boolean decides = !conditionParts.isEmpty()
+            if (decides) {
+                steps << webcoreFlowControl('if', webcoreFlowConditionLabel(st, false),
+                        conditionParts, "${st.o ?: 'and'}")
+            }
             webcoreFlowStatements(body, steps, depth + 1)
             ((st.ei instanceof List) ? st.ei as List : []).each { Object raw ->
                 if (!(raw instanceof Map)) return
                 Map branch = raw as Map
-                steps << webcoreFlowControl('elseif', webcoreFlowConditionLabel(branch),
-                        webcoreFlowConditionParts(branch), "${branch.o ?: 'and'}")
+                steps << webcoreFlowControl('elseif', webcoreFlowConditionLabel(branch, false),
+                        webcoreFlowConditionParts(branch, false), "${branch.o ?: 'and'}")
                 webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
             }
             List elseBody = (st.e instanceof List) ? st.e as List : []
             if (elseBody) {
-                steps << webcoreFlowControl('else', '')
+                if (decides) steps << webcoreFlowControl('else', '')
                 webcoreFlowStatements(elseBody, steps, depth + 1)
             }
-            steps << webcoreFlowControl('endif', '')
+            // Only closed when one was opened, so a trigger-only if does not
+            // emit a stray endif that would unbalance the chart.
+            if (decides) steps << webcoreFlowControl('endif', '')
             break
         case 'switch':
             // Ordered cases render as one decision chain. The default case is
@@ -3978,10 +3993,49 @@ String webcoreFlowEventLabel(Map event) {
     return 'When an event fires'
 }
 
-// Fallback only, used when a condition cannot be transcribed in full.
-String webcoreFlowConditionLabel(Map st) {
+// webCoRE defines every comparison in one of two blocks, conditions or triggers
+// (parent.getChildComparisons), and the executor stores which one applied as the
+// first letter of that block name in ct - subscribeAll: cndtn[sCT] =
+// cmpTyp.take(i1). ct is therefore only present once a piston has subscribed, so
+// a paused piston carries none and the operator name is the reliable source.
+// This is the trigger block's own membership, transcribed, not a judgement about
+// which comparisons "feel like" events.
+List webcoreFlowTriggerComparisons() {
+    return ['arrives', 'becomes_even', 'becomes_odd', 'changes', 'changes_away_from',
+            'changes_away_from_any_of', 'changes_to', 'changes_to_any_of', 'does_not_drop',
+            'does_not_rise', 'drops', 'drops_below', 'drops_to_or_below', 'enters_range',
+            'event_occurs', 'executes', 'exits_range', 'gets', 'gets_any', 'happens_daily_at',
+            'receives', 'remains_above', 'remains_above_or_equal_to', 'remains_below',
+            'remains_below_or_equal_to', 'remains_even', 'remains_inside_of_range', 'remains_odd',
+            'remains_outside_of_range', 'rises', 'rises_above', 'rises_to_or_above', 'stays',
+            'stays_any_of', 'stays_away_from', 'stays_away_from_any_of', 'stays_different_than',
+            'stays_equal_to', 'stays_even', 'stays_greater_than', 'stays_greater_than_or_equal_to',
+            'stays_inside_of_range', 'stays_less_than', 'stays_less_than_or_equal_to', 'stays_not',
+            'stays_odd', 'stays_outside_of_range', 'stays_unchanged']
+}
+
+// ct when the piston has subscribed, the comparison block otherwise. Both answer
+// the same question, so the stored value wins where it exists.
+boolean webcoreFlowIsTrigger(Map condition) {
+    // String.valueOf, not a GString: Groovy's == coerces the two but List.contains
+    // is a plain Java call where a GString never equals a String.
+    String ct = String.valueOf(condition?.ct ?: '')
+    if (ct) return ct == 't'
+    return webcoreFlowTriggerComparisons().contains(String.valueOf(condition?.co ?: ''))
+}
+
+// Fallback only, used when a condition cannot be transcribed in full. Counts the
+// same subset the caller asked for, so a decision that holds one condition and
+// one trigger does not claim two undecoded conditions.
+String webcoreFlowConditionLabel(Map st, boolean includeTriggers = true) {
     Object raw = st?.c
-    int count = (raw instanceof List) ? ((raw as List).count { it instanceof Map } as int) : 0
+    int count = 0
+    if (raw instanceof List) {
+        (raw as List).each { Object entry ->
+            if (!(entry instanceof Map)) return
+            if (includeTriggers || !webcoreFlowIsTrigger(entry as Map)) count++
+        }
+    }
     return count > 1 ? "${count} conditions not decoded" : 'condition not decoded'
 }
 
@@ -3990,14 +4044,21 @@ String webcoreFlowConditionLabel(Map st) {
 // so the pieces travel with the step and the text is built during graph
 // assembly. A group entry is marked opaque: nesting is not flattened, and one
 // opaque part collapses the whole label rather than printing half a condition.
-List webcoreFlowConditionParts(Map st) {
+List webcoreFlowConditionParts(Map st, Boolean triggersWanted = null) {
     Object raw = st?.c
     if (!(raw instanceof List)) return []
     List parts = []
     (raw as List).each { Object entry ->
         if (!(entry instanceof Map)) return
         Map condition = entry as Map
-        if ("${condition.t ?: ''}" != 'condition') { parts << [opaque: true]; return }
+        // A group is opaque either way, so it stays with the conditions rather
+        // than being silently dropped from both halves of the split.
+        boolean isGroup = "${condition.t ?: ''}" != 'condition'
+        if (triggersWanted != null) {
+            boolean trigger = !isGroup && webcoreFlowIsTrigger(condition)
+            if (trigger != triggersWanted.booleanValue()) return
+        }
+        if (isGroup) { parts << [opaque: true]; return }
         Map lo = (condition.lo instanceof Map) ? condition.lo as Map : [:]
         Map ro = (condition.ro instanceof Map) ? condition.ro as Map : [:]
         parts << [opaque: false,
@@ -4055,6 +4116,15 @@ String webcoreFlowConditionText(List parts, String joiner, Map tokenNames) {
 Map webcoreFlowNode(String kind, String label, List deviceTokens) {
     return [kind: kind, ctrl: null, cond: '', label: label, devices: [],
             deviceTokens: deviceTokens, ruleTargets: [], selfTarget: false]
+}
+
+// One event trigger lifted out of an if's condition list. Carries the same parts
+// a decision does, so the sentence is composed from resolved device names later;
+// until then it shows the undecoded fallback rather than a bare attribute.
+Map webcoreFlowTrigger(Map part, String joiner) {
+    return [kind: 'trigger', ctrl: null, cond: '', label: 'trigger not decoded',
+            devices: [], deviceTokens: [], conditionParts: [part], conditionJoiner: joiner,
+            ruleTargets: [], selfTarget: false]
 }
 
 Map webcoreFlowControl(String ctrl, String cond, List parts = [], String joiner = 'and') {
@@ -7923,7 +7993,12 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
                 }
             }
             String text = webcoreFlowConditionText(parts, "${s.conditionJoiner ?: 'and'}", tokenNames)
-            if (text) s.cond = text
+            // A decision reads from cond; a trigger is an ordinary node, and
+            // mermaidFor only reads cond on a control step, so it takes label.
+            if (text) {
+                if (s.ctrl) s.cond = text
+                else { s.label = text; s.cond = '' }
+            }
         }
     }
     return flow ?: []
