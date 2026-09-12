@@ -444,6 +444,17 @@ end state. That answer is currently unknown and is worth having either way.
   it runs only inside buildGraph - resolved correctly to real names (`setColor` on Gordon Study Desk, a
   three-device toggle, a switch trigger on _Test Switch) with no unresolved markers. Pistons whose `if`
   has an empty saved body correctly draw as a decision with no branch content rather than inventing one.
+- **Conditions now read as text (dev, 2026-09-12).** A decision that said `2 conditions not decoded` now
+  reads `Entrance Hall Motion Sensor's motion changes and Patio Door's contact is closed` - the same
+  wording the piston editor shows. Nothing new had to be proven: the physical operand already carried its
+  attribute and device tokens, the constant operand its value, and the comparison its own stored
+  spelling, so this transcribes rather than interprets (underscores spaced, no operator meaning claimed -
+  the same basis on which a task already renders as its raw command name). Composed during graph
+  assembly, because a device name only exists once the owning parent index does and `mermaidFor` does not
+  append a device list to a diamond. Anything that cannot be named in full - a nested group, an
+  unresolved device, an operand kind with no transcription - collapses back to the undecoded fallback
+  rather than printing half a sentence. Sanitised fixtures cannot cover this (the sanitiser placeholders
+  operator and joiner strings), so it is covered by synthetic tests plus live hub verification.
 - **Still to come.** Operand meaning, which is what turns those undecoded conditions into real
   comparison text - now the highest-value rung left, and the one the user actually sees. Then the
   runtime walker using the raised operand levels for anything at all, and the rest of L4 (remaining
