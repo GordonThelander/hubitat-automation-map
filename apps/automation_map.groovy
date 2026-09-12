@@ -4075,26 +4075,42 @@ String webcoreFlowConditionLabel(Map st, boolean includeTriggers = true) {
     return count > 1 ? "${count} conditions not decoded" : 'condition not decoded'
 }
 
+// How deep a nested condition group is followed before it is left opaque. A
+// piston can nest groups arbitrarily; this is a traversal bound, not a claim
+// about how deep a real one goes.
+int webcoreFlowMaxConditionDepth() { return 6 }
+
 // Structured condition pieces, composed into a sentence later. A device NAME is
 // not available here - tokens only resolve once the owning parent index exists -
 // so the pieces travel with the step and the text is built during graph
-// assembly. A group entry is marked opaque: nesting is not flattened, and one
-// opaque part collapses the whole label rather than printing half a condition.
-List webcoreFlowConditionParts(Map st, Boolean triggersWanted = null) {
+// assembly. A group carries its own nested pieces and its own joiner, so a
+// grouped condition reads as "(a or b) and c" instead of collapsing the whole
+// label. A group this decoder cannot read anything out of stays opaque, and one
+// opaque part still collapses the label rather than printing half a condition.
+List webcoreFlowConditionParts(Map st, Boolean triggersWanted = null, int depth = 0) {
     Object raw = st?.c
     if (!(raw instanceof List)) return []
     List parts = []
     (raw as List).each { Object entry ->
         if (!(entry instanceof Map)) return
         Map condition = entry as Map
-        // A group is opaque either way, so it stays with the conditions rather
-        // than being silently dropped from both halves of the split.
+        // A group stays with the conditions either way, rather than being
+        // silently dropped from both halves of the trigger/condition split.
         boolean isGroup = "${condition.t ?: ''}" != 'condition'
         if (triggersWanted != null) {
             boolean trigger = !isGroup && webcoreFlowIsTrigger(condition)
             if (trigger != triggersWanted.booleanValue()) return
         }
-        if (isGroup) { parts << [opaque: true]; return }
+        if (isGroup) {
+            // Never split inside a group: the split is about which entries of
+            // the OWNING statement are triggers, and a group is one entry.
+            List nested = depth >= webcoreFlowMaxConditionDepth() ? []
+                    : webcoreFlowConditionParts(condition, null, depth + 1)
+            parts << (nested ? [opaque: false, group: true, parts: nested,
+                                joiner: "${condition.o ?: 'and'}"]
+                             : [opaque: true])
+            return
+        }
         Map lo = (condition.lo instanceof Map) ? condition.lo as Map : [:]
         Map ro = (condition.ro instanceof Map) ? condition.ro as Map : [:]
         parts << [opaque: false,
@@ -4130,6 +4146,16 @@ String webcoreFlowConditionText(List parts, String joiner, Map tokenNames) {
         if (!(raw instanceof Map)) return ''
         Map part = raw as Map
         if (part.opaque) return ''
+        // A group becomes its own bracketed sentence, joined by its own
+        // operator. The all-or-nothing rule holds inside it too: if any piece
+        // of the group cannot be named, the whole label falls back.
+        if (part.group) {
+            String inner = webcoreFlowConditionText((part.parts ?: []) as List,
+                    "${part.joiner ?: 'and'}", tokenNames)
+            if (!inner) return ''
+            rendered << "(${inner})"
+            continue
+        }
         String subject = "${part.subject ?: ''}"
         List tokens = (part.deviceTokens ?: []) as List
         if (tokens) {
@@ -8019,15 +8045,24 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
         List parts = (s.conditionParts ?: []) as List
         if (parts) {
             Map tokenNames = [:]
-            parts.each { Object raw ->
-                if (!(raw instanceof Map)) return
-                (((raw as Map).deviceTokens ?: []) as List).each { Object token ->
-                    String key = "${token}"
-                    if (tokenNames.containsKey(key)) return
-                    Map resolved = resolveWebcoreDeviceToken(key, parentAppId, hashIndexes, labels)
-                    if (resolved.deviceId) tokenNames[key] = "${labels[resolved.deviceId as String]}"
+            // Recursive because a group carries its own nested parts: resolving
+            // only the top level would leave every grouped device unnamed, and
+            // an unnamed device collapses the whole condition to the fallback.
+            Closure collectTokens
+            collectTokens = { List list ->
+                list.each { Object raw ->
+                    if (!(raw instanceof Map)) return
+                    Map part = raw as Map
+                    if (part.group) { collectTokens((part.parts ?: []) as List); return }
+                    ((part.deviceTokens ?: []) as List).each { Object token ->
+                        String key = "${token}"
+                        if (tokenNames.containsKey(key)) return
+                        Map resolved = resolveWebcoreDeviceToken(key, parentAppId, hashIndexes, labels)
+                        if (resolved.deviceId) tokenNames[key] = "${labels[resolved.deviceId as String]}"
+                    }
                 }
             }
+            collectTokens(parts)
             String text = webcoreFlowConditionText(parts, "${s.conditionJoiner ?: 'and'}", tokenNames)
             // A decision reads from cond; a trigger is an ordinary node, and
             // mermaidFor only reads cond on a control step, so it takes label.
