@@ -137,7 +137,7 @@ check(String.valueOf(builder.webcoreFlowConditionText(orDecision.conditionParts 
 check(builder.webcoreFlowConditionText(realTrigger.conditionParts as List, 'and', [:]) == '',
     'an unresolvable device yields no text at all, never half a condition')
 check(builder.webcoreFlowConditionText([[opaque: true]], 'and', names) == '',
-    'a group collapses the whole label rather than being flattened')
+    'an opaque part collapses the whole label rather than printing half a condition')
 check(builder.webcoreFlowConditionText([], 'and', names) == '', 'no parts yields no text')
 
 check(String.valueOf(builder.webcoreFlowConditionText(
@@ -147,6 +147,43 @@ check(String.valueOf(builder.webcoreFlowConditionText(
         [[opaque: false, deviceTokens: [], subject: '@@TestNumber', op: 'is greater than', value: '5']],
         'and', [:])) == '@@TestNumber is greater than 5',
     'an underscored operator is transcribed with spaces, not reinterpreted')
+
+// ---- nested condition groups compose instead of collapsing ------------------
+
+Map nestedGroupIf = [s: [[t: 'if', o: 'and', c: [
+    [t: 'group', o: 'or', c: [
+        [t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Home']],
+        [t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Away']]]],
+    [t: 'condition', co: 'is', lo: [t: 'v', v: 'phase'], ro: [t: 'c', c: 'Night']]],
+    s: [[t: 'action', k: [[c: 'noop']]]]]]]
+Map nestedDecision = builder.buildWebcoreFlow(nestedGroupIf)[0]
+check(String.valueOf(builder.webcoreFlowConditionText(nestedDecision.conditionParts as List, 'and', [:])) ==
+        '(mode is Home or mode is Away) and phase is Night',
+    'a group composes as a bracketed sub-sentence joined by its own saved operator')
+
+String groupToken = ':f142209a9087c18092a59ef88e2b5b6a:'
+List groupedDevicePart = [[opaque: false, group: true, joiner: 'or', parts: [
+    [opaque: false, deviceTokens: [groupToken], subject: '', attribute: 'contact',
+     op: 'is', value: 'closed']]]]
+check(String.valueOf(builder.webcoreFlowConditionText(groupedDevicePart, 'and',
+        [(groupToken): 'Patio Door'])) == "(Patio Door's contact is closed)",
+    'a device inside a group resolves its name through the nested parts')
+check(builder.webcoreFlowConditionText(groupedDevicePart, 'and', [:]) == '',
+    'an unnamed device inside a group still collapses the whole label')
+
+// An empty group has nothing to read, so it stays opaque rather than rendering
+// as a pair of empty brackets.
+check(builder.webcoreFlowConditionText(
+        builder.webcoreFlowConditionParts([c: [[t: 'group', o: 'and', c: []]]], null, 0) as List,
+        'and', [:]) == '',
+    'a group with no readable conditions stays opaque')
+
+Object deepGroup = [t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Home']]
+8.times { deepGroup = [t: 'group', o: 'and', c: [deepGroup]] }
+Map deepIf = [s: [[t: 'if', o: 'and', c: [deepGroup], s: [[t: 'action', k: [[c: 'noop']]]]]]]
+Map deepDecision = builder.buildWebcoreFlow(deepIf)[0]
+check(builder.webcoreFlowConditionText(deepDecision.conditionParts as List, 'and', [:]) == '',
+    'runaway group nesting is bounded and left opaque rather than followed')
 
 check(String.valueOf(builder.webcoreFlowOperandText([t: 'c', c: 'closed'])) == 'closed' &&
       String.valueOf(builder.webcoreFlowOperandText([t: 'x', x: '@@GT1'])) == '@@GT1' &&

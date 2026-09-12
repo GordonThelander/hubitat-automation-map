@@ -969,12 +969,18 @@ only when every part can be named in full, which means every device token in it 
 name. If any part cannot be, the whole condition falls back to the explicitly undecoded step rather
 than printing half a sentence.
 
-**What is still not decoded, and is visibly marked so.** A nested condition group is opaque: nesting
-is not flattened, and one opaque part collapses that whole condition to `condition not decoded` (or
-`3 conditions not decoded`). An unrecognised statement type becomes a visible `not decoded` block
-rather than being dropped, so a chart never silently omits part of a piston. A switch case is not
-decoded, and a switch default branch is not drawn at all, because where a default body is stored is
-unproven. Task parameters are not rendered, so a task shows its saved command name alone.
+**Nested condition groups.** A group is composed as a bracketed sub-sentence joined by its own saved
+operator, so a grouped condition reads as `(mode is Home or mode is Away) and phase is Night` rather
+than collapsing the statement it belongs to. Groups nest, bounded at six levels. A group the decoder
+can read nothing out of, or one deeper than that bound, stays opaque.
+
+**What is still not decoded, and is visibly marked so.** An opaque part collapses its whole condition
+to `condition not decoded` (or `3 conditions not decoded`) rather than printing half a sentence; the
+same happens when any device in the condition cannot be named. An unrecognised statement type becomes
+a visible `not decoded` block rather than being dropped, so a chart never silently omits part of a
+piston. A switch case is not decoded, and a switch default branch is not drawn at all, because where
+a default body is stored is unproven. Task parameters are not rendered, so a task shows its saved
+command name alone.
 
 **Device names.** Flow steps carry webCoRE device tokens, not names, until the export is assembled:
 a token is only ever resolved against the permitted-device list of the specific webCoRE parent that

@@ -86,6 +86,15 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   but not the zoom, so a chart still scaled from the last app read as a panel that had not gone back to
   its default size. Zoom now follows size and position. This reverses a previously tested decision that
   the zoom was held for the whole page session; reopening the same app still keeps it.
+- **Nested condition groups composed instead of collapsing.** A group was marked opaque, and one opaque
+  part collapsed the entire condition, so a single grouped clause turned an otherwise readable decision
+  into `condition not decoded` along with every other clause beside it. A group is now composed as a
+  bracketed sub-sentence joined by its own saved operator, reading as
+  `(mode is Home or mode is Away) and phase is Night`. Groups nest, bounded at six levels; a group the
+  decoder can read nothing out of, or one past that bound, is still opaque, and the all-or-nothing rule
+  still holds inside a group, so an unnamed device there falls the whole label back. Device name
+  resolution had to become recursive to match, or every grouped device would have gone unnamed and
+  defeated the change.
 
 **Still open, waiting on Gordon:**
 
@@ -468,9 +477,9 @@ end state. That answer is currently unknown and is worth having either way.
   spelling, so this transcribes rather than interprets (underscores spaced, no operator meaning claimed -
   the same basis on which a task already renders as its raw command name). Composed during graph
   assembly, because a device name only exists once the owning parent index does and `mermaidFor` does not
-  append a device list to a diamond. Anything that cannot be named in full - a nested group, an
-  unresolved device, an operand kind with no transcription - collapses back to the undecoded fallback
-  rather than printing half a sentence. Sanitised fixtures cannot cover this (the sanitiser placeholders
+  append a device list to a diamond. Anything that cannot be named in full - an unresolved device, an
+  operand kind with no transcription, a group too deeply nested to follow - collapses back to the
+  undecoded fallback rather than printing half a sentence. Sanitised fixtures cannot cover this (the sanitiser placeholders
   operator and joiner strings), so it is covered by synthetic tests plus live hub verification.
 - **Still to come.** Operand meaning, which is what turns those undecoded conditions into real
   comparison text - now the highest-value rung left, and the one the user actually sees. Then the
