@@ -243,7 +243,9 @@ now writes a paired marker, `state.graphCommittedAtLocal` alongside `atomicState
 with the same value. `atomicState` commits on every write and cannot go stale, which is the same
 property `shouldAutoScan()` already relies on, so the two disagreeing is proof of a stale snapshot
 rather than an inference from timing. The self-heal logs at info when staleness is proven and keeps
-its warning otherwise, because a graph missing for any other reason still deserves one. The pair is
+its warning otherwise, because a graph missing for any other reason still deserves one. The
+`clearAbandonedScan` flag-clear line before it is also info (2026-09-13): it only runs once the
+generation's terminal tombstone proves the scan finished. The pair is
 deliberately not overloaded onto `state.scanHeartbeat`, which feeds `clearAbandonedScan`'s
 90-second freshness check.
 
@@ -257,8 +259,7 @@ to 2026-08-30, and `selfHealGraphIfNeeded()` was written for it as a recovery, n
 
 **Worth weighing before fixing.** The self-heal is doing its job and the user sees a correct map, so
 the case for touching a known-delicate scan lifecycle is efficiency and log honesty, not correctness.
-A cheaper first step may be to stop logging at WARN when the self-heal succeeds, since a working
-mitigation should not look like a failure.
+Both lines now log at info in this case, so a normal scan shows no WARN.
 
 ## Hold / closed
 

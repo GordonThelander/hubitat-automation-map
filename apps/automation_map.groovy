@@ -1252,7 +1252,9 @@ void clearAbandonedScan() {
     boolean tombstoned = activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))
     if (tombstoned) {
         if (diagOn()) log.info "${app.label}: recovery, tombstoned generation - ${lockVsState()}"
-        log.warn "${app.label}: clearing resurrected scan flags for an already-completed generation"
+        // info, not warn: the tombstone proves the scan finished, so this is the stale-render race
+        // being corrected, not a fault.
+        log.info "${app.label}: clearing resurrected scan flags for an already-completed generation"
         state.scanRunning = false
         return
     }
@@ -2842,7 +2844,6 @@ void fetchRegistry(jobData = null) {
     } catch (Exception ex) {
         meta.state = 'ERROR'
         meta.error = "${ex.message}"
-        log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
     // Written unconditionally, keyed by this generation's own token, not
@@ -2869,8 +2870,9 @@ void fetchRegistry(jobData = null) {
     // Split by outcome (v2.1.8): registry unavailable is a degraded outcome
     // (map still builds, just without registry-derived matches) and stays
     // always logged; a normal match count is routine detail, gated.
+    // One warning per failure, carrying the cause.
     if (meta.error) {
-        log.warn "${app.label}: registry unavailable, continuing without it"
+        log.warn "${app.label}: registry unavailable, continuing without it: ${meta.error}"
     } else if (diagOn()) {
         log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
     }
