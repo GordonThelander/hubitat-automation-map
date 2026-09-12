@@ -979,8 +979,15 @@ to `condition not decoded` (or `3 conditions not decoded`) rather than printing 
 same happens when any device in the condition cannot be named. An unrecognised statement type becomes
 a visible `not decoded` block rather than being dropped, so a chart never silently omits part of a
 piston. A switch case is not decoded, and a switch default branch is not drawn at all, because where
-a default body is stored is unproven. Task parameters are not rendered, so a task shows its saved
-command name alone.
+a default body is stored is unproven.
+
+**Task parameters.** A task transcribes its saved parameters beside its command name, reading as
+`setVariable(localCounter, @@AMGateA_NumShared)`. Each parameter is an operand printed exactly as
+stored, with no meaning claimed for the command itself, and the list is shown only when every
+parameter yields text: a task holding a parameter kind with no transcription, such as a device
+selection, keeps its bare command name rather than printing a list with holes in it. webCoRE's own
+display templates would give properly worded labels rather than raw command names; they are not
+transcribed, so the command appears as saved.
 
 **Device names.** Flow steps carry webCoRE device tokens, not names, until the export is assembled:
 a token is only ever resolved against the permitted-device list of the specific webCoRE parent that

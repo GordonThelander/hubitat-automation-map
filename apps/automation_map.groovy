@@ -1350,7 +1350,7 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 (in Beta) and webCoRE pistons (in Beta: statement order and branching, with conditions shown as undecoded). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 (in Beta) and webCoRE pistons (in Beta: statement order, branching, condition text and task parameters). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
     return s.toString()
 }
 
@@ -15928,7 +15928,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
-    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow, but it covers statement order and branching only - every condition appears as an explicitly undecoded step rather than as comparison text - and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, or an operand kind with no transcription. A switch case is not decoded, a switch default branch is not drawn, and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
