@@ -497,16 +497,19 @@ end state. That answer is currently unknown and is worth having either way.
   wording the piston editor shows. Nothing new had to be proven: the physical operand already carried its
   attribute and device tokens, the constant operand its value, and the comparison its own stored
   spelling, so this transcribes rather than interprets (underscores spaced, no operator meaning claimed -
-  the same basis on which a task already renders as its raw command name). Composed during graph
+  the same basis on which a task transcribes its own saved command and parameters). Composed during graph
   assembly, because a device name only exists once the owning parent index does and `mermaidFor` does not
   append a device list to a diamond. Anything that cannot be named in full - an unresolved device, an
   operand kind with no transcription, a group too deeply nested to follow - collapses back to the
   undecoded fallback rather than printing half a sentence. Sanitised fixtures cannot cover this (the sanitiser placeholders
   operator and joiner strings), so it is covered by synthetic tests plus live hub verification.
-- **Still to come.** Operand meaning, which is what turns those undecoded conditions into real
-  comparison text - now the highest-value rung left, and the one the user actually sees. Then the
-  runtime walker using the raised operand levels for anything at all, and the rest of L4 (remaining
-  action semantics).
+- **Still to come.** Operand semantic (L4) meaning: what a comparison actually *means*, as opposed to
+  the saved spelling the chart now transcribes. Transcription already gave the user the readable
+  sentence, so this rung is no longer the visible win it was described as here; it is what would let
+  the app reason about a condition rather than only print it. Then the runtime walker using the
+  raised operand levels for anything at all, the rest of L4 (remaining action semantics), and
+  webCoRE's own display templates (`"Wait {0}"`, `Send notification "{0}"`) to replace raw command
+  names with worded labels, which is roughly a hundred entries to transcribe.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
