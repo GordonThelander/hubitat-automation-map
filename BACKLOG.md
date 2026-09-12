@@ -428,11 +428,23 @@ end state. That answer is currently unknown and is worth having either way.
   inert, round-tripped capture, but promoting it needs generator work rather than a data addition:
   structural forms are emitted with a hardcoded `level: 'L2'` and consult no evidence manifest, and the
   operand gate's own id pattern does not match `wc.task-parameter.*`.
-- **Still to come.** The runtime walker actually using the raised operand levels for anything (currently
-  only the registry level itself changed; no L4 operand-meaning claim exists yet to make use of it), the
-  rest of L4 (remaining action semantics, operand meaning once L3-proven), then the flow rendering that
-  eventually lets a piston draw its own flow with anything not yet understood shown as an explicit
-  opaque block.
+- **webCoRE piston flow now draws (dev, 2026-09-12).** A piston decodes into the same step list
+  `mermaidFor()` already renders for Rule Machine, Notifier and Visual Rule Builder 2.0, so it draws
+  through the existing rendering path rather than a new one, and `showFlow` needed no change because it
+  gates only on a step list existing. Statement order and branch structure only: a condition is emitted
+  as an explicitly undecoded step rather than invented comparison text, an unrecognised statement
+  becomes a visible not-decoded block rather than being dropped, and a switch default is not drawn at
+  all because where its body is stored is unproven. Device tokens stay unresolved until graph assembly,
+  the first point the owning parent's hash index exists, reusing the existing never-guess resolver.
+  Verified by lifting the builder out of the hub's own deployed source and running it against committed
+  captures: the conditional fixture yields a full if/elseif/elseif/else/endif chain, the switch fixture
+  an ordered case chain, the events fixture its two triggers. **Not yet confirmed end to end on the map
+  page** - that needs a scan to re-decode pistons, and the Hubitat app config page would not respond to
+  automation to start one. Before the scan, `graph.flows` holds 68 entries and not one is a piston.
+- **Still to come.** Operand meaning, which is what turns those undecoded conditions into real
+  comparison text - now the highest-value rung left, and the one the user actually sees. Then the
+  runtime walker using the raised operand levels for anything at all, and the rest of L4 (remaining
+  action semantics).
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
