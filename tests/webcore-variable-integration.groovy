@@ -213,9 +213,38 @@ println '--- v2.2.8: piston-to-device references ---'
 check('a direct physical-device read resolves with its attribute') {
     Map doc = [s: [[t: 'p', d: [':f142209a9087c18092a59ef88e2b5b6a:'], a: 'switch']]]
     Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
-    assert result.reads == [[token: ':f142209a9087c18092a59ef88e2b5b6a:', attribute: 'switch']]
+    assert result.reads == [[token: ':f142209a9087c18092a59ef88e2b5b6a:', attribute: 'switch', role: null]]
     assert result.actions == []
     assert result.unsupported == [:]
+}
+check('a device read inside an on event is attributed as a trigger') {
+    Map doc = [s: [[t: 'on', c: [[t: 'event',
+        lo: [t: 'p', d: [':f142209a9087c18092a59ef88e2b5b6a:'], a: 'motion']]]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads == [[token: ':f142209a9087c18092a59ef88e2b5b6a:', attribute: 'motion', role: 'trigger']]
+}
+check('a condition on a trigger comparison is a trigger, a state comparison is a constraint') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'condition', co: 'changes', lo: [t: 'p', d: [':11111111111111111111111111111111:'], a: 'motion']],
+        [t: 'condition', co: 'is', lo: [t: 'p', d: [':22222222222222222222222222222222:'], a: 'contact']]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads.find { it.token == ':11111111111111111111111111111111:' }.role == 'trigger'
+    assert result.reads.find { it.token == ':22222222222222222222222222222222:' }.role == 'constraint'
+}
+check('a stored ct wins over the operator name') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'condition', ct: 'c', co: 'changes', lo: [t: 'p', d: [':33333333333333333333333333333333:'], a: 'motion']]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads[0].role == 'constraint'
+}
+check('a read in a task parameter stays unattributed rather than guessed') {
+    Map doc = [s: [[t: 'action', d: [':44444444444444444444444444444444:'],
+        k: [[c: 'setVariable', p: [[t: 'p', d: [':55555555555555555555555555555555:'], a: 'temperature']]]]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads == [[token: ':55555555555555555555555555555555:', attribute: 'temperature', role: null]]
+    assert result.actions[0].token == ':44444444444444444444444444444444:'
 }
 check('a direct device action resolves with its command list') {
     Map doc = [s: [[t: 'action', d: [':252e3db9c501eef295bae52a99e633cc:'], k: [[c: 'setColor']]]]]
@@ -291,7 +320,11 @@ check('schema, scan gaps and export semantics are explicit') {
     assert source.contains("relationships: ['read', 'write', 'usesVar']")
 }
 check('v2.2.8: device edges, coverage and local variables reach the client and export') {
-    assert source.contains("kind: 'deviceRead'")
+    // A read edge now takes the role the piston proved, so the map agrees with
+    // the flowchart beside it. deviceRead survives as the fallback for a read
+    // that could not be attributed to either.
+    assert source.contains('kind: readKind, attribute: ref.attribute')
+    assert source.contains("'constraint' : 'deviceRead'")
     assert source.contains("edges << [from: appNodeId, to: devNodeId, kind: 'action', stateful: null, commands: ref.commands]")
     assert source.contains('webcoreDeviceRelationshipCoverage[appNodeId] = coverage')
     assert source.contains("deviceRelationshipCoverage: n.appType === 'webCoRE Piston' ? (n.webcoreDeviceRelationshipCoverage || 'none')")

@@ -962,12 +962,19 @@ contributes its ordered cases as one decision chain; loops contribute a delimite
 block; an action contributes one step per task, in saved order, carrying that statement's own device
 list.
 
-**What is not decoded, and is visibly marked so.** Condition and operand meaning. Comparison
-semantics carry no proven claim, so a condition is emitted as an explicitly undecoded step (for
-example `condition not decoded`, or `3 conditions not decoded`) rather than rendered as comparison
-text. An unrecognised statement type becomes a visible `not decoded` block rather than being dropped,
-so a chart never silently omits part of a piston. A switch default branch is not drawn at all,
-because where a default body is stored is unproven.
+**Condition text.** A condition is transcribed from its own saved spelling, not interpreted: the
+subject (a device and its attribute, or a variable, virtual, argument or constant operand exactly as
+stored), the saved operator with its underscores removed, and the right-hand operand. It is composed
+only when every part can be named in full, which means every device token in it resolved to a real
+name. If any part cannot be, the whole condition falls back to the explicitly undecoded step rather
+than printing half a sentence.
+
+**What is still not decoded, and is visibly marked so.** A nested condition group is opaque: nesting
+is not flattened, and one opaque part collapses that whole condition to `condition not decoded` (or
+`3 conditions not decoded`). An unrecognised statement type becomes a visible `not decoded` block
+rather than being dropped, so a chart never silently omits part of a piston. A switch case is not
+decoded, and a switch default branch is not drawn at all, because where a default body is stored is
+unproven. Task parameters are not rendered, so a task shows its saved command name alone.
 
 **Device names.** Flow steps carry webCoRE device tokens, not names, until the export is assembled:
 a token is only ever resolved against the permitted-device list of the specific webCoRE parent that
@@ -978,3 +985,29 @@ rather than being matched by label.
 **Unchanged.** No flow step becomes an edge. Hub Variable, local-variable and direct device
 relationships are exactly as section 26 describes. Parent-app permitted-device selections remain
 omitted as permissions rather than relationships.
+
+## 28. webCoRE device-read roles (delta)
+
+A piston's direct physical-device read is no longer always reported as `deviceRead`. Where the read
+is reached through an `on` event, or through a condition on an `if`, `while`, `repeat` or else-if
+branch, the edge takes the `trigger` or `constraint` relationship instead, the same two kinds Rule
+Machine already uses for the same thing. Section 26's statement that a piston device read is always
+`deviceRead`, and that its trigger/condition role is never decoded, was accurate for the schema it
+was written against and is left as the historical record. This section supersedes it.
+
+**Why this is not an inference.** webCoRE defines every comparison in one of exactly two blocks,
+conditions or triggers (`parent.getChildComparisons`), and its own subscription pass records which
+one applied in `ct`. The decoder reads that classification back: `ct` where the piston has subscribed
+to its events, and the operator's own block membership otherwise, since a paused piston carries no
+`ct`. No judgement is made about which comparisons feel like events. One caveat a consumer should
+know: a saved `ct` can be stale if a condition was edited after the piston was last opened, and it is
+still preferred over the operator name where present, the same way the piston flowchart does it.
+
+**What stays `deviceRead`.** A read this decoder cannot attribute to either role, such as one inside
+an expression or a task parameter. No read is ever reported as `monitor`.
+
+**Field effects.** `attribute` now rides `trigger` and `constraint` edges as well as `deviceRead`,
+carrying the same bounded evidence (the saved attribute name, never a value). `direction` is
+unchanged: `"unknown"` on `deviceRead` and `usesVar` only, because a role-attributed read has the
+same direction convention as any other trigger or constraint edge. A consumer counting piston device
+relationships must therefore read all three kinds, not `deviceRead` alone.

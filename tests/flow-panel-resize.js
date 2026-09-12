@@ -438,13 +438,28 @@ check('Insights drops the zoom and the normal view gets it back', function () {
     assert(sb.zoomEl.style.zoom === z, 'zoom not restored');
 });
 
-check('the zoom is kept when a new item is picked', function () {
+// Reversed on Gordon's report that the panel does not go back to its default
+// size for a new app. Zoom was the one part of the layout surviving an item
+// change, and a chart still scaled from the last item reads as a panel that
+// kept its size. It now follows the chosen size and position, already cleared here.
+check('the zoom goes back to 100 percent when a new item is picked', function () {
     const sb = makeSandbox();
     openItem(sb);
     wheel(sb, -100, true);
-    const z = sb.zoom();
+    assert(sb.zoom() !== 1, 'the wheel did not zoom, so this proves nothing');
     openItem(sb);
-    assert(sb.zoom() === z && sb.zoomEl.style.zoom === String(z), 'zoom lost on a new item');
+    assert(sb.zoom() === 1 && sb.zoomEl.style.zoom === '', 'zoom ' + sb.zoom() + ' kept on a new item');
+});
+
+check('the zoom survives reopening the same item', function () {
+    const sb = makeSandbox();
+    sb.select(7);
+    sb.setFlowSizeMode(false);
+    wheel(sb, -100, true);
+    const z = sb.zoom();
+    sb.select(7);
+    sb.setFlowSizeMode(false);
+    assert(sb.zoom() === z && sb.zoomEl.style.zoom === String(z), 'zoom lost on the same item');
 });
 
 check('resetting puts the zoom back to 100 percent', function () {

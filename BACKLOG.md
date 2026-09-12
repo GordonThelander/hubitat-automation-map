@@ -71,6 +71,21 @@ twelve Show filters on dev hub revision 136, measured in the browser.
 - **I.** The webCoRE parent panel drew an informational sentence in the red attention style, and its
   "holds 6 apps" heading repeated the title. Now ordinary text, and a heading already in the title is
   not repeated. Red stays for a partial or failed piston coverage.
+- **The map contradicted the piston's own flowchart.** Every device a piston touched drew as one
+  light-blue "Device read" line, so a motion sensor the flowchart drew as a purple trigger was blue on
+  the map beside it. Rule Machine drew the same relationship purple in both, which made the piston look
+  like the odd one out rather than the map looking undecided. A read reached through an `on` event or
+  through a condition now takes the `trigger` or `constraint` kind that read was decoded in, reusing the
+  kinds and colours Rule Machine already uses rather than inventing new ones. The classification is
+  webCoRE's own: which of its two comparison blocks the operator belongs to. `deviceRead` survives for a
+  read that genuinely could not be attributed, such as one inside an expression or a task parameter, and
+  its legend row now says so instead of claiming no role is ever decoded. Caveat worth remembering: a
+  saved `ct` can be stale (see the structure doc), and both the flowchart and this now prefer it over the
+  operator name, so they are at least consistent with each other.
+- **The flow panel kept the previous app's zoom.** Picking a new app cleared a chosen size and position
+  but not the zoom, so a chart still scaled from the last app read as a panel that had not gone back to
+  its default size. Zoom now follows size and position. This reverses a previously tested decision that
+  the zoom was held for the whole page session; reopening the same app still keeps it.
 
 **Still open, waiting on Gordon:**
 
