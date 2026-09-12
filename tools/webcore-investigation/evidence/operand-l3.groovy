@@ -37,6 +37,12 @@
 
   kinds: ['constant', 'virtual', 'variable', 'expression'],
 
+  // Same lineage and named-test shape the statement manifest uses, reused by the registry
+  // generator's operand-level promotion (L3Promotion.derive against a shim pointing at
+  // operands below and at each fixture's own 'operands' occurrence-count map).
+  captureLineage: ['first-save': 'round-trip', 'edit-save': 'edit-round-trip', 'edit-round-trip': 'chained-round-trip'],
+  namedTests: ['operand-l3-manifest': 'tests/webcore-operand-l3-manifest.groovy'],
+
   // persisted, unless-empty, user-optional etc. carry the same meaning as the statement manifest.
   // exclusive: this key is stripped from every operand whose t is not the owning kind
   // (executor.clean-code, unconditional, not inMem-guarded, so it holds for the saved IDE copy too):
@@ -65,7 +71,9 @@
         'exp': [kind: 'expression', persisted: 'always', consumed: 'read', exclusiveTo: ['c', 'e'],
                 readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
                 notes: 'the expression container, shared by exactly two kinds; exp survives only for t in [e, c] (ListEC) - executor.clean-code: if(!(ty in ListEC) && item[sEXP]) item.remove(sEXP)']
-      ]
+      ],
+      fixtures: ['l3-01-conditional.first-save'],
+      tests: ['operand-l3-manifest']
     ],
 
     'wc.operand.v': [
@@ -89,7 +97,9 @@
                notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven'],
         'd':  [kind: 'device-list', persisted: 'never', consumed: 'not-cited',
                notes: 'editor-authored-only, not exclusive to v: cleanCode strips d unconditionally for t in ListC2 (which includes v, s, x, c, e, u) during recreatePiston; observed present on l3-01-conditional.first-save (on both v and c operands) and absent on its edit-round-trip']
-      ]
+      ],
+      fixtures: ['l3-01-conditional.first-save'],
+      tests: ['operand-l3-manifest']
     ],
 
     'wc.operand.x': [
@@ -111,7 +121,9 @@
         'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
                writtenBy: ['editor.edit-statement'],
                notes: 'stripped in memory only when vt is device and g is avg/any (ty==sX && vt!=sDEV branch is the one that applies here since vt is otherwise not device in every fixture occurrence seen); canonical-copy status unproven']
-      ]
+      ],
+      fixtures: ['l3-04-loops.first-save'],
+      tests: ['operand-l3-manifest']
     ],
 
     'wc.operand.e': [
@@ -133,7 +145,9 @@
         'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
                writtenBy: ['editor.edit-statement'],
                notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
-      ]
+      ],
+      fixtures: ['l3-03-switch.first-save'],
+      tests: ['operand-l3-manifest']
     ]
   ],
 

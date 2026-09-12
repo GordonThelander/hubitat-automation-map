@@ -220,7 +220,7 @@ assertThat(((body.constructOccurrences as Map)['wc.statement.if'] as Map)?.struc
 assertThat((reparsed.structureFindings as List).every { Map f -> f.keySet() == (['path', 'category'] as Set) } &&
            (reparsed.structureFindings as List).any { it.category == 'unexpected-key' && it.path == '$.s[0].ok' },
     'structure findings reach the response as a closed category and a structural path only')
-assertThat(reparsed.structurallyCapped == ['wc.statement.action', 'wc.statement.if'] && (reparsed.constructLevels as Map)['wc.statement.if'] == 'L2' &&
+assertThat(reparsed.structurallyCapped == ['wc.operand.c', 'wc.operand.v', 'wc.operand.x', 'wc.statement.action', 'wc.statement.if'] && (reparsed.constructLevels as Map)['wc.statement.if'] == 'L2' &&
            reparsed.evidenceCapped == [],
     "an invalid occurrence lowers the shipped L3 statement ceiling and names the capped id (${reparsed.structurallyCapped})")
 
@@ -228,8 +228,9 @@ Map shippedConstructs = app.webcoreCensusRegistry().constructs as Map
 Map allValidBody = new LinkedHashMap(body)
 allValidBody.constructOccurrences = ['wc.statement.if': [structurallyValid: 1, structurallyInvalid: 0, evidenceGapped: 0, evidenceGaps: [:]]]
 Map allValidOut = new groovy.json.JsonSlurper().parseText(app.webcoreCoverageJson(allValidBody, shippedConstructs) as String) as Map
-assertThat((allValidOut.constructLevels as Map)['wc.statement.if'] == 'L3' && allValidOut.structurallyCapped == ['wc.statement.action'],
-    'an L3 ceiling holds when every occurrence is valid and gap-free, and an id with no occurrence record is capped')
+assertThat((allValidOut.constructLevels as Map)['wc.statement.if'] == 'L3' &&
+           allValidOut.structurallyCapped == ['wc.operand.c', 'wc.operand.v', 'wc.operand.x', 'wc.statement.action'],
+    'an L3 ceiling holds when every occurrence is valid and gap-free, and an id with no occurrence override stays capped')
 
 // ---- evidence gaps and the two assessments -----------------------------------
 
@@ -242,7 +243,7 @@ gappedBody.unrecognisedOutsideStatements = 6
 String gappedJson = app.webcoreCoverageJson(gappedBody, shippedConstructs) as String
 Map gappedOut = new groovy.json.JsonSlurper().parseText(gappedJson) as Map
 assertThat((gappedOut.constructLevels as Map)['wc.statement.if'] == 'L2' && (gappedOut.constructLevels as Map)['wc.statement.action'] == 'L3' &&
-           gappedOut.evidenceCapped == ['wc.statement.if'] && gappedOut.structurallyCapped == [],
+           gappedOut.evidenceCapped == ['wc.statement.if'] && gappedOut.structurallyCapped == ['wc.operand.c', 'wc.operand.v', 'wc.operand.x'],
     "a valid occurrence taking an evidence gap holds only its own id, reported as evidence-capped (${gappedOut.evidenceCapped} ${gappedOut.structurallyCapped})")
 assertThat(((gappedOut.constructOccurrences as Map)['wc.statement.if'] as Map).evidenceGaps == ['statement/sm/present': 1] &&
            gappedOut.evidenceGaps == [[id: 'statement/sm/present', reason: 'observed-at-capture', occurrences: 1]] && !gappedJson.contains('SECRET'),

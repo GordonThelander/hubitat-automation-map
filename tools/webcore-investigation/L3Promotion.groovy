@@ -4,7 +4,11 @@
 // the statement and are inert and structurally valid, and every named test it declares exists.
 // Every citation that does not hold is a problem, and the registry generator then emits nothing.
 class L3Promotion {
-    static Map derive(Map evidence, Map fixtureManifest, File repoRoot) {
+    // countsField selects which per-fixture occurrence-count map a family is checked against
+    // ('statements' for statement families, 'operands' for operand families sharing this same
+    // gate through a caller-built evidence shim). The family list itself always comes from
+    // evidence.statements, whatever the caller populates there.
+    static Map derive(Map evidence, Map fixtureManifest, File repoRoot, String countsField = 'statements') {
         Map lineage = (evidence?.captureLineage ?: [:]) as Map
         Map named = (evidence?.namedTests ?: [:]) as Map
         Map byName = [:]
@@ -31,7 +35,7 @@ class L3Promotion {
                 Map roundTrip = byName[roundTripName] as Map
                 if (roundTrip == null) { problems << "${id} cites ${name}, which has no committed round trip ${roundTripName}".toString(); return }
                 [save, roundTrip].each { Map f ->
-                    Object n = ((f.statements ?: [:]) as Map)[id]
+                    Object n = ((f[countsField] ?: [:]) as Map)[id]
                     if (!(n instanceof Number) || (n as int) < 1) problems << "${id}: ${f.file} holds no occurrence of it".toString()
                     if (f.structurallyInvalid != 0 || f.inertAtCapture != true) problems << "${id}: ${f.file} is not an inert, structurally valid capture".toString()
                 }
