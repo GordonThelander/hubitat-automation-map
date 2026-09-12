@@ -24,3 +24,9 @@ Bucket/
 
 # Local-only working material. Never pushed, never published.
 Private/
+
+# Third-party source read during decoding work (a webCoRE checkout, 19MB), and
+# local evidence notes. Neither is this project's source, and both were sitting
+# untracked where one `git add -A` would have committed them.
+tmp/
+WIP/
