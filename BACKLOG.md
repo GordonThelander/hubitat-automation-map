@@ -398,19 +398,25 @@ end state. That answer is currently unknown and is worth having either way.
   break-on-failure behaviour is a new, separate, explicit gap
   (`statement.action.fast-forward-unresolved`); an action with one task or fewer still carries
   `statement.action.task-order-unresolved`, since no capture exercises order for it.
-- **Operand structural (L3) evidence, six of twelve, wired into the registry.** Constant, virtual
+- **Operand structural (L3) evidence, seven of twelve, wired into the registry.** Constant, virtual
   (mode/HSM/etc. reads), variable (Hub/global/local references), expression, physical-device (a device
-  attribute read) and preset (a named time-of-day value) all have a reviewed, source-cited shape and a
-  gate proving it against every occurrence in the fixture corpus. As of 2026-09-12 all six are promoted
-  to L3 in the construct registry itself, through the same committed-metadata promotion gate the
-  statement manifest already used, reused via a small shim rather than duplicated. The registry
-  generator now needs a local checkout of the pinned webCoRE source to run
+  attribute read), preset (a named time-of-day value), and the virtual form of the event-match operand
+  (the operand inside an `on` statement's own trigger list, saved like an ordinary virtual operand but
+  read by a separate, simpler consumer) all have a reviewed, source-cited shape and a gate proving it
+  against every occurrence in the fixture corpus. The event-match slice needed no new capture: two
+  occurrences were already present in the committed `zz-L3-07 events` fixture. As of 2026-09-12 all
+  seven are promoted to L3 in the construct registry itself, through the same committed-metadata
+  promotion gate the statement manifest already used, reused via a small shim rather than duplicated.
+  Fixed a real bug the new slice exposed along the way: the operand gate test keyed its per-occurrence
+  shape lookup by bare discriminator letter alone, which silently collided once two entries shared the
+  same letter (`t: 'v'`) at different saved positions; it now folds the saved parent context into the
+  lookup key. The registry generator needs a local checkout of the pinned webCoRE source to run
   (`tools/webcore-investigation/generate-construct-registry.groovy <source-root> --emit`); one was
-  cloned read-only to `Hubitat Apps/_webcore-source` for this. The remaining four kinds (a bare
-  device-list operand, an argument operand, the three event-match forms inside an `on` statement's
-  trigger, and the empty/nothing-selected form) have no fixture evidence yet and stay L2; none of the
-  current captures exercises them.
-- **Still to come.** The remaining four operand kinds, the runtime walker actually using the raised
+  cloned read-only to `Hubitat Apps/_webcore-source` for this. The remaining five kinds (a bare
+  device-list operand, an argument operand, the physical and variable event-match forms, and the
+  empty/nothing-selected form) have no fixture evidence yet and stay L2; none of the current captures
+  exercises them.
+- **Still to come.** The remaining five operand kinds, the runtime walker actually using the raised
   operand levels for anything (currently only the registry level itself changed; no L4 operand-meaning
   claim exists yet to make use of it), the rest of L4 (remaining action semantics, operand meaning once
   L3-proven), then the flow rendering that eventually lets a piston draw its own flow with anything not

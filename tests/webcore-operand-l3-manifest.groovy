@@ -50,15 +50,23 @@ List<File> fixtures = fixtureDir.listFiles().findAll { it.name != 'manifest.json
 // l3-02-followed-by.edit-save. Checked against every capture regardless for the always-persisted
 // and occurrence-count assertions, which hold on any capture.
 List<File> canonicalFixtures = fixtures.findAll { it.name =~ /\.(round-trip|edit-round-trip|chained-round-trip)\.json$/ }
+// A discriminator value alone is not always a unique key: an event-match operand is saved with the
+// same t as its ordinary counterpart (t: 'v' either way) and is told apart only by being the lo of an
+// 'event' node, per the registry's own SITE_NORMALIZATION. lookupKey folds that saved parent context
+// into the covered/occurrence key wherever an entry declares one, so the two never collide.
+def lookupKey = { String t, boolean inEvent -> inEvent ? "${t}@event".toString() : t }
 Map covered = [:]
-operands.each { String id, Object o -> covered[((o as Map).discriminator as Map).value.toString()] = id }
+operands.each { String id, Object o ->
+    Map d = (o as Map).discriminator as Map
+    covered[lookupKey(d.value.toString(), d.parentContext == 'event')] = id
+}
 
 List shapeProblems = []
 List exclusivityProblems = []
 Map occurrenceCounts = [:].withDefault { 0 }
 
 def walk
-walk = { Object node, String path ->
+walk = { Object node, String path, boolean inEvent = false ->
     if (node instanceof Map) {
         Map n = node as Map
         String t = n.t instanceof String ? n.t as String : null
@@ -66,29 +74,30 @@ walk = { Object node, String path ->
         // case's t: 's', a condition's t: 'condition') without vt, so vt is the operand discriminator.
         if (t != null && n.containsKey('vt')) {
             occurrenceCounts[t] = (occurrenceCounts[t] as Integer) + 1
-            if (covered.containsKey(t)) {
-                String id = covered[t]
+            String key = lookupKey(t, inEvent)
+            if (covered.containsKey(key)) {
+                String id = covered[key]
                 Map keys = (operands[id] as Map).keys as Map
-                keys.each { String key, Object spec ->
+                keys.each { String k2, Object spec ->
                     Map s = spec as Map
-                    boolean present = n.containsKey(key)
-                    if (s.persisted == 'always' && !present) shapeProblems << "${path}: ${id} missing always-persisted ${key}".toString()
+                    boolean present = n.containsKey(k2)
+                    if (s.persisted == 'always' && !present) shapeProblems << "${path}: ${id} missing always-persisted ${k2}".toString()
                 }
                 // Exclusivity: a key is exclusive to a closed set of kinds (exclusiveTo). An
                 // occurrence of a kind outside that set must never carry the key.
                 operands.each { String otherId, Object otherRaw ->
-                    ((otherRaw as Map).keys as Map).each { String key, Object spec ->
+                    ((otherRaw as Map).keys as Map).each { String k2, Object spec ->
                         List owners = (spec as Map).exclusiveTo as List
-                        if (owners != null && !owners.contains(t) && n.containsKey(key)) {
-                            exclusivityProblems << "${path}: ${id} occurrence carries ${key}, exclusive to ${owners}".toString()
+                        if (owners != null && !owners.contains(t) && n.containsKey(k2)) {
+                            exclusivityProblems << "${path}: ${id} occurrence carries ${k2}, exclusive to ${owners}".toString()
                         }
                     }
                 }
             }
         }
-        n.each { k, v -> walk(v, path + '.' + k) }
+        n.each { k, v -> walk(v, path + '.' + k, t == 'event' && k == 'lo') }
     } else if (node instanceof List) {
-        (node as List).eachWithIndex { v, i -> walk(v, path + '[' + i + ']') }
+        (node as List).eachWithIndex { v, i -> walk(v, path + '[' + i + ']', inEvent) }
     }
 }
 fixtures.each { File f -> walk(new JsonSlurper().parseText(f.getText('UTF-8')), f.name) }
@@ -98,23 +107,24 @@ check(shapeProblems.isEmpty(), "every covered operand occurrence carries every f
 List canonicalExclusivityProblems = []
 canonicalFixtures.each { File f ->
     def walkCanon
-    walkCanon = { Object node, String path ->
+    walkCanon = { Object node, String path, boolean inEvent = false ->
         if (node instanceof Map) {
             Map n = node as Map
             String t = n.t instanceof String ? n.t as String : null
-            if (t != null && n.containsKey('vt') && covered.containsKey(t)) {
+            String key = t == null ? null : lookupKey(t, inEvent)
+            if (t != null && n.containsKey('vt') && covered.containsKey(key)) {
                 operands.each { String otherId, Object otherRaw ->
-                    ((otherRaw as Map).keys as Map).each { String key, Object spec ->
+                    ((otherRaw as Map).keys as Map).each { String k2, Object spec ->
                         List owners = (spec as Map).exclusiveTo as List
-                        if (owners != null && !owners.contains(t) && n.containsKey(key)) {
-                            canonicalExclusivityProblems << "${f.name}${path}: ${covered[t]} occurrence carries ${key}, exclusive to ${owners}".toString()
+                        if (owners != null && !owners.contains(t) && n.containsKey(k2)) {
+                            canonicalExclusivityProblems << "${f.name}${path}: ${covered[key]} occurrence carries ${k2}, exclusive to ${owners}".toString()
                         }
                     }
                 }
             }
-            n.each { k, v -> walkCanon(v, path + '.' + k) }
+            n.each { k, v -> walkCanon(v, path + '.' + k, t == 'event' && k == 'lo') }
         } else if (node instanceof List) {
-            (node as List).eachWithIndex { v, i -> walkCanon(v, path + '[' + i + ']') }
+            (node as List).eachWithIndex { v, i -> walkCanon(v, path + '[' + i + ']', inEvent) }
         }
     }
     walkCanon(new JsonSlurper().parseText(f.getText('UTF-8')), '')
@@ -173,7 +183,7 @@ Map promotion = deriveOperands(manifest, fixtureManifest)
 check((promotion.problems as List).isEmpty() && (promotion.levels as Map).keySet() == operands.keySet() && (promotion.levels as Map).values().every { it == 'L3' },
     "promotion derives L3 for every covered operand from committed metadata alone ${promotion.problems}")
 
-Set registryOperands = constructs.keySet().findAll { "${it}" ==~ /wc\.operand\.[a-z]+/ }.collect { "${it}" } as Set
+Set registryOperands = constructs.keySet().findAll { "${it}" ==~ /wc\.operand(\.event-match)?\.[a-z]+/ }.collect { "${it}" } as Set
 List registryDrift = registryOperands.findAll { String id -> (constructs[id] as Map).level != (operands.containsKey(id) ? 'L3' : 'L2') }.toList()
 check(registryDrift.isEmpty(),
     "the registry carries L3 for exactly the covered operand kinds and L2 for the rest ${registryDrift}")
