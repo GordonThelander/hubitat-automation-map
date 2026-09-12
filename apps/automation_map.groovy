@@ -4658,7 +4658,7 @@ Map webcoreCensusRegistry() {
         'wc.operand.e': [level: 'L3'],
         'wc.operand.empty': [level: 'L2'],
         'wc.operand.event-match.p': [level: 'L2'],
-        'wc.operand.event-match.v': [level: 'L2'],
+        'wc.operand.event-match.v': [level: 'L3'],
         'wc.operand.event-match.x': [level: 'L2'],
         'wc.operand.p': [level: 'L3'],
         'wc.operand.s': [level: 'L3'],

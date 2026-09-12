@@ -12,8 +12,11 @@
 // mode, power source and HSM status) and the variable operand (t: 'x': a Hub, global, superglobal or
 // piston-local variable reference). A fourth adds the expression operand (t: 'e'). A fifth adds the
 // physical-device operand (t: 'p': a device attribute read) and the preset operand (t: 's': a named
-// time-of-day value). Not yet covered, deliberately: d, u, the three event-match kinds, and the empty
-// (nothing-selected) kind. Each needs its own reviewed slice the same way these do.
+// time-of-day value). A sixth adds one of the three event-match kinds (an operand inside an on
+// statement's event matcher, saved like an ordinary operand but read by a different, simpler
+// consumer): the virtual form only, from occurrences already present in the existing zz-L3-07 events
+// fixture, no new capture needed. Not yet covered, deliberately: d, u, the other two event-match kinds
+// (physical and variable), and the empty (nothing-selected) kind. Each needs its own reviewed slice.
 //
 // A canonical-persistence finding carried over from the statement work: cleanCode's exclusivity and
 // default-stripping rules run only during recreatePiston (executor.recreate-piston, called on load),
@@ -36,7 +39,7 @@
   // event-match and empty forms the registry already carries separately.
   discriminatorValues: ['p', 'd', 'v', 's', 'x', 'c', 'e', 'u'],
 
-  kinds: ['constant', 'virtual', 'variable', 'expression', 'physical', 'preset'],
+  kinds: ['constant', 'virtual', 'variable', 'expression', 'physical', 'preset', 'event-match-virtual'],
 
   // Same lineage and named-test shape the statement manifest uses, reused by the registry
   // generator's operand-level promotion (L3Promotion.derive against a shim pointing at
@@ -198,6 +201,36 @@
       ],
       fixtures: ['l3-12-preset.first-save'],
       tests: ['operand-l3-manifest']
+    ],
+
+    // Not a seventh saved shape: an event-match operand is saved exactly like an ordinary virtual
+    // operand (vt, v, f, g), the same keys and the same closed value vocabulary. It is tracked as its
+    // own registry identity only because of WHERE it is saved and who reads it - the registry
+    // generator's SITE_NORMALIZATION keeps operand.event-match.* distinct from operand.* for exactly
+    // this reason. Here that means: same keys block as wc.operand.v, a discriminator that also names
+    // the saved parent context so the gate test can tell the two apart, and its own citation.
+    'wc.operand.event-match.v': [
+      family: 'virtual',
+      discriminator: [key: 't', value: 'v', parentContext: 'event'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+               readBy: [], writtenBy: ['editor.edit-statement'],
+               notes: 'saved like any virtual operand but not read here: the event-match switch on sMt(operand) only reads v'],
+        'v':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['v'],
+               readBy: ['executor.statement-dispatch'], writtenBy: ['editor.edit-statement'],
+               values: ['mode', 'time', 'date', 'dtime', 'pwrSrc', 'hsmSts', 'hsmAlrt', 'hsmSArm', 'hsmRule', 'hsmRules',
+                        'pstnRsm', 'cloudBackup', 'lowMemory', 'manualReboot', 'update', 'systemStart', 'severeLoad',
+                        'zigbeeOff', 'zigbeeOn', 'zwaveCrashed', 'sunriseTime', 'sunsetTime', 'tile', 'ifttt', 'email', 'routine'],
+               notes: 'compared for exact string equality against the triggering event name (evntName==sMv(operand)); proven here for mode and powerSource only'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ],
+      fixtures: ['l3-07-events.first-save'],
+      tests: ['operand-l3-manifest']
     ]
   ],
 
@@ -228,7 +261,8 @@
     [region: 'executor.evaluate-operand', contains: 'mv=movt+evaluateExpression(r9,mMs(operand,sEXP))', supports: 'operand.e evaluates only its exp; e and vt are not read here'],
     [region: 'executor.clean-code', contains: 'if(ty!=sP && item[sA]!=null) item.remove(sA)', supports: 'operand.p.a is exclusive to t: p, unconditional, holds on the saved copy'],
     [region: 'executor.clean-code', contains: 'if(ty!=sS && item[sS]!=null) item.remove(sS)', supports: 'operand.s.s is exclusive to t: s, unconditional, holds on the saved copy'],
-    [region: 'executor.evaluate-operand', contains: 'case sSUNSET: v= getSunsetTime(r9,dayBasis); break', supports: 'operand.s.s: sunset is a member of the closed preset-name case list, proven for this one value']
+    [region: 'executor.evaluate-operand', contains: 'case sSUNSET: v= getSunsetTime(r9,dayBasis); break', supports: 'operand.s.s: sunset is a member of the closed preset-name case list, proven for this one value'],
+    [region: 'executor.statement-dispatch', contains: 'if(evntName==sMv(operand))', supports: 'operand.event-match.v.v: the event-match consumer reads only v, compared by exact string equality against the triggering event name']
   ],
 
   // Open questions this increment does not resolve. Recorded so the next increment starts from them
@@ -237,11 +271,12 @@
     'the closed vocabulary of vt (value-type) values is not yet reconciled against the executor',
     'whether f and g are ever absent on the saved IDE copy, or only stripped in memory, is unverified - needs the same IDE round-trip evidence the statement manifest built for statement keys',
     'expression item (exp.i[]) shape is undefined here: item kind, operator vocabulary, and nesting rules all remain open',
-    'the remaining four operand constructs (d, u, the three event-match kinds, empty) have no manifest entry yet and no fixture evidence; each needs its own reviewed slice and capture',
+    'the remaining four operand constructs (d, u, the physical and variable event-match kinds, empty) have no manifest entry yet and no fixture evidence; each needs its own reviewed slice and capture',
     'operand.e.e has no proven purpose; not read by the one evaluateOperand region reviewed here',
     'the v value vocabulary is transcribed from the evaluateOperand switch cases but not yet cross-checked against a full source string dump the way the statement construct catalogue was',
     'the s (preset) value vocabulary is proven for sunset only; sunrise, midnight and noon are transcribed from the same switch but not independently captured',
     'operand.p.p (the physical/digital/any read preference) has no captured occurrence; its saved shape when present, and which attributes actually offer the choice, are both unproven',
+    'operand.event-match.v.v is proven for mode and powerSource only; the other 24 members of the shared virtual-device value vocabulary are transcribed, not independently exercised in event-match position',
     'whether cleanCode ever runs on a path other than recreatePiston (for example inside compilePiston itself) is asserted from call-site inspection, not yet proven exhaustively'
   ]
 ]
