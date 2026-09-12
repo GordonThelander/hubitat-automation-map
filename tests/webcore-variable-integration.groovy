@@ -232,11 +232,57 @@ check('a condition on a trigger comparison is a trigger, a state comparison is a
     assert result.reads.find { it.token == ':11111111111111111111111111111111:' }.role == 'trigger'
     assert result.reads.find { it.token == ':22222222222222222222222222222222:' }.role == 'constraint'
 }
-check('a stored ct wins over the operator name') {
+// A stored ct must NOT simply win. subscribeAll can downgrade a
+// trigger comparison to a condition before writing ct, so co=changes with ct=c is
+// genuine; a saved ct can also be stale after an edit. Disagreement therefore
+// means unknown, and the read stays unattributed rather than being given a role
+// that might be false.
+check('a ct conflicting with the operator block yields no role at all') {
     Map doc = [s: [[t: 'if', c: [
         [t: 'condition', ct: 'c', co: 'changes', lo: [t: 'p', d: [':33333333333333333333333333333333:'], a: 'motion']]
     ]]]]
     Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads[0].role == null
+}
+check('the conflict is refused in the other direction too') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'condition', ct: 't', co: 'is', lo: [t: 'p', d: [':33333333333333333333333333333333:'], a: 'contact']]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads[0].role == null
+}
+check('an agreeing ct confirms the role rather than overriding it') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'condition', ct: 'c', co: 'is', lo: [t: 'p', d: [':11111111111111111111111111111111:'], a: 'contact']],
+        [t: 'condition', ct: 't', co: 'changes', lo: [t: 'p', d: [':22222222222222222222222222222222:'], a: 'motion']]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads.find { it.token == ':11111111111111111111111111111111:' }.role == 'constraint'
+    assert result.reads.find { it.token == ':22222222222222222222222222222222:' }.role == 'trigger'
+}
+check('an unrecognised comparison stays unattributed instead of defaulting to constraint') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'condition', co: 'some_future_comparison',
+         lo: [t: 'p', d: [':44444444444444444444444444444444:'], a: 'switch']]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads[0].role == null
+}
+check('a condition carrying no comparison at all stays unattributed') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'condition', lo: [t: 'p', d: [':55555555555555555555555555555555:'], a: 'switch']]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    assert result.reads[0].role == null
+}
+check('a group with neither ct nor co does not lend a role to its devices') {
+    Map doc = [s: [[t: 'if', c: [
+        [t: 'group', o: 'and', c: [
+            [t: 'condition', co: 'is', lo: [t: 'p', d: [':66666666666666666666666666666666:'], a: 'contact']]
+        ]]
+    ]]]]
+    Map result = decoder.collectWebcorePistonDeviceReferences(doc) as Map
+    // The inner condition decides its own role; the group contributes none.
     assert result.reads[0].role == 'constraint'
 }
 check('a read in a task parameter stays unattributed rather than guessed') {

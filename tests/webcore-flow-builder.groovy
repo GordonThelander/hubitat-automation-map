@@ -222,9 +222,24 @@ check(builder.webcoreFlowIsTrigger([co: 'changes']) && builder.webcoreFlowIsTrig
 check(!builder.webcoreFlowIsTrigger([co: 'is']) && !builder.webcoreFlowIsTrigger([co: 'is_equal_to']) &&
       !builder.webcoreFlowIsTrigger([co: 'is_between']),
     'comparisons from the condition block are not triggers')
-check(builder.webcoreFlowIsTrigger([co: 'is', ct: 't']) &&
+// Reversed on review. A stored ct used to win outright, which was
+// wrong in both directions: subscribeAll can legitimately downgrade a trigger
+// comparison to a condition before writing ct, and a saved ct can be stale after
+// an edit. Neither source can arbitrate the other, so disagreement means unknown
+// and nothing is split out of its decision on a saved ct alone.
+check(!builder.webcoreFlowIsTrigger([co: 'is', ct: 't']) &&
       !builder.webcoreFlowIsTrigger([co: 'changes', ct: 'c']),
-    'a stored ct wins over the operator name, since the executor wrote it')
+    'a ct conflicting with its operator block yields no role, so nothing is lifted out')
+check(builder.webcoreFlowIsTrigger([co: 'changes', ct: 't']) &&
+      !builder.webcoreFlowIsTrigger([co: 'is', ct: 'c']),
+    'an agreeing ct confirms the operator block rather than overriding it')
+check(String.valueOf(builder.webcoreFlowRole([co: 'changes'])) == 'trigger' &&
+      String.valueOf(builder.webcoreFlowRole([co: 'is'])) == 'constraint',
+    'an absent ct falls back to closed-set membership in both directions')
+check(builder.webcoreFlowRole([co: 'some_future_comparison']) == null &&
+      builder.webcoreFlowRole([co: 'is', ct: 'x']) == null &&
+      builder.webcoreFlowRole([:]) == null,
+    'an unrecognised comparison, an unrecognised ct, or nothing at all yields no role')
 check(!builder.webcoreFlowIsTrigger([:]), 'an unknown comparison is not assumed to be a trigger')
 
 List mixed = builder.buildWebcoreFlow(realShape)
