@@ -5085,7 +5085,7 @@ void webcoreSemanticStatements(List list, String path, int depth, Map acc, Strin
 // one of those two is claimed as scoped to it.
 void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String container = 'block') {
     if (depth > (acc.maxDepth as Integer)) { acc.truncated = true; return }
-    String type = (node.t instanceof String) ? (node.t as String) : ''
+    String type = (node.t instanceof String) ? (node.t as String) : "${''}"
     Set claims = [] as Set
     Set gaps = [] as Set
     Map gapReasons = (((acc.evidence as Map).gaps ?: [:]) as Map)
