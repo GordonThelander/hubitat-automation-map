@@ -438,9 +438,12 @@ end state. That answer is currently unknown and is worth having either way.
   the first point the owning parent's hash index exists, reusing the existing never-guess resolver.
   Verified by lifting the builder out of the hub's own deployed source and running it against committed
   captures: the conditional fixture yields a full if/elseif/elseif/else/endif chain, the switch fixture
-  an ordered case chain, the events fixture its two triggers. **Not yet confirmed end to end on the map
-  page** - that needs a scan to re-decode pistons, and the Hubitat app config page would not respond to
-  automation to start one. Before the scan, `graph.flows` holds 68 entries and not one is a piston.
+  an ordered case chain, the events fixture its two triggers. **Confirmed on the dev hub**: a scan took
+  `graph.flows` from 68 entries with no piston among them to 93 entries including all 25 pistons, in 38
+  seconds, with no errors logged. Device-token resolution - the one path unit tests cannot reach, since
+  it runs only inside buildGraph - resolved correctly to real names (`setColor` on Gordon Study Desk, a
+  three-device toggle, a switch trigger on _Test Switch) with no unresolved markers. Pistons whose `if`
+  has an empty saved body correctly draw as a decision with no branch content rather than inventing one.
 - **Still to come.** Operand meaning, which is what turns those undecoded conditions into real
   comparison text - now the highest-value rung left, and the one the user actually sees. Then the
   runtime walker using the raised operand levels for anything at all, and the rest of L4 (remaining
