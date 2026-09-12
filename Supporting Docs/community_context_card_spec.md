@@ -1,6 +1,7 @@
 # Community Context Card for Automation Map
 
-**Status:** Proposed specification, not yet authorized for implementation  
+**Status:** **Shipped**, the feature is on `main`. Historical design record; the original "not yet
+authorized for implementation" wording predates delivery.  
 **Target:** Earliest release after v2.0.14 stabilization  
 **Repositories:** `hubitat-automation-map` and `HPM_Manifest_Crawl`  
 **Primary outcome:** Selecting an application in Automation Map shows relevant, evidence-labelled

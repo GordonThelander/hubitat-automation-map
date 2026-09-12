@@ -1,7 +1,8 @@
 # Hub Variable Authoritative Inventory - v2.0.14 Implementation Spec
 
-**Status:** Draft, review corrections incorporated. No code written. Not authorized
-for implementation.
+**Status:** **Shipped in v2.0.14.** Historical implementation record. The original wording ("No code
+written. Not authorized for implementation.") described the position before delivery and was never
+updated.
 **Scope:** One bounded slice of `hub_variable_first_class_spec.md`, sized for a single dev-hub
 test release (v2.0.14), not the full first-class-entity design in one shot.
 **Target:** `dev` branch only. Deployed to Gordon's own hub for his own testing. Not for `main`,

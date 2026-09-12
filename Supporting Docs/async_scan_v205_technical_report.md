@@ -1,7 +1,9 @@
 # Technical Report: Automation Map v2.0.5 Async Scan Architecture and Validation
 
 **Date:** 22 August 2026  
-**Status:** Development-hub candidate; normal path validated, production promotion not yet approved
+**Status:** **Shipped to production.** The async scan architecture described here is the one in use.
+"Development-hub candidate; production promotion not yet approved" was the status on 2026-08-22 and
+was never updated.
 
 ## Executive summary
 

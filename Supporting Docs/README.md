@@ -31,9 +31,8 @@ where the backlog referenced them and they would eventually have been lost.
 | `desktop_ui_independent_assessment_2026-09-07.md` | Independent desktop UI assessment. Its three concrete bugs are closed; the rest is backlog item 23 |
 | `local_hub_variable_identity_proposal.md` | Local versus Hub Variable identity proposal. **Shipped** (Gate C, v2.1.4; owner-scoped nodes in v2.1.6) |
 | `local_hub_variable_identity_plain_language.md` | Plain-language companion to the identity proposal |
-| `production_build_methodology.md` | **Duplicate.** The maintained copy lives in the `production-protocol` repository; this one is a leftover of the move and should not be edited here |
+| `production_build_methodology.md` | **Redirect stub** (253 bytes) pointing at the canonical copy in the private `production-protocol` repository. Kept so existing links resolve; do not edit or delete |
 | `vis_network_capability_framework.md` | vis-network capability framework, validated against the library in use |
-| `ai_bad_rule_assessment_framework.md` | See its own row above; written against export schema 3 |
 
 ## rule_machine_5_1_storage_format.md
 

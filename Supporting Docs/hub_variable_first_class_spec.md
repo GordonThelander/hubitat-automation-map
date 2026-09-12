@@ -1,9 +1,10 @@
 # First-Class Hub Variables Specification
 
-**Status:** Draft for review  
-**Date:** 2026-08-26  
-**Scope:** Automation Map graph, discovery, UI, diagnostics, baseline comparison and AI-friendly export  
-**Implementation authorization:** None. This document is a design proposal.
+**Status:** **Shipped.** Historical design record, retained for its reasoning. The original header
+read "Draft for review" with "Implementation authorization: None" and was never updated after
+delivery; see BACKLOG.md Hold/closed for the disposition.  
+**Date:** 2026-08-26 (original proposal)  
+**Scope:** Automation Map graph, discovery, UI, diagnostics, baseline comparison and AI-friendly export
 
 ## 1. Decision
 
