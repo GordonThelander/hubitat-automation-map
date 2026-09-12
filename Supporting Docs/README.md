@@ -14,19 +14,26 @@ where the backlog referenced them and they would eventually have been lost.
 | `rule_machine_5_1_storage_format.md` | Rule Machine 5.1 documentation (**written**, ready to publish) |
 | `registry-pack-v0.3/` | Integration registry |
 | `rule_machine_execution_and_cross_rule_causality.md` | Rule Machine 5.1 documentation and rule-to-rule links (superseded source material, see below) |
-| `ai_export_spec.md` | AI-friendly Export JSON (implemented contract through export schema 12) |
+| `ai_export_spec.md` | AI-friendly Export JSON (implemented contract through export schema 13) |
 | `webcore_hub_variable_decoding.md` | Focused explanation of Hub Variables in webCoRE pistons: the `@@` namespace, when a reference counts, and how read and write direction is proven |
 | `webcore_piston_devices_and_local_variables_spec.md` | Implementation record for owner-scoped webCoRE Local Variables and direct piston device read/action relationships (implemented, v2.2.8): contracts, fixtures, acceptance test and gates |
 | `webcore_saved_piston_structure.md` | Canonical reference for webCoRE pistons in Automation Map: storage, source pins, saved grammar, evidence classification, rendering, boundaries, privacy and status |
 | `hpm_scrape_spec.md` | Origin task spec for the package identity index now built and maintained in `GordonThelander/HPM_Manifest_Crawl` |
 | `async_scan_v205_technical_report.md` | v2.0.5 bounded-async scan architecture, failure model, harness evidence, dev-hub validation, and remaining release gates |
 | `hubitat_local_mcp_data_access_assessment.md` | Assessment of reusable Hubitat data-access methods evidenced by the Community Hubitat Local MCP server |
-| `hub_variable_first_class_spec.md` | First-class Hub Variable entity and export specification (draft, consensus reached, implementation not yet authorized) |
+| `hub_variable_first_class_spec.md` | First-class Hub Variable entity and export specification. **Shipped** - the description here said "implementation not yet authorized" long after it was delivered; retained as the design record |
 | `hubitat_driver_programmatic_access.md` | Architecture for programmatic access to Hubitat devices and drivers (inventory, source, capabilities, commands, attributes, events, state) |
-| `ai_assessment_export_extension.md` | AI assessment export feature contract (proposed, not implemented) - augments the AI-friendly export with evidence for automated review. Delivered 2026-08-23 (see its own Source line) |
+| `ai_assessment_export_extension.md` | AI assessment export feature contract, delivered 2026-08-23. **Written against export schema 3** and not revised since; the export is now schema 13, so read `ai_export_spec.md` for the current contract |
 | `ai_bad_rule_assessment_framework.md` | Detailed reasoning catalogue behind the AI assessment export feature contract (superseded as the design itself by `ai_assessment_export_extension.md`, retained as background) |
-| `hub_variable_v2014_implementation_spec.md` | Bounded v2.0.14 implementation plan for `hub_variable_first_class_spec.md` (draft, sent for review, not authorized for implementation) |
+| `hub_variable_v2014_implementation_spec.md` | Bounded v2.0.14 implementation plan for `hub_variable_first_class_spec.md`. **Shipped in v2.0.14**; the "not authorized for implementation" note here was stale |
 | `community_context_card_spec.md` | Proposed contextual Community Utilities information card for selected Automation Map apps, including the slim online data contract, local matching, privacy boundary and release gates |
+| `community_release_activity_embed_spec.md` | Spec for the Hubitat release activity panel embed |
+| `desktop_ui_independent_assessment_2026-09-07.md` | Independent desktop UI assessment. Its three concrete bugs are closed; the rest is backlog item 23 |
+| `local_hub_variable_identity_proposal.md` | Local versus Hub Variable identity proposal. **Shipped** (Gate C, v2.1.4; owner-scoped nodes in v2.1.6) |
+| `local_hub_variable_identity_plain_language.md` | Plain-language companion to the identity proposal |
+| `production_build_methodology.md` | **Duplicate.** The maintained copy lives in the `production-protocol` repository; this one is a leftover of the move and should not be edited here |
+| `vis_network_capability_framework.md` | vis-network capability framework, validated against the library in use |
+| `ai_bad_rule_assessment_framework.md` | See its own row above; written against export schema 3 |
 
 ## rule_machine_5_1_storage_format.md
 

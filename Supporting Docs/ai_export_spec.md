@@ -1,7 +1,7 @@
 # Automation Map AI Export Specification
 
 **Status:** implemented contract  
-**Export schema:** 12 (see sections 18-26 for the schema 4/5/6/7/8/9/10/11/12 deltas; sections 1-17
+**Export schema:** 13 (see sections 18-28 for the schema 4/5/6/7/8/9/10/11/12/13 deltas; sections 1-17
 describe schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
 **Default filename:** `automation-map-export-YYYY-MM-DD.json`
