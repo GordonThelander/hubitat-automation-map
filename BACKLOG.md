@@ -620,6 +620,43 @@ constraint line), and whether to add a matching neutral Insights finding alongsi
 this is a presentation decision, not new analysis. Hub-wide there were 20 such edges across 6 rules
 when this was measured (2026-09-09).
 
+### 30. The graph is rebuilt a second time after most scans
+
+**The symptom.** Every completed scan on the dev hub is followed within a second by this pair in the
+log, at 07:20, 07:53, 13:37, 15:24 and 16:25 on 2026-09-12 alone:
+
+```
+clearing resurrected scan flags for an already-completed generation
+state.graph was missing after a completed scan - rebuilding from existing scan data
+```
+
+**What is established.** Both lines come from the same execution, a render of the main page:
+`clearAbandonedScan()` is called at line 513 and `selfHealGraphIfNeeded()` at line 536 of the same
+method. `startScan()` deliberately sets `state.graph = null` to free memory, `finishScan()` commits
+the rebuilt graph, and the self-heal fires when a page render sees a null graph alongside a non-null
+`atomicState.graphVersion`. At 16:25 the scan committed at `.264`, the flag clear logged at `.293`,
+and the self-heal at `1.007`, so the render was working from a state snapshot taken before the
+commit landed.
+
+**The cost.** The map itself is correct, because the self-heal rebuilds from the same `appInfo`. The
+waste is a second full `buildGraph()` across 143 apps and 221 devices immediately after the scan
+already built one, plus two warnings that read as faults when they are a mitigation working.
+
+**Open question, deliberately not guessed.** Which re-render races the commit. The page has three
+that could: a 60 second fallback `refreshInterval` while a scan is active (line 554), the
+`/scan-status` progress poll, and a one-time `location.reload()` four seconds after the poll sees
+completion (line 964). The observed gap is under one second rather than four, which does not match
+the reload path, so this needs establishing rather than assuming before anything is changed.
+
+**Not a regression.** Pre-existing, and unrelated to the v2.3.0 webCoRE work: it fired at 07:20 and
+07:53, before any of that day's changes were deployed. The source comments date the underlying race
+to 2026-08-30, and `selfHealGraphIfNeeded()` was written for it as a recovery, not a cure.
+
+**Worth weighing before fixing.** The self-heal is doing its job and the user sees a correct map, so
+the case for touching a known-delicate scan lifecycle is efficiency and log honesty, not correctness.
+A cheaper first step may be to stop logging at WARN when the self-heal succeeds, since a working
+mitigation should not look like a failure.
+
 ## Later / v3
 
 ### 11. Move graph derivation into the browser
