@@ -74,7 +74,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `12` as of v2.2.8 (see sections 18-26). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `13` as of v2.3.0 (see sections 18-28). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
@@ -992,7 +992,7 @@ rather than being matched by label.
 relationships are exactly as section 26 describes. Parent-app permitted-device selections remain
 omitted as permissions rather than relationships.
 
-## 28. webCoRE device-read roles (delta)
+## 28. Schema 13 (v2.3.0) delta: webCoRE device-read roles
 
 A piston's direct physical-device read is no longer always reported as `deviceRead`. Where the read
 is reached through an `on` event, or through a condition on an `if`, `while`, `repeat` or else-if
@@ -1000,6 +1000,11 @@ branch, the edge takes the `trigger` or `constraint` relationship instead, the s
 Machine already uses for the same thing. Section 26's statement that a piston device read is always
 `deviceRead`, and that its trigger/condition role is never decoded, was accurate for the schema it
 was written against and is left as the historical record. This section supersedes it.
+
+`graphSchemaVersion` moves 14 -> 15 alongside this change. The role is decided during the decode pass
+and stored with the read, so a cached schema-14 graph holds no roles at all: every read in it would
+fall back to `deviceRead`. Without the bump the app would consider that cache current and never
+prompt for the rescan that fixes it.
 
 **Why this is not an inference.** webCoRE defines every comparison in one of exactly two blocks,
 conditions or triggers (`parent.getChildComparisons`), and its own subscription pass records which

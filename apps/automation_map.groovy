@@ -157,7 +157,13 @@ boolean isDevBuild() {
 // are decoded and reconciled against the parent's own device hash index
 // (deviceRead edges, plus webCoRE-sourced action edges). A schema-13 cache
 // has none of this - no piston locals, no piston device edges at all.
-@Field static final String GRAPH_SCHEMA = '14'
+// Bumped 14->15 (v2.3.0): a piston's device read now carries the role it was
+// decoded in, so it becomes a trigger or constraint edge instead of always a
+// deviceRead one. The role is computed during the decode pass and stored with
+// the read, so a schema-14 cache has no roles at all: every read in it would
+// fall back to deviceRead and the map would keep contradicting the piston's own
+// flowchart, with nothing telling the user a rescan would fix it.
+@Field static final String GRAPH_SCHEMA = '15'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -3993,8 +3999,7 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
             } else {
                 tasks.each { Object raw ->
                     if (!(raw instanceof Map)) return
-                    String command = "${(raw as Map).c ?: ''}"
-                    steps << webcoreFlowNode('action', command ?: 'task', tokens)
+                    steps << webcoreFlowNode('action', webcoreFlowTaskLabel(raw as Map), tokens)
                 }
             }
             break
@@ -4027,6 +4032,27 @@ String webcoreFlowLoopLabel(String type) {
         case 'each':   return 'for each device (loop)'
     }
     return 'loop'
+}
+
+// A task's saved command with its own parameters, transcribed the way a
+// condition is: each parameter is an operand printed exactly as stored, with no
+// meaning claimed for the command itself. The list is shown only when EVERY
+// parameter yields text, so a task holding a parameter kind with no
+// transcription (a device selection, for example) shows its bare command name
+// rather than a list with silent holes in it.
+String webcoreFlowTaskLabel(Map task) {
+    String command = "${task?.c ?: ''}"
+    if (!command) return 'task'
+    List params = (task?.p instanceof List) ? task.p as List : []
+    if (!params) return command
+    List rendered = []
+    for (Object raw : params) {
+        if (!(raw instanceof Map)) return command
+        String text = webcoreFlowOperandText(raw as Map)
+        if (!text) return command
+        rendered << text
+    }
+    return "${command}(${rendered.join(', ')})"
 }
 
 // Only webCoRE's own ":" + 32 hex + ":" device token is carried through. Any
@@ -9887,7 +9913,7 @@ String buildMapHtml() {
     // (complete/partial/none/error) instead of a fixed not-decoded value.
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 12,
+        exportSchemaVersion: 13,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -12097,7 +12123,11 @@ function mermaidFor(steps) {
     else lines.push('  ' + id + '["' + text + '"]');
     if (kind === 'trigger') styles.push('  style ' + id + ' fill:#4a2f5e,stroke:#9b59b6,color:#fff');
     else if (kind === 'required') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
-    else if (kind === 'cond') styles.push('  style ' + id + ' fill:#123a4a,stroke:#4aa3c7,color:#fff');
+    // The map's own constraint colour, not a fourth blue of this chart's own.
+    // A condition was teal on the map and blue in the chart beside it, which is
+    // the same contradiction the device-read roles fixed. A required expression
+    // shares it: the map gives both one colour, and the shape tells them apart.
+    else if (kind === 'cond') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
     else if (kind === 'end') styles.push('  style ' + id + ' fill:#2b2b2b,stroke:#777,color:#bbb');
     else styles.push('  style ' + id + ' fill:#33502a,stroke:#7fae42,color:#fff');
     return id;

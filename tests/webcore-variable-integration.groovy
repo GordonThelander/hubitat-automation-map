@@ -313,8 +313,8 @@ check('usesVar remains a distinct fail-safe visual and pivot relationship') {
     assert source.contains("n.appType === 'webCoRE Piston'")
 }
 check('schema, scan gaps and export semantics are explicit') {
-    assert source.contains("GRAPH_SCHEMA = '14'")
-    assert source.contains('exportSchemaVersion: 12')
+    assert source.contains("GRAPH_SCHEMA = '15'")
+    assert source.contains('exportSchemaVersion: 13')
     assert source.contains('webcoreVariableDecodeIssues: webcoreVariableDecodeIssues')
     assert source.contains("direction: (e.kind === 'usesVar' || e.kind === 'deviceRead') ? 'unknown' : null")
     assert source.contains("relationships: ['read', 'write', 'usesVar']")

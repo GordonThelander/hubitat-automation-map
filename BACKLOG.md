@@ -95,6 +95,28 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   still holds inside a group, so an unnamed device there falls the whole label back. Device name
   resolution had to become recursive to match, or every grouped device would have gone unnamed and
   defeated the change.
+- **The decision diamond was an off-palette blue.** Gordon spotted the last of the chart-versus-map
+  colour mismatches in his own screenshot: Patio Door drew teal on the map as a Constraint while its
+  diamond in the chart was blue. The diamond used `#4aa3c7`, which appears nowhere in the map's
+  colour table. It now uses the map's own constraint teal, so a condition is one colour in both
+  views. A required expression shares that colour, which is correct: the map gives both a single
+  colour and the shape is what tells them apart. Rule Machine charts get the same fix, since they
+  draw the same diamond.
+- **Tasks showed a bare command name.** A task drew as `setVariable` with nothing about what it set.
+  It now transcribes its saved parameters beside the command, reading as
+  `setVariable(localCounter, @@AMGateA_NumShared)`, reusing the operand transcription conditions
+  already use. The same all-or-nothing rule applies: a task holding a parameter kind with no
+  transcription, such as a device selection, shows its bare command rather than a list with silent
+  holes in it. webCoRE's own display templates (`"Wait {0}"`, `Send notification "{0}"`) would give
+  properly worded labels instead of raw command names, but that is roughly a hundred entries to
+  transcribe and is not done.
+- **Schema bumped to graph 15, export 13** (on Gordon's explicit approval). The device-read role is
+  decided during the decode pass and stored with the read, so a cached schema-14 graph holds no roles
+  at all and every read in it falls back to `deviceRead`. Without the bump the app treats that cache
+  as current and never prompts for the rescan that fixes it, which is the same reasoning recorded for
+  the 13 to 14 bump. The export contract moved too: `attribute` now rides `trigger` and `constraint`
+  edges, and `deviceRead` means something narrower, so a consumer counting piston device
+  relationships must read all three kinds.
 
 **Still open, waiting on Gordon:**
 
