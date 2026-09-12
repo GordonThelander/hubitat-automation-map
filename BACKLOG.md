@@ -414,15 +414,25 @@ end state. That answer is currently unknown and is worth having either way.
   unrecognised field even though the construct itself was registered; `saved-position-map.md`'s
   allowlist section is updated to match. As of 2026-09-12 all eleven proven kinds are promoted to L3 in
   the construct registry itself, through the same committed-metadata promotion gate the statement
-  manifest already used. Only the empty (nothing-selected) operand kind has no fixture evidence yet and
-  stays L2 - but source inspection (`executor.clean-code`'s `ty==sNL` branch) shows it is a real,
-  distinct saved shape, not merely absence of a shape, and is worth a direct, hands-on capture attempt
-  before concluding it is unreachable.
-- **Still to come.** The empty/nothing-selected operand kind, the runtime walker actually using the
-  raised operand levels for anything (currently only the registry level itself changed; no L4
-  operand-meaning claim exists yet to make use of it), the rest of L4 (remaining action semantics,
-  operand meaning once L3-proven), then the flow rendering that eventually lets a piston draw its own
-  flow with anything not yet understood shown as an explicit opaque block.
+  manifest already used. The twelfth kind stays L2, and as of 2026-09-12 that is a settled finding
+  rather than an open gap: a direct capture (`zz-L3-18`, a `Make a web request` task with its three
+  optional parameters left untouched, paused throughout) showed the editor holds an empty-string `t` in
+  memory and renders it as "(no value set)", but the empty string never reaches storage - both the first
+  save and the round trip stored those parameters with no `t` key at all. That is a different registered
+  construct (`wc.task-parameter.unselected`), not `wc.operand.empty`. The empty operand is therefore
+  source-proven, since the executor carries a real dispatch case for it, but not editor-producible.
+- **Found during that work, not yet actioned.** Two items. First, nothing actually verifies
+  `operand-l3.groovy`'s `sourceAssertions`: repo-wide, only `tests/webcore-l3-manifest.groovy` reads
+  them and it loads the *statement* manifest, so every operand citation is currently unchecked despite a
+  comment in that file claiming otherwise. Second, `wc.task-parameter.unselected` now has a clean,
+  inert, round-tripped capture, but promoting it needs generator work rather than a data addition:
+  structural forms are emitted with a hardcoded `level: 'L2'` and consult no evidence manifest, and the
+  operand gate's own id pattern does not match `wc.task-parameter.*`.
+- **Still to come.** The runtime walker actually using the raised operand levels for anything (currently
+  only the registry level itself changed; no L4 operand-meaning claim exists yet to make use of it), the
+  rest of L4 (remaining action semantics, operand meaning once L3-proven), then the flow rendering that
+  eventually lets a piston draw its own flow with anything not yet understood shown as an explicit
+  opaque block.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,
