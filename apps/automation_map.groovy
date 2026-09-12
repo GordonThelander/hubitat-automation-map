@@ -3855,12 +3855,14 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
             webcoreFlowStatements(body, steps, depth + 1)
             break
         case 'if':
-            steps << webcoreFlowControl('if', webcoreFlowConditionLabel(st))
+            steps << webcoreFlowControl('if', webcoreFlowConditionLabel(st),
+                    webcoreFlowConditionParts(st), "${st.o ?: 'and'}")
             webcoreFlowStatements(body, steps, depth + 1)
             ((st.ei instanceof List) ? st.ei as List : []).each { Object raw ->
                 if (!(raw instanceof Map)) return
                 Map branch = raw as Map
-                steps << webcoreFlowControl('elseif', webcoreFlowConditionLabel(branch))
+                steps << webcoreFlowControl('elseif', webcoreFlowConditionLabel(branch),
+                        webcoreFlowConditionParts(branch), "${branch.o ?: 'and'}")
                 webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
             }
             List elseBody = (st.e instanceof List) ? st.e as List : []
@@ -3976,12 +3978,78 @@ String webcoreFlowEventLabel(Map event) {
     return 'When an event fires'
 }
 
-// Comparison semantics carry no L4 claim, so the count is stated and the meaning
-// is not. Saying "not decoded" is the point: it marks the next slice's work.
+// Fallback only, used when a condition cannot be transcribed in full.
 String webcoreFlowConditionLabel(Map st) {
     Object raw = st?.c
     int count = (raw instanceof List) ? ((raw as List).count { it instanceof Map } as int) : 0
     return count > 1 ? "${count} conditions not decoded" : 'condition not decoded'
+}
+
+// Structured condition pieces, composed into a sentence later. A device NAME is
+// not available here - tokens only resolve once the owning parent index exists -
+// so the pieces travel with the step and the text is built during graph
+// assembly. A group entry is marked opaque: nesting is not flattened, and one
+// opaque part collapses the whole label rather than printing half a condition.
+List webcoreFlowConditionParts(Map st) {
+    Object raw = st?.c
+    if (!(raw instanceof List)) return []
+    List parts = []
+    (raw as List).each { Object entry ->
+        if (!(entry instanceof Map)) return
+        Map condition = entry as Map
+        if ("${condition.t ?: ''}" != 'condition') { parts << [opaque: true]; return }
+        Map lo = (condition.lo instanceof Map) ? condition.lo as Map : [:]
+        Map ro = (condition.ro instanceof Map) ? condition.ro as Map : [:]
+        parts << [opaque: false,
+                  deviceTokens: webcoreFlowDeviceTokens(lo),
+                  subject: webcoreFlowOperandText(lo),
+                  attribute: "${lo.a ?: ''}",
+                  op: "${condition.co ?: ''}".replace('_', ' '),
+                  value: webcoreFlowOperandText(ro)]
+    }
+    return parts
+}
+
+// Transcribes an operand's own saved spelling. No comparison meaning is claimed:
+// a variable, virtual name, argument or constant is printed exactly as stored,
+// and any other kind yields nothing rather than a guess.
+String webcoreFlowOperandText(Map operand) {
+    switch ("${operand?.t ?: ''}") {
+        case 'v': return "${operand.v ?: ''}"
+        case 'x': return "${operand.x ?: ''}"
+        case 'u': return "${operand.u ?: ''}"
+        case 'c': return operand.c == null ? '' : "${operand.c}"
+    }
+    return ''
+}
+
+// Pure so it can be tested: takes the parts and a token-to-name map resolved by
+// the caller. Returns '' when any part cannot be named in full, which leaves the
+// undecoded fallback in place instead of a half-written sentence.
+String webcoreFlowConditionText(List parts, String joiner, Map tokenNames) {
+    if (!parts) return ''
+    List rendered = []
+    for (Object raw : parts) {
+        if (!(raw instanceof Map)) return ''
+        Map part = raw as Map
+        if (part.opaque) return ''
+        String subject = "${part.subject ?: ''}"
+        List tokens = (part.deviceTokens ?: []) as List
+        if (tokens) {
+            List names = []
+            tokens.each { Object token -> if (tokenNames["${token}"]) names << "${tokenNames["${token}"]}" }
+            if (names.size() != tokens.size()) return ''
+            subject = names.join(', ')
+            String attribute = "${part.attribute ?: ''}"
+            if (attribute) subject = "${subject}'s ${attribute}"
+        }
+        if (!subject) return ''
+        String line = subject
+        if ("${part.op ?: ''}") line = "${line} ${part.op}"
+        if ("${part.value ?: ''}") line = "${line} ${part.value}"
+        rendered << line
+    }
+    return rendered.join(" ${joiner} ")
 }
 
 Map webcoreFlowNode(String kind, String label, List deviceTokens) {
@@ -3989,9 +4057,10 @@ Map webcoreFlowNode(String kind, String label, List deviceTokens) {
             deviceTokens: deviceTokens, ruleTargets: [], selfTarget: false]
 }
 
-Map webcoreFlowControl(String ctrl, String cond) {
+Map webcoreFlowControl(String ctrl, String cond, List parts = [], String joiner = 'and') {
     return [kind: 'action', ctrl: ctrl, cond: cond, label: cond ?: ctrl, devices: [],
-            deviceTokens: [], ruleTargets: [], selfTarget: false]
+            deviceTokens: [], conditionParts: parts, conditionJoiner: joiner,
+            ruleTargets: [], selfTarget: false]
 }
 // --- webcore flow builder: end ---
 
@@ -7829,14 +7898,33 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
         if (!(step instanceof Map)) return
         Map s = step as Map
         List tokens = (s.deviceTokens ?: []) as List
-        if (!tokens) return
-        List devices = (s.devices ?: []) as List
-        tokens.each { Object raw ->
-            Map resolved = resolveWebcoreDeviceToken("${raw}", parentAppId, hashIndexes, labels)
-            String name = resolved.deviceId ? "${labels[resolved.deviceId as String]}" : 'unresolved device'
-            if (!devices.contains(name)) devices << name
+        if (tokens) {
+            List devices = (s.devices ?: []) as List
+            tokens.each { Object raw ->
+                Map resolved = resolveWebcoreDeviceToken("${raw}", parentAppId, hashIndexes, labels)
+                String name = resolved.deviceId ? "${labels[resolved.deviceId as String]}" : 'unresolved device'
+                if (!devices.contains(name)) devices << name
+            }
+            s.devices = devices
         }
-        s.devices = devices
+        // A condition names its device inside the sentence, and mermaidFor does
+        // not append a device list to a diamond the way it does to a box, so the
+        // text is composed here where names finally exist.
+        List parts = (s.conditionParts ?: []) as List
+        if (parts) {
+            Map tokenNames = [:]
+            parts.each { Object raw ->
+                if (!(raw instanceof Map)) return
+                (((raw as Map).deviceTokens ?: []) as List).each { Object token ->
+                    String key = "${token}"
+                    if (tokenNames.containsKey(key)) return
+                    Map resolved = resolveWebcoreDeviceToken(key, parentAppId, hashIndexes, labels)
+                    if (resolved.deviceId) tokenNames[key] = "${labels[resolved.deviceId as String]}"
+                }
+            }
+            String text = webcoreFlowConditionText(parts, "${s.conditionJoiner ?: 'and'}", tokenNames)
+            if (text) s.cond = text
+        }
     }
     return flow ?: []
 }
