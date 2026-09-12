@@ -230,17 +230,16 @@ discriminates the same way on `p`, `v`, `x` again, but at a distinct saved paren
 three are tracked as three further registered kinds rather than folded into the general nine. Twelve
 operand kinds in total.
 
-Structural (L3) evidence exists for seven of the twelve so far: constant (`t: 'c'`), virtual (`t: 'v'`),
-variable (`t: 'x'`), expression (`t: 'e'`), physical-device (`t: 'p'`), preset (`t: 's'`) and the virtual
-form of the event-match operand (the operand inside an `on` statement's own trigger list). The other
-five, a bare device-list operand (`t: 'd'`), argument (`t: 'u'`), the physical and variable event-match
-forms, and the empty form, have zero occurrences anywhere in the captured fixture corpus and remain
-unverified; every saved device list on an `action` statement observed so far is either empty or the
-single static target added for the action-targeting increment (section 4, `action`). As of 2026-09-12
-all seven proven kinds are raised to L3 in the construct registry itself, through the same
-committed-metadata promotion gate the statement grammar uses; the other five stay L2. No operand-meaning
-(L4) claim exists yet, so the raised level is not yet consumed by anything beyond the registry and the
-decode-coverage card's own recognition count.
+Structural (L3) evidence exists for eleven of the twelve as of 2026-09-12: constant (`t: 'c'`), virtual
+(`t: 'v'`), variable (`t: 'x'`), expression (`t: 'e'`), physical-device (`t: 'p'`), preset (`t: 's'`), a
+bare device-list operand (`t: 'd'`), argument (`t: 'u'`), and all three event-match forms (the operand
+inside an `on` statement's own trigger list: virtual, physical and variable). Only the empty
+(nothing-selected) form remains unverified from the hosted editor - see the note below, which is a real,
+distinct saved shape by source inspection, just not yet reproduced by hand. All eleven proven kinds are
+raised to L3 in the construct registry itself, through the same committed-metadata promotion gate the
+statement grammar uses; `wc.operand.empty` stays L2. No operand-meaning (L4) claim exists yet, so the
+raised level is not yet consumed by anything beyond the registry and the decode-coverage card's own
+recognition count.
 
 | Kind | Discriminator | Always-persisted keys | Notes |
 | --- | --- | --- | --- |
@@ -250,19 +249,33 @@ decode-coverage card's own recognition count.
 | expression | `t: 'e'` | `vt`, `exp` | shares `exp` with constant; its own `e` key is saved but not read by `evaluateOperand` in the reviewed region, purpose unproven |
 | physical-device | `t: 'p'` | `vt`, `a`, `d` | `a` (the attribute name) is exclusive to physical-device; `d` (the device list) is not exclusive to it, since `cleanCode` only strips `d` for the kinds in `ListC2`, which excludes both `p` and `d` |
 | preset | `t: 's'` | `vt`, `s` | `s` (the preset name: sunset, sunrise, midnight or noon) is exclusive to preset, and meaningful only when `vt` is `time` or `datetime`; otherwise passed through unvalidated |
+| device-list | `t: 'd'` | `vt`, `d` | a raw device selection with no attribute read attached; observed as a Device-typed piston-local variable's initial value (`v[].v`), not inside a condition or action target; `evaluateOperand` hard-codes the result type to `device` and does not read `vt` or apply a grouping function to a multi-device selection |
+| argument | `t: 'u'` | `vt`, `u` | `u` is the argument name, looked up by `getArgument` against the piston's `$args` system variable; exclusive to argument |
 | event-match virtual | `t: 'v'`, inside an `on` statement's own trigger list | `vt`, `v` | saved identically to the ordinary virtual operand above, but tracked as its own registry identity because it is read by a separate, simpler consumer: only `v` is compared, by exact string equality, against the name of the triggering event |
+| event-match physical | `t: 'p'`, inside an `on` statement's own trigger list | `vt`, `a`, `d` | same keys as the ordinary physical-device operand; the event dispatcher reads `a` and `d` only, requiring the triggering device to be in the expanded device list and its attribute to equal the event name - the operand's own `p` (read-preference) key is not referenced at this site |
+| event-match variable | `t: 'x'`, inside an `on` statement's own trigger list | `vt`, `x` | same keys as the ordinary variable operand; the event dispatcher reads only `x`, matched against the triggering event's value and an instanceId-qualified event name - how this reconciles with the `@@`-superglobal event naming `evaluateOperand` uses is not traced here |
 
 Each kind also carries `f` (format) and `g` (grouping function) when non-default, and `vt` itself is a
 value-type discriminator whose closed vocabulary is not yet reconciled against the executor. A saved
 physical-device operand can also carry a user-optional `p` (a physical/digital/any read preference for
 attributes that offer the choice); no captured occurrence has exercised it yet, so its saved shape is
-unproven. All seven follow the same exclusivity rule already established for statement keys: a key
+unproven. All eleven follow the same exclusivity rule already established for statement keys: a key
 belongs to exactly one `t`, stripped unconditionally from every other kind by `cleanCode`, except `exp`,
 which two kinds share (`ListEC = [e, c]`). As with statement keys, this exclusivity is proven for
 `cleanCode`'s unconditional strip on load (`recreatePiston`), not for the editor's own save; a `d` list
 has been observed left over on both a `v`-type and a `c`-type operand in an `edit-save` capture, absent
 again after the next round-trip. Treat a stray key on an editor-save-only capture as expected cruft, not
 as a broken exclusivity claim.
+
+**The empty (nothing-selected) operand, a new lead not yet captured.** `cleanCode` (executor.clean-code,
+around the `ty==sNL` guard) carries a distinct cleanup branch for an operand with no discriminator at
+all: when the operand's `g` is `avg`/`any`, its `f` is `l` and its `vt` is non-null, the branch strips
+`x`, `xi`, `e`, `c`, `v`, `s`, `u` and `exp`, and additionally zeroes out a device list rather than
+removing it outright. The accompanying source comment reads "task parameters (`sP`) with 'Nothing
+selected'", suggesting this is what an unselected slot inside a task's own parameter list saves as, not
+an unselected condition or trigger operand. Not yet reproduced from the hosted editor; worth a direct,
+hands-on attempt (a task parameter left as "Nothing selected") before concluding it needs a different
+approach.
 
 The event-match virtual operand also illustrates a gap the reconciliation gate test used to have: a
 discriminator value alone (`t`) is not always a unique key, since an event-match operand shares its `t`
@@ -447,7 +460,8 @@ Measured on a Hubitat C-8 development hub, 2026-09.
   source-cited structural (L3) evidence and at least one proven semantic (L4) claim, each gated on a
   hand-authored trace, a hashed pinned-source region and a canonical (round-trip) fixture with proven
   save/reload lineage.
-- **Operand structural evidence:** seven of twelve kinds (see "Operand grammar" above), now raised to
-  L3 in the construct registry. **In progress:** the remaining five operand kinds, and operand semantic
-  (L4) meaning once an operand kind is L3-proven. Not yet started: the runtime coverage walker doing
-  anything with the raised operand levels beyond reporting them.
+- **Operand structural evidence:** eleven of twelve kinds (see "Operand grammar" above), now raised to
+  L3 in the construct registry. **In progress:** the remaining empty (nothing-selected) operand kind
+  (a lead identified but not yet reproduced from the hosted editor), and operand semantic (L4) meaning
+  once an operand kind is L3-proven. Not yet started: the runtime coverage walker doing anything with
+  the raised operand levels beyond reporting them.
