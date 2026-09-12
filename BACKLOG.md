@@ -130,6 +130,26 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   one-line webCoRE decode summary, and a compact lock-versus-state snapshot at all four recovery
   points. Decoded flows are deliberately not counted in the summary: `finishScan` moves them out of
   `appInfo` into `graph.flows`, so counting them at the log site would depend on that ordering.
+- **The device-role classifier was overclaiming, and is now tri-state.** Caught in independent review
+  before the push. The first version asked "is this a trigger?" and treated every "no" as a
+  constraint, so an unrecognised comparison, or a condition carrying none at all, was positively
+  labelled `constraint` despite the comment beside it promising the opposite. The stored `ct` also
+  simply won, which cannot be right in either direction: `subscribeAll` can legitimately downgrade a
+  trigger comparison to a condition before writing `ct`, so a genuine `co: changes` with `ct: c`
+  exists, while the structure doc already records that a saved `ct` can be stale after an edit.
+  Neither source can arbitrate the other. `webcoreFlowRole()` now returns `trigger`, `constraint` or
+  null, deciding by closed-set membership against BOTH comparison blocks, transcribed from the same
+  pinned source (the trigger block was already there; the 35-entry condition block was not, and had
+  to be added for membership to be decidable in both directions). Agreement or an absent `ct` yields
+  a role; a conflict, an unrecognised operator or an unrecognised `ct` yields null and the read stays
+  an unattributed `deviceRead`. The same uncertainty now governs the flow split, so nothing is lifted
+  out of a decision on a saved `ct` alone. This deliberately gives up classifying context-downgraded
+  triggers rather than ever publishing a role that might be false.
+- **A mandatory gate was skipped, not failed.** `validate.ps1` was never run for any of this work;
+  only `groovyc`, `check_template.sh` and the suites were. It failed at HEAD because a comment
+  reintroduced the banned literal `AM-TRACE` while describing the facility that was removed. The
+  marker list at `validate.ps1:162` is deliberately exact, so the comment was reworded rather than
+  the gate bypassed. Both `validate.ps1 -BuildProfile Dev` and `-SelfTest` now pass.
 
 **Still open, waiting on Gordon:**
 

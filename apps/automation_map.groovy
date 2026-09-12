@@ -344,7 +344,7 @@ boolean diagOn() {
 // copy of it. These only ever run behind a diagOn() check.
 
 // Compact scan-lifecycle snapshot for the recovery paths, restoring the part of
-// the removed AM-TRACE facility that mattered: when a recovery fires, the live
+// the removed scan-trace facility that mattered: when a recovery fires, the live
 // static lock and the durable state THIS execution can see disagree, and
 // neither value alone says which. Only the token tails are logged, never a
 // whole token, and it is only ever built behind a diagOn() check.
@@ -3626,7 +3626,10 @@ String webcoreDeviceReadRole(Object entry, String inherited) {
     Map node = entry as Map
     String type = String.valueOf(node.t ?: '')
     if (type == 'event') return 'trigger'
-    if (type == 'condition' || type == 'group') return webcoreFlowIsTrigger(node) ? 'trigger' : 'constraint'
+    // null where the role cannot be told, which leaves the read unattributed and
+    // keeps it a deviceRead edge. Deliberately not falling back to the inherited
+    // role: an unreadable condition must not borrow a claim from its surroundings.
+    if (type == 'condition' || type == 'group') return webcoreFlowRole(node)
     return inherited
 }
 
@@ -3690,14 +3693,55 @@ List webcoreFlowTriggerComparisons() {
             'stays_odd', 'stays_outside_of_range', 'stays_unchanged']
 }
 
-// ct when the piston has subscribed, the comparison block otherwise. Both answer
-// the same question, so the stored value wins where it exists.
-boolean webcoreFlowIsTrigger(Map condition) {
+// The conditions half of the same block, transcribed from the same pinned
+// source. is_true, is_false, was_true and was_false are commented out there and
+// so are deliberately absent: this is the live set, not the file's full text.
+// Needed because membership has to be decidable in BOTH directions - without it
+// an unrecognised comparison is indistinguishable from a known condition.
+List webcoreFlowConditionComparisons() {
+    return ['changed', 'did_not_change', 'is', 'is_not', 'is_any_of', 'is_not_any_of', 'is_equal_to',
+            'is_different_than', 'is_less_than', 'is_less_than_or_equal_to', 'is_greater_than',
+            'is_greater_than_or_equal_to', 'is_inside_of_range', 'is_outside_of_range', 'is_even',
+            'is_odd', 'was', 'was_not', 'was_any_of', 'was_not_any_of', 'was_equal_to',
+            'was_different_than', 'was_less_than', 'was_less_than_or_equal_to', 'was_greater_than',
+            'was_greater_than_or_equal_to', 'was_inside_of_range', 'was_outside_of_range', 'was_even',
+            'was_odd', 'is_any', 'is_before', 'is_after', 'is_between', 'is_not_between']
+}
+
+// trigger, constraint, or null when this decoder cannot tell. Tri-state on
+// purpose: a bare precedence rule cannot be correct here.
+//
+// subscribeAll starts from the current comparison and can DOWNGRADE a trigger
+// comparison to a condition for execution-context or subscription reasons before
+// writing ct, so a genuine co=changes with ct=c exists. In the other direction a
+// saved ct can be stale after an edit (see the structure doc). So neither ct nor
+// the operator name can simply win: they are two sources that usually agree, and
+// disagreement means this decoder does not know which applies.
+//
+// Agreement or an absent ct yields a role. Conflict, an unrecognised operator, or
+// an unrecognised ct yields null, and the caller keeps its unattributed form. That
+// gives up some classification for context-downgraded triggers rather than ever
+// publishing a role that might be false, which is also what the L4 evidence
+// contract pins as a named misreading.
+String webcoreFlowRole(Map condition) {
     // String.valueOf, not a GString: Groovy's == coerces the two but List.contains
     // is a plain Java call where a GString never equals a String.
+    String co = String.valueOf(condition?.co ?: '')
+    boolean triggerOp = webcoreFlowTriggerComparisons().contains(co)
+    boolean conditionOp = webcoreFlowConditionComparisons().contains(co)
+    if (!triggerOp && !conditionOp) return null
+    String byMembership = triggerOp ? 'trigger' : 'constraint'
     String ct = String.valueOf(condition?.ct ?: '')
-    if (ct) return ct == 't'
-    return webcoreFlowTriggerComparisons().contains(String.valueOf(condition?.co ?: ''))
+    if (!ct) return byMembership
+    String byStored = ct == 't' ? 'trigger' : (ct == 'c' ? 'constraint' : null)
+    if (byStored == null) return null
+    return byStored == byMembership ? byMembership : null
+}
+
+// Only a positively identified trigger splits out of a decision. An uncertain
+// leaf stays where it is rather than being moved on a saved ct alone.
+boolean webcoreFlowIsTrigger(Map condition) {
+    return webcoreFlowRole(condition) == 'trigger'
 }
 // --- webcore trigger classifier: end ---
 
