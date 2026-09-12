@@ -359,6 +359,23 @@ String lockVsState() {
            " appResultsReady=${state.appResultsReady == true}"
 }
 
+// True when THIS execution's state snapshot was taken before the graph was
+// last committed. atomicState commits on every write and so cannot go stale
+// (the same property shouldAutoScan() already relies on), while state.* comes
+// from the snapshot this execution started with - so the two disagreeing is
+// proof of staleness rather than an inference from timing.
+//
+// Both values are written together at every graph commit, so they are equal for
+// a fresh snapshot and the atomicState one is ahead for a stale snapshot.
+// Deliberately NOT reusing state.scanHeartbeat: that feeds clearAbandonedScan's
+// 90-second freshness check, and overloading it here would change recovery
+// behaviour as a side effect.
+boolean snapshotPredatesGraphCommit() {
+    Long committed = (atomicState.graphCommittedAt ?: 0) as Long
+    Long seen = (state.graphCommittedAtLocal ?: 0) as Long
+    return committed > 0 && committed > seen
+}
+
 // Seconds since a phase timestamp. Returns -1 when the phase never stamped one
 // (an app update mid-scan, or a path that skipped the phase), so a missing
 // measurement reads as missing rather than as a suspiciously fast phase.
@@ -884,11 +901,30 @@ void selfHealGraphIfNeeded() {
     // Backlog item 30: this fires after most scans, and the log gave no way to
     // tell WHICH re-render raced the commit. The snapshot below is the evidence
     // that question needs.
+    // Backlog item 30, answered from the hub log on 2026-09-12: the usual cause
+    // is a page render whose snapshot was taken before finishScan committed and
+    // which ends after it, so its own write-back nulls the graph and this
+    // rebuild puts it straight back. Hubitat writes the whole snapshot at end of
+    // run, so that cannot be prevented from inside the render, and rebuilding IS
+    // the right response. What was wrong was the level: a mitigation working as
+    // designed was logging at WARN and reading as a fault. Proven staleness now
+    // logs at info; anything else keeps the warning, because a graph that went
+    // missing for some OTHER reason is still worth shouting about.
+    boolean staleSnapshot = snapshotPredatesGraphCommit()
     if (diagOn()) log.info "${app.label}: self-heal rebuilding the graph - ${lockVsState()}"
-    log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
+    if (staleSnapshot) {
+        if (diagOn()) {
+            log.info "${app.label}: rebuilding after a stale snapshot raced the graph commit - expected, not a fault"
+        }
+    } else {
+        log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
+    }
     state.hubVariableInventory = fetchHubVariableInventory()
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
+    Long healedAt = now()
+    state.graphCommittedAtLocal = healedAt
+    atomicState.graphCommittedAt = healedAt
 }
 
 // True when the app is ready to work but has never produced a map. Opening it in
@@ -2897,6 +2933,12 @@ void finishScan(data = null) {
         state.scanHeartbeat = now()
         state.graph = graph
         atomicState.graphVersion = GRAPH_SCHEMA
+        // Paired marker, same value to both halves: a later execution comparing
+        // them can prove whether its own snapshot predates this commit. See
+        // snapshotPredatesGraphCommit().
+        Long graphCommittedAt = now()
+        state.graphCommittedAtLocal = graphCommittedAt
+        atomicState.graphCommittedAt = graphCommittedAt
 
         // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
         // 61KB of a 244KB state on this hub, a quarter of everything stored, held
@@ -9128,6 +9170,11 @@ Map buildGraph() {
 void rebuildStoredGraph() {
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
+    // Kept in step with the other two commit sites, or every later render would
+    // read as stale against a marker this one never advanced.
+    Long rebuiltAt = now()
+    state.graphCommittedAtLocal = rebuiltAt
+    atomicState.graphCommittedAt = rebuiltAt
 }
 
 // ===================================================================================================================
