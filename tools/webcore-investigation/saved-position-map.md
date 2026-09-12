@@ -167,13 +167,15 @@ The walker's allowlist is exactly the keys named above:
 
 ```
 $ a c ced cm co cs ct ctp cto d di e ei exp f fs g i id k l lo lo2 lo3 m n o ok p r rn ro ro2 rop
-s sm str t tcp tep to to2 ts tsp v vt w wd wt x xi z
+s sm str t tcp tep to to2 ts tsp u v vt w wd wt x xi z
 ```
 
 `ctp`, `lo2`, `lo3`, `m`, `rn`, `wd` and `wt` were added after tracing them to the executor, as set out
-in section 1. `cm` was added after tracing it through the editor serializer. `zc` (comments) and `data` are source-known but never interpreted. They are reported with
+in section 1. `cm` was added after tracing it through the editor serializer. `u` was added after
+tracing it to the argument operand's saved position and its one runtime consumer, getArgument
+(executor.evaluate-operand: `mv=getArgument(r9,sMs(operand,sU))`). `zc` (comments) and `data` are source-known but never interpreted. They are reported with
 the fixed reason `known-opaque-field`, so they count as unidentified without being mistaken for
-unknown structure. `u`, `pr` and `os` are not added until a saved position and a runtime consumer are
+unknown structure. `pr` and `os` are not added until a saved position and a runtime consumer are
 traced. Editor diagnostics (`err`, `errVar`, `loc`) stay unknown fields.
 
 Nine of these were added after the first Dev-hub run, which produced 91 `unknown-key` records across

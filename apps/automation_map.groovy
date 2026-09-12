@@ -3816,7 +3816,7 @@ List<String> webcoreCensusSchemaKeys() {
     return ['$', 'a', 'c', 'ced', 'cm', 'co', 'cs', 'ct', 'ctp', 'cto', 'd', 'di', 'e', 'ei', 'exp',
             'f', 'fs', 'g', 'i', 'id', 'k', 'l', 'lo', 'lo2', 'lo3', 'm', 'n', 'o', 'ok', 'p',
             'r', 'rn', 'ro', 'ro2', 'rop', 's', 'sm', 'str', 't', 'tcp', 'tep', 'to', 'to2',
-            'ts', 'tsp', 'v', 'vt', 'w', 'wd', 'wt', 'x', 'xi', 'z']
+            'ts', 'tsp', 'u', 'v', 'vt', 'w', 'wd', 'wt', 'x', 'xi', 'z']
 }
 
 // Source-known editor and data fields that are never interpreted. Reported with
@@ -4654,15 +4654,15 @@ Map webcoreCensusRegistry() {
         'wc.function.variance': [level: 'L2'],
         'wc.function.weekdayname': [level: 'L2'],
         'wc.operand.c': [level: 'L3'],
-        'wc.operand.d': [level: 'L2'],
+        'wc.operand.d': [level: 'L3'],
         'wc.operand.e': [level: 'L3'],
         'wc.operand.empty': [level: 'L2'],
-        'wc.operand.event-match.p': [level: 'L2'],
+        'wc.operand.event-match.p': [level: 'L3'],
         'wc.operand.event-match.v': [level: 'L3'],
-        'wc.operand.event-match.x': [level: 'L2'],
+        'wc.operand.event-match.x': [level: 'L3'],
         'wc.operand.p': [level: 'L3'],
         'wc.operand.s': [level: 'L3'],
-        'wc.operand.u': [level: 'L2'],
+        'wc.operand.u': [level: 'L3'],
         'wc.operand.v': [level: 'L3'],
         'wc.operand.x': [level: 'L3'],
         'wc.policy.tcp': [level: 'L2'],

@@ -134,10 +134,8 @@ check(canonicalExclusivityProblems.isEmpty(),
 check(!exclusivityProblems.isEmpty() && exclusivityProblems.every { it.contains('edit-save') || it.contains('first-save') },
     "the raw exclusivity scan over every capture finds only the known editor-authored-only exceptions ${exclusivityProblems.findAll { !(it.contains('edit-save') || it.contains('first-save')) }.take(3)}")
 check(occurrenceCounts['c'] > 150 && occurrenceCounts['v'] > 15 && occurrenceCounts['x'] > 15 && occurrenceCounts['e'] > 0 &&
-      occurrenceCounts['p'] > 0 && occurrenceCounts['s'] > 0,
+      occurrenceCounts['p'] > 0 && occurrenceCounts['s'] > 0 && occurrenceCounts['u'] > 0 && occurrenceCounts['d'] > 0,
     "each covered kind occurs many times across the corpus ${occurrenceCounts}")
-check(occurrenceCounts['d'] == 0,
-    "d occurs zero times, confirming the open question that it needs a new capture ${occurrenceCounts}")
 
 // ---- mutation: a wrong exclusivity claim is caught -----------------------------------
 

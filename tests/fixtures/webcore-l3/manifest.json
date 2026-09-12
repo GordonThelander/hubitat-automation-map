@@ -10,7 +10,7 @@
         "editor": "https://dashboard.webcore.co",
         "hostedIdeVersion": "v0.3.114.20220203",
         "hubitatImplementation": "v0.3.114.20240115_HE",
-        "captureDate": "2026-09-11",
+        "captureDate": "2026-09-11 to 2026-09-12",
         "timeZone": "Australia/Perth",
         "workflow": "paused pistons built in the supported editor; empty first save, immediate pause, then construction; never executed"
     },
@@ -774,6 +774,156 @@
                 "wc.operand.c": 3,
                 "wc.operand.s": 1,
                 "wc.operand.v": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-13-argument.first-save.json",
+            "piston": "zz-L3-13 argument",
+            "capture": "first-save",
+            "pistonBuild": 1,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "4e93d9f875a9d6594b93390b7c7546d4736a6419720aefe9f4692bd613637eb5",
+            "statements": {
+                "wc.statement.if": 1
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.u": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-13-argument.round-trip.json",
+            "piston": "zz-L3-13 argument",
+            "capture": "round-trip",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "67e7f187256558e37972c44f5ca42f3a95b7c5f29795ed960a7ed689d568fec7",
+            "statements": {
+                "wc.statement.if": 1
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.u": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-14-device-var.first-save.json",
+            "piston": "zz-L3-14 device-var",
+            "capture": "first-save",
+            "pistonBuild": 1,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "198771751b8dd5264165d04c53cf371083e7807381635ecaef9c4d8875a98aeb",
+            "statements": {
+                "wc.statement.action": 1
+            },
+            "operands": {
+                "wc.operand.d": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 1
+        },
+        {
+            "file": "l3-14-device-var.round-trip.json",
+            "piston": "zz-L3-14 device-var",
+            "capture": "round-trip",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "9985a7c655811472d0b0958c06378998d5abcf98b8e427703a15f9efe99a0ca5",
+            "statements": {
+                "wc.statement.action": 1
+            },
+            "operands": {
+                "wc.operand.d": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-15-device-trigger.first-save.json",
+            "piston": "zz-L3-15 device-trigger",
+            "capture": "first-save",
+            "pistonBuild": 1,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "378efea438134192341110f01f4cb17748713ebfe420540ec94beecacca1db63",
+            "statements": {
+                "wc.statement.action": 1,
+                "wc.statement.on": 1
+            },
+            "operands": {
+                "wc.operand.event-match.p": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-15-device-trigger.round-trip.json",
+            "piston": "zz-L3-15 device-trigger",
+            "capture": "round-trip",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "82356d63f892d193278a289b3a43e5e83b1281d7d94957094cbdf06f96194f53",
+            "statements": {
+                "wc.statement.action": 1,
+                "wc.statement.on": 1
+            },
+            "operands": {
+                "wc.operand.event-match.p": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-16-variable-trigger.first-save.json",
+            "piston": "zz-L3-16 variable-trigger",
+            "capture": "first-save",
+            "pistonBuild": 1,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "4876606d938e7b9d6a7ffb1b901eefdab9760e79859b7913d9bd6399f3a0fc1e",
+            "statements": {
+                "wc.statement.action": 1,
+                "wc.statement.on": 1
+            },
+            "operands": {
+                "wc.operand.event-match.x": 1
+            },
+            "structurallyInvalid": 0,
+            "structureFindings": 0,
+            "unrecognised": 0
+        },
+        {
+            "file": "l3-16-variable-trigger.round-trip.json",
+            "piston": "zz-L3-16 variable-trigger",
+            "capture": "round-trip",
+            "pistonBuild": 2,
+            "activeAtCapture": false,
+            "inertAtCapture": true,
+            "sha256": "19bb1151fa4537598f342a36ffbd5cd357c4cd17f1e57e5f66961dcf1b4a8dd5",
+            "statements": {
+                "wc.statement.action": 1,
+                "wc.statement.on": 1
+            },
+            "operands": {
+                "wc.operand.event-match.x": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,

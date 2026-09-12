@@ -398,29 +398,31 @@ end state. That answer is currently unknown and is worth having either way.
   break-on-failure behaviour is a new, separate, explicit gap
   (`statement.action.fast-forward-unresolved`); an action with one task or fewer still carries
   `statement.action.task-order-unresolved`, since no capture exercises order for it.
-- **Operand structural (L3) evidence, seven of twelve, wired into the registry.** Constant, virtual
+- **Operand structural (L3) evidence, eleven of twelve, wired into the registry.** Constant, virtual
   (mode/HSM/etc. reads), variable (Hub/global/local references), expression, physical-device (a device
-  attribute read), preset (a named time-of-day value), and the virtual form of the event-match operand
-  (the operand inside an `on` statement's own trigger list, saved like an ordinary virtual operand but
-  read by a separate, simpler consumer) all have a reviewed, source-cited shape and a gate proving it
-  against every occurrence in the fixture corpus. The event-match slice needed no new capture: two
-  occurrences were already present in the committed `zz-L3-07 events` fixture. As of 2026-09-12 all
-  seven are promoted to L3 in the construct registry itself, through the same committed-metadata
-  promotion gate the statement manifest already used, reused via a small shim rather than duplicated.
-  Fixed a real bug the new slice exposed along the way: the operand gate test keyed its per-occurrence
-  shape lookup by bare discriminator letter alone, which silently collided once two entries shared the
-  same letter (`t: 'v'`) at different saved positions; it now folds the saved parent context into the
-  lookup key. The registry generator needs a local checkout of the pinned webCoRE source to run
-  (`tools/webcore-investigation/generate-construct-registry.groovy <source-root> --emit`); one was
-  cloned read-only to `Hubitat Apps/_webcore-source` for this. The remaining five kinds (a bare
-  device-list operand, an argument operand, the physical and variable event-match forms, and the
-  empty/nothing-selected form) have no fixture evidence yet and stay L2; none of the current captures
-  exercises them.
-- **Still to come.** The remaining five operand kinds, the runtime walker actually using the raised
-  operand levels for anything (currently only the registry level itself changed; no L4 operand-meaning
-  claim exists yet to make use of it), the rest of L4 (remaining action semantics, operand meaning once
-  L3-proven), then the flow rendering that eventually lets a piston draw its own flow with anything not
-  yet understood shown as an explicit opaque block.
+  attribute read), preset (a named time-of-day value), a bare device-list operand, an argument operand,
+  and all three event-match forms (virtual, physical and variable - the operand inside an `on`
+  statement's own trigger list, saved like the ordinary operand of the same kind but read by a
+  separate, simpler consumer) all have a reviewed, source-cited shape and a gate proving it against
+  every occurrence in the fixture corpus. Four new test pistons were built and captured directly (not
+  delegated) to close the remaining kinds: an `if` condition using the Argument operand type
+  (`zz-L3-13`), a Device-typed piston-local variable (`zz-L3-14`), a physical-device `on` trigger
+  (`zz-L3-15`) and a variable-change `on` trigger (`zz-L3-16`) - each built paused, saved twice
+  (first-save and an unchanged round-trip) and verified inert before capture. A real registry gap
+  surfaced along the way and was fixed: the census walker's flat allowlist of recognised field names
+  (`webcoreCensusSchemaKeys()`) was missing `u`, so every argument operand's own value key read as an
+  unrecognised field even though the construct itself was registered; `saved-position-map.md`'s
+  allowlist section is updated to match. As of 2026-09-12 all eleven proven kinds are promoted to L3 in
+  the construct registry itself, through the same committed-metadata promotion gate the statement
+  manifest already used. Only the empty (nothing-selected) operand kind has no fixture evidence yet and
+  stays L2 - but source inspection (`executor.clean-code`'s `ty==sNL` branch) shows it is a real,
+  distinct saved shape, not merely absence of a shape, and is worth a direct, hands-on capture attempt
+  before concluding it is unreachable.
+- **Still to come.** The empty/nothing-selected operand kind, the runtime walker actually using the
+  raised operand levels for anything (currently only the registry level itself changed; no L4
+  operand-meaning claim exists yet to make use of it), the rest of L4 (remaining action semantics,
+  operand meaning once L3-proven), then the flow rendering that eventually lets a piston draw its own
+  flow with anything not yet understood shown as an explicit opaque block.
 
 The binding constraint remains fixture diversity: the dev hub has six pistons, which cannot establish
 real-world coverage, so any broad claim needs a sanitized opt-in corpus first. Related to item 24,

@@ -15,8 +15,14 @@
 // time-of-day value). A sixth adds one of the three event-match kinds (an operand inside an on
 // statement's event matcher, saved like an ordinary operand but read by a different, simpler
 // consumer): the virtual form only, from occurrences already present in the existing zz-L3-07 events
-// fixture, no new capture needed. Not yet covered, deliberately: d, u, the other two event-match kinds
-// (physical and variable), and the empty (nothing-selected) kind. Each needs its own reviewed slice.
+// fixture, no new capture needed. A seventh increment adds the bare device-list operand (t: 'd': a raw
+// device selection, seen here as a Device-typed piston-local variable's initial value) and the
+// argument operand (t: 'u': one named entry of a piston's $args, e.g. from an external trigger). An
+// eighth adds the remaining two event-match kinds: physical (t: 'p' in event position, matched by
+// attribute name and device membership) and variable (t: 'x' in event position, matched by variable
+// name). Not yet covered, deliberately: the empty (nothing-selected) kind, which the pinned source
+// shows is a real, distinct saved shape (executor.clean-code's ty==sNL branch) but has not yet been
+// reproduced from the hosted editor.
 //
 // A canonical-persistence finding carried over from the statement work: cleanCode's exclusivity and
 // default-stripping rules run only during recreatePiston (executor.recreate-piston, called on load),
@@ -39,7 +45,8 @@
   // event-match and empty forms the registry already carries separately.
   discriminatorValues: ['p', 'd', 'v', 's', 'x', 'c', 'e', 'u'],
 
-  kinds: ['constant', 'virtual', 'variable', 'expression', 'physical', 'preset', 'event-match-virtual'],
+  kinds: ['constant', 'virtual', 'variable', 'expression', 'physical', 'preset', 'event-match-virtual',
+          'device-list', 'argument', 'event-match-physical', 'event-match-variable'],
 
   // Same lineage and named-test shape the statement manifest uses, reused by the registry
   // generator's operand-level promotion (L3Promotion.derive against a shim pointing at
@@ -231,6 +238,101 @@
       ],
       fixtures: ['l3-07-events.first-save'],
       tests: ['operand-l3-manifest']
+    ],
+
+    'wc.operand.d': [
+      family: 'device-list',
+      discriminator: [key: 't', value: 'd'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'value-type discriminator; evaluateOperand.case-sD hard-codes its result type to sDEV and does not read vt'],
+        'd':  [kind: 'device-list', persisted: 'always', consumed: 'read',
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               notes: 'the device list, expanded through expandDeviceList and returned as the operand value; not exclusive to d, since cleanCode only strips d for t in ListC2, which excludes both d and p; observed here as a Device-typed piston-local variable\'s initial value (v[].v), not inside a condition or action target'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'not read by evaluateOperand.case-sD (unlike case-sP, this case applies no grouping function to a multi-device result); saved here as avg on a single-device selection, so whether the editor ever offers or persists a different value is unproven']
+      ],
+      fixtures: ['l3-14-device-var.first-save'],
+      tests: ['operand-l3-manifest']
+    ],
+
+    'wc.operand.u': [
+      family: 'argument',
+      discriminator: [key: 't', value: 'u'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'value-type discriminator; getArgument returns whatever is stored in $args under this name, untyped by vt'],
+        'u':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['u'],
+               readBy: ['executor.evaluate-operand'], writtenBy: ['editor.edit-statement'],
+               notes: 'the argument name, looked up by getArgument against the piston\'s $args system variable (getJsonData(gtSysVarVal(r9,sDARGS), name)); exclusive to t: u'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ],
+      fixtures: ['l3-13-argument.first-save'],
+      tests: ['operand-l3-manifest']
+    ],
+
+    // The physical event-match: same keys (vt, a, d, p, f, g) as the ordinary physical operand, but
+    // read by the on-statement's own event dispatcher, not evaluateOperand - the same distinction
+    // event-match.v documents against the ordinary virtual operand above.
+    'wc.operand.event-match.p': [
+      family: 'physical',
+      discriminator: [key: 't', value: 'p', parentContext: 'event'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+               readBy: [], writtenBy: ['editor.edit-statement'],
+               notes: 'saved like any physical operand but not read here: the event-match switch on sMt(operand) reads only a and d'],
+        'a':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['p'],
+               readBy: ['executor.statement-dispatch'], writtenBy: ['editor.edit-statement'],
+               notes: 'compared for exact string equality against the triggering event name (evntName==sMa(operand)); same exclusivity rule as the ordinary physical operand\'s a key'],
+        'd':  [kind: 'device-list', persisted: 'always', consumed: 'read',
+               readBy: ['executor.statement-dispatch'], writtenBy: ['editor.edit-statement'],
+               notes: 'the triggering device must expand into this list (deviceId in expandDeviceList(r9,liMd(operand),true)); not exclusive to p, same as the ordinary physical operand\'s d key'],
+        'p':  [kind: 'scalar', persisted: 'user-optional', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'the physical/digital/any read preference; the on-statement event dispatcher does not reference operand[p] at all, unlike evaluateOperand\'s ordinary physical-operand path - purpose in event-match position unproven'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ],
+      fixtures: ['l3-15-device-trigger.first-save'],
+      tests: ['operand-l3-manifest']
+    ],
+
+    // The variable event-match: same keys (vt, x, xi, f, g) as the ordinary variable operand, but read
+    // by the on-statement's own event dispatcher.
+    'wc.operand.event-match.x': [
+      family: 'variable',
+      discriminator: [key: 't', value: 'x', parentContext: 'event'],
+      keys: [
+        'vt': [kind: 'scalar', persisted: 'always', consumed: 'not-cited',
+               readBy: [], writtenBy: ['editor.edit-statement'],
+               notes: 'saved like any variable operand but not read here: the event-match switch on sMt(operand) reads only x'],
+        'x':  [kind: 'scalar', persisted: 'always', consumed: 'read', exclusiveTo: ['x'],
+               readBy: ['executor.statement-dispatch'], writtenBy: ['editor.edit-statement'],
+               notes: 'the referenced variable name; matched by (ce[sVAL]==operX && evntName==sMs(r9,sINSTID)+sDOT+operX) - the event\'s value must equal the variable name and the event name must equal instanceId.variableName; how this reconciles with the sVARIABLE:name event-naming evaluateOperand uses for a leading @@ superglobal (see wc.operand.x.x) is not traced here, open question below'],
+        'f':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.f, inMem-guarded, canonical-copy status unproven'],
+        'g':  [kind: 'scalar', persisted: 'unless-empty', consumed: 'not-cited',
+               writtenBy: ['editor.edit-statement'],
+               notes: 'same default-stripping caveat as operand.c.g, inMem-guarded, canonical-copy status unproven']
+      ],
+      fixtures: ['l3-16-variable-trigger.first-save'],
+      tests: ['operand-l3-manifest']
     ]
   ],
 
@@ -262,7 +364,14 @@
     [region: 'executor.clean-code', contains: 'if(ty!=sP && item[sA]!=null) item.remove(sA)', supports: 'operand.p.a is exclusive to t: p, unconditional, holds on the saved copy'],
     [region: 'executor.clean-code', contains: 'if(ty!=sS && item[sS]!=null) item.remove(sS)', supports: 'operand.s.s is exclusive to t: s, unconditional, holds on the saved copy'],
     [region: 'executor.evaluate-operand', contains: 'case sSUNSET: v= getSunsetTime(r9,dayBasis); break', supports: 'operand.s.s: sunset is a member of the closed preset-name case list, proven for this one value'],
-    [region: 'executor.statement-dispatch', contains: 'if(evntName==sMv(operand))', supports: 'operand.event-match.v.v: the event-match consumer reads only v, compared by exact string equality against the triggering event name']
+    [region: 'executor.statement-dispatch', contains: 'if(evntName==sMv(operand))', supports: 'operand.event-match.v.v: the event-match consumer reads only v, compared by exact string equality against the triggering event name'],
+    [region: 'executor.clean-code', contains: 'if(ty!=sU && item[sU]!=null) item.remove(sU)', supports: 'operand.u.u is exclusive to t: u, unconditional, holds on the saved copy'],
+    [region: 'executor.evaluate-operand', contains: 'mv=getArgument(r9,sMs(operand,sU))', supports: 'operand.u.u: getArgument is the only site that reads this key, looking it up in the $args system variable'],
+    [region: 'executor.evaluate-operand', contains: 'mv=rtnMap(sDEV,deviceIds.unique())', supports: 'operand.d.d: the device list is expanded and returned as a device-type result; vt and g are not referenced in this case'],
+    [region: 'executor.clean-code', contains: 'if(ty in ListC2 && item[sD] instanceof List) item.remove(sD)', supports: 'operand.d.d is not exclusive but persists because d, like p, is excluded from ListC2'],
+    [region: 'executor.statement-dispatch', contains: 'if(deviceId!=sNL && evntName==sMa(operand) && liMd(operand) && deviceId in expandDeviceList(r9,liMd(operand),true))', supports: 'operand.event-match.p: the event-match consumer reads a and d, requiring the device id to be in the expanded device list and the attribute name to equal the event name'],
+    [region: 'executor.clean-code', contains: 'if(ty!=sP && item[sA]!=null) item.remove(sA)', supports: 'operand.event-match.p.a is exclusive to t: p, the same unconditional rule proven for the ordinary physical operand'],
+    [region: 'executor.statement-dispatch', contains: 'if(ce[sVAL]==operX && evntName==sMs(r9,sINSTID)+sDOT+operX)', supports: 'operand.event-match.x.x: the event-match consumer reads only x, matched against the triggering event\'s value and a computed instanceId-qualified event name']
   ],
 
   // Open questions this increment does not resolve. Recorded so the next increment starts from them
@@ -271,7 +380,9 @@
     'the closed vocabulary of vt (value-type) values is not yet reconciled against the executor',
     'whether f and g are ever absent on the saved IDE copy, or only stripped in memory, is unverified - needs the same IDE round-trip evidence the statement manifest built for statement keys',
     'expression item (exp.i[]) shape is undefined here: item kind, operator vocabulary, and nesting rules all remain open',
-    'the remaining four operand constructs (d, u, the physical and variable event-match kinds, empty) have no manifest entry yet and no fixture evidence; each needs its own reviewed slice and capture',
+    'the empty (nothing-selected) operand construct has no manifest entry yet and no fixture evidence; executor.clean-code shows a distinct ty==sNL cleanup branch for it (task parameters and, per the same guard shape, other slots left unselected) but reproducing it from the hosted editor has not yet been attempted',
+    'operand.event-match.x.x match semantics for a leading @@ superglobal variable are unproven: the on-statement dispatcher compares evntName to instanceId+"."+operX unconditionally, while evaluateOperand routes a superglobal to a differently-named node (sVARIABLE:name); whether a superglobal variable can even fire this event-match branch, or only plain/global variables can, is not traced here',
+    'operand.d.g is proven only as avg on a single-device selection; whether the editor offers other grouping values for a Device-typed variable, and whether any of them persist through the same ListAVANY-based stripping other operand kinds show, is unproven',
     'operand.e.e has no proven purpose; not read by the one evaluateOperand region reviewed here',
     'the v value vocabulary is transcribed from the evaluateOperand switch cases but not yet cross-checked against a full source string dump the way the statement construct catalogue was',
     'the s (preset) value vocabulary is proven for sunset only; sunrise, midnight and noon are transcribed from the same switch but not independently captured',
