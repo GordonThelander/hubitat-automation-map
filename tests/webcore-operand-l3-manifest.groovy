@@ -5,8 +5,8 @@
 // variable, expression) matches every real occurrence exactly: every key the manifest calls
 // persisted:always is present, every key marked exclusive never appears on a foreign kind, and no
 // unlisted key appears uncounted. Also proves the manifest's own closed vocabularies are internally
-// consistent. This is evidence-gathering and a reconciliation gate; it does not yet raise any
-// registry level or wire into the runtime walker - that is the next increment.
+// consistent, and that the same committed-metadata promotion gate the statement manifest uses derives
+// L3 for exactly the covered operand kinds and holds the registry to it, with no drift either way.
 // Run with: groovy tests/webcore-operand-l3-manifest.groovy
 
 import groovy.json.JsonSlurper
@@ -157,6 +157,44 @@ walkMutant = { Object node, String path ->
 }
 fixtures.each { File f -> walkMutant(new JsonSlurper().parseText(f.getText('UTF-8')), f.name) }
 check(!mutantProblems.isEmpty(), "mutation: falsely marking vt exclusive to v is caught, since every operand carries vt (${mutantProblems.size()} hits)")
+
+// ---- operand-level promotion: the same committed-metadata gate the statement manifest uses ------
+
+Map fixtureManifest = new JsonSlurper().parse(new File(fixtureDir, 'manifest.json')) as Map
+String registryText = new File(repoRoot, 'tools/webcore-investigation/generated/webcore_construct_registry.groovy').getText('UTF-8')
+String registryAnchor = 'WEBCORE_CONSTRUCT_REGISTRY = '
+Map registry = new GroovyShell().evaluate(registryText.substring(registryText.indexOf(registryAnchor) + registryAnchor.length())) as Map
+Map constructs = registry.constructs as Map
+Class promotionClass = new GroovyClassLoader(this.class.classLoader).parseClass(new File(repoRoot, 'tools/webcore-investigation/L3Promotion.groovy'))
+def deriveOperands = { Map ev, Map fm -> promotionClass.derive([captureLineage: ev.captureLineage, namedTests: ev.namedTests, statements: ev.operands], fm, repoRoot, 'operands') as Map }
+
+Map promotion = deriveOperands(manifest, fixtureManifest)
+check((promotion.problems as List).isEmpty() && (promotion.levels as Map).keySet() == operands.keySet() && (promotion.levels as Map).values().every { it == 'L3' },
+    "promotion derives L3 for every covered operand from committed metadata alone ${promotion.problems}")
+
+Set registryOperands = constructs.keySet().findAll { "${it}" ==~ /wc\.operand\.[a-z]+/ }.collect { "${it}" } as Set
+List registryDrift = registryOperands.findAll { String id -> (constructs[id] as Map).level != (operands.containsKey(id) ? 'L3' : 'L2') }.toList()
+check(registryDrift.isEmpty(),
+    "the registry carries L3 for exactly the covered operand kinds and L2 for the rest ${registryDrift}")
+
+def copyOperandJson = { Object o -> new JsonSlurper().parseText(groovy.json.JsonOutput.toJson(o)) }
+def promoteOperandMutant = { Closure mutate ->
+    Map ev = copyOperandJson(manifest) as Map
+    Map fm = copyOperandJson(fixtureManifest) as Map
+    mutate(ev, fm)
+    deriveOperands(ev, fm)
+}
+[['a citation naming a round-trip capture', { Map ev, Map fm -> ((ev.operands as Map)['wc.operand.x'] as Map).fixtures = ['l3-04-loops.round-trip'] }],
+ ['a cited save without its committed round trip', { Map ev, Map fm -> fm.fixtures = (fm.fixtures as List).findAll { it.file != 'l3-04-loops.round-trip.json' } }],
+ ['a round trip that no longer holds the operand', { Map ev, Map fm -> ((fm.fixtures as List).find { it.file == 'l3-04-loops.round-trip.json' } as Map).operands = [:] }],
+ ['a citation of a fixture that is not committed', { Map ev, Map fm -> ((ev.operands as Map)['wc.operand.x'] as Map).fixtures = ['l3-09-missing.first-save'] }],
+ ['a named test that does not exist', { Map ev, Map fm -> (ev.namedTests as Map)['operand-l3-manifest'] = 'tests/no-such-test.groovy' }]].each { List mc ->
+    Map mutatedOp = promoteOperandMutant(mc[1] as Closure)
+    boolean caught = mc[0] == 'a named test that does not exist' ?
+        (mutatedOp.levels as Map).values().every { it == 'L2' } :
+        ((mutatedOp.levels as Map)['wc.operand.x'] == 'L2')
+    check(caught, "mutation: ${mc[0]} withdraws L3 (${mutatedOp.levels})")
+}
 
 int bad = results.count { !it }
 println "${results.size() - bad} passed, ${bad} failed"

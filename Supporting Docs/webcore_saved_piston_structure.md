@@ -235,8 +235,10 @@ variable (`t: 'x'`) and expression (`t: 'e'`). The other eight, physical-device 
 (`t: 'd'`), preset (`t: 's'`), argument (`t: 'u'`), the three event-match forms, and the empty form,
 have zero occurrences anywhere in the captured fixture corpus and remain unverified; every saved device
 list observed so far is either empty or the single static target added for the action-targeting
-increment (section 4, `action`). This is evidence only. It does not yet raise any operand's registry
-level, which stays L2 pending the same save/reload promotion gate the statement grammar uses.
+increment (section 4, `action`). As of 2026-09-12 the four proven kinds are raised to L3 in the
+construct registry itself, through the same committed-metadata promotion gate the statement grammar
+uses; the other eight stay L2. No operand-meaning (L4) claim exists yet, so the raised level is not
+yet consumed by anything beyond the registry and the decode-coverage card's own recognition count.
 
 | Kind | Discriminator | Always-persisted keys | Notes |
 | --- | --- | --- | --- |
@@ -432,7 +434,8 @@ Measured on a Hubitat C-8 development hub, 2026-09.
   source-cited structural (L3) evidence and at least one proven semantic (L4) claim, each gated on a
   hand-authored trace, a hashed pinned-source region and a canonical (round-trip) fixture with proven
   save/reload lineage.
-- **In progress:** operand structural evidence, first slice (four of twelve kinds; see "Operand
-  grammar" above). Not yet started: wiring proven operand evidence into the construct registry's level
-  field and into the runtime coverage walker, the remaining eight operand kinds, and operand semantic
-  (L4) meaning once an operand kind is L3-proven.
+- **Operand structural evidence, first slice:** four of twelve kinds (see "Operand grammar" above),
+  now raised to L3 in the construct registry. **In progress:** the remaining eight operand kinds (two
+  captures already requested), and operand semantic (L4) meaning once an operand kind is L3-proven. Not
+  yet started: the runtime coverage walker doing anything with the raised operand levels beyond
+  reporting them.

@@ -45,6 +45,10 @@
                 "wc.statement.action": 5,
                 "wc.statement.if": 2
             },
+            "operands": {
+                "wc.operand.c": 29,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 6
@@ -60,6 +64,10 @@
             "statements": {
                 "wc.statement.action": 5,
                 "wc.statement.if": 2
+            },
+            "operands": {
+                "wc.operand.c": 29,
+                "wc.operand.v": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -77,6 +85,10 @@
                 "wc.statement.action": 5,
                 "wc.statement.if": 2
             },
+            "operands": {
+                "wc.operand.c": 29,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 6
@@ -92,6 +104,10 @@
             "statements": {
                 "wc.statement.action": 5,
                 "wc.statement.if": 2
+            },
+            "operands": {
+                "wc.operand.c": 29,
+                "wc.operand.v": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -109,6 +125,10 @@
                 "wc.statement.action": 2,
                 "wc.statement.if": 2
             },
+            "operands": {
+                "wc.operand.c": 32,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -124,6 +144,10 @@
             "statements": {
                 "wc.statement.action": 2,
                 "wc.statement.if": 2
+            },
+            "operands": {
+                "wc.operand.c": 32,
+                "wc.operand.v": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -141,6 +165,10 @@
                 "wc.statement.action": 2,
                 "wc.statement.if": 2
             },
+            "operands": {
+                "wc.operand.c": 32,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -157,6 +185,9 @@
                 "wc.statement.action": 2,
                 "wc.statement.if": 2
             },
+            "operands": {
+                "wc.operand.c": 33
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -172,6 +203,9 @@
             "statements": {
                 "wc.statement.action": 2,
                 "wc.statement.if": 2
+            },
+            "operands": {
+                "wc.operand.c": 33
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -190,6 +224,11 @@
                 "wc.statement.break": 1,
                 "wc.statement.switch": 2
             },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.e": 1,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -206,6 +245,11 @@
                 "wc.statement.action": 4,
                 "wc.statement.break": 1,
                 "wc.statement.switch": 2
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.e": 1,
+                "wc.operand.v": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -224,6 +268,11 @@
                 "wc.statement.break": 1,
                 "wc.statement.switch": 2
             },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.e": 1,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -240,6 +289,11 @@
                 "wc.statement.action": 4,
                 "wc.statement.break": 1,
                 "wc.statement.switch": 2
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.e": 1,
+                "wc.operand.v": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -260,6 +314,10 @@
                 "wc.statement.repeat": 2,
                 "wc.statement.while": 2
             },
+            "operands": {
+                "wc.operand.c": 16,
+                "wc.operand.x": 4
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -279,6 +337,10 @@
                 "wc.statement.repeat": 2,
                 "wc.statement.while": 2
             },
+            "operands": {
+                "wc.operand.c": 16,
+                "wc.operand.x": 4
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -296,6 +358,10 @@
                 "wc.statement.break": 4,
                 "wc.statement.repeat": 2,
                 "wc.statement.while": 2
+            },
+            "operands": {
+                "wc.operand.c": 16,
+                "wc.operand.x": 4
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -315,6 +381,10 @@
                 "wc.statement.repeat": 2,
                 "wc.statement.while": 2
             },
+            "operands": {
+                "wc.operand.c": 16,
+                "wc.operand.x": 4
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -332,6 +402,10 @@
                 "wc.statement.each": 1,
                 "wc.statement.exit": 1,
                 "wc.statement.for": 1
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.x": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -351,6 +425,10 @@
                 "wc.statement.exit": 1,
                 "wc.statement.for": 1
             },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.x": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -368,6 +446,10 @@
                 "wc.statement.each": 1,
                 "wc.statement.exit": 1,
                 "wc.statement.for": 1
+            },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.x": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -387,6 +469,10 @@
                 "wc.statement.exit": 1,
                 "wc.statement.for": 1
             },
+            "operands": {
+                "wc.operand.c": 4,
+                "wc.operand.x": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -402,6 +488,9 @@
             "statements": {
                 "wc.statement.action": 2,
                 "wc.statement.every": 2
+            },
+            "operands": {
+                "wc.operand.c": 4
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -419,6 +508,9 @@
                 "wc.statement.action": 2,
                 "wc.statement.every": 2
             },
+            "operands": {
+                "wc.operand.c": 4
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -434,6 +526,9 @@
             "statements": {
                 "wc.statement.action": 1,
                 "wc.statement.on": 1
+            },
+            "operands": {
+                "wc.operand.event-match.v": 2
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -451,6 +546,9 @@
                 "wc.statement.action": 1,
                 "wc.statement.on": 1
             },
+            "operands": {
+                "wc.operand.event-match.v": 2
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -466,6 +564,9 @@
             "statements": {
                 "wc.statement.action": 1,
                 "wc.statement.on": 1
+            },
+            "operands": {
+                "wc.operand.event-match.v": 2
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -483,6 +584,9 @@
                 "wc.statement.action": 1,
                 "wc.statement.on": 1
             },
+            "operands": {
+                "wc.operand.event-match.v": 2
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -497,6 +601,10 @@
             "sha256": "8e89c5aeae80cdfe5351557141ed3ae4e063f8eaa7664b342e513fe691178c89",
             "statements": {
                 "wc.statement.action": 3
+            },
+            "operands": {
+                "wc.operand.c": 2,
+                "wc.operand.v": 1
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -513,6 +621,10 @@
             "statements": {
                 "wc.statement.action": 3
             },
+            "operands": {
+                "wc.operand.c": 2,
+                "wc.operand.v": 1
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -527,6 +639,9 @@
             "sha256": "2f1f3ccc1cbf452abe9f6cced7fb7a97170ecbb60d98d8ce42b4991e2c84bd94",
             "statements": {
                 "wc.statement.action": 1
+            },
+            "operands": {
+                "wc.operand.c": 3
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
@@ -543,6 +658,9 @@
             "statements": {
                 "wc.statement.action": 1
             },
+            "operands": {
+                "wc.operand.c": 3
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -558,6 +676,9 @@
             "statements": {
                 "wc.statement.action": 1
             },
+            "operands": {
+                
+            },
             "structurallyInvalid": 0,
             "structureFindings": 0,
             "unrecognised": 0
@@ -572,6 +693,9 @@
             "sha256": "dbe31083985cc011df6881c583b31552c51b6971f5950a5c2567d7aad6892c65",
             "statements": {
                 "wc.statement.action": 1
+            },
+            "operands": {
+                
             },
             "structurallyInvalid": 0,
             "structureFindings": 0,
