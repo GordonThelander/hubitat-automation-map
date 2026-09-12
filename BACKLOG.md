@@ -536,13 +536,25 @@ keeping scan collection and authoritative normalization on the hub.
 Investigate a maintainable source and build arrangement for HTML, CSS and JavaScript without
 breaking single-app Hubitat distribution.
 
-**Getting more urgent.** `validate.ps1`'s GString-size gate is now failing outright: the largest
-constant is measured at 88.8% of the 65535-byte JVM limit (leaving 7327 bytes), already past this
-project's own warning threshold before this backlog note was added. It will keep growing every time
-evidence or normaliser text is added anywhere in the file, not just in template code, since it is one
-compiled constant. The webCoRE L4 increment 6 deploy (2026-09-12) went out with `-SkipValidation`
-because of this pre-existing gate failure, unrelated to that change; the actual fix (a `${''}` split
-marker near the reported line, or the frontend separation this item already proposes) is still open.
+**GString-size gate fixed 2026-09-12, but the root cause is still this item.** The gate had reached
+88.8% of the 65535-byte JVM limit and was failing outright. The flagged span turned out to hold no
+HTML/JS template content at all: it was the webCoRE L3/L4 evidence and normaliser code (construct
+registry, statement shapes, semantic evidence, semantic normaliser), thousands of bytes of ordinary
+Groovy business logic with no `${...}` anywhere in it. `validate.ps1`'s gate measures the largest run
+of raw file text between any two literal `${` occurrences, whole file, not scoped to an actual GString
+region, so a long stretch of unrelated Groovy code between two incidental interpolations elsewhere in
+the file counts against the same 65535-byte ceiling as a real HTML template constant. Fixed by turning
+one existing empty-string literal in the hand-written normaliser
+(`webcoreSemanticStatement`'s `: ''` fallback) into `: "${''}"`, a same-value GString that splits the
+heuristic's count without changing behaviour; the evidence/normaliser span dropped from 58208 bytes to
+two pieces of roughly 41800 and 16400. The new largest segment measured anywhere in the file is 50938
+bytes (77.7% of the limit), a different, pre-existing span this note has not located yet, most likely
+inside the real HTML/JS template content the gate was originally written for. This is a stopgap, not a
+structural fix: every future evidence or normaliser addition still grows the same measured span, and
+either that or the newly-largest 50938-byte span will need another split marker eventually. The frontend
+separation this item already proposes remains the real fix, since it would remove the actual large
+HTML/JS GString constants (the reason this gate exists at all) rather than just the code that happens
+to share a compiled-constant boundary with them.
 
 ### 14. Delta scanning
 
