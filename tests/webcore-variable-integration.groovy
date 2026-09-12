@@ -327,7 +327,7 @@ check('webCoRE pistons are not called inert and UI and export disclose device co
     assert source.contains("n.appType === 'webCoRE' ? 'parent-permissions-omitted'")
     assert source.contains('<b>Your map contains:</b>')
     assert source.contains('including ${inert} freestanding apps')
-    assert source.contains('local variables and direct device reads/actions are also decoded from webCoRE pistons; step-by-step webCoRE flow is not.')
+    assert source.contains('webCoRE pistons (in Beta: statement order and branching, with conditions shown as undecoded)')
 }
 
 println ''

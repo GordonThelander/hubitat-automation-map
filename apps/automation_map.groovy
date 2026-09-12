@@ -1344,7 +1344,7 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier and Visual Rule Builder 2.0 (in Beta). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons; step-by-step webCoRE flow is not.</span>"
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 (in Beta) and webCoRE pistons (in Beta: statement order and branching, with conditions shown as undecoded). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
     return s.toString()
 }
 
@@ -3733,6 +3733,14 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                     out.webcoreDeviceReads = deviceRefs.reads
                     out.webcoreDeviceActions = deviceRefs.actions
                     out.webcoreUnsupportedDeviceRefs = deviceRefs.unsupported
+
+                    // Ordered flow, from the same already-parsed document rather
+                    // than a second decode. buildRuleFlow() above leaves a piston
+                    // at [] (no actionList, no graphDocument, no Notifier text),
+                    // so this fills a slot nothing else writes. Device tokens in
+                    // these steps stay unresolved until buildGraph, which is the
+                    // first point the parent's hash index exists.
+                    out.flow = buildWebcoreFlow(document)
                 } else {
                     out.webcoreHubVarReads = []
                     out.webcoreHubVarWrites = []
@@ -3790,6 +3798,200 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
 // it carries counts, fixed construct IDs, fixed reason codes and safe paths
 // only. Saved positions and normalisations are anchored to named sites in the
 // pinned source - see tools/webcore-investigation/saved-position-map.md.
+// --- webcore flow builder: begin ---
+// An ordered step list for one webCoRE piston, in the same shape mermaidFor()
+// already renders for Rule Machine, Notifier and Visual Rule Builder 2.0: each
+// entry is either a control marker (ctrl if/elseif/else/endif) or a node
+// (kind/label/devices). Pure on purpose - it reads the already-decoded piston
+// document and nothing else - so its test can lift this whole block out of the
+// app source and run it, the way the census walker's test does.
+//
+// Device tokens are deliberately NOT resolved here. A piston stores webCoRE's
+// own hashed device tokens, and the index needed to read them is built from the
+// piston's PARENT app's permitted-device list, which is not in scope during
+// per-app decode. Steps carry deviceTokens instead and buildGraph resolves them,
+// exactly the way it already defers ruleTargets to resolveFlowTargets.
+//
+// Scope of what this claims: ORDER and BRANCH STRUCTURE, resting on the semantic
+// evidence already gated for all twelve statement types. Condition and operand
+// MEANING carry no L4 claim yet, so a condition is drawn as an explicitly opaque
+// diamond rather than inventing comparison text. Event matchers are labelled
+// only from their own L3-proven keys (a physical event's attribute, a virtual
+// event's name, a variable event's name). An unrecognised statement becomes a
+// visible "not decoded" block rather than being silently dropped, so the chart
+// never omits part of the piston without saying so.
+int webcoreFlowMaxDepth() { return 12 }
+int webcoreFlowMaxSteps() { return 400 }
+
+List buildWebcoreFlow(Object document) {
+    if (!(document instanceof Map)) return []
+    Object statements = (document as Map).s
+    List steps = []
+    webcoreFlowStatements(statements instanceof List ? statements as List : [], steps, 0)
+    return steps
+}
+
+void webcoreFlowStatements(List statements, List steps, int depth) {
+    if (depth > webcoreFlowMaxDepth()) return
+    statements.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        if (steps.size() >= webcoreFlowMaxSteps()) return
+        webcoreFlowStatement(raw as Map, steps, depth)
+    }
+}
+
+void webcoreFlowStatement(Map st, List steps, int depth) {
+    String type = "${st.t ?: ''}"
+    List body = (st.s instanceof List) ? st.s as List : []
+    switch (type) {
+        case 'on':
+            // An on statement's own c holds event matchers, not conditions.
+            ((st.c instanceof List) ? st.c as List : []).each { Object raw ->
+                if (!(raw instanceof Map)) return
+                Map event = raw as Map
+                Map lo = (event.lo instanceof Map) ? event.lo as Map : [:]
+                steps << webcoreFlowNode('trigger', webcoreFlowEventLabel(event), webcoreFlowDeviceTokens(lo))
+            }
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+        case 'if':
+            steps << webcoreFlowControl('if', webcoreFlowConditionLabel(st))
+            webcoreFlowStatements(body, steps, depth + 1)
+            ((st.ei instanceof List) ? st.ei as List : []).each { Object raw ->
+                if (!(raw instanceof Map)) return
+                Map branch = raw as Map
+                steps << webcoreFlowControl('elseif', webcoreFlowConditionLabel(branch))
+                webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
+            }
+            List elseBody = (st.e instanceof List) ? st.e as List : []
+            if (elseBody) {
+                steps << webcoreFlowControl('else', '')
+                webcoreFlowStatements(elseBody, steps, depth + 1)
+            }
+            steps << webcoreFlowControl('endif', '')
+            break
+        case 'switch':
+            // Ordered cases render as one decision chain. The default case is
+            // NOT drawn: a switch's own s is the subscription flag subscribeAll
+            // writes, not a statement list, so where a default body lives is
+            // unproven and is left rather than guessed.
+            boolean opened = false
+            ((st.cs instanceof List) ? st.cs as List : []).each { Object raw ->
+                if (!(raw instanceof Map)) return
+                Map branch = raw as Map
+                steps << webcoreFlowControl(opened ? 'elseif' : 'if', 'case not decoded')
+                opened = true
+                webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
+            }
+            if (opened) steps << webcoreFlowControl('endif', '')
+            break
+        case 'while':
+        case 'repeat':
+        case 'for':
+        case 'each':
+            // Delimited enter/exit blocks rather than a diamond. A diamond would
+            // assert a pre-condition test, which is wrong for repeat, and this
+            // renderer has no back edge to express the loop itself.
+            steps << webcoreFlowNode('action', webcoreFlowLoopLabel(type), webcoreFlowDeviceTokens(st))
+            webcoreFlowStatements(body, steps, depth + 1)
+            steps << webcoreFlowNode('action', "end ${type}", [])
+            break
+        case 'action':
+            // One box per task, in saved order, each carrying the statement's own
+            // device list - the action device-list and task-order claims.
+            List tokens = webcoreFlowDeviceTokens(st)
+            List tasks = (st.k instanceof List) ? st.k as List : []
+            if (!tasks) {
+                steps << webcoreFlowNode('action', 'action', tokens)
+            } else {
+                tasks.each { Object raw ->
+                    if (!(raw instanceof Map)) return
+                    String command = "${(raw as Map).c ?: ''}"
+                    steps << webcoreFlowNode('action', command ?: 'task', tokens)
+                }
+            }
+            break
+        case 'do':
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+        case 'break':
+            steps << webcoreFlowNode('action', 'break', [])
+            break
+        case 'exit':
+            steps << webcoreFlowNode('action', 'exit piston', [])
+            break
+        case 'every':
+            steps << webcoreFlowNode('trigger', 'every (timer)', [])
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+        default:
+            steps << webcoreFlowNode('action', type ? "${type} not decoded" : 'not decoded',
+                    webcoreFlowDeviceTokens(st))
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+    }
+}
+
+String webcoreFlowLoopLabel(String type) {
+    switch (type) {
+        case 'while':  return 'while (loop)'
+        case 'repeat': return 'repeat (loop)'
+        case 'for':    return 'for each step (loop)'
+        case 'each':   return 'for each device (loop)'
+    }
+    return 'loop'
+}
+
+// Only webCoRE's own ":" + 32 hex + ":" device token is carried through. Any
+// other device-list entry (a variable-backed selector, for example) names no one
+// device and belongs to the operand slice, not this one.
+List webcoreFlowDeviceTokens(Map node) {
+    Object raw = node?.d
+    if (!(raw instanceof List)) return []
+    List out = []
+    (raw as List).each { Object token ->
+        if (!(token instanceof String)) return
+        String value = token as String
+        if (value ==~ /^:[0-9a-f]{32}:$/ && !out.contains(value)) out << value
+    }
+    return out
+}
+
+String webcoreFlowEventLabel(Map event) {
+    Map lo = (event?.lo instanceof Map) ? event.lo as Map : [:]
+    switch ("${lo.t ?: ''}") {
+        case 'p':
+            String attribute = "${lo.a ?: ''}"
+            return attribute ? "When ${attribute} changes" : 'When a device event fires'
+        case 'v':
+            String virtual = "${lo.v ?: ''}"
+            return virtual ? "When ${virtual} changes" : 'When a virtual event fires'
+        case 'x':
+            String variable = "${lo.x ?: ''}"
+            return variable ? "When ${variable} changes" : 'When a variable changes'
+    }
+    return 'When an event fires'
+}
+
+// Comparison semantics carry no L4 claim, so the count is stated and the meaning
+// is not. Saying "not decoded" is the point: it marks the next slice's work.
+String webcoreFlowConditionLabel(Map st) {
+    Object raw = st?.c
+    int count = (raw instanceof List) ? ((raw as List).count { it instanceof Map } as int) : 0
+    return count > 1 ? "${count} conditions not decoded" : 'condition not decoded'
+}
+
+Map webcoreFlowNode(String kind, String label, List deviceTokens) {
+    return [kind: kind, ctrl: null, cond: '', label: label, devices: [],
+            deviceTokens: deviceTokens, ruleTargets: [], selfTarget: false]
+}
+
+Map webcoreFlowControl(String ctrl, String cond) {
+    return [kind: 'action', ctrl: ctrl, cond: cond, label: cond ?: ctrl, devices: [],
+            deviceTokens: [], ruleTargets: [], selfTarget: false]
+}
+// --- webcore flow builder: end ---
+
 // --- webcore census walker: begin ---
 
 Map webcoreCensusLimits() {
@@ -7613,6 +7815,29 @@ Map resolveWebcoreDeviceToken(String token, String parentAppId, Map hashIndexes,
     return [deviceId: deviceId]
 }
 
+// A piston's flow steps carry webCoRE's own hashed device tokens, readable only
+// against that piston's PARENT app's permitted-device index - which does not
+// exist during per-app decode. Resolution is deferred to here, exactly the way
+// resolveFlowTargets defers a Rule Machine action's rule targets. A token that
+// does not resolve cleanly is shown as an explicit unresolved marker rather than
+// guessed at or silently dropped, keeping resolveWebcoreDeviceToken's contract.
+List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, Map labels) {
+    (flow ?: []).each { step ->
+        if (!(step instanceof Map)) return
+        Map s = step as Map
+        List tokens = (s.deviceTokens ?: []) as List
+        if (!tokens) return
+        List devices = (s.devices ?: []) as List
+        tokens.each { Object raw ->
+            Map resolved = resolveWebcoreDeviceToken("${raw}", parentAppId, hashIndexes, labels)
+            String name = resolved.deviceId ? "${labels[resolved.deviceId as String]}" : 'unresolved device'
+            if (!devices.contains(name)) devices << name
+        }
+        s.devices = devices
+    }
+    return flow ?: []
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -7973,7 +8198,16 @@ Map buildGraph() {
         // Flows come from appInfo during a scan, and from the previously built
         // graph on a rebuild - see finishScan, which strips them from appInfo
         // once they are here, so the same 60KB is not held twice.
-        if (appMap.flow) flows[appNodeId] = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
+        if (appMap.flow) {
+            List resolvedFlow = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
+            // First point at which a piston's parent hash index exists, so this
+            // is where its steps' device tokens can become names.
+            if ("${appMap.type ?: ''}" == 'webCoRE Piston') {
+                resolvedFlow = resolveWebcoreFlowDevices(resolvedFlow, "${appMap.parent ?: ''}",
+                        webcoreDeviceHashIndexes, labels)
+            }
+            flows[appNodeId] = resolvedFlow
+        }
         else if (priorFlows[appNodeId]) flows[appNodeId] = priorFlows[appNodeId]
 
         roles.each { String devId, devRoles ->
@@ -15668,8 +15902,10 @@ function buildExportPayload(ext, icons, failedFetches) {
     // - see the limitations entry on this distinction.
     // v2.2.8: counted directly from graph nodes, not summed from
     // ruleFlows[].localVariables - a webCoRE piston's own local variables
-    // never get a ruleFlows entry (no flow decoding), so that sum silently
-    // missed every one of them once webCoRE locals existed at all.
+    // had no ruleFlows entry when that sum was written, so it silently missed
+    // every one of them once webCoRE locals existed at all. Pistons do carry a
+    // decoded flow now, but their locals still live in localVariables[] rather
+    // than nested under ruleFlows[], so this stays computed from the nodes.
     localVariableCount: ALL_NODES.filter(function (n) { return n.group === 'localVariable'; }).length,
     nonResolvedVariableReferenceCount: ruleFlows.reduce(function (sum, f) { return sum + (f.nonResolvedVariableReferences ? f.nonResolvedVariableReferences.length : 0); }, 0)
   };
@@ -15678,8 +15914,8 @@ function buildExportPayload(ext, icons, failedFetches) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
-    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. Room Lighting, Basic Rules and Simple Automation can still appear with device relationships, but webCoRE parent permissions and piston device relationships are intentionally omitted until piston device operands are decoded.',
-    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding, but webCoRE step-by-step flow is not reconstructed.',
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow, but it covers statement order and branching only - every condition appears as an explicitly undecoded step rather than as comparison text - and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
+    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
     'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
