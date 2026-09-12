@@ -943,3 +943,38 @@ and none are guessed at. `scan.webcoreDeviceReconciliationGaps` counts only genu
 failures (an unresolved or ambiguous device hash, or a missing parent index) toward
 `scan.status: "complete-with-gaps"` - the by-design coverage limits above are expected outcomes, not
 gaps, and do not affect scan status.
+
+## 27. webCoRE piston flow (delta)
+
+A webCoRE piston now produces a decoded flow. `apps[].hasDecodedFlow` is `true` for a piston whose
+saved configuration decoded into at least one step, and that piston appears in the same `ruleFlows[]`
+collection Rule Machine, Notifier and Visual Rule Builder 2.0 already use. Nothing about the
+`ruleFlows[]` entry shape changed; what changed is which apps can appear in it.
+
+The earlier statements that webCoRE never gains a flow entry, and that `hasDecodedFlow` is always
+`false` for a piston, were accurate for the schema they were written against (sections 23.4 and 26)
+and are left as the historical record. This section supersedes them.
+
+**What is decoded.** Statement order and branch structure only, resting on the semantic evidence
+already gated for all twelve webCoRE statement types: an `on` statement contributes one trigger step
+per saved event matcher; `if` contributes an ordered `if`/`elseif`/`else`/`endif` structure; a switch
+contributes its ordered cases as one decision chain; loops contribute a delimited enter and exit
+block; an action contributes one step per task, in saved order, carrying that statement's own device
+list.
+
+**What is not decoded, and is visibly marked so.** Condition and operand meaning. Comparison
+semantics carry no proven claim, so a condition is emitted as an explicitly undecoded step (for
+example `condition not decoded`, or `3 conditions not decoded`) rather than rendered as comparison
+text. An unrecognised statement type becomes a visible `not decoded` block rather than being dropped,
+so a chart never silently omits part of a piston. A switch default branch is not drawn at all,
+because where a default body is stored is unproven.
+
+**Device names.** Flow steps carry webCoRE device tokens, not names, until the export is assembled:
+a token is only ever resolved against the permitted-device list of the specific webCoRE parent that
+piston belongs to, reusing the same hash construction and the same never-guess contract section 26
+already describes. A token that does not resolve cleanly is shown as an unresolved device marker
+rather than being matched by label.
+
+**Unchanged.** No flow step becomes an edge. Hub Variable, local-variable and direct device
+relationships are exactly as section 26 describes. Parent-app permitted-device selections remain
+omitted as permissions rather than relationships.
