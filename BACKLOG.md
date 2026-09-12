@@ -117,6 +117,19 @@ twelve Show filters on dev hub revision 136, measured in the browser.
   the 13 to 14 bump. The export contract moved too: `attribute` now rides `trigger` and `constraint`
   edges, and `deviceRead` means something narrower, so a consumer counting piston device
   relationships must read all three kinds.
+- **Diagnostic logging covered failures but nothing else.** Gordon recalled more being logged in an
+  earlier version and was right: `dc7f0dc` removed 365 lines of AM-TRACE instrumentation once the
+  investigation it served closed, including named trace points at `display.lock-vs-state` and the
+  C0/C1/C2 recovery decisions. The failure logging left behind is genuinely good, 34 unconditional
+  warnings naming the failing app or device, the exception, and the invariant state. What was gone
+  was everything about a scan that did NOT fail: no timings anywhere, nothing about what the decoder
+  achieved, and no way to tell which execution won a race. Added, all gated behind `diagOn()` so a
+  production install stays quiet: total scan duration on the completion line (the value already
+  existed in `state.lastScanDurationSeconds`, it was simply computed after the log rather than
+  before), per-phase durations for the device and app phases from two new durable timestamps, a
+  one-line webCoRE decode summary, and a compact lock-versus-state snapshot at all four recovery
+  points. Decoded flows are deliberately not counted in the summary: `finishScan` moves them out of
+  `appInfo` into `graph.flows`, so counting them at the log site would depend on that ordering.
 
 **Still open, waiting on Gordon:**
 
@@ -647,6 +660,13 @@ that could: a 60 second fallback `refreshInterval` while a scan is active (line 
 `/scan-status` progress poll, and a one-time `location.reload()` four seconds after the poll sees
 completion (line 964). The observed gap is under one second rather than four, which does not match
 the reload path, so this needs establishing rather than assuming before anything is changed.
+
+**The evidence now exists.** A `lockVsState()` snapshot is logged at the self-heal and at all three
+recovery branches, behind `diagOn()`. It reports the live static lock and the durable state this
+execution can see, which are exactly the two values that disagree when a recovery fires: lock and
+generation token tails, `scanRunning`, `scanPhase`, whether `state.graph` is present, the graph
+version, the `appInfo` size and `appResultsReady`. One scan with diagnostic logging on should settle
+which render raced the commit.
 
 **Not a regression.** Pre-existing, and unrelated to the v2.3.0 webCoRE work: it fired at 07:20 and
 07:53, before any of that day's changes were deployed. The source comments date the underlying race
