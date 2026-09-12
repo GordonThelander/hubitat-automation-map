@@ -354,11 +354,13 @@ end state. That answer is currently unknown and is worth having either way.
   whose type is a webCoRE piston, permits one operation per piston at a time, bounds the request,
   the loopback and the analysis with fixed time limits, and builds its response field by field from
   an explicit allowlist at every level.
-- **Decode coverage card (v2.2.9, dev).** A card in the focused panel of a webCoRE piston. Nothing is
-  fetched until its button is pressed. It leads with whether the whole saved piston was accounted
-  for, then the share of construct positions recognised at L2 or above, the constructs found with
-  their evidence level, and any gaps as structural paths. Verified in a browser on the dev hub in
-  every state it can show, and accepted in review.
+- **Decode coverage card (v2.2.9, collapsed on dev).** A card in the focused panel of a webCoRE
+  piston. It began as a construct table behind a Check coverage button. Once the flow chart started
+  drawing anything it could not decode as a visible block, the table no longer told the user
+  anything the map was not already showing, so the card was cut to a single line: the check runs on
+  selection and the card stays hidden unless the decoder meets a field it has never seen, which is a
+  webCoRE version saving something new rather than anything a person can act on. Outcomes that are
+  not a completed walk say nothing.
 - **No cache.** The endpoint applies fixed traversal, output and time bounds. Measured on the dev hub,
   results were under 1KB and returned within a second, so a cache would add hub state for no
   meaningful saving there; that is observed evidence, not a guarantee for every hub.
@@ -378,8 +380,8 @@ end state. That answer is currently unknown and is worth having either way.
   `wd`, and `wt` of `l` or `n`. Nodes
   saved before the piston was first reopened (`$`, `ct` or `s` absent) cannot be shown after a reload
   and stay held by design.
-- **Semantic evidence (L4), on hub dev v2.3.0.** The coverage card shows what saved statements mean,
-  separately from structure: the order in which an if tests its branches, condition negation, `or`
+- **Semantic evidence (L4), on hub dev v2.3.0.** The evidence ladder records what saved statements
+  mean, separately from structure: the order in which an if tests its branches, condition negation, `or`
   groups, followed-by groups kept opaque, `do` as a sequential block, the default statement settings,
   switch case order and its case-traversal policy, `while` as a pre-condition loop, `repeat` as a
   post-condition loop that stops once its condition becomes true, `for`/`each` as step/device
