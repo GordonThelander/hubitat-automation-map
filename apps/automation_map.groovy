@@ -12034,6 +12034,7 @@ function mermaidFor(steps) {
     if (kind === 'trigger') styles.push('  style ' + id + ' fill:#4a2f5e,stroke:#9b59b6,color:#fff');
     else if (kind === 'required') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
     else if (kind === 'cond') styles.push('  style ' + id + ' fill:#123a4a,stroke:#4aa3c7,color:#fff');
+    else if (kind === 'end') styles.push('  style ' + id + ' fill:#2b2b2b,stroke:#777,color:#bbb');
     else styles.push('  style ' + id + ' fill:#33502a,stroke:#7fae42,color:#fff');
     return id;
   }
@@ -12111,6 +12112,14 @@ function mermaidFor(steps) {
   while (stack.length) {
     const f = stack.pop();
     tails = f.branchTails.concat(tails).concat(f.pendingFalse);
+  }
+
+  // A decision whose false path leads nowhere otherwise draws as a diamond with
+  // one exit, which reads as a decision that was never made. Once more than one
+  // end is open, they are joined to an explicit end node so every branch
+  // visibly terminates - including the "no" that simply does nothing.
+  if (tails.length > 1) {
+    connect(emit('stadium', 'end', 'end'));
   }
 
   // Double-escaped on purpose. This page is a Groovy GString, so a single
