@@ -1,12 +1,12 @@
 {
     "packageName": "Automation Map (Preprod)",
     "author": "Gordon Thelander",
-    "version": "2.2.3",
+    "version": "2.3.0",
     "minimumHEVersion": "2.5.1",
-    "dateReleased": "2026-09-02",
+    "dateReleased": "2026-09-13",
     "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/preprod/README.md",
     "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-    "releaseNotes": "v2.2.3: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.\n\nSince the last production release (2.2.1):\n\n- Focusing an app, device or variable now fills the available space properly, instead of leaving a handful of nodes too small to read.\n- The map no longer draws underneath the legend, the controls menu, or an open panel such as the rule flowchart, External systems or Pivot tables.\n- Node labels are no longer cut off at the edge of the view.\n- The map no longer visibly jumps about while a focused view settles.",
+    "releaseNotes": "v2.3.0: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.\n\nSince the last production release (2.2.3):\n\n- webCoRE pistons now draw as flowcharts, like Rule Machine, Notifier and Visual Rule Builder rules: statement order, if/else-if/else branches, loops, condition text, nested condition groups, and each task's parameters beside its command, for example setLevel(40). Anything that cannot be shown in full, such as a condition with a time window, is marked \"not decoded\" rather than half-written.\n- webCoRE pistons now show the devices they actually read and command. A device read in an event or condition is shown as a trigger or constraint, matching Rule Machine and the flowchart. The devices merely permitted in webCoRE's own settings are no longer presented as used.\n- webCoRE piston local variables appear as their own nodes, and piston Hub Variable reads and writes are shown separately.\n- A Decode coverage card shows how much of a selected piston Automation Map understands, and lists what it cannot yet explain.\n- Insights, External systems, Pivot tables, Device icons and Hubitat release activity now open in one consistent movable panel, and the compact legend shows only what the current view contains.\n- The flowchart panel returns to its normal size when you select a different app.\n- Quick Search and the Focus lists also match the tags shown on each row, such as [WCP].\n- Routine scan housekeeping no longer appears as warnings in the hub log.\n\nPrivacy: no piston variable value is ever read, and the decoded piston and its raw configuration are never logged or exported. Constants saved in a condition or task parameter do appear in flowchart labels and the export.\n\nRun a scan after updating so the map and export pick up the new webCoRE relationships.",
     "apps": [
         {
             "id": "ad31f3b0-cad1-4aaa-8f17-6215e4a3b6d0",
@@ -16,7 +16,7 @@
             "required": true,
             "oauth": true,
             "primary": true,
-            "version": "2.2.3"
+            "version": "2.3.0"
         }
     ]
 }
