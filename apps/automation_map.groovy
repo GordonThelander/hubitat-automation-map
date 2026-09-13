@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit f07799d33df079ce04cdf7c7343606c4e8bb33fd; developer
+ * builder from the annotated Dev source at commit 505efc9d350b71b10fad827245188428c3feb4a1; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/f07799d33df079ce04cdf7c7343606c4e8bb33fd/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/505efc9d350b71b10fad827245188428c3feb4a1/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -28,6 +28,7 @@ import java.util.regex.Pattern
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+import java.security.MessageDigest
 
 @Field static final String APP_NAME = 'Automation Map'
 
@@ -35,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.2.3'
+@Field static final String APP_VERSION = '2.3.0'
 
 
 
@@ -98,7 +99,28 @@ boolean isDevBuild() {
 
 
 
-@Field static final String GRAPH_SCHEMA = '10'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String GRAPH_SCHEMA = '15'
 
 
 
@@ -271,6 +293,80 @@ boolean diagOn() {
     Long expiresAt = (state.diagnosticLoggingExpiresAt ?: 0) as Long
     return expiresAt > 0 && now() < expiresAt
 }
+
+
+
+
+
+
+
+
+
+
+
+
+String lockVsState() {
+    String lock = SCAN_LOCKS.get("${app.id}") as String
+    String gen = (state.activeGenerationToken ?: '') as String
+    return "lock=${lock ? lock.tokenize('-').last() : 'none'}" +
+           " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
+           " running=${state.scanRunning == true} phase=${state.scanPhase ?: '-'}" +
+           " graph=${state.graph != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
+           " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
+           " appResultsReady=${state.appResultsReady == true}"
+}
+
+
+
+
+
+
+
+
+
+
+
+
+boolean snapshotPredatesGraphCommit() {
+    Long committed = (atomicState.graphCommittedAt ?: 0) as Long
+    Long seen = (state.graphCommittedAtLocal ?: 0) as Long
+    return committed > 0 && committed > seen
+}
+
+
+
+
+int phaseElapsedSeconds(Object startedAt) {
+    Long started = (startedAt ?: 0) as Long
+    if (started <= 0) return -1
+    return ((now() - started) / 1000).intValue()
+}
+
+
+
+
+
+String webcoreDecodeSummary() {
+    Map appInfo = (state.appInfo instanceof Map) ? state.appInfo as Map : [:]
+    int pistons = 0
+    int errored = 0
+    int withReads = 0
+    int unsupported = 0
+    appInfo.each { Object id, Object raw ->
+        if (!(raw instanceof Map)) return
+        Map a = raw as Map
+        if ("${a.type ?: ''}".trim() != 'webCoRE Piston') return
+        pistons++
+        if ("${a.webcoreVariableDecodeStatus ?: ''}" == 'error') errored++
+        if (((a.webcoreDeviceReads ?: []) as List)) withReads++
+        ((a.webcoreUnsupportedDeviceRefs ?: [:]) as Map).each { Object code, Object count ->
+            unsupported += (count ?: 0) as Integer
+        }
+    }
+    return "pistons=${pistons} withDeviceReads=${withReads} decodeErrors=${errored}" +
+           " unresolvedDeviceRefs=${unsupported}"
+}
+
 
 
 
@@ -591,9 +687,7 @@ Map main() {
                         
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
-                        paragraph "Map contains: ${(state.appInfo ?: [:]).size()} apps, ${(state.deviceLabels ?: [:]).size()} devices, " +
-                            "${(g.nodes ?: []).size()} nodes, ${(g.edges ?: []).size()} relationships."
-                        paragraph compatibilitySummary()
+                        paragraph compatibilitySummary(g)
                         href(
                             name: 'mapLink', title: "<span style='color:#1976d2'>View Automation Map</span>",
                             description: 'Open the relationship graph',
@@ -761,10 +855,33 @@ void selfHealGraphIfNeeded() {
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
     if (!(state.appInfo)) return
-    log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    boolean staleSnapshot = snapshotPredatesGraphCommit()
+    if (diagOn()) log.info "${app.label}: self-heal rebuilding the graph - ${lockVsState()}"
+    if (staleSnapshot) {
+        if (diagOn()) {
+            log.info "${app.label}: rebuilding after a stale snapshot raced the graph commit - expected, not a fault"
+        }
+    } else {
+        log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
+    }
     state.hubVariableInventory = fetchHubVariableInventory()
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
+    Long healedAt = now()
+    state.graphCommittedAtLocal = healedAt
+    atomicState.graphCommittedAt = healedAt
 }
 
 
@@ -1091,7 +1208,10 @@ void clearAbandonedScan() {
     String currentLock = SCAN_LOCKS.get("${app.id}") as String
     boolean tombstoned = activeGen != null && currentLock == null && TERMINAL_TOMBSTONES.containsKey(genKey(activeGen))
     if (tombstoned) {
-        log.warn "${app.label}: clearing resurrected scan flags for an already-completed generation"
+        if (diagOn()) log.info "${app.label}: recovery, tombstoned generation - ${lockVsState()}"
+        
+        
+        log.info "${app.label}: clearing resurrected scan flags for an already-completed generation"
         state.scanRunning = false
         return
     }
@@ -1211,12 +1331,16 @@ void clearAbandonedScan() {
             
             
             
+            if (diagOn()) log.info "${app.label}: recovery, finishing a published-but-unfinalized scan - ${lockVsState()}"
             log.warn "${app.label}: complete app results were published but graph finalization never ran - finishing now"
             finishScan([lockToken: currentToken, logicalGen: activeGen])
         } else {
             
             
             
+            
+            
+            if (diagOn()) log.info "${app.label}: recovery, working data lost - ${lockVsState()}"
             log.warn "${app.label}: scan working data was lost before app results were published - not building an incomplete map"
             markScanFinished(currentToken,
                 'The scan working data was lost before it could be published. Press Scan to run it again.',
@@ -1255,11 +1379,7 @@ void clearAbandonedScan() {
 
 
 
-String compatibilitySummary() {
-    int decoded = (state.appsDecoded ?: 0) as Integer
-    int unreadable = (state.appsUnreadable ?: 0) as Integer
-    int rules = (state.rulesDecoded ?: 0) as Integer
-
+String compatibilitySummary(Map graph) {
     StringBuilder s = new StringBuilder()
     if (state.compatOk == false) {
         s << "<b style='color:#c0392b'>${state.compatDetail}</b><br>"
@@ -1268,25 +1388,12 @@ String compatibilitySummary() {
     if (devUnreadable > 0) {
         s << "<b style='color:#c0392b'>${devUnreadable} device(s) could not be read</b> and are missing from this map, along with any app only discoverable through them. "
     }
-    s << "Read ${decoded} app(s)"
-    if (unreadable > 0) s << ", <b>${unreadable} could not be read</b>"
-    s << ". Decoded ${rules} flow(s)."
-
-    
-    
-    
-    
+    int appCount = (state.appInfo ?: [:]).size()
+    int deviceCount = (state.deviceLabels ?: [:]).size()
+    int nodeCount = (graph.nodes ?: []).size()
+    int relationshipCount = (graph.edges ?: []).size()
     int inert = (state.appsInert ?: 0) as Integer
-    if (inert > 0) {
-        s << " ${inert} touch no device and link to no rule; they are drawn apart from the network, each labelled with why."
-    }
-
-    int links = (state.ruleLinks ?: 0) as Integer
-    if (links > 0) {
-        s << " Found ${links} rule-to-rule link(s)."
-    } else {
-        s << " No rule-to-rule links found - no rule on this hub runs, cancels timed actions on, pauses/resumes, or sets the Private Boolean of another."
-    }
+    s << "<b>Your map contains:</b> ${appCount} apps, ${deviceCount} devices, ${nodeCount} nodes"
 
     
     
@@ -1297,17 +1404,14 @@ String compatibilitySummary() {
     if (hubVarInvStatus == 'complete' || hubVarInvStatus == 'complete-with-gaps') {
         int hubVarCount = (hubVarInv.count ?: 0) as Integer
         int hubVarConnCount = (state.hubVariableConnectorCount ?: 0) as Integer
-        s << " Found ${hubVarCount} Hub Variable(s)"
-        s << (hubVarConnCount > 0 ? ", ${hubVarConnCount} with a Connector." : ".")
+        String variableLabel = hubVarCount == 1 ? 'Hub Variable' : 'Hub Variables'
+        String connectorLabel = hubVarConnCount == 1 ? '1 with a Connector' : "${hubVarConnCount} with Connectors"
+        s << " and ${hubVarCount} ${variableLabel} (${connectorLabel})"
     }
-
-    int skipped = (state.rulesSkipped ?: 0) as Integer
-    if (skipped > 0) {
-        List engines = (state.otherEngines ?: []) as List
-        s << "<br><b style='color:#b9770e'>${skipped} rule(s) on ${engines.join(', ')} were not decoded</b> - flow decoding supports ${DECODED_ENGINES_TEXT} only. They still appear in the map with their device relationships."
-    } else {
-        s << "<br><span style='opacity:0.75'>Flow decoding supports ${DECODED_ENGINES_TEXT}. Apps that are not rules appear in the map with their device relationships.</span>"
-    }
+    s << ", resulting in ${relationshipCount} relationships"
+    if (inert > 0) s << ", including ${inert} freestanding apps"
+    s << "."
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 (in Beta) and webCoRE pistons (in Beta: statement order, branching, condition text and task parameters). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
     return s.toString()
 }
 
@@ -1329,7 +1433,7 @@ String compatibilitySummary() {
 
 
 Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
-    Map out = [ok: false, data: null, error: null]
+    Map out = [ok: false, data: null, error: null, timedOut: false]
     try {
         httpGet(extraOpts + [uri: uri, timeout: timeoutSec]) { resp ->
             out.data = resp.data
@@ -1337,6 +1441,16 @@ Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
         }
     } catch (Exception ex) {
         out.error = "${ex.message}"
+        
+        
+        Throwable cause = ex
+        int guard = 0
+        while (cause != null && guard < 8) {
+            if (cause instanceof java.net.SocketTimeoutException ||
+                cause instanceof java.util.concurrent.TimeoutException) { out.timedOut = true; break }
+            cause = cause.getCause()
+            guard++
+        }
     }
     return out
 }
@@ -1700,6 +1814,9 @@ Map startScan() {
     state.scanTotal = repIds.size()
     state.scanDone = 0
     state.scanPhase = 'devices'
+    
+    
+    state.devicePhaseStartedAt = now()
     state.scanRunning = true
     
     
@@ -2162,6 +2279,10 @@ void finalizeDevicePhase(String scanId) {
 
         state.scanDone = scan.total as Integer
         state.scanHeartbeat = now()
+        if (diagOn()) {
+            log.info "${app.label}: device phase done in ${phaseElapsedSeconds(state.devicePhaseStartedAt)}s" +
+                     " - ${scan.total} representative type(s), ${unreadable.size()} unreadable"
+        }
     } catch (Exception ex) {
         log.warn "${app.label}: device-phase finalization failed: ${ex.message}"
         markScanFinished(scan.lockToken as String, "${ex.message}")
@@ -2215,6 +2336,9 @@ void startAppPhase(String lockToken) {
     state.appIds = appIds as List
 
     state.scanPhase = 'apps'
+    
+    
+    state.appPhaseStartedAt = now()
     state.scanTotal = appIds.size()
     state.scanDone = 0
     state.scanQueue = []
@@ -2582,6 +2706,11 @@ void finalizeAppPhase(String scanId) {
         
         state.appResultsReady = true
         state.scanHeartbeat = now()
+        if (diagOn()) {
+            log.info "${app.label}: app phase done in ${phaseElapsedSeconds(state.appPhaseStartedAt)}s" +
+                     " - ${state.appsDecoded} decoded, ${state.appsUnreadable} unreadable," +
+                     " ${state.rulesDecoded} rule(s) decoded, ${state.rulesSkipped} skipped"
+        }
     } catch (Exception ex) {
         log.warn "${app.label}: app-phase finalization failed: ${ex.message}"
         markScanFinished(scan.lockToken as String, "${ex.message}")
@@ -2672,7 +2801,6 @@ void fetchRegistry(jobData = null) {
     } catch (Exception ex) {
         meta.state = 'ERROR'
         meta.error = "${ex.message}"
-        log.warn "${app.label}: registry fetch failed, continuing without it: ${ex.message}"
     }
 
     
@@ -2699,8 +2827,9 @@ void fetchRegistry(jobData = null) {
     
     
     
+    
     if (meta.error) {
-        log.warn "${app.label}: registry unavailable, continuing without it"
+        log.warn "${app.label}: registry unavailable, continuing without it: ${meta.error}"
     } else if (diagOn()) {
         log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
     }
@@ -2763,6 +2892,12 @@ void finishScan(data = null) {
         state.scanHeartbeat = now()
         state.graph = graph
         atomicState.graphVersion = GRAPH_SCHEMA
+        
+        
+        
+        Long graphCommittedAt = now()
+        state.graphCommittedAtLocal = graphCommittedAt
+        atomicState.graphCommittedAt = graphCommittedAt
 
         
         
@@ -2799,8 +2934,6 @@ void finishScan(data = null) {
         
         state.hubVariableConnectorCount = (graph.hubVariableConnectorCount ?: 0) as Integer
 
-        if (diagOn()) log.info "${app.label}: scan complete - ${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
-
         
         
         
@@ -2808,7 +2941,15 @@ void finishScan(data = null) {
         Long scanStartedAtMs = lockToken.tokenize('-')[1] as Long
         
         
+        
+        
         state.lastScanDurationSeconds = ((now() - scanStartedAtMs) / 1000).intValue()
+
+        if (diagOn()) {
+            log.info "${app.label}: scan complete in ${state.lastScanDurationSeconds}s - " +
+                     "${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+            log.info "${app.label}: webCoRE decode - ${webcoreDecodeSummary()}"
+        }
     }
     if (!finished) {
         
@@ -3074,6 +3215,502 @@ Map fetchAppTypeNamespaces() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+Map decodeWebcorePistonDocument(Map data) {
+    Map<Integer, String> chunks = [:]
+    Set<Integer> duplicates = [] as Set<Integer>
+    if (data.appSettings != null && !(data.appSettings instanceof List)) {
+        return [status: 'error', error: 'unexpected-settings']
+    }
+    (data.appSettings instanceof List ? data.appSettings : []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map setting = raw as Map
+        def match = ("${setting.name ?: ''}" =~ /^chunk:([0-9]+)$/)
+        if (!match.matches()) return
+        int index = match[0][1] as int
+        if (chunks.containsKey(index)) duplicates << index
+        chunks[index] = setting.value == null ? null : "${setting.value}"
+    }
+
+    
+    
+    if (!chunks) return [status: 'not-present']
+    if (duplicates) return [status: 'error', error: 'duplicate-chunk']
+    if (!chunks.containsKey(0)) return [status: 'error', error: 'missing-chunk-zero']
+
+    int maximum = chunks.keySet().max() as int
+    
+    
+    
+    if (maximum > 255) return [status: 'error', error: 'chunk-index-out-of-range']
+    if ((0..maximum).any { !chunks.containsKey(it) }) {
+        return [status: 'error', error: 'missing-chunk']
+    }
+    if ((0..maximum).any { chunks[it] == null || chunks[it].isEmpty() }) {
+        return [status: 'error', error: 'empty-chunk']
+    }
+    int encodedLength = (0..maximum).sum { chunks[it].length() } as int
+    if (encodedLength > 2_000_000) {
+        return [status: 'error', error: 'configuration-too-large']
+    }
+
+    byte[] decoded
+    try {
+        decoded = (0..maximum).collect { chunks[it] }.join('').decodeBase64()
+    } catch (Exception ignored) {
+        return [status: 'error', error: 'invalid-base64']
+    }
+
+    Object document
+    try {
+        String json = decodeWebcoreEmoji(new String(decoded, 'UTF-8'))
+        document = new groovy.json.JsonSlurper().parseText(json)
+    } catch (Exception ignored) {
+        return [status: 'error', error: 'invalid-json']
+    }
+    if (!(document instanceof Map)) {
+        return [status: 'error', error: 'unexpected-root']
+    }
+    return [status: 'complete', document: document]
+}
+
+Map decodeWebcoreHubVariableUses(Map data) {
+    Map decoded = decodeWebcorePistonDocument(data)
+    if (decoded.status == 'error') return [status: 'error', error: decoded.error, hubVariables: []]
+    if (decoded.status != 'complete') return [status: decoded.status, hubVariables: []]
+    Map<String, Set<String>> roles = [:]
+    collectWebcoreHubVariableRoles(decoded.document, roles, false)
+    List<String> reads = roles.findAll { String name, Set<String> found -> found.contains('read') }.keySet().sort()
+    List<String> writes = roles.findAll { String name, Set<String> found -> found.contains('write') }.keySet().sort()
+    List<String> unknown = roles.findAll { String name, Set<String> found -> found.contains('unknown') }.keySet().sort()
+    return [status: 'complete', reads: reads, writes: writes, hubVariables: unknown]
+}
+
+void collectWebcoreHubVariableRoles(Object value, Map<String, Set<String>> roles, boolean suppressCurrentRead) {
+    if (value instanceof List) {
+        (value as List).each { Object child -> collectWebcoreHubVariableRoles(child, roles, false) }
+        return
+    }
+    if (!(value instanceof Map)) return
+
+    Map item = value as Map
+    Object writeTarget = null
+
+    
+    
+    
+    
+    if (item.c == 'setVariable' && item.p instanceof List && (item.p as List)) {
+        Object first = (item.p as List)[0]
+        if (first instanceof Map && (first as Map).t == 'x') {
+            writeTarget = first
+            addWebcoreHubVariableRole(roles, (first as Map).x, 'write')
+        }
+    }
+
+    String itemType = item.t instanceof String ? item.t as String : null
+    if (itemType in ['for', 'each']) {
+        addWebcoreHubVariableRole(roles, item.x, 'write')
+    }
+    if (itemType == 'p') {
+        addWebcoreHubVariableRole(roles, item.dm, 'write')
+        addWebcoreHubVariableRole(roles, item.dn, 'write')
+    }
+    if (itemType == 'function' && "${item.n ?: ''}".equalsIgnoreCase('setVariable')) {
+        Object staticTarget = webcoreStaticStringArgument(item.i instanceof List && (item.i as List) ? (item.i as List)[0] : null)
+        addWebcoreHubVariableRole(roles, staticTarget, 'write')
+    }
+
+    
+    
+    
+    
+    if (!suppressCurrentRead && item.x != null && itemType in ['x', 'variable', 'device']) {
+        addWebcoreHubVariableRole(roles, item.x, 'read')
+    }
+    
+    
+    if (item.d instanceof List && itemType in ['p', 'd', 'action']) {
+        (item.d as List).each { Object deviceOrVariable ->
+            addWebcoreHubVariableRole(roles, deviceOrVariable, 'read')
+        }
+    }
+
+    item.values().each { Object child ->
+        if (child instanceof List) {
+            (child as List).each { Object listChild ->
+                collectWebcoreHubVariableRoles(listChild, roles, listChild.is(writeTarget))
+            }
+        } else if (child instanceof Map) {
+            collectWebcoreHubVariableRoles(child, roles, child.is(writeTarget))
+        }
+    }
+}
+
+void addWebcoreHubVariableRole(Map<String, Set<String>> roles, Object rawName, String role) {
+    if (rawName instanceof List) {
+        (rawName as List).each { Object one -> addWebcoreHubVariableRole(roles, one, role) }
+        return
+    }
+    if (!(rawName instanceof String)) return
+    String name = webcoreBaseVariableName(rawName as String)
+    if (!name.startsWith('@@') || name.length() <= 2) return
+    String hubName = name.substring(2)
+    if (!roles[hubName]) roles[hubName] = [] as Set<String>
+    roles[hubName] << role
+}
+
+
+
+
+
+Object webcoreStaticStringArgument(Object value) {
+    Object current = value
+    while (current instanceof Map && (current as Map).t == 'expression') {
+        Object items = (current as Map).i
+        if (!(items instanceof List) || (items as List).size() != 1) return null
+        current = (items as List)[0]
+    }
+    if (current instanceof Map && (current as Map).t == 'string' && (current as Map).v instanceof String) {
+        return (current as Map).v
+    }
+    return null
+}
+
+String decodeWebcoreEmoji(String value) {
+    if (!value) return ''
+    return value.replaceAll(/(:%[0-9A-F]{2}%[0-9A-F]{2}%[0-9A-F]{2}%[0-9A-F]{2}:)/) { Object match ->
+        String token = (match instanceof List ? match[0] : match) as String
+        URLDecoder.decode(token.substring(1, 13), 'UTF-8')
+    }
+}
+
+
+
+
+String webcoreBaseVariableName(String name) {
+    if (name && !name.startsWith('$') && name.endsWith(']')) {
+        List<String> parts = name.substring(0, name.length() - 1).tokenize('[')
+        if (parts.size() == 2) return parts[0]
+    }
+    return name ?: ''
+}
+
+
+
+
+
+String webcoreSanitizeLocalName(String name) {
+    name ? name.trim().replace(' ', '_') : ''
+}
+
+
+
+
+
+
+
+
+
+
+
+
+Map collectWebcorePistonLocalVariables(Object document) {
+    Set<String> declared = [] as LinkedHashSet<String>
+    Map<String, String> declaredType = [:]
+    if (document instanceof Map && (document as Map).v instanceof List) {
+        ((document as Map).v as List).each { Object declaration ->
+            if (!(declaration instanceof Map)) return
+            Map d = declaration as Map
+            String name = d.n instanceof String ? (d.n as String).trim() : null
+            if (!name) return
+            String base = webcoreSanitizeLocalName(name)
+            declared << base
+            if (!declaredType.containsKey(base)) declaredType[base] = (d.t instanceof String ? d.t as String : null)
+        }
+    }
+    Map<String, Set<String>> roles = [:]
+    collectWebcoreLocalVariableRoles(document, declared, roles, false)
+    List<Map> definitions = declared.sort().collect { String name -> [name: name, engineVariableType: declaredType[name]] }
+    List<String> reads = roles.findAll { String n, Set<String> f -> f.contains('read') }.keySet().sort()
+    List<String> writes = roles.findAll { String n, Set<String> f -> f.contains('write') }.keySet().sort()
+    return [definitions: definitions, reads: reads, writes: writes]
+}
+
+void collectWebcoreLocalVariableRoles(Object value, Set<String> declared, Map<String, Set<String>> roles, boolean suppressCurrentRead) {
+    if (value instanceof List) {
+        (value as List).each { Object child -> collectWebcoreLocalVariableRoles(child, declared, roles, false) }
+        return
+    }
+    if (!(value instanceof Map)) return
+
+    Map item = value as Map
+    Object writeTarget = null
+
+    if (item.c == 'setVariable' && item.p instanceof List && (item.p as List)) {
+        Object first = (item.p as List)[0]
+        if (first instanceof Map && (first as Map).t == 'x') {
+            writeTarget = first
+            addWebcoreLocalVariableRole(roles, declared, (first as Map).x, 'write')
+        }
+    }
+
+    String itemType = item.t instanceof String ? item.t as String : null
+    if (itemType in ['for', 'each']) {
+        addWebcoreLocalVariableRole(roles, declared, item.x, 'write')
+    }
+    if (itemType == 'p') {
+        addWebcoreLocalVariableRole(roles, declared, item.dm, 'write')
+        addWebcoreLocalVariableRole(roles, declared, item.dn, 'write')
+    }
+    if (itemType == 'function' && "${item.n ?: ''}".equalsIgnoreCase('setVariable')) {
+        Object staticTarget = webcoreStaticStringArgument(item.i instanceof List && (item.i as List) ? (item.i as List)[0] : null)
+        addWebcoreLocalVariableRole(roles, declared, staticTarget, 'write')
+    }
+
+    if (!suppressCurrentRead && item.x != null && itemType in ['x', 'variable', 'device']) {
+        addWebcoreLocalVariableRole(roles, declared, item.x, 'read')
+    }
+    if (item.d instanceof List && itemType in ['p', 'd', 'action']) {
+        (item.d as List).each { Object deviceOrVariable ->
+            addWebcoreLocalVariableRole(roles, declared, deviceOrVariable, 'read')
+        }
+    }
+
+    item.values().each { Object child ->
+        if (child instanceof List) {
+            (child as List).each { Object listChild ->
+                collectWebcoreLocalVariableRoles(listChild, declared, roles, listChild.is(writeTarget))
+            }
+        } else if (child instanceof Map) {
+            collectWebcoreLocalVariableRoles(child, declared, roles, child.is(writeTarget))
+        }
+    }
+}
+
+void addWebcoreLocalVariableRole(Map<String, Set<String>> roles, Set<String> declared, Object rawName, String role) {
+    if (rawName instanceof List) {
+        (rawName as List).each { Object one -> addWebcoreLocalVariableRole(roles, declared, one, role) }
+        return
+    }
+    if (!(rawName instanceof String)) return
+    String name = webcoreBaseVariableName(rawName as String)
+    
+    
+    if (name.startsWith('@') || name.startsWith('$')) return
+    String sanitized = webcoreSanitizeLocalName(name)
+    if (!declared.contains(sanitized)) return
+    if (!roles[sanitized]) roles[sanitized] = [] as Set<String>
+    roles[sanitized] << role
+}
+
+
+
+
+
+
+
+
+Map collectWebcorePistonDeviceReferences(Object document) {
+    List<Map> reads = []
+    List<Map> actions = []
+    Map<String, Integer> unsupported = [:]
+    walkWebcoreDeviceNodes(document, reads, actions, unsupported)
+    return [reads: reads, actions: actions, unsupported: unsupported]
+}
+
+void walkWebcoreDeviceNodes(Object value, List<Map> reads, List<Map> actions, Map<String, Integer> unsupported,
+                            String role = null) {
+    if (value instanceof List) {
+        (value as List).each { Object child -> walkWebcoreDeviceNodes(child, reads, actions, unsupported, role) }
+        return
+    }
+    if (!(value instanceof Map)) return
+    Map item = value as Map
+    String itemType = item.t instanceof String ? item.t as String : null
+
+    if (itemType == 'p') {
+        String attribute = item.a instanceof String ? item.a as String : null
+        classifyWebcoreDeviceList(item.d, unsupported).each { String token ->
+            reads << [token: token, attribute: attribute, role: role]
+        }
+    } else if (itemType == 'action') {
+        List<String> commands = (item.k instanceof List ? item.k as List : []).findResults { Object task ->
+            (task instanceof Map && (task as Map).c instanceof String) ? (task as Map).c as String : null
+        }
+        classifyWebcoreDeviceList(item.d, unsupported).each { String token ->
+            actions << [token: token, commands: commands]
+        }
+    }
+
+    
+    
+    
+    
+    
+    
+    
+    
+    item.each { Object rawKey, Object child ->
+        String key = String.valueOf(rawKey)
+        if (key == 'c' && child instanceof List) {
+            (child as List).each { Object entry ->
+                walkWebcoreDeviceNodes(entry, reads, actions, unsupported,
+                        webcoreDeviceReadRole(entry, role))
+            }
+            return
+        }
+        if (child instanceof List) {
+            (child as List).each { Object listChild -> walkWebcoreDeviceNodes(listChild, reads, actions, unsupported, role) }
+        } else if (child instanceof Map) {
+            walkWebcoreDeviceNodes(child, reads, actions, unsupported, role)
+        }
+    }
+}
+
+
+
+
+String webcoreDeviceReadRole(Object entry, String inherited) {
+    if (!(entry instanceof Map)) return inherited
+    Map node = entry as Map
+    String type = String.valueOf(node.t ?: '')
+    if (type == 'event') return 'trigger'
+    
+    
+    
+    if (type == 'condition' || type == 'group') return webcoreFlowRole(node)
+    return inherited
+}
+
+
+
+
+
+
+
+
+
+
+List<String> classifyWebcoreDeviceList(Object dList, Map<String, Integer> unsupported) {
+    List<String> tokens = []
+    (dList instanceof List ? dList as List : []).each { Object entry ->
+        if (!(entry instanceof String)) {
+            unsupported['malformed-device-node'] = (unsupported['malformed-device-node'] ?: 0) + 1
+            return
+        }
+        String s = entry as String
+        
+        
+        
+        if (s ==~ /^:[0-9a-f]{32}:$/) {
+            tokens << s
+        } else if (s == '$currentEventDevice') {
+            unsupported['runtime-selected-device'] = (unsupported['runtime-selected-device'] ?: 0) + 1
+        } else if (s.startsWith('@')) {
+            unsupported['variable-backed-device-list'] = (unsupported['variable-backed-device-list'] ?: 0) + 1
+        } else {
+            unsupported['non-physical-device'] = (unsupported['non-physical-device'] ?: 0) + 1
+        }
+    }
+    return tokens
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+List webcoreFlowTriggerComparisons() {
+    return ['arrives', 'becomes_even', 'becomes_odd', 'changes', 'changes_away_from',
+            'changes_away_from_any_of', 'changes_to', 'changes_to_any_of', 'does_not_drop',
+            'does_not_rise', 'drops', 'drops_below', 'drops_to_or_below', 'enters_range',
+            'event_occurs', 'executes', 'exits_range', 'gets', 'gets_any', 'happens_daily_at',
+            'receives', 'remains_above', 'remains_above_or_equal_to', 'remains_below',
+            'remains_below_or_equal_to', 'remains_even', 'remains_inside_of_range', 'remains_odd',
+            'remains_outside_of_range', 'rises', 'rises_above', 'rises_to_or_above', 'stays',
+            'stays_any_of', 'stays_away_from', 'stays_away_from_any_of', 'stays_different_than',
+            'stays_equal_to', 'stays_even', 'stays_greater_than', 'stays_greater_than_or_equal_to',
+            'stays_inside_of_range', 'stays_less_than', 'stays_less_than_or_equal_to', 'stays_not',
+            'stays_odd', 'stays_outside_of_range', 'stays_unchanged']
+}
+
+
+
+
+
+
+List webcoreFlowConditionComparisons() {
+    return ['changed', 'did_not_change', 'is', 'is_not', 'is_any_of', 'is_not_any_of', 'is_equal_to',
+            'is_different_than', 'is_less_than', 'is_less_than_or_equal_to', 'is_greater_than',
+            'is_greater_than_or_equal_to', 'is_inside_of_range', 'is_outside_of_range', 'is_even',
+            'is_odd', 'was', 'was_not', 'was_any_of', 'was_not_any_of', 'was_equal_to',
+            'was_different_than', 'was_less_than', 'was_less_than_or_equal_to', 'was_greater_than',
+            'was_greater_than_or_equal_to', 'was_inside_of_range', 'was_outside_of_range', 'was_even',
+            'was_odd', 'is_any', 'is_before', 'is_after', 'is_between', 'is_not_between']
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+String webcoreFlowRole(Map condition) {
+    
+    
+    String co = String.valueOf(condition?.co ?: '')
+    boolean triggerOp = webcoreFlowTriggerComparisons().contains(co)
+    boolean conditionOp = webcoreFlowConditionComparisons().contains(co)
+    if (!triggerOp && !conditionOp) return null
+    String byMembership = triggerOp ? 'trigger' : 'constraint'
+    String ct = String.valueOf(condition?.ct ?: '')
+    if (!ct) return byMembership
+    String byStored = ct == 't' ? 'trigger' : (ct == 'c' ? 'constraint' : null)
+    if (byStored == null) return null
+    return byStored == byMembership ? byMembership : null
+}
+
+
+
+boolean webcoreFlowIsTrigger(Map condition) {
+    return webcoreFlowRole(condition) == 'trigger'
+}
+
+
+
+
+
+
+
+
+
 Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
     Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
@@ -3117,6 +3754,23 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 out.endpoints = []
                 out.hubVarWrites = []
                 out.hubVarReads = []
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                List selfJobs = scheduledJobList(data.scheduledJobs)
+                out.inert = [
+                    kids  : (data.childAppCount ?: 0) as Integer,
+                    devs  : (data.childDeviceCount ?: 0) as Integer,
+                    sched : selfJobs.size(),
+                    schedJobs : selfJobs.collect { Map j -> [next: "${j.nextRunTime}", cron: "${j.schedule}"] },
+                    subs  : countOf(data.eventSubscriptions),
+                ]
                 return out
             }
 
@@ -3175,6 +3829,10 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
 
             
             
+            out.unusedConstraints = unusedConstraintDeviceIds(data)
+
+            
+            
             
             
             
@@ -3185,6 +3843,42 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             subscribed.each { String devId ->
                 List existing = (roles[devId] ?: []) as List
                 if (!existing) addRole(roles, devId, 'trigger')
+            }
+
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            String normalizedAppType = (out.type ?: '').toString().trim()
+            if (normalizedAppType == 'webCoRE') {
+                
+                
+                
+                
+                
+                
+                Set<String> permitted = [] as LinkedHashSet<String>
+                (data.appSettings instanceof List ? data.appSettings as List : []).each { Object raw ->
+                    if (!(raw instanceof Map)) return
+                    Map setting = raw as Map
+                    if (!("${setting.type ?: ''}").startsWith('capability')) return
+                    (setting.deviceIdsForDeviceList instanceof List ? setting.deviceIdsForDeviceList as List : []).each { Object devId ->
+                        if (devId != null) permitted << "${devId}"
+                    }
+                }
+                out.webcorePermittedDeviceIds = permitted.toList()
+            }
+            if (normalizedAppType == 'webCoRE' || normalizedAppType == 'webCoRE Piston') {
+                roles.clear()
+                stateful.clear()
+                out.webcoreDeviceRelationshipsSuppressed = true
             }
 
             out.roles = roles
@@ -3218,6 +3912,51 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 
                 
                 out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
+            }
+            if ("${out.type}" == 'webCoRE Piston') {
+                
+                
+                
+                
+                Map decodedPiston = decodeWebcorePistonDocument(data)
+                out.webcoreVariableDecodeStatus = decodedPiston.status
+                if (decodedPiston.error) out.webcoreVariableDecodeError = decodedPiston.error
+                if (decodedPiston.status == 'complete') {
+                    Object document = decodedPiston.document
+                    Map<String, Set<String>> hubRoles = [:]
+                    collectWebcoreHubVariableRoles(document, hubRoles, false)
+                    out.webcoreHubVarReads = hubRoles.findAll { String n, Set<String> f -> f.contains('read') }.keySet().sort()
+                    out.webcoreHubVarWrites = hubRoles.findAll { String n, Set<String> f -> f.contains('write') }.keySet().sort()
+                    out.webcoreHubVarUses = hubRoles.findAll { String n, Set<String> f -> f.contains('unknown') }.keySet().sort()
+
+                    Map localVars = collectWebcorePistonLocalVariables(document)
+                    out.webcoreLocalVariableDefinitions = localVars.definitions
+                    out.webcoreLocalVariableReads = localVars.reads
+                    out.webcoreLocalVariableWrites = localVars.writes
+
+                    Map deviceRefs = collectWebcorePistonDeviceReferences(document)
+                    out.webcoreDeviceReads = deviceRefs.reads
+                    out.webcoreDeviceActions = deviceRefs.actions
+                    out.webcoreUnsupportedDeviceRefs = deviceRefs.unsupported
+
+                    
+                    
+                    
+                    
+                    
+                    
+                    out.flow = buildWebcoreFlow(document)
+                } else {
+                    out.webcoreHubVarReads = []
+                    out.webcoreHubVarWrites = []
+                    out.webcoreHubVarUses = []
+                    out.webcoreLocalVariableDefinitions = []
+                    out.webcoreLocalVariableReads = []
+                    out.webcoreLocalVariableWrites = []
+                    out.webcoreDeviceReads = []
+                    out.webcoreDeviceActions = []
+                    out.webcoreUnsupportedDeviceRefs = [:]
+                }
             }
 
             
@@ -3255,6 +3994,2267 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
     }
     return out
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+int webcoreFlowMaxDepth() { return 12 }
+int webcoreFlowMaxSteps() { return 400 }
+
+List buildWebcoreFlow(Object document) {
+    if (!(document instanceof Map)) return []
+    Object statements = (document as Map).s
+    List steps = []
+    webcoreFlowStatements(statements instanceof List ? statements as List : [], steps, 0)
+    return steps
+}
+
+void webcoreFlowStatements(List statements, List steps, int depth) {
+    if (depth > webcoreFlowMaxDepth()) return
+    statements.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        if (steps.size() >= webcoreFlowMaxSteps()) return
+        webcoreFlowStatement(raw as Map, steps, depth)
+    }
+}
+
+void webcoreFlowStatement(Map st, List steps, int depth) {
+    String type = "${st.t ?: ''}"
+    List body = (st.s instanceof List) ? st.s as List : []
+    switch (type) {
+        case 'on':
+            
+            ((st.c instanceof List) ? st.c as List : []).each { Object raw ->
+                if (!(raw instanceof Map)) return
+                Map event = raw as Map
+                Map lo = (event.lo instanceof Map) ? event.lo as Map : [:]
+                steps << webcoreFlowNode('trigger', webcoreFlowEventLabel(event), webcoreFlowDeviceTokens(lo))
+            }
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+        case 'if':
+            
+            
+            
+            
+            
+            List triggerParts = webcoreFlowConditionParts(st, true)
+            List conditionParts = webcoreFlowConditionParts(st, false)
+            triggerParts.each { Object part ->
+                steps << webcoreFlowTrigger(part as Map, "${st.o ?: 'and'}")
+            }
+            boolean decides = !conditionParts.isEmpty()
+            if (decides) {
+                steps << webcoreFlowControl('if', webcoreFlowConditionLabel(st, false),
+                        conditionParts, "${st.o ?: 'and'}")
+            }
+            webcoreFlowStatements(body, steps, depth + 1)
+            ((st.ei instanceof List) ? st.ei as List : []).each { Object raw ->
+                if (!(raw instanceof Map)) return
+                Map branch = raw as Map
+                steps << webcoreFlowControl('elseif', webcoreFlowConditionLabel(branch, false),
+                        webcoreFlowConditionParts(branch, false), "${branch.o ?: 'and'}")
+                webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
+            }
+            List elseBody = (st.e instanceof List) ? st.e as List : []
+            if (elseBody) {
+                if (decides) steps << webcoreFlowControl('else', '')
+                webcoreFlowStatements(elseBody, steps, depth + 1)
+            }
+            
+            
+            if (decides) steps << webcoreFlowControl('endif', '')
+            break
+        case 'switch':
+            
+            
+            
+            
+            boolean opened = false
+            ((st.cs instanceof List) ? st.cs as List : []).each { Object raw ->
+                if (!(raw instanceof Map)) return
+                Map branch = raw as Map
+                steps << webcoreFlowControl(opened ? 'elseif' : 'if', 'case not decoded')
+                opened = true
+                webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
+            }
+            if (opened) steps << webcoreFlowControl('endif', '')
+            break
+        case 'while':
+        case 'repeat':
+        case 'for':
+        case 'each':
+            
+            
+            
+            steps << webcoreFlowNode('action', webcoreFlowLoopLabel(type), webcoreFlowDeviceTokens(st))
+            webcoreFlowStatements(body, steps, depth + 1)
+            
+            
+            
+            steps << webcoreFlowNode('action', 'end ' + webcoreFlowLoopLabel(type).replace(' (loop)', ''), [])
+            break
+        case 'action':
+            
+            
+            List tokens = webcoreFlowDeviceTokens(st)
+            List tasks = (st.k instanceof List) ? st.k as List : []
+            if (!tasks) {
+                steps << webcoreFlowNode('action', 'action', tokens)
+            } else {
+                tasks.each { Object raw ->
+                    if (!(raw instanceof Map)) return
+                    steps << webcoreFlowNode('action', webcoreFlowTaskLabel(raw as Map), tokens)
+                }
+            }
+            break
+        case 'do':
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+        case 'break':
+            steps << webcoreFlowNode('action', 'break', [])
+            break
+        case 'exit':
+            steps << webcoreFlowNode('action', 'exit piston', [])
+            break
+        case 'every':
+            steps << webcoreFlowNode('trigger', 'every (timer)', [])
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+        default:
+            steps << webcoreFlowNode('action', type ? "${type} not decoded" : 'not decoded',
+                    webcoreFlowDeviceTokens(st))
+            webcoreFlowStatements(body, steps, depth + 1)
+            break
+    }
+}
+
+String webcoreFlowLoopLabel(String type) {
+    switch (type) {
+        case 'while':  return 'while (loop)'
+        case 'repeat': return 'repeat (loop)'
+        case 'for':    return 'for each step (loop)'
+        case 'each':   return 'for each device (loop)'
+    }
+    return 'loop'
+}
+
+
+
+
+
+
+
+String webcoreFlowTaskLabel(Map task) {
+    String command = "${task?.c ?: ''}"
+    if (!command) return 'task'
+    List params = (task?.p instanceof List) ? task.p as List : []
+    if (!params) return command
+    List rendered = []
+    for (Object raw : params) {
+        if (!(raw instanceof Map)) return command
+        String text = webcoreFlowOperandText(raw as Map)
+        if (!text) return command
+        rendered << text
+    }
+    return "${command}(${rendered.join(', ')})"
+}
+
+
+
+
+List webcoreFlowDeviceTokens(Map node) {
+    Object raw = node?.d
+    if (!(raw instanceof List)) return []
+    List out = []
+    (raw as List).each { Object token ->
+        if (!(token instanceof String)) return
+        String value = token as String
+        if (value ==~ /^:[0-9a-f]{32}:$/ && !out.contains(value)) out << value
+    }
+    return out
+}
+
+String webcoreFlowEventLabel(Map event) {
+    Map lo = (event?.lo instanceof Map) ? event.lo as Map : [:]
+    switch ("${lo.t ?: ''}") {
+        case 'p':
+            String attribute = "${lo.a ?: ''}"
+            return attribute ? "When ${attribute} changes" : 'When a device event fires'
+        case 'v':
+            String virtual = "${lo.v ?: ''}"
+            return virtual ? "When ${virtual} changes" : 'When a virtual event fires'
+        case 'x':
+            String variable = "${lo.x ?: ''}"
+            return variable ? "When ${variable} changes" : 'When a variable changes'
+    }
+    return 'When an event fires'
+}
+
+
+
+
+String webcoreFlowConditionLabel(Map st, boolean includeTriggers = true) {
+    Object raw = st?.c
+    int count = 0
+    if (raw instanceof List) {
+        (raw as List).each { Object entry ->
+            if (!(entry instanceof Map)) return
+            if (includeTriggers || !webcoreFlowIsTrigger(entry as Map)) count++
+        }
+    }
+    return count > 1 ? "${count} conditions not decoded" : 'condition not decoded'
+}
+
+
+
+
+int webcoreFlowMaxConditionDepth() { return 6 }
+
+
+
+
+
+
+
+
+List webcoreFlowConditionParts(Map st, Boolean triggersWanted = null, int depth = 0) {
+    Object raw = st?.c
+    if (!(raw instanceof List)) return []
+    List parts = []
+    (raw as List).each { Object entry ->
+        if (!(entry instanceof Map)) return
+        Map condition = entry as Map
+        
+        
+        boolean isGroup = "${condition.t ?: ''}" != 'condition'
+        if (triggersWanted != null) {
+            boolean trigger = !isGroup && webcoreFlowIsTrigger(condition)
+            if (trigger != triggersWanted.booleanValue()) return
+        }
+        if (isGroup) {
+            
+            
+            List nested = depth >= webcoreFlowMaxConditionDepth() ? []
+                    : webcoreFlowConditionParts(condition, null, depth + 1)
+            parts << (nested ? [opaque: false, group: true, parts: nested,
+                                joiner: "${condition.o ?: 'and'}"]
+                             : [opaque: true])
+            return
+        }
+        Map lo = (condition.lo instanceof Map) ? condition.lo as Map : [:]
+        Map ro = (condition.ro instanceof Map) ? condition.ro as Map : [:]
+        Map ro2 = (condition.ro2 instanceof Map) ? condition.ro2 as Map : [:]
+        String co = String.valueOf(condition.co ?: '')
+        
+        
+        
+        Object arity = webcoreFlowComparisonValueCounts()[co]
+        String value = webcoreFlowOperandText(ro)
+        String value2 = webcoreFlowOperandText(ro2)
+        if (arity == null || ((arity as int) >= 1 && !value) || ((arity as int) == 2 && !value2)) {
+            parts << [opaque: true]
+            return
+        }
+        parts << [opaque: false,
+                  deviceTokens: webcoreFlowDeviceTokens(lo),
+                  subject: webcoreFlowOperandText(lo),
+                  attribute: "${lo.a ?: ''}",
+                  op: co.replace('_', ' '),
+                  value: (arity as int) >= 1 ? value : '',
+                  value2: (arity as int) == 2 ? value2 : '']
+    }
+    return parts
+}
+
+
+
+
+Map webcoreFlowComparisonValueCounts() {
+    return [arrives: 2, becomes_even: 0, becomes_odd: 0, changes: 0, changes_away_from: 1,
+            changes_away_from_any_of: 1, changes_to: 1, changes_to_any_of: 1, does_not_drop: 0,
+            does_not_rise: 0, drops: 0, drops_below: 1, drops_to_or_below: 1, enters_range: 2,
+            event_occurs: 0, executes: 1, exits_range: 2, gets: 1, gets_any: 0, happens_daily_at: 1,
+            is: 1, is_after: 1, is_any: 0, is_any_of: 1, is_before: 1, is_between: 2,
+            is_different_than: 1, is_equal_to: 1, is_even: 0, is_greater_than: 1,
+            is_greater_than_or_equal_to: 1, is_inside_of_range: 2, is_less_than: 1,
+            is_less_than_or_equal_to: 1, is_not: 1, is_not_any_of: 1, is_not_between: 2, is_odd: 0,
+            is_outside_of_range: 2, receives: 1, remains_above: 1, remains_above_or_equal_to: 1,
+            remains_below: 1, remains_below_or_equal_to: 1, remains_even: 0, remains_inside_of_range: 2,
+            remains_odd: 0, remains_outside_of_range: 2, rises: 0, rises_above: 1, rises_to_or_above: 1]
+}
+
+
+
+
+String webcoreFlowOperandText(Map operand) {
+    switch ("${operand?.t ?: ''}") {
+        case 'v': return "${operand.v ?: ''}"
+        case 'x': return "${operand.x ?: ''}"
+        case 'u': return "${operand.u ?: ''}"
+        case 'c':
+            Object c = operand.c
+            return (c instanceof CharSequence || c instanceof Number || c instanceof Boolean) ? "${c}" : ''
+    }
+    return ''
+}
+
+
+
+
+String webcoreFlowConditionText(List parts, String joiner, Map tokenNames) {
+    if (!parts) return ''
+    List rendered = []
+    for (Object raw : parts) {
+        if (!(raw instanceof Map)) return ''
+        Map part = raw as Map
+        if (part.opaque) return ''
+        
+        
+        
+        if (part.group) {
+            String inner = webcoreFlowConditionText((part.parts ?: []) as List,
+                    "${part.joiner ?: 'and'}", tokenNames)
+            if (!inner) return ''
+            rendered << "(${inner})"
+            continue
+        }
+        String subject = "${part.subject ?: ''}"
+        List tokens = (part.deviceTokens ?: []) as List
+        if (tokens) {
+            List names = []
+            tokens.each { Object token -> if (tokenNames["${token}"]) names << "${tokenNames["${token}"]}" }
+            if (names.size() != tokens.size()) return ''
+            subject = names.join(', ')
+            String attribute = "${part.attribute ?: ''}"
+            if (attribute) subject = "${subject}'s ${attribute}"
+        }
+        if (!subject) return ''
+        String line = subject
+        if ("${part.op ?: ''}") line = "${line} ${part.op}"
+        if ("${part.value ?: ''}") line = "${line} ${part.value}"
+        if ("${part.value2 ?: ''}") line = "${line} and ${part.value2}"
+        rendered << line
+    }
+    return rendered.join(" ${joiner} ")
+}
+
+Map webcoreFlowNode(String kind, String label, List deviceTokens) {
+    return [kind: kind, ctrl: null, cond: '', label: label, devices: [],
+            deviceTokens: deviceTokens, ruleTargets: [], selfTarget: false]
+}
+
+
+
+
+Map webcoreFlowTrigger(Map part, String joiner) {
+    return [kind: 'trigger', ctrl: null, cond: '', label: 'trigger not decoded',
+            devices: [], deviceTokens: [], conditionParts: [part], conditionJoiner: joiner,
+            ruleTargets: [], selfTarget: false]
+}
+
+Map webcoreFlowControl(String ctrl, String cond, List parts = [], String joiner = 'and') {
+    return [kind: 'action', ctrl: ctrl, cond: cond, label: cond ?: ctrl, devices: [],
+            deviceTokens: [], conditionParts: parts, conditionJoiner: joiner,
+            ruleTargets: [], selfTarget: false]
+}
+
+
+
+
+Map webcoreCensusLimits() {
+    return [maxDepth: 100, maxValues: 250000, maxUnrecognised: 50, maxPathLength: 200,
+            deadlineCheckInterval: 2000, maxStructureFindings: 50]
+}
+
+
+
+
+
+
+String webcoreCensusBoundPath(String path, int limit) {
+    if (path == null || path.length() <= limit) return path
+    String marker = '<path-elided>'
+    int head = (limit - marker.length()) / 2 as int
+    int tail = limit - marker.length() - head
+    return path.substring(0, head) + marker + path.substring(path.length() - tail)
+}
+
+
+
+List<String> webcoreCensusSchemaKeys() {
+    return ['$', 'a', 'c', 'ced', 'cm', 'co', 'cs', 'ct', 'ctp', 'cto', 'd', 'di', 'e', 'ei', 'exp',
+            'f', 'fs', 'g', 'i', 'id', 'k', 'l', 'lo', 'lo2', 'lo3', 'm', 'n', 'o', 'ok', 'p',
+            'r', 'rn', 'ro', 'ro2', 'rop', 's', 'sm', 'str', 't', 'tcp', 'tep', 'to', 'to2',
+            'ts', 'tsp', 'u', 'v', 'vt', 'w', 'wd', 'wt', 'x', 'xi', 'z']
+}
+
+
+
+List<String> webcoreCensusOpaqueKeys() {
+    return ['data', 'zc']
+}
+
+
+
+
+String webcoreCensusFixAttr(String attr) {
+    if (attr == null) return null
+    if (attr in ['orientation', 'axisX', 'axisY', 'axisZ']) return 'threeAxis'
+    switch (attr) {
+        case 'alarmSystemStatus': return 'hsmStatus'
+        case 'alarmSystemAlert': return 'hsmAlert'
+        case 'alarmSystemEvent': return 'hsmSetArm'
+        case 'alarmSystemRule': return 'hsmRule'
+        case 'alarmSystemRules': return 'hsmRules'
+    }
+    return attr
+}
+
+
+
+boolean webcoreCensusExpired(Closure expired) {
+    return expired != null && expired()
+}
+
+String webcoreCensusNodeKind(Object value) {
+    if (value instanceof Map) return 'object'
+    if (value instanceof List) return 'array'
+    return 'scalar'
+}
+
+Map collectWebcoreDecodeCoverage(Object document, Map registry, Closure expired = null, Map shapes = null) {
+    Map limits = webcoreCensusLimits()
+    Map constructs = (registry != null && registry.constructs instanceof Map) ? (registry.constructs as Map) : [:]
+    Map provenance = (registry != null && registry.provenance instanceof Map) ? (registry.provenance as Map) : [:]
+    Map result = [
+        status: 'complete',
+        truncation: null,
+        registryVersion: provenance.registryVersion,
+        provenance: [
+            observedWebcoreVersion: null,
+            referenceSourceCommit: provenance.commit,
+            compatibilityStatus: 'unknown'
+        ],
+        accounting: [objectsVisited: 0, arraysVisited: 0, fieldsVisited: 0, arrayElementsVisited: 0,
+                     scalarsVisited: 0, constructCandidates: 0, constructsIdentified: 0,
+                     defaultBranchOccurrences: 0],
+        constructCounts: [:],
+        constructOccurrences: [:],
+        levelCounts: [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0],
+        unrecognised: [],
+        unrecognisedOverflow: 0,
+        structureFindings: [],
+        structureFindingsOverflow: 0,
+        unrecognisedOutsideStatements: null
+    ]
+    if (!(document instanceof Map)) {
+        result.status = 'error'
+        result.error = 'unexpected-root'
+        return result
+    }
+
+    Map acc = [
+        objectsVisited: 0, arraysVisited: 0, fieldsVisited: 0, arrayElementsVisited: 0,
+        scalarsVisited: 0, constructCandidates: 0, constructsIdentified: 0,
+        defaultBranchOccurrences: 0,
+        counts: [:], unrecognised: [], seen: [] as Set, overflow: 0, truncated: null,
+        expired: expired, sinceDeadlineCheck: 0,
+        schemaKeys: webcoreCensusSchemaKeys() as Set,
+        opaqueKeys: webcoreCensusOpaqueKeys() as Set,
+        constructs: constructs,
+        functionIndex: webcoreCensusFunctionIndex(constructs),
+        limits: limits,
+        shapes: shapes,
+        occurrenceStack: [], occurrences: [:],
+        structureFindings: [], structureSeen: [] as Set, structureOverflow: 0, outsideStatements: 0
+    ]
+    
+    
+    
+    
+    
+    if (webcoreCensusExpired(expired)) {
+        acc.truncated = 'analysis-deadline'
+    } else {
+        webcoreCensusWalk(document, 'root', '$', 0, acc)
+        if (acc.truncated == null && webcoreCensusExpired(expired)) {
+            acc.truncated = 'analysis-deadline'
+        }
+    }
+
+    Map counts = [:]
+    (acc.counts as Map).keySet().sort().each { Object id -> counts[id] = (acc.counts as Map)[id] }
+    Map occurrences = [:]
+    (acc.occurrences as Map).keySet().sort().each { Object id ->
+        Map entry = (acc.occurrences as Map)[id] as Map
+        Map gapCounts = [:]
+        (entry.evidenceGaps as Map).keySet().sort().each { Object g -> gapCounts[g] = (entry.evidenceGaps as Map)[g] }
+        occurrences[id] = [structurallyValid: entry.structurallyValid, structurallyInvalid: entry.structurallyInvalid,
+                           evidenceGapped: entry.evidenceGapped, evidenceGaps: gapCounts]
+    }
+    Map levels = [L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0]
+    counts.keySet().each { Object id ->
+        Object entry = constructs[id]
+        String level = (entry instanceof Map && (entry as Map).level instanceof String) ? ((entry as Map).level as String) : 'L0'
+        if (shapes != null) level = webcoreCensusAchievedLevel(level, occurrences[id], counts[id])
+        if (levels.containsKey(level)) levels[level] = (levels[level] as Integer) + 1
+    }
+
+    result.accounting = [
+        objectsVisited: acc.objectsVisited, arraysVisited: acc.arraysVisited,
+        fieldsVisited: acc.fieldsVisited, arrayElementsVisited: acc.arrayElementsVisited,
+        scalarsVisited: acc.scalarsVisited, constructCandidates: acc.constructCandidates,
+        constructsIdentified: acc.constructsIdentified,
+        defaultBranchOccurrences: acc.defaultBranchOccurrences
+    ]
+    result.constructCounts = counts
+    result.levelCounts = levels
+    result.unrecognised = acc.unrecognised
+    result.unrecognisedOverflow = acc.overflow
+    result.constructOccurrences = occurrences
+    result.structureFindings = acc.structureFindings
+    result.structureFindingsOverflow = acc.structureOverflow
+    if (shapes != null) result.unrecognisedOutsideStatements = acc.outsideStatements
+    if (acc.truncated != null) {
+        result.status = 'truncated'
+        result.truncation = [reason: acc.truncated, maxDepth: limits.maxDepth, maxValues: limits.maxValues]
+    }
+    return result
+}
+
+
+
+
+Map webcoreCensusFunctionIndex(Map constructs) {
+    Map index = [:]
+    constructs.each { Object id, Object entry ->
+        String key = "${id}"
+        if (!key.startsWith('wc.function.')) return
+        index[key.substring('wc.function.'.length()).toLowerCase()] = key
+    }
+    return index
+}
+
+
+
+void webcoreCensusWalk(Object value, String context, String path, int depth, Map acc) {
+    if (acc.truncated != null) return
+    if (depth > ((acc.limits as Map).maxDepth as Integer)) { acc.truncated = 'depth-limit'; return }
+    int seen = (acc.objectsVisited as Integer) + (acc.arraysVisited as Integer) + (acc.scalarsVisited as Integer)
+    if (seen >= ((acc.limits as Map).maxValues as Integer)) { acc.truncated = 'value-limit'; return }
+    
+    
+    if (acc.expired != null) {
+        acc.sinceDeadlineCheck = (acc.sinceDeadlineCheck as Integer) + 1
+        if ((acc.sinceDeadlineCheck as Integer) >= ((acc.limits as Map).deadlineCheckInterval as Integer)) {
+            acc.sinceDeadlineCheck = 0
+            if (webcoreCensusExpired(acc.expired as Closure)) { acc.truncated = 'analysis-deadline'; return }
+        }
+    }
+
+    if (value instanceof Map) {
+        acc.objectsVisited = (acc.objectsVisited as Integer) + 1
+        Map node = value as Map
+        boolean opened = webcoreCensusOpenOccurrence(node, context, acc)
+        webcoreCensusClassify(node, context, path, acc)
+        Map shape = webcoreCensusValidate(node, context, path, acc)
+        List entryKeys = node.keySet().toList()
+        for (int i = 0; i < entryKeys.size(); i++) {
+            acc.fieldsVisited = (acc.fieldsVisited as Integer) + 1
+            String key = "${entryKeys[i]}"
+            Object child = node[entryKeys[i]]
+            
+            
+            if (context == 'opaque') {
+                webcoreCensusWalk(child, 'opaque', "${path}.<opaque#${i}>", depth + 1, acc)
+                if (acc.truncated != null) return
+                continue
+            }
+            boolean known = (acc.schemaKeys as Set).contains(key)
+            boolean opaque = !known && (acc.opaqueKeys as Set).contains(key)
+            String childPath = (known || opaque) ? "${path}.${key}" : "${path}.<unknown-key#${i}>"
+            if (opaque) webcoreCensusRecord(acc, childPath, 'known-opaque-field', webcoreCensusNodeKind(child))
+            else if (!known) webcoreCensusRecord(acc, childPath, 'unknown-key', webcoreCensusNodeKind(child))
+            String childContext = opaque ? 'opaque' : (known ? webcoreCensusChildContext(node, context, key) : null)
+            if (known && childContext != null && shape != null) childContext = webcoreCensusShapeRoute(node, context, key, child, childContext, shape)
+            webcoreCensusWalk(child, childContext, childPath, depth + 1, acc)
+            if (acc.truncated != null) return
+        }
+        if (opened) webcoreCensusCloseOccurrence(acc)
+        return
+    }
+    if (value instanceof List) {
+        acc.arraysVisited = (acc.arraysVisited as Integer) + 1
+        List list = value as List
+        for (int i = 0; i < list.size(); i++) {
+            acc.arrayElementsVisited = (acc.arrayElementsVisited as Integer) + 1
+            webcoreCensusWalk(list[i], webcoreCensusElementContext(context, list[i], i), "${path}[${i}]", depth + 1, acc)
+            if (acc.truncated != null) return
+        }
+        return
+    }
+    acc.scalarsVisited = (acc.scalarsVisited as Integer) + 1
+    if (context == 'device-list') webcoreCensusDeviceSelector(acc, path, value)
+}
+
+
+
+String webcoreCensusChildContext(Map node, String context, String key) {
+    String t = node.t instanceof String ? (node.t as String) : null
+    switch (context) {
+        case 'root':
+            if (key == 's') return 'statement'
+            if (key == 'r') return 'restriction'
+            if (key == 'v') return 'variable-declaration'
+            return null
+        
+        
+        
+        case 'variable-declaration':
+            if (key == 'v') return 'operand'
+            return null
+        case 'statement':
+            
+            if (key == 's') return (t == 'switch') ? null : 'statement'
+            if (key == 'e') return 'statement'
+            if (key == 'r') return 'restriction'
+            if (key == 'ei') return 'elseif'
+            if (key == 'cs') return 'case'
+            if (key == 'k') return 'task'
+            if (key == 'lo') return 'operand'
+            
+            
+            if ((key == 'lo2' || key == 'lo3') && (t == 'for' || t == 'every')) return 'operand'
+            if (key == 'd') return 'device-list'
+            
+            
+            if (key == 'c') return (t == 'on') ? 'event' : webcoreCensusConditionListContext(node)
+            return null
+        case 'elseif':
+            if (key == 'c') return webcoreCensusConditionListContext(node)
+            if (key == 's') return 'statement'
+            return null
+        case 'case':
+            if (key == 'ro' || key == 'ro2') return 'operand'
+            if (key == 's') return 'statement'
+            return null
+        
+        
+        case 'followed-by-later-step':
+            if (key == 'wd') return 'operand'
+        case 'followed-by-first-step':
+        case 'condition':
+            
+            
+            if (key == 'lo' || key == 'ro' || key == 'ro2' || key == 'to' || key == 'to2') return 'operand'
+            if (key == 'c') return webcoreCensusConditionListContext(node)
+            if (key == 'ts' || key == 'fs') return 'statement'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'restriction':
+            if (key == 'lo' || key == 'ro' || key == 'ro2') return 'operand'
+            if (key == 'r') return 'restriction'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'event':
+            if (key == 'lo') return 'event-operand'
+            return null
+        case 'operand':
+        case 'event-operand':
+        case 'param':
+            if (key == 'exp') return 'expression'
+            if (key == 'i') return 'expression'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'task':
+            if (key == 'p') return 'param'
+            if (key == 'd') return 'device-list'
+            return null
+        case 'expression':
+            if (key == 'i') return 'expression'
+            if (key == 'd') return 'device-list'
+            return null
+    }
+    return null
+}
+
+
+
+String webcoreCensusConditionListContext(Map node) {
+    return (node.o instanceof String && (node.o as String) == 'followed by') ? 'followed-by-step' : 'condition'
+}
+
+void webcoreCensusClassify(Map node, String context, String path, Map acc) {
+    if (context == null || context == 'opaque') return
+    if (context == 'statement') {
+        webcoreCensusCandidate(acc, "${path}.t", node.t, 'wc.statement.', 'unknown-statement-type')
+        ['tep', 'tsp', 'tcp'].each { String key ->
+            if (!node.containsKey(key)) return
+            
+            
+            webcoreCensusCandidate(acc, "${path}.${key}", key, 'wc.policy.', 'unknown-policy-value')
+        }
+        return
+    }
+    if (context == 'operand' || context == 'event-operand' || context == 'param') {
+        String prefix = (context == 'event-operand') ? 'wc.operand.event-match.' : 'wc.operand.'
+        String spelling = (node.t instanceof String) ? (node.t as String) : null
+        
+        
+        Object member = (node.t instanceof String) ? ((spelling == '') ? 'empty' : spelling) : node.t
+        if (context == 'param' && !(node.t instanceof String)) {
+            
+            
+            
+            
+            
+            webcoreCensusCandidate(acc, "${path}.t", 'unselected', 'wc.task-parameter.', 'malformed-node')
+        } else {
+            webcoreCensusCandidate(acc, "${path}.t", member, prefix, 'unknown-operand-type')
+        }
+        if (context == 'param') webcoreCensusDefaultSite(acc, node.vt, 'wc.task.value-type.')
+        if (spelling == 'v') {
+            Object name = (node.v instanceof String) ? webcoreCensusFixAttr(node.v as String) : node.v
+            webcoreCensusCandidate(acc, "${path}.v", name, 'wc.virtual-device.', 'unknown-operand-type')
+        } else if (spelling == 's') {
+            
+            
+            
+            
+            String presetType = (node.vt instanceof String) ? (node.vt as String) : null
+            if (presetType != null && (acc.constructs as Map).containsKey('wc.preset.value-type.' + presetType)) {
+                webcoreCensusCandidate(acc, "${path}.s", node.s, 'wc.preset.', 'unknown-operand-type')
+            }
+            webcoreCensusDefaultSite(acc, node.vt, 'wc.preset.value-type.')
+        } else if (spelling == 'c') {
+            webcoreCensusDefaultSite(acc, node.vt, 'wc.constant.value-type.')
+        }
+        return
+    }
+    if (context == 'expression') {
+        String spelling = (node.t instanceof String) ? (node.t as String) : null
+        
+        
+        if (spelling == 'operator') return
+        webcoreCensusCandidate(acc, "${path}.t", node.t, 'wc.expression.result-type.', 'unknown-operand-type')
+        if (spelling == 'function') webcoreCensusFunction(acc, "${path}.n", node.n)
+        return
+    }
+}
+
+void webcoreCensusCandidate(Map acc, String path, Object member, String prefix, String reason) {
+    acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+    if (!(member instanceof String)) {
+        webcoreCensusRecord(acc, path, 'malformed-node', webcoreCensusNodeKind(member))
+        return
+    }
+    String id = prefix + (member as String)
+    if ((acc.constructs as Map).containsKey(id)) {
+        webcoreCensusIdentify(acc, id)
+        return
+    }
+    webcoreCensusRecord(acc, path, reason, 'scalar')
+}
+
+
+
+
+
+void webcoreCensusDefaultSite(Map acc, Object member, String prefix) {
+    if (member instanceof String) {
+        String id = prefix + (member as String)
+        if ((acc.constructs as Map).containsKey(id)) {
+            acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+            webcoreCensusIdentify(acc, id)
+            return
+        }
+    }
+    acc.defaultBranchOccurrences = (acc.defaultBranchOccurrences as Integer) + 1
+}
+
+void webcoreCensusFunction(Map acc, String path, Object name) {
+    acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+    if (!(name instanceof String)) {
+        webcoreCensusRecord(acc, path, 'malformed-node', webcoreCensusNodeKind(name))
+        return
+    }
+    Object id = (acc.functionIndex as Map)[(name as String).toLowerCase()]
+    if (id != null) { webcoreCensusIdentify(acc, "${id}"); return }
+    webcoreCensusRecord(acc, path, 'unknown-function', 'scalar')
+}
+
+
+
+
+void webcoreCensusDeviceSelector(Map acc, String path, Object entry) {
+    acc.constructCandidates = (acc.constructCandidates as Integer) + 1
+    if (entry == null || (entry instanceof String && (entry as String).isEmpty())) {
+        webcoreCensusIdentify(acc, 'wc.device-selector.empty')
+        return
+    }
+    if (!(entry instanceof String)) {
+        webcoreCensusRecord(acc, path, 'malformed-node', webcoreCensusNodeKind(entry))
+        return
+    }
+    if ((entry as String) ==~ /^:[0-9a-f]{32}:$/) {
+        webcoreCensusIdentify(acc, 'wc.device-selector.direct-identifier')
+        return
+    }
+    webcoreCensusRecord(acc, path, 'unknown-device-selector', 'scalar')
+}
+
+void webcoreCensusIdentify(Map acc, String id) {
+    acc.constructsIdentified = (acc.constructsIdentified as Integer) + 1
+    Map counts = acc.counts as Map
+    counts[id] = ((counts[id] ?: 0) as Integer) + 1
+}
+
+
+
+void webcoreCensusRecord(Map acc, String path, String reason, String nodeKind) {
+    webcoreCensusTaint(acc)
+    String key = "${path}|${reason}|${nodeKind}"
+    Set seen = acc.seen as Set
+    if (seen.contains(key)) return
+    seen << key
+    if (!(acc.occurrenceStack as List)) acc.outsideStatements = (acc.outsideStatements as Integer) + 1
+    List records = acc.unrecognised as List
+    if (records.size() >= ((acc.limits as Map).maxUnrecognised as Integer)) {
+        acc.overflow = (acc.overflow as Integer) + 1
+        return
+    }
+    records << [path: webcoreCensusBoundPath(path, (acc.limits as Map).maxPathLength as Integer),
+                reason: reason, nodeKind: nodeKind]
+}
+
+
+
+
+
+List<String> webcoreCensusStructureCategories() {
+    return ['missing-discriminator', 'unknown-variant', 'missing-key', 'missing-unconsumed-key',
+            'never-persisted', 'empty-persisted', 'wrong-kind', 'bad-value', 'outside-condition',
+            'variant-foreign-key', 'unexpected-key']
+}
+
+
+
+
+String webcoreCensusElementContext(String context, Object element, int index) {
+    if (context == 'followed-by-step') {
+        if (element instanceof List) return null
+        return index == 0 ? 'followed-by-first-step' : 'followed-by-later-step'
+    }
+    if (element instanceof List && context in ['statement', 'elseif', 'case', 'event', 'task', 'restriction',
+                                               'condition', 'followed-by-first-step', 'followed-by-later-step']) return null
+    return context
+}
+
+String webcoreCensusShapeContext(String context) {
+    if (context == 'condition') return 'condition-list-member'
+    if (context == 'followed-by-first-step' || context == 'followed-by-later-step') return context
+    return null
+}
+
+boolean webcoreCensusOpenOccurrence(Map node, String context, Map acc) {
+    if (acc.shapes == null || context != 'statement' || !(node.t instanceof String)) return false
+    String id = 'wc.statement.' + (node.t as String)
+    if (!(acc.constructs as Map).containsKey(id) || !(((acc.shapes as Map).statements as Map).containsKey(id))) return false
+    (acc.occurrenceStack as List) << [id: id, invalid: false, gaps: [] as Set]
+    return true
+}
+
+void webcoreCensusCloseOccurrence(Map acc) {
+    List stack = acc.occurrenceStack as List
+    Map top = stack.remove((int) (stack.size() - 1)) as Map
+    Map occurrences = acc.occurrences as Map
+    Map entry = (occurrences[top.id] instanceof Map) ? (occurrences[top.id] as Map) :
+        [structurallyValid: 0, structurallyInvalid: 0, evidenceGapped: 0, evidenceGaps: [:]]
+    String field = (top.invalid == true) ? 'structurallyInvalid' : 'structurallyValid'
+    entry[field] = (entry[field] as Integer) + 1
+    
+    if (top.invalid != true && (top.gaps as Set)) {
+        entry.evidenceGapped = (entry.evidenceGapped as Integer) + 1
+        Map gapCounts = entry.evidenceGaps as Map
+        (top.gaps as Set).each { Object g -> gapCounts[g] = ((gapCounts[g] ?: 0) as Integer) + 1 }
+    }
+    occurrences[top.id] = entry
+}
+
+
+
+void webcoreCensusTaint(Map acc) {
+    List stack = acc.occurrenceStack as List
+    if (stack) (stack[stack.size() - 1] as Map).invalid = true
+}
+
+void webcoreCensusMismatch(Map acc, String path, String category) {
+    webcoreCensusTaint(acc)
+    String key = "${path}|${category}"
+    Set seen = acc.structureSeen as Set
+    if (seen.contains(key)) return
+    seen << key
+    List records = acc.structureFindings as List
+    if (records.size() >= ((acc.limits as Map).maxStructureFindings as Integer)) {
+        acc.structureOverflow = (acc.structureOverflow as Integer) + 1
+        return
+    }
+    records << [path: webcoreCensusBoundPath(path, (acc.limits as Map).maxPathLength as Integer), category: category]
+}
+
+
+
+Map webcoreCensusShapeKeys(Map node, String context, String path, Map acc) {
+    Map shapes = acc.shapes as Map
+    Map subs = shapes.substructures as Map
+    if (context == 'statement') {
+        Object entry = (node.t instanceof String) ? (shapes.statements as Map)['wc.statement.' + (node.t as String)] : null
+        return (entry instanceof Map) ? [keys: (shapes.common as Map) + ((entry as Map).keys as Map), foreign: [] as Set] : null
+    }
+    if (context in ['elseif', 'case', 'event', 'task']) return [keys: (subs[context] as Map).keys as Map, foreign: [] as Set]
+    if (webcoreCensusShapeContext(context) == null) return null
+    Map condition = subs.condition as Map
+    Map discriminator = condition.discriminator as Map
+    String dk = discriminator.key as String
+    Object variant = (node[dk] instanceof String) ? (condition.variants as Map)[node[dk] as String] : null
+    if (!(variant instanceof Map)) {
+        webcoreCensusMismatch(acc, path + '.' + dk, node.containsKey(dk) ? 'unknown-variant' : 'missing-discriminator')
+        return [keys: [:], foreign: [] as Set, blocked: true]
+    }
+    Set foreign = [] as Set
+    (condition.variants as Map).each { Object name, Object keys -> if (name != node[dk]) foreign.addAll((keys as Map).keySet()) }
+    foreign.removeAll((variant as Map).keySet())
+    return [keys: (variant as Map) + [(dk): discriminator], foreign: foreign]
+}
+
+Map webcoreCensusValidate(Map node, String context, String path, Map acc) {
+    if (acc.shapes == null || !(acc.occurrenceStack as List)) return null
+    Map shape = webcoreCensusShapeKeys(node, context, path, acc)
+    if (shape == null || shape.blocked == true) return shape
+    Map keys = shape.keys as Map
+    Map lists = (acc.shapes as Map).lists as Map
+    String shapeContext = webcoreCensusShapeContext(context)
+    keys.each { Object k, Object s ->
+        String key = "${k}"
+        Map spec = s as Map
+        String at = path + '.' + key
+        boolean present = node.containsKey(key)
+        Object v = node[key]
+        if (spec.persisted == 'when' && !webcoreCensusPredicate(spec.persistedWhen as Map, node, shapeContext)) {
+            if (!present) return
+            if (spec.outsideWhen != 'retained-unconsumed') webcoreCensusMismatch(acc, at, 'outside-condition')
+            else if (!webcoreCensusKindOk(spec.kind as String, v)) webcoreCensusMismatch(acc, at, 'wrong-kind')
+            else if (spec.values instanceof List && !(spec.values as List).contains(v)) webcoreCensusMismatch(acc, at, 'bad-value')
+            return
+        }
+        if (!present) {
+            if (spec.persisted == 'always' || spec.persisted == 'when') {
+                boolean unconsumed = spec.consumed == 'read' && spec.consumedWhen instanceof Map &&
+                    !webcoreCensusPredicate(spec.consumedWhen as Map, node, shapeContext)
+                webcoreCensusMismatch(acc, at, unconsumed ? 'missing-unconsumed-key' : 'missing-key')
+            }
+            return
+        }
+        if (spec.persisted == 'never') { webcoreCensusMismatch(acc, at, 'never-persisted'); return }
+        boolean empty = v == null || (v instanceof Boolean && !(v as Boolean)) || (v instanceof String && (v as String).isEmpty())
+        if (spec.persisted == 'unless-empty' && empty) { webcoreCensusMismatch(acc, at, 'empty-persisted'); return }
+        if (!webcoreCensusKindOk(spec.kind as String, v)) { webcoreCensusMismatch(acc, at, 'wrong-kind'); return }
+        if (spec.values instanceof List && !(spec.values as List).contains(v)) { webcoreCensusMismatch(acc, at, 'bad-value'); return }
+        if (lists.containsKey(spec.kind)) {
+            List items = v as List
+            for (int i = 0; i < items.size(); i++) {
+                if (!(items[i] instanceof Map)) webcoreCensusMismatch(acc, at + '[' + i + ']', 'wrong-kind')
+            }
+        }
+    }
+    
+    Set foreign = shape.foreign as Set
+    Set schemaKeys = acc.schemaKeys as Set
+    node.keySet().each { Object k ->
+        String key = "${k}"
+        if (keys.containsKey(key)) return
+        if (foreign.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'variant-foreign-key')
+        else if (schemaKeys.contains(key)) webcoreCensusMismatch(acc, path + '.' + key, 'unexpected-key')
+    }
+    webcoreCensusEvidenceGaps(node, context, keys, shapeContext, acc)
+    return shape
+}
+
+
+
+
+void webcoreCensusEvidenceGaps(Map node, String context, Map keys, String shapeContext, Map acc) {
+    Object declared = (acc.shapes as Map).evidenceGaps
+    if (!(declared instanceof Map) || !(declared as Map)) return
+    Map gaps = declared as Map
+    Map statementKeys = [:]
+    if (context == 'statement') {
+        statementKeys = (((acc.shapes as Map).statements as Map)['wc.statement.' + (node.t as String)] as Map).keys as Map
+    }
+    List stack = acc.occurrenceStack as List
+    Set recorded = (stack[stack.size() - 1] as Map).gaps as Set
+    keys.each { Object k, Object s ->
+        String key = "${k}"
+        Map spec = s as Map
+        String structure = (context == 'statement') ? (statementKeys.containsKey(key) ? 'wc.statement.' + (node.t as String) : 'statement') :
+            (shapeContext != null ? (node.t as String) : context)
+        boolean present = node.containsKey(key)
+        List branches = []
+        if (spec.persisted in ['unless-empty', 'user-optional', 'round-trip']) branches << (present ? 'present' : 'absent')
+        if (present && spec.persisted == 'when') branches << (webcoreCensusPredicate(spec.persistedWhen as Map, node, shapeContext) ? 'present' : 'retained')
+        if (present && spec.values instanceof List && spec.values != [true]) branches << ('value:' + node[key])
+        if (present && spec.consumedWhen instanceof Map) branches << (webcoreCensusPredicate(spec.consumedWhen as Map, node, shapeContext) ? 'consumed' : 'unconsumed')
+        branches.each { Object b ->
+            String id = structure + '/' + key + '/' + b
+            if (gaps.containsKey(id)) recorded << id
+        }
+    }
+}
+
+
+
+
+String webcoreCensusShapeRoute(Map node, String context, String key, Object child, String childContext, Map shape) {
+    if (shape.blocked == true) return null
+    Object s = (shape.keys as Map)[key]
+    if (!(s instanceof Map)) return null
+    Map spec = s as Map
+    String shapeContext = webcoreCensusShapeContext(context)
+    if (!webcoreCensusKindOk(spec.kind as String, child)) return null
+    if (spec.persisted == 'when' && !webcoreCensusPredicate(spec.persistedWhen as Map, node, shapeContext)) return null
+    if (spec.consumed != 'read') return null
+    if (spec.consumedWhen instanceof Map && !webcoreCensusPredicate(spec.consumedWhen as Map, node, shapeContext)) return null
+    return childContext
+}
+
+boolean webcoreCensusPredicate(Map predicate, Map node, String shapeContext) {
+    if (predicate == null) return false
+    if (predicate.all instanceof List) return (predicate.all as List).every { webcoreCensusPredicate(it as Map, node, shapeContext) }
+    if (predicate.context instanceof List) return (predicate.context as List).contains(shapeContext)
+    Object v = node
+    for (String segment : (predicate.key as String).tokenize('.')) v = (v instanceof Map) ? (v as Map)[segment] : null
+    if (predicate.oneOf instanceof List) return (predicate.oneOf as List).contains(v)
+    if (predicate.noneOf instanceof List) return !(predicate.noneOf as List).contains(v)
+    return false
+}
+
+boolean webcoreCensusIsScalar(Object v) {
+    return v instanceof String || v instanceof Number || v instanceof Boolean
+}
+
+boolean webcoreCensusKindOk(String kind, Object v) {
+    switch (kind) {
+        case 'scalar': return webcoreCensusIsScalar(v)
+        case 'scalar-list': return v instanceof List && (v as List).every { webcoreCensusIsScalar(it) }
+        case 'operand': return v instanceof Map
+        case 'operand-list': return v instanceof List && (v as List).every { it instanceof Map }
+    }
+    return v instanceof List
+}
+
+
+
+String webcoreCensusAchievedLevel(String ceiling, Object occurrence, Object count) {
+    if (!(ceiling in ['L3', 'L4', 'L5'])) return ceiling
+    if (!(occurrence instanceof Map) || !(count instanceof Number)) return 'L2'
+    Object valid = (occurrence as Map).structurallyValid
+    Object invalid = (occurrence as Map).structurallyInvalid
+    Object gapped = (occurrence as Map).evidenceGapped
+    if (!(valid instanceof Number) || !(invalid instanceof Number) || !(gapped instanceof Number)) return 'L2'
+    return ((invalid as Integer) == 0 && (gapped as Integer) == 0 && (valid as Integer) == (count as Integer)) ? ceiling : 'L2'
+}
+
+
+
+
+
+
+
+Map webcoreCensusRegistry() {
+    return [provenance: [commit: '0a37eee2537accd706aaaeeed5a7b4bb0c82646e', registryVersion: '1'],
+            constructs: [
+        'wc.constant.value-type.date': [level: 'L2'],
+        'wc.constant.value-type.datetime': [level: 'L2'],
+        'wc.constant.value-type.time': [level: 'L2'],
+        'wc.device-selector.direct-identifier': [level: 'L2'],
+        'wc.device-selector.empty': [level: 'L2'],
+        'wc.device-selector.variable-device-list': [level: 'L2'],
+        'wc.device-selector.variable-device-map': [level: 'L2'],
+        'wc.device-selector.variable-name-cast': [level: 'L2'],
+        'wc.expression.item.decimal': [level: 'L2'],
+        'wc.expression.item.double': [level: 'L2'],
+        'wc.expression.item.float': [level: 'L2'],
+        'wc.expression.item.integer': [level: 'L2'],
+        'wc.expression.item.number': [level: 'L2'],
+        'wc.expression.result-type.bool': [level: 'L2'],
+        'wc.expression.result-type.boolean': [level: 'L2'],
+        'wc.expression.result-type.date': [level: 'L2'],
+        'wc.expression.result-type.datetime': [level: 'L2'],
+        'wc.expression.result-type.decimal': [level: 'L2'],
+        'wc.expression.result-type.device': [level: 'L2'],
+        'wc.expression.result-type.double': [level: 'L2'],
+        'wc.expression.result-type.duration': [level: 'L2'],
+        'wc.expression.result-type.dynamic': [level: 'L2'],
+        'wc.expression.result-type.enum': [level: 'L2'],
+        'wc.expression.result-type.error': [level: 'L2'],
+        'wc.expression.result-type.expression': [level: 'L2'],
+        'wc.expression.result-type.float': [level: 'L2'],
+        'wc.expression.result-type.function': [level: 'L2'],
+        'wc.expression.result-type.int32': [level: 'L2'],
+        'wc.expression.result-type.int64': [level: 'L2'],
+        'wc.expression.result-type.integer': [level: 'L2'],
+        'wc.expression.result-type.long': [level: 'L2'],
+        'wc.expression.result-type.number': [level: 'L2'],
+        'wc.expression.result-type.operand': [level: 'L2'],
+        'wc.expression.result-type.phone': [level: 'L2'],
+        'wc.expression.result-type.string': [level: 'L2'],
+        'wc.expression.result-type.text': [level: 'L2'],
+        'wc.expression.result-type.time': [level: 'L2'],
+        'wc.expression.result-type.uri': [level: 'L2'],
+        'wc.expression.result-type.variable': [level: 'L2'],
+        'wc.function.abs': [level: 'L2'],
+        'wc.function.adddays': [level: 'L2'],
+        'wc.function.addhours': [level: 'L2'],
+        'wc.function.addminutes': [level: 'L2'],
+        'wc.function.addseconds': [level: 'L2'],
+        'wc.function.addweeks': [level: 'L2'],
+        'wc.function.age': [level: 'L2'],
+        'wc.function.arrayitem': [level: 'L2'],
+        'wc.function.asin': [level: 'L2'],
+        'wc.function.atan2': [level: 'L2'],
+        'wc.function.avg': [level: 'L2'],
+        'wc.function.bool': [level: 'L2'],
+        'wc.function.boolean': [level: 'L2'],
+        'wc.function.ceil': [level: 'L2'],
+        'wc.function.ceiling': [level: 'L2'],
+        'wc.function.celsius': [level: 'L2'],
+        'wc.function.coalesce': [level: 'L2'],
+        'wc.function.concat': [level: 'L2'],
+        'wc.function.contains': [level: 'L2'],
+        'wc.function.converttemperatureifneeded': [level: 'L2'],
+        'wc.function.cos': [level: 'L2'],
+        'wc.function.count': [level: 'L2'],
+        'wc.function.date': [level: 'L2'],
+        'wc.function.dateAdd': [level: 'L2'],
+        'wc.function.datetime': [level: 'L2'],
+        'wc.function.decimal': [level: 'L2'],
+        'wc.function.dewpoint': [level: 'L2'],
+        'wc.function.distance': [level: 'L2'],
+        'wc.function.encodeuricomponent': [level: 'L2'],
+        'wc.function.endswith': [level: 'L2'],
+        'wc.function.eq': [level: 'L2'],
+        'wc.function.exists': [level: 'L2'],
+        'wc.function.fahrenheit': [level: 'L2'],
+        'wc.function.float': [level: 'L2'],
+        'wc.function.floor': [level: 'L2'],
+        'wc.function.format': [level: 'L2'],
+        'wc.function.formatdatetime': [level: 'L2'],
+        'wc.function.formatduration': [level: 'L2'],
+        'wc.function.ge': [level: 'L2'],
+        'wc.function.gt': [level: 'L2'],
+        'wc.function.hsltohex': [level: 'L2'],
+        'wc.function.if': [level: 'L2'],
+        'wc.function.indexof': [level: 'L2'],
+        'wc.function.int': [level: 'L2'],
+        'wc.function.integer': [level: 'L2'],
+        'wc.function.isbetween': [level: 'L2'],
+        'wc.function.isempty': [level: 'L2'],
+        'wc.function.ispistonpaused': [level: 'L2'],
+        'wc.function.json': [level: 'L2'],
+        'wc.function.lastindexof': [level: 'L2'],
+        'wc.function.le': [level: 'L2'],
+        'wc.function.least': [level: 'L2'],
+        'wc.function.left': [level: 'L2'],
+        'wc.function.length': [level: 'L2'],
+        'wc.function.log': [level: 'L2'],
+        'wc.function.lower': [level: 'L2'],
+        'wc.function.lt': [level: 'L2'],
+        'wc.function.ltrim': [level: 'L2'],
+        'wc.function.matches': [level: 'L2'],
+        'wc.function.max': [level: 'L2'],
+        'wc.function.median': [level: 'L2'],
+        'wc.function.mid': [level: 'L2'],
+        'wc.function.min': [level: 'L2'],
+        'wc.function.monthname': [level: 'L2'],
+        'wc.function.most': [level: 'L2'],
+        'wc.function.newer': [level: 'L2'],
+        'wc.function.not': [level: 'L2'],
+        'wc.function.number': [level: 'L2'],
+        'wc.function.older': [level: 'L2'],
+        'wc.function.parsedatetime': [level: 'L2'],
+        'wc.function.pow': [level: 'L2'],
+        'wc.function.power': [level: 'L2'],
+        'wc.function.previousage': [level: 'L2'],
+        'wc.function.previousvalue': [level: 'L2'],
+        'wc.function.rainbowvalue': [level: 'L2'],
+        'wc.function.random': [level: 'L2'],
+        'wc.function.rangevalue': [level: 'L2'],
+        'wc.function.replace': [level: 'L2'],
+        'wc.function.right': [level: 'L2'],
+        'wc.function.round': [level: 'L2'],
+        'wc.function.roundtimetominutes': [level: 'L2'],
+        'wc.function.rtrim': [level: 'L2'],
+        'wc.function.settzid': [level: 'L2'],
+        'wc.function.setvariable': [level: 'L2'],
+        'wc.function.sin': [level: 'L2'],
+        'wc.function.size': [level: 'L2'],
+        'wc.function.sort': [level: 'L2'],
+        'wc.function.sprintf': [level: 'L2'],
+        'wc.function.sqr': [level: 'L2'],
+        'wc.function.sqrt': [level: 'L2'],
+        'wc.function.startswith': [level: 'L2'],
+        'wc.function.stdev': [level: 'L2'],
+        'wc.function.string': [level: 'L2'],
+        'wc.function.strlen': [level: 'L2'],
+        'wc.function.substr': [level: 'L2'],
+        'wc.function.substring': [level: 'L2'],
+        'wc.function.sum': [level: 'L2'],
+        'wc.function.tan': [level: 'L2'],
+        'wc.function.text': [level: 'L2'],
+        'wc.function.time': [level: 'L2'],
+        'wc.function.title': [level: 'L2'],
+        'wc.function.todegrees': [level: 'L2'],
+        'wc.function.toradians': [level: 'L2'],
+        'wc.function.trim': [level: 'L2'],
+        'wc.function.trimleft': [level: 'L2'],
+        'wc.function.trimright': [level: 'L2'],
+        'wc.function.upper': [level: 'L2'],
+        'wc.function.urlencode': [level: 'L2'],
+        'wc.function.variance': [level: 'L2'],
+        'wc.function.weekdayname': [level: 'L2'],
+        'wc.operand.c': [level: 'L3'],
+        'wc.operand.d': [level: 'L3'],
+        'wc.operand.e': [level: 'L3'],
+        'wc.operand.empty': [level: 'L2'],
+        'wc.operand.event-match.p': [level: 'L3'],
+        'wc.operand.event-match.v': [level: 'L3'],
+        'wc.operand.event-match.x': [level: 'L3'],
+        'wc.operand.p': [level: 'L3'],
+        'wc.operand.s': [level: 'L3'],
+        'wc.operand.u': [level: 'L3'],
+        'wc.operand.v': [level: 'L3'],
+        'wc.operand.x': [level: 'L3'],
+        'wc.policy.tcp': [level: 'L2'],
+        'wc.policy.tep': [level: 'L2'],
+        'wc.policy.tsp': [level: 'L2'],
+        'wc.preset.midnight': [level: 'L2'],
+        'wc.preset.noon': [level: 'L2'],
+        'wc.preset.sunrise': [level: 'L2'],
+        'wc.preset.sunset': [level: 'L2'],
+        'wc.preset.value-type.datetime': [level: 'L2'],
+        'wc.preset.value-type.time': [level: 'L2'],
+        'wc.statement.action': [level: 'L3'],
+        'wc.statement.break': [level: 'L3'],
+        'wc.statement.do': [level: 'L3'],
+        'wc.statement.each': [level: 'L3'],
+        'wc.statement.every': [level: 'L3'],
+        'wc.statement.exit': [level: 'L3'],
+        'wc.statement.for': [level: 'L3'],
+        'wc.statement.if': [level: 'L3'],
+        'wc.statement.on': [level: 'L3'],
+        'wc.statement.repeat': [level: 'L3'],
+        'wc.statement.switch': [level: 'L3'],
+        'wc.statement.while': [level: 'L3'],
+        'wc.task-parameter.unselected': [level: 'L2'],
+        'wc.task.value-type.variable': [level: 'L2'],
+        'wc.vcmd.adjustColorTemperature': [level: 'L2'],
+        'wc.vcmd.adjustHue': [level: 'L2'],
+        'wc.vcmd.adjustInfraredLevel': [level: 'L2'],
+        'wc.vcmd.adjustLevel': [level: 'L2'],
+        'wc.vcmd.adjustSaturation': [level: 'L2'],
+        'wc.vcmd.appendFile': [level: 'L2'],
+        'wc.vcmd.cancelTasks': [level: 'L2'],
+        'wc.vcmd.clearFuelStream': [level: 'L2'],
+        'wc.vcmd.clearTile': [level: 'L2'],
+        'wc.vcmd.deleteFile': [level: 'L2'],
+        'wc.vcmd.emulatedFlash': [level: 'L2'],
+        'wc.vcmd.executePiston': [level: 'L2'],
+        'wc.vcmd.executeRoutine': [level: 'L2'],
+        'wc.vcmd.executeRule': [level: 'L2'],
+        'wc.vcmd.fadeColorTemperature': [level: 'L2'],
+        'wc.vcmd.fadeHue': [level: 'L2'],
+        'wc.vcmd.fadeInfraredLevel': [level: 'L2'],
+        'wc.vcmd.fadeLevel': [level: 'L2'],
+        'wc.vcmd.fadeSaturation': [level: 'L2'],
+        'wc.vcmd.flash': [level: 'L2'],
+        'wc.vcmd.flashColor': [level: 'L2'],
+        'wc.vcmd.flashLevel': [level: 'L2'],
+        'wc.vcmd.httpRequest': [level: 'L2'],
+        'wc.vcmd.iftttMaker': [level: 'L2'],
+        'wc.vcmd.internal_fade': [level: 'L2'],
+        'wc.vcmd.lifxBreathe': [level: 'L2'],
+        'wc.vcmd.lifxPulse': [level: 'L2'],
+        'wc.vcmd.lifxScene': [level: 'L2'],
+        'wc.vcmd.lifxState': [level: 'L2'],
+        'wc.vcmd.lifxToggle': [level: 'L2'],
+        'wc.vcmd.loadStateGlobally': [level: 'L2'],
+        'wc.vcmd.loadStateLocally': [level: 'L2'],
+        'wc.vcmd.log': [level: 'L2'],
+        'wc.vcmd.noop': [level: 'L2'],
+        'wc.vcmd.parseJson': [level: 'L2'],
+        'wc.vcmd.pausePiston': [level: 'L2'],
+        'wc.vcmd.readFile': [level: 'L2'],
+        'wc.vcmd.readFuelStream': [level: 'L2'],
+        'wc.vcmd.resumePiston': [level: 'L2'],
+        'wc.vcmd.saveStateGlobally': [level: 'L2'],
+        'wc.vcmd.saveStateLocally': [level: 'L2'],
+        'wc.vcmd.sendEmail': [level: 'L2'],
+        'wc.vcmd.sendNotification': [level: 'L2'],
+        'wc.vcmd.sendNotificationToContacts': [level: 'L2'],
+        'wc.vcmd.sendPushNotification': [level: 'L2'],
+        'wc.vcmd.sendSMSNotification': [level: 'L2'],
+        'wc.vcmd.setAlarmSystemStatus': [level: 'L2'],
+        'wc.vcmd.setHSLColor': [level: 'L2'],
+        'wc.vcmd.setLocationMode': [level: 'L2'],
+        'wc.vcmd.setState': [level: 'L2'],
+        'wc.vcmd.setSwitch': [level: 'L2'],
+        'wc.vcmd.setTile': [level: 'L2'],
+        'wc.vcmd.setTileColor': [level: 'L2'],
+        'wc.vcmd.setTileFooter': [level: 'L2'],
+        'wc.vcmd.setTileOTitle': [level: 'L2'],
+        'wc.vcmd.setTileText': [level: 'L2'],
+        'wc.vcmd.setTileTitle': [level: 'L2'],
+        'wc.vcmd.setVariable': [level: 'L2'],
+        'wc.vcmd.storeMedia': [level: 'L2'],
+        'wc.vcmd.toggle': [level: 'L2'],
+        'wc.vcmd.toggleLevel': [level: 'L2'],
+        'wc.vcmd.toggleRandom': [level: 'L2'],
+        'wc.vcmd.wait': [level: 'L2'],
+        'wc.vcmd.waitForDateTime': [level: 'L2'],
+        'wc.vcmd.waitForTime': [level: 'L2'],
+        'wc.vcmd.waitRandom': [level: 'L2'],
+        'wc.vcmd.wolRequest': [level: 'L2'],
+        'wc.vcmd.writeFile': [level: 'L2'],
+        'wc.vcmd.writeFuelStream': [level: 'L2'],
+        'wc.vcmd.writeToFuelStream': [level: 'L2'],
+        'wc.virtual-device.cloudBackup': [level: 'L2'],
+        'wc.virtual-device.date': [level: 'L2'],
+        'wc.virtual-device.datetime': [level: 'L2'],
+        'wc.virtual-device.email': [level: 'L2'],
+        'wc.virtual-device.hsmAlert': [level: 'L2'],
+        'wc.virtual-device.hsmRule': [level: 'L2'],
+        'wc.virtual-device.hsmRules': [level: 'L2'],
+        'wc.virtual-device.hsmSetArm': [level: 'L2'],
+        'wc.virtual-device.hsmStatus': [level: 'L2'],
+        'wc.virtual-device.ifttt': [level: 'L2'],
+        'wc.virtual-device.lowMemory': [level: 'L2'],
+        'wc.virtual-device.manualReboot': [level: 'L2'],
+        'wc.virtual-device.mode': [level: 'L2'],
+        'wc.virtual-device.pistonResume': [level: 'L2'],
+        'wc.virtual-device.powerSource': [level: 'L2'],
+        'wc.virtual-device.routine': [level: 'L2'],
+        'wc.virtual-device.severeLoad': [level: 'L2'],
+        'wc.virtual-device.sunriseTime': [level: 'L2'],
+        'wc.virtual-device.sunsetTime': [level: 'L2'],
+        'wc.virtual-device.systemStart': [level: 'L2'],
+        'wc.virtual-device.tile': [level: 'L2'],
+        'wc.virtual-device.time': [level: 'L2'],
+        'wc.virtual-device.update': [level: 'L2'],
+        'wc.virtual-device.zigbeeOff': [level: 'L2'],
+        'wc.virtual-device.zigbeeOn': [level: 'L2'],
+        'wc.virtual-device.zwaveCrashed': [level: 'L2'],
+    ]]
+}
+
+
+
+
+
+
+Map webcoreStatementShapes() {
+    return [
+        contexts: ['condition-list-member', 'followed-by-first-step', 'followed-by-later-step'],
+        lists: [
+            'condition-list': ['element': 'condition', 'ownerKey': 'o', 'ownerOneOf': ['followed by'], 'first': 'followed-by-first-step', 'rest': 'followed-by-later-step', 'otherwise': 'condition-list-member'],
+            'event-list': ['element': 'event'],
+            'elseif-list': ['element': 'elseif'],
+            'case-list': ['element': 'case'],
+            'task-list': ['element': 'task']
+        ],
+        common: [
+            't': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+            '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+            'a': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['0', '1']],
+            'tep': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': ['c', 'p', 'b']],
+            'tsp': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': ['a']],
+            'tcp': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited', 'values': ['c', 'p', 'b']],
+            'r': ['kind': 'restriction-list', 'persisted': 'always', 'consumed': 'read'],
+            'rop': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+            'rn': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+            'di': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited', 'values': [true]],
+            'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+            'sm': ['kind': 'scalar', 'persisted': 'user-optional', 'consumed': 'not-cited']
+        ],
+        statements: [
+            'wc.statement.action': [keys: [
+                'd': ['kind': 'device-list', 'persisted': 'always', 'consumed': 'read'],
+                'k': ['kind': 'task-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.if': [keys: [
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                'ei': ['kind': 'elseif-list', 'persisted': 'always', 'consumed': 'read'],
+                'e': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.while': [keys: [
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.repeat': [keys: [
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.every': [keys: [
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'lo2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read', 'consumedWhen': ['key': 'lo.vt', 'oneOf': ['d', 'w', 'n', 'y']]],
+                'lo3': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read', 'consumedWhen': ['key': 'lo.vt', 'oneOf': ['d', 'w', 'n', 'y']]],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.on': [keys: [
+                'c': ['kind': 'event-list', 'persisted': 'always', 'consumed': 'read'],
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited', 'values': ['or']],
+                'n': ['kind': 'scalar', 'persisted': 'never', 'consumed': 'not-cited'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.each': [keys: [
+                'x': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read'],
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.for': [keys: [
+                'x': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read'],
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'lo2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'lo3': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.switch': [keys: [
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'cs': ['kind': 'case-list', 'persisted': 'always', 'consumed': 'read'],
+                'e': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                'ctp': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['i', 'e']],
+                'ct': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': ['c']],
+                's': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': [true]]
+            ]],
+            'wc.statement.do': [keys: [
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'wc.statement.break': [keys: [:]],
+            'wc.statement.exit': [keys: [
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read']
+            ]]
+        ],
+        substructures: [
+            'elseif': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read']
+            ]],
+            'case': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                't': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['s', 'r']],
+                'ro': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'ro2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read', 'consumedWhen': ['key': 't', 'oneOf': ['r']]],
+                's': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited']
+            ]],
+            'event': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                't': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read', 'values': ['event']],
+                'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                'sm': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited'],
+                'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+                'ct': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'read', 'values': ['t']],
+                's': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': [true]]
+            ]],
+            'task': [keys: [
+                '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                'c': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                'cm': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited', 'values': [true]],
+                'p': ['kind': 'operand-list', 'persisted': 'always', 'consumed': 'read'],
+                'a': ['kind': 'scalar', 'persisted': 'user-optional', 'consumed': 'not-cited'],
+                'm': ['kind': 'scalar-list', 'persisted': 'user-optional', 'consumed': 'read'],
+                'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited']
+            ]],
+            'condition': [
+                discriminator: ['key': 't', 'kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                variants: [
+                    'condition': [
+                        '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                        'lo': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'co': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                        'ro': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'ro2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'to': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'to2': ['kind': 'operand', 'persisted': 'always', 'consumed': 'read'],
+                        'ts': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'fs': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'sm': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited'],
+                        'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+                        'ct': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': ['t', 'c']],
+                        's': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load', 'values': [true]],
+                        'wd': ['kind': 'operand', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-later-step']]],
+                        'wt': ['kind': 'scalar', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-first-step', 'followed-by-later-step']], 'values': ['l', 's', 'n']]
+                    ],
+                    'group': [
+                        '$': ['kind': 'scalar', 'persisted': 'round-trip', 'consumed': 'replaced-on-load'],
+                        'c': ['kind': 'condition-list', 'persisted': 'always', 'consumed': 'read'],
+                        'o': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'read'],
+                        'n': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'read', 'values': [true]],
+                        'ts': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'fs': ['kind': 'statement-list', 'persisted': 'always', 'consumed': 'read'],
+                        'sm': ['kind': 'scalar', 'persisted': 'always', 'consumed': 'not-cited'],
+                        'z': ['kind': 'scalar', 'persisted': 'unless-empty', 'consumed': 'not-cited'],
+                        'wd': ['kind': 'operand', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-later-step']]],
+                        'wt': ['kind': 'scalar', 'persisted': 'when', 'persistedWhen': ['context': ['followed-by-later-step']], 'outsideWhen': 'retained-unconsumed', 'consumed': 'read', 'consumedWhen': ['context': ['followed-by-first-step', 'followed-by-later-step']], 'values': ['l', 's', 'n']]
+                    ]
+                ]
+            ]
+        ],
+        evidenceGaps: [
+            'statement/$/absent': 'editor-authored-only',
+            'statement/tcp/absent': 'not-in-matrix',
+            'statement/sm/present': 'observed-at-capture',
+            'wc.statement.for/x/absent': 'not-in-matrix',
+            'elseif/$/absent': 'editor-authored-only',
+            'case/$/absent': 'editor-authored-only',
+            'event/$/absent': 'editor-authored-only',
+            'event/ct/absent': 'editor-authored-only',
+            'event/s/absent': 'editor-authored-only',
+            'task/$/absent': 'editor-authored-only',
+            'task/cm/present': 'needs-physical-device',
+            'task/a/present': 'observed-at-capture',
+            'condition/$/absent': 'editor-authored-only',
+            'condition/ct/absent': 'editor-authored-only',
+            'group/$/absent': 'editor-authored-only',
+            'group/wd/retained': 'not-in-matrix',
+            'group/wd/unconsumed': 'not-in-matrix',
+            'group/wt/retained': 'not-in-matrix',
+            'group/wt/value:l': 'not-in-matrix',
+            'group/wt/value:n': 'not-in-matrix',
+            'group/wt/unconsumed': 'not-in-matrix'
+        ]
+    ]
+}
+
+
+
+
+
+
+Map webcoreSemanticEvidence() {
+    return [
+        claims: [
+            'statement.if.branch-order.v1': true,
+            'condition.list.negation.v1': true,
+            'condition.list.operator-or.v1': true,
+            'condition.followed-by.opaque-group.v1': true,
+            'statement.do.sequential-block.v1': true,
+            'statement.envelope.default.v1': true,
+            'statement.switch.ordered-cases.v1': true,
+            'statement.switch.default.v1': true,
+            'statement.break.switch-scope.v1': true,
+            'statement.exit.terminate-piston.v1': true,
+            'statement.while.pre-condition-loop.v1': true,
+            'statement.repeat.post-condition-loop.v1': true,
+            'statement.for.step-iteration.v1': true,
+            'statement.each.device-iteration.v1': true,
+            'statement.break.loop-scope.v1': true,
+            'statement.on.any-event-match.v1': true,
+            'statement.every.own-timer-only.v1': true,
+            'statement.tep.execution-policy.v1': true,
+            'statement.tsp.scheduling-policy.v1': true,
+            'statement.tcp.cancellation-policy.v1': true,
+            'statement.action.device-list.v1': true,
+            'statement.action.task-order.v1': true
+        ],
+        gaps: [
+            'statement.envelope.restrictions-present': 'Restrictions gate this statement and their meaning is not yet proven',
+            'statement.envelope.async': 'The execution method is not the proven synchronous default',
+            'statement.envelope.tep-present': 'A task execution policy is set and its meaning is not yet proven',
+            'statement.envelope.tsp-present': 'A task scheduling policy is set and its meaning is not yet proven',
+            'statement.envelope.tcp-non-default': 'The task cancellation policy is not the proven default',
+            'statement.if.automatic-piston-state-unresolved': 'A top-level if may set the automatic piston state, which is not yet explained',
+            'statement.if.fast-forward-resumption-unresolved': 'Resumed execution may enter a branch regardless of the condition, which is not yet explained',
+            'statement.action.task-order-unresolved': 'Task order is not yet proven; this action has one task, or fewer, so no capture exercises order',
+            'statement.action.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.action.device-list.dynamic-unresolved': 'A dynamic ($currentEventDevice) device target is not yet explained further than being dynamic',
+            'statement.unrecognised': 'The statement type is not recognised',
+            'condition.leaf-opaque': 'A condition comparison is shown as opaque until its meaning is proven',
+            'condition.operator-unproven': 'This condition operator is not yet proven',
+            'condition.group-depth-unproven': 'A group inside a group is not yet proven',
+            'condition.followed-by-timing-unproven': 'The timing of a followed-by sequence is not yet explained',
+            'statement.switch.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.break.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.break.container-unresolved': 'This break statement is not directly inside a switch case or default, so its scope is not yet proven',
+            'statement.exit.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.while.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.repeat.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.for.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.each.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.on.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'statement.every.fast-forward-unresolved': 'Resumed execution may behave differently from a normal run, which is not yet explained',
+            'claim.statement.if.branch-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.condition.list.negation.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.condition.list.operator-or.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.condition.followed-by.opaque-group.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.do.sequential-block.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.envelope.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.switch.ordered-cases.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.switch.default.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.break.switch-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.exit.terminate-piston.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.while.pre-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.repeat.post-condition-loop.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.for.step-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.each.device-iteration.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.break.loop-scope.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.on.any-event-match.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.every.own-timer-only.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tep.execution-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tsp.scheduling-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.tcp.cancellation-policy.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.action.device-list.v1.not-promoted': 'This claim lost its evidence, for example after source drift',
+            'claim.statement.action.task-order.v1.not-promoted': 'This claim lost its evidence, for example after source drift'
+        ]
+    ]
+}
+
+
+
+
+
+
+
+Map webcoreSemanticModel(Object document, Map evidence, int maxDepth) {
+    Map acc = [occurrences: [:], truncated: false, maxDepth: maxDepth, evidence: evidence]
+    if (document instanceof Map && (document as Map).s instanceof List) {
+        webcoreSemanticStatements((document as Map).s as List, '$.s', 0, acc)
+    }
+    return [occurrences: acc.occurrences, truncated: acc.truncated]
+}
+
+void webcoreSemanticStatements(List list, String path, int depth, Map acc, String container = 'block') {
+    for (int i = 0; i < list.size(); i++) {
+        if (list[i] instanceof Map) webcoreSemanticStatement(list[i] as Map, path + '[' + i + ']', depth + 1, acc, container)
+    }
+}
+
+
+
+
+
+void webcoreSemanticStatement(Map node, String path, int depth, Map acc, String container = 'block') {
+    if (depth > (acc.maxDepth as Integer)) { acc.truncated = true; return }
+    String type = (node.t instanceof String) ? (node.t as String) : "${''}"
+    Set claims = [] as Set
+    Set gaps = [] as Set
+    Map gapReasons = (((acc.evidence as Map).gaps ?: [:]) as Map)
+    boolean known = type in ['if', 'do', 'switch', 'break', 'exit', 'while', 'repeat', 'for', 'each', 'on', 'every', 'action'] ||
+        gapReasons.containsKey('statement.' + type + '.not-in-increment')
+    Map entry = [construct: known ? 'wc.statement.' + type : 'wc.statement.unrecognised', role: null]
+    
+    boolean envelope = true
+    if (node.r instanceof List && (node.r as List)) { gaps << 'statement.envelope.restrictions-present'; envelope = false }
+    if (node.a != '0') { gaps << 'statement.envelope.async'; envelope = false }
+    if (node.containsKey('tep')) { gaps << 'statement.envelope.tep-present'; envelope = false }
+    if (node.containsKey('tsp')) { gaps << 'statement.envelope.tsp-present'; envelope = false }
+    if (node.tcp != 'c') { gaps << 'statement.envelope.tcp-non-default'; envelope = false }
+    if (envelope) claims << 'statement.envelope.default.v1'
+    
+    
+    
+    if (node.containsKey('tep')) claims << 'statement.tep.execution-policy.v1'
+    if (node.containsKey('tsp')) claims << 'statement.tsp.scheduling-policy.v1'
+    if (node.tcp != null && node.tcp != 'c') claims << 'statement.tcp.cancellation-policy.v1'
+    if (type == 'if') {
+        entry.role = 'decision'
+        claims << 'statement.if.branch-order.v1'
+        gaps << 'statement.if.automatic-piston-state-unresolved'
+        gaps << 'statement.if.fast-forward-resumption-unresolved'
+        List branches = [[name: 'then', condition: webcoreSemanticConditionList(node, path, depth, acc, claims, gaps)]]
+        List elseIfs = (node.ei instanceof List) ? (node.ei as List) : []
+        for (int i = 0; i < elseIfs.size(); i++) {
+            if (!(elseIfs[i] instanceof Map)) continue
+            branches << [name: 'else-if[' + i + ']', condition: webcoreSemanticConditionList(elseIfs[i] as Map, path + '.ei[' + i + ']', depth, acc, claims, gaps)]
+        }
+        if (node.e instanceof List && (node.e as List)) branches << [name: 'else']
+        entry.branches = branches
+    } else if (type == 'do') {
+        entry.role = 'sequential-block'
+        claims << 'statement.do.sequential-block.v1'
+        entry.children = (node.s instanceof List) ? (node.s as List).count { it instanceof Map } : 0
+        entry.lowersStatementLevel = true
+    } else if (type == 'switch') {
+        entry.role = 'multi-way-decision'
+        
+        entry.ctp = (node.ctp == 'e') ? 'e' : 'i'
+        claims << 'statement.switch.ordered-cases.v1'
+        if (node.e instanceof List && (node.e as List)) claims << 'statement.switch.default.v1'
+        gaps << 'statement.switch.fast-forward-unresolved'
+    } else if (type == 'break') {
+        if (container == 'switch-case') {
+            entry.role = 'switch-scoped-control-transfer'
+            claims << 'statement.break.switch-scope.v1'
+            gaps << 'statement.break.fast-forward-unresolved'
+        } else if (container == 'loop-body') {
+            entry.role = 'loop-scoped-control-transfer'
+            claims << 'statement.break.loop-scope.v1'
+            gaps << 'statement.break.fast-forward-unresolved'
+        } else {
+            gaps << 'statement.break.container-unresolved'
+        }
+    } else if (type == 'exit') {
+        entry.role = 'piston-terminate'
+        claims << 'statement.exit.terminate-piston.v1'
+        gaps << 'statement.exit.fast-forward-unresolved'
+    } else if (type == 'while') {
+        entry.role = 'pre-condition-loop'
+        claims << 'statement.while.pre-condition-loop.v1'
+        gaps << 'statement.while.fast-forward-unresolved'
+        entry.condition = webcoreSemanticConditionList(node, path, depth, acc, claims, gaps)
+    } else if (type == 'repeat') {
+        entry.role = 'post-condition-loop'
+        claims << 'statement.repeat.post-condition-loop.v1'
+        gaps << 'statement.repeat.fast-forward-unresolved'
+        entry.condition = webcoreSemanticConditionList(node, path, depth, acc, claims, gaps)
+    } else if (type == 'for') {
+        entry.role = 'step-iteration'
+        claims << 'statement.for.step-iteration.v1'
+        gaps << 'statement.for.fast-forward-unresolved'
+    } else if (type == 'each') {
+        entry.role = 'device-iteration'
+        claims << 'statement.each.device-iteration.v1'
+        gaps << 'statement.each.fast-forward-unresolved'
+    } else if (type == 'on') {
+        entry.role = 'any-event-match'
+        claims << 'statement.on.any-event-match.v1'
+        gaps << 'statement.on.fast-forward-unresolved'
+    } else if (type == 'every') {
+        entry.role = 'own-timer-only'
+        claims << 'statement.every.own-timer-only.v1'
+        gaps << 'statement.every.fast-forward-unresolved'
+    } else if (type == 'action') {
+        List taskList = (node.k instanceof List) ? (node.k as List) : []
+        if (taskList.size() > 1) {
+            entry.role = 'ordered-tasks'
+            claims << 'statement.action.task-order.v1'
+            entry.taskCount = taskList.size()
+            gaps << 'statement.action.fast-forward-unresolved'
+        } else {
+            gaps << 'statement.action.task-order-unresolved'
+        }
+        List deviceList = (node.d instanceof List) ? (node.d as List) : []
+        if (deviceList) {
+            entry.role = 'targeted-tasks'
+            claims << 'statement.action.device-list.v1'
+            boolean dynamic = deviceList.size() == 1 && deviceList[0] == '$currentEventDevice'
+            entry.deviceTarget = dynamic ? 'dynamic' : 'static'
+            if (dynamic) gaps << 'statement.action.device-list.dynamic-unresolved'
+        }
+    } else {
+        String gap = 'statement.' + type + '.not-in-increment'
+        gaps << ((((acc.evidence as Map).gaps ?: [:]) as Map).containsKey(gap) ? gap : 'statement.unrecognised')
+        webcoreSemanticConditionStatements(node.c, path, depth, acc)
+    }
+    Map promoted = (((acc.evidence as Map).claims ?: [:]) as Map)
+    List kept = []
+    for (Object c : claims) {
+        if (promoted[c] == true) { kept << c } else { gaps << ('claim.' + c + '.not-promoted') }
+    }
+    entry.claims = kept.sort()
+    entry.gaps = (gaps as List).sort()
+    (acc.occurrences as Map)[path] = entry
+    if (node.s instanceof List) {
+        webcoreSemanticStatements(node.s as List, path + '.s', depth, acc, type in ['while', 'repeat', 'for', 'each'] ? 'loop-body' : 'block')
+    }
+    List elseIfLists = (node.ei instanceof List) ? (node.ei as List) : []
+    for (int i = 0; i < elseIfLists.size(); i++) {
+        if (elseIfLists[i] instanceof Map && (elseIfLists[i] as Map).s instanceof List) {
+            webcoreSemanticStatements((elseIfLists[i] as Map).s as List, path + '.ei[' + i + '].s', depth, acc)
+        }
+    }
+    List cases = (node.cs instanceof List) ? (node.cs as List) : []
+    for (int i = 0; i < cases.size(); i++) {
+        if (cases[i] instanceof Map && (cases[i] as Map).s instanceof List) {
+            webcoreSemanticStatements((cases[i] as Map).s as List, path + '.cs[' + i + '].s', depth, acc, type == 'switch' ? 'switch-case' : 'block')
+        }
+    }
+    if (node.e instanceof List) webcoreSemanticStatements(node.e as List, path + '.e', depth, acc, type == 'switch' ? 'switch-case' : 'block')
+}
+
+
+
+Map webcoreSemanticConditionList(Map owner, String path, int depth, Map acc, Set claims, Set gaps) {
+    Map out = [operator: null, negated: owner.n == true, children: []]
+    if (depth > (acc.maxDepth as Integer)) { acc.truncated = true; return out }
+    claims << 'condition.list.negation.v1'
+    if (owner.o == 'or') { out.operator = 'or'; claims << 'condition.list.operator-or.v1' } else { gaps << 'condition.operator-unproven' }
+    List items = (owner.c instanceof List) ? (owner.c as List) : []
+    for (int i = 0; i < items.size(); i++) {
+        Object k = items[i]
+        String at = path + '.c[' + i + ']'
+        if (k instanceof Map && (k as Map).t == 'group') {
+            Map g = k as Map
+            if (g.o == 'followed by') {
+                (out.children as List) << [kind: 'opaque-followed-by-group']
+                claims << 'condition.followed-by.opaque-group.v1'
+                gaps << 'condition.followed-by-timing-unproven'
+                webcoreSemanticConditionStatements(g.c, at, depth + 1, acc)
+            } else {
+                List inner = (g.c instanceof List) ? (g.c as List) : []
+                if (inner.any { it instanceof Map && (it as Map).t == 'group' }) gaps << 'condition.group-depth-unproven'
+                (out.children as List) << ([kind: 'group'] + webcoreSemanticConditionList(g, at, depth + 1, acc, claims, gaps))
+            }
+        } else {
+            (out.children as List) << [kind: 'opaque-condition']
+            gaps << 'condition.leaf-opaque'
+        }
+        if (k instanceof Map) webcoreSemanticTaskLists(k as Map, at, depth, acc)
+    }
+    return out
+}
+
+void webcoreSemanticTaskLists(Map condition, String path, int depth, Map acc) {
+    if (condition.ts instanceof List) webcoreSemanticStatements(condition.ts as List, path + '.ts', depth + 1, acc)
+    if (condition.fs instanceof List) webcoreSemanticStatements(condition.fs as List, path + '.fs', depth + 1, acc)
+}
+
+
+void webcoreSemanticConditionStatements(Object conditions, String path, int depth, Map acc) {
+    if (!(conditions instanceof List) || depth > (acc.maxDepth as Integer)) return
+    List items = conditions as List
+    for (int i = 0; i < items.size(); i++) {
+        if (!(items[i] instanceof Map)) continue
+        Map k = items[i] as Map
+        String at = path + '.c[' + i + ']'
+        webcoreSemanticTaskLists(k, at, depth, acc)
+        if (k.t == 'group') webcoreSemanticConditionStatements(k.c, at, depth + 1, acc)
+    }
+}
+
+
+Map webcoreSemanticAssessment(Map model, Map evidence) {
+    if (!(model instanceof Map) || model.truncated == true) {
+        return [status: 'not-evaluated', occurrences: 0, explained: 0, explainable: false, gaps: [], claims: []]
+    }
+    Map occurrences = (model.occurrences ?: [:]) as Map
+    int explained = 0
+    Map gapCounts = [:]
+    Set claims = [] as Set
+    for (Object o : occurrences.values()) {
+        Map om = o as Map
+        if (!(om.gaps as List)) explained++
+        for (Object g : (om.gaps as List)) gapCounts[g] = ((gapCounts[g] ?: 0) as Integer) + 1
+        claims.addAll(om.claims as List)
+    }
+    Map reasons = (evidence?.gaps ?: [:]) as Map
+    return [status: 'complete', occurrences: occurrences.size(), explained: explained,
+            explainable: occurrences.size() > 0 && explained == occurrences.size(),
+            gaps: gapCounts.keySet().sort().collect { Object g -> [id: g, reason: reasons[g], occurrences: gapCounts[g]] },
+            claims: (claims as List).sort()]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String WEBCORE_COVERAGE_SCHEMA = '1'
+
+
+
+
+@Field static final ConcurrentHashMap<String, Long> WEBCORE_COVERAGE_CLAIMS = new ConcurrentHashMap<>()
+
+
+
+
+
+
+
+Map webcoreCoverageLimits() {
+    return [maxAppIdLength: 12, claimTtlMs: 60000L,
+            requestBudgetMs: 12000L, loopbackTimeoutSec: 6, analysisBudgetMs: 5000L]
+}
+
+
+
+
+Long webcoreCoverageClaim(String appId, Long stamp, Long ttlMs) {
+    Long held = WEBCORE_COVERAGE_CLAIMS.putIfAbsent(appId, stamp)
+    if (held == null) return stamp
+    if ((stamp - held) < ttlMs) return null
+    return WEBCORE_COVERAGE_CLAIMS.replace(appId, held, stamp) ? stamp : null
+}
+
+void webcoreCoverageRelease(String appId, Long stamp) {
+    if (stamp != null) WEBCORE_COVERAGE_CLAIMS.remove(appId, stamp)
+}
+
+
+
+
+
+Closure webcoreCoverageDeadline(Long deadlineAt) {
+    Closure expired = { Object ignored -> now() >= deadlineAt }
+    return expired
+}
+
+Integer webcoreCoverageCount(Object value) { return (value instanceof Number) ? (value as Integer) : null }
+
+String webcoreCoverageText(Object value) { return (value instanceof String) ? (value as String) : null }
+
+
+
+
+
+Map webcoreCoverageResponse(Map body, Map constructs) {
+    Map prov = (body.provenance instanceof Map) ? (body.provenance as Map) : [:]
+    Map acc = (body.accounting instanceof Map) ? (body.accounting as Map) : null
+    Map levels = (body.levelCounts instanceof Map) ? (body.levelCounts as Map) : [:]
+    Map trunc = (body.truncation instanceof Map) ? (body.truncation as Map) : null
+    Map meta = (body.meta instanceof Map) ? (body.meta as Map) : [:]
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    Object declaredGaps = webcoreStatementShapes().evidenceGaps
+    Map shapeGaps = (declaredGaps instanceof Map) ? (declaredGaps as Map) : [:]
+    Map counts = [:]
+    Map constructLevels = [:]
+    Map occurrences = [:]
+    List capped = []
+    List evidenceCapped = []
+    Map occurrenceIn = (body.constructOccurrences instanceof Map) ? (body.constructOccurrences as Map) : [:]
+    if (body.constructCounts instanceof Map) {
+        (body.constructCounts as Map).keySet().collect { "${it}" }.sort().each { String id ->
+            if (!constructs.containsKey(id)) return
+            Integer n = webcoreCoverageCount((body.constructCounts as Map)[id])
+            Object entry = constructs[id]
+            String level = (entry instanceof Map) ? webcoreCoverageText((entry as Map).level) : null
+            if (n == null || !(level in ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'])) return
+            counts[id] = n
+            Object occ = occurrenceIn[id]
+            if (occ instanceof Map) {
+                Integer valid = webcoreCoverageCount((occ as Map).structurallyValid)
+                Integer invalid = webcoreCoverageCount((occ as Map).structurallyInvalid)
+                Integer gapped = webcoreCoverageCount((occ as Map).evidenceGapped)
+                if (valid != null && invalid != null && gapped != null) {
+                    Map gapCounts = [:]
+                    Object rawGaps = (occ as Map).evidenceGaps
+                    if (rawGaps instanceof Map) {
+                        (rawGaps as Map).keySet().collect { "${it}" }.sort().each { String g ->
+                            Integer c = webcoreCoverageCount((rawGaps as Map)[g])
+                            if (shapeGaps.containsKey(g) && c != null && c > 0) gapCounts[g] = c
+                        }
+                    }
+                    occurrences[id] = [structurallyValid: valid, structurallyInvalid: invalid, evidenceGapped: gapped, evidenceGaps: gapCounts]
+                }
+            }
+            String achieved = webcoreCensusAchievedLevel(level, occurrences[id], n)
+            constructLevels[id] = achieved
+            if (achieved == level) return
+            Map o = occurrences[id] as Map
+            if (o != null && o.structurallyInvalid == 0 && o.structurallyValid == n && (o.evidenceGapped as Integer) > 0) evidenceCapped << id
+            else capped << id
+        }
+    }
+
+    List structureRecords = []
+    if (body.structureFindings instanceof List) {
+        List categories = webcoreCensusStructureCategories()
+        int cap = webcoreCensusLimits().maxStructureFindings as Integer
+        (body.structureFindings as List).each { Object raw ->
+            if (!(raw instanceof Map) || structureRecords.size() >= cap) return
+            String category = webcoreCoverageText((raw as Map).category)
+            if (!(category in categories)) return
+            structureRecords << [path: webcoreCoverageText((raw as Map).path), category: category]
+        }
+    }
+
+    List records = []
+    if (body.unrecognised instanceof List) {
+        (body.unrecognised as List).each { Object raw ->
+            if (!(raw instanceof Map)) return
+            Map r = raw as Map
+            records << [path: webcoreCoverageText(r.path),
+                        reason: webcoreCoverageText(r.reason),
+                        nodeKind: webcoreCoverageText(r.nodeKind)]
+        }
+    }
+
+    
+    
+    Map gapTotals = [:]
+    occurrences.each { Object id, Object o ->
+        ((o as Map).evidenceGaps as Map).each { Object g, Object c -> gapTotals[g] = ((gapTotals[g] ?: 0) as Integer) + (c as Integer) }
+    }
+    List evidenceGaps = gapTotals.keySet().sort().collect { Object g ->
+        [id: g, reason: webcoreCoverageText(shapeGaps[g]), occurrences: gapTotals[g]]
+    }
+
+    
+    
+    
+    List levelOrder = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']
+    List statementIds = counts.keySet().findAll { "${it}".startsWith('wc.statement.') } as List
+    Map statementAssessment = null
+    if (statementIds) {
+        Map totals = [occurrences: 0, structurallyValid: 0, structurallyInvalid: 0, evidenceGapped: 0]
+        statementIds.each { Object id ->
+            totals.occurrences = (totals.occurrences as Integer) + (counts[id] as Integer)
+            Map o = occurrences[id] as Map
+            if (o != null) ['structurallyValid', 'structurallyInvalid', 'evidenceGapped'].each { String f -> totals[f] = (totals[f] as Integer) + (o[f] as Integer) }
+        }
+        String lowest = statementIds.collect { constructLevels[it] as String }.min { levelOrder.indexOf(it) }
+        statementAssessment = [level: lowest] + totals
+    }
+    Map nonStatementAssessment = [unrecognised: webcoreCoverageCount(body.unrecognisedOutsideStatements)]
+
+    Map out = [
+        status: webcoreCoverageText(body.status),
+        appId: webcoreCoverageText(body.appId),
+        registryVersion: webcoreCoverageText(body.registryVersion),
+        provenance: [
+            observedWebcoreVersion: webcoreCoverageText(prov.observedWebcoreVersion),
+            referenceSourceCommit: webcoreCoverageText(prov.referenceSourceCommit),
+            compatibilityStatus: webcoreCoverageText(prov.compatibilityStatus)
+        ],
+        accounting: acc == null ? null : [
+            objectsVisited: webcoreCoverageCount(acc.objectsVisited),
+            arraysVisited: webcoreCoverageCount(acc.arraysVisited),
+            fieldsVisited: webcoreCoverageCount(acc.fieldsVisited),
+            arrayElementsVisited: webcoreCoverageCount(acc.arrayElementsVisited),
+            scalarsVisited: webcoreCoverageCount(acc.scalarsVisited),
+            constructCandidates: webcoreCoverageCount(acc.constructCandidates),
+            constructsIdentified: webcoreCoverageCount(acc.constructsIdentified),
+            defaultBranchOccurrences: webcoreCoverageCount(acc.defaultBranchOccurrences)
+        ],
+        constructCounts: counts,
+        constructLevels: constructLevels,
+        constructOccurrences: occurrences,
+        structurallyCapped: capped,
+        evidenceCapped: evidenceCapped,
+        evidenceGaps: evidenceGaps,
+        statementAssessment: statementAssessment,
+        nonStatementAssessment: nonStatementAssessment,
+        semanticAssessment: webcoreSemanticResponse(body.semanticAssessment),
+        levelCounts: [L0: webcoreCoverageCount(levels.L0), L1: webcoreCoverageCount(levels.L1),
+                      L2: webcoreCoverageCount(levels.L2), L3: webcoreCoverageCount(levels.L3),
+                      L4: webcoreCoverageCount(levels.L4), L5: webcoreCoverageCount(levels.L5)],
+        unrecognised: records,
+        unrecognisedOverflow: webcoreCoverageCount(body.unrecognisedOverflow),
+        structureFindings: structureRecords,
+        structureFindingsOverflow: webcoreCoverageCount(body.structureFindingsOverflow),
+        truncation: trunc == null ? null : [reason: webcoreCoverageText(trunc.reason)],
+        meta: [elapsedMs: webcoreCoverageCount(meta.elapsedMs),
+               resultBytes: webcoreCoverageCount(meta.resultBytes),
+               decoderSchema: webcoreCoverageText(meta.decoderSchema),
+               cached: meta.cached == true]
+    ]
+    if (body.error instanceof String) out.error = body.error
+    return out
+}
+
+
+
+Map webcoreSemanticResponse(Object raw) {
+    Map evidence = webcoreSemanticEvidence()
+    Map reasons = (evidence.gaps ?: [:]) as Map
+    Map claimIds = (evidence.claims ?: [:]) as Map
+    Map a = (raw instanceof Map) ? (raw as Map) : [:]
+    String status = (a.status == 'complete') ? 'complete' : 'not-evaluated'
+    List gaps = []
+    if (a.gaps instanceof List) {
+        for (Object g : (a.gaps as List)) {
+            if (!(g instanceof Map)) continue
+            String id = webcoreCoverageText((g as Map).id)
+            Integer n = webcoreCoverageCount((g as Map).occurrences)
+            if (id != null && reasons.containsKey(id) && n != null && n > 0) gaps << [id: id, reason: reasons[id], occurrences: n]
+        }
+    }
+    List claims = []
+    if (a.claims instanceof List) {
+        for (Object c : (a.claims as List)) { if (c instanceof String && claimIds.containsKey(c)) claims << c }
+    }
+    Integer occurrences = webcoreCoverageCount(a.occurrences)
+    Integer explained = webcoreCoverageCount(a.explained)
+    boolean counted = status == 'complete' && occurrences != null && explained != null
+    return [status: status, occurrences: counted ? occurrences : 0, explained: counted ? explained : 0,
+            explainable: counted && occurrences > 0 && explained == occurrences && a.explainable == true,
+            gaps: status == 'complete' ? gaps : [], claims: status == 'complete' ? claims : []]
+}
+
+String webcoreCoverageJson(Map body, Map constructs) {
+    return JsonOutput.toJson(webcoreCoverageResponse(body, constructs))
+}
+
+Map webcoreCoverageOutcome(String status, String code, int http, String appId) {
+    Map body = [status: status, appId: appId, registryVersion: null,
+                provenance: [observedWebcoreVersion: null, referenceSourceCommit: null,
+                             compatibilityStatus: 'unknown'],
+                accounting: null, constructCounts: [:], constructOccurrences: [:], levelCounts: [:],
+                unrecognised: [], unrecognisedOverflow: 0, structureFindings: [], structureFindingsOverflow: 0,
+                truncation: null, meta: [:]]
+    if (code != null) body.error = code
+    return [http: http, body: body]
+}
+
+Map webcoreDecodeCoverageMapping() {
+    Map result = webcoreDecodeCoverageResult("${params?.appId ?: ''}")
+    return render(status: result.http as Integer, contentType: 'application/json',
+                  data: webcoreCoverageJson(result.body as Map,
+                                            (webcoreCensusRegistry().constructs as Map)))
+}
+
+
+Map webcoreDecodeCoverageResult(String rawAppId) {
+    Map limits = webcoreCoverageLimits()
+
+    
+    
+    clearAbandonedScan()
+    if (scanEffectivelyActive()) return webcoreCoverageOutcome('busy', 'scan-active', 409, null)
+
+    String appId = rawAppId == null ? '' : rawAppId.trim()
+    if (!appId || appId.length() > (limits.maxAppIdLength as Integer) || !(appId ==~ /^[0-9]+$/)) {
+        return webcoreCoverageOutcome('invalid-request', 'invalid-app-id', 400, null)
+    }
+
+    
+    
+    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Object entry = appInfo[appId]
+    if (!(entry instanceof Map)) return webcoreCoverageOutcome('invalid-request', 'unknown-app-id', 400, appId)
+    if ("${(entry as Map).type ?: ''}".trim() != 'webCoRE Piston') {
+        return webcoreCoverageOutcome('invalid-request', 'not-a-piston', 400, appId)
+    }
+
+    Long started = now()
+    Long stamp = webcoreCoverageClaim(appId, started, limits.claimTtlMs as Long)
+    if (stamp == null) return webcoreCoverageOutcome('busy', 'coverage-in-flight', 409, appId)
+
+    try {
+        Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
+                                limits.loopbackTimeoutSec as Integer,
+                                [contentType: 'application/json'])
+        if (!fetched.ok) {
+            
+            return fetched.timedOut ? webcoreCoverageOutcome('error', 'source-timeout', 422, appId)
+                                    : webcoreCoverageOutcome('error', 'source-unavailable', 422, appId)
+        }
+        if (!(fetched.data instanceof Map)) return webcoreCoverageOutcome('error', 'source-malformed', 422, appId)
+
+        Map decoded = decodeWebcorePistonDocument(fetched.data as Map)
+        
+        
+        if (decoded.status == 'not-present') return webcoreCoverageOutcome('not-present', null, 200, appId)
+        if (decoded.status != 'complete') return webcoreCoverageOutcome('error', 'decode-failed', 422, appId)
+
+        Map registry = webcoreCensusRegistry()
+        Map constructs = registry.constructs as Map
+        
+        
+        
+        Long analysisDeadline = Math.min(started + (limits.requestBudgetMs as Long),
+                                         now() + (limits.analysisBudgetMs as Long))
+        Map census = collectWebcoreDecodeCoverage(decoded.document, registry, webcoreCoverageDeadline(analysisDeadline),
+                                                  webcoreStatementShapes())
+        Map semanticModel = (census.status == 'complete') ?
+            webcoreSemanticModel(decoded.document, webcoreSemanticEvidence(), webcoreCensusLimits().maxDepth as int) : null
+        decoded = null
+
+        
+        
+        
+        if (census.status == 'truncated' &&
+            ((census.truncation instanceof Map) ? (census.truncation as Map).reason : null) == 'analysis-deadline') {
+            return webcoreCoverageOutcome('analysis-timeout', 'analysis-deadline', 422, appId)
+        }
+
+        Map body = [
+            status: census.status,
+            appId: appId,
+            registryVersion: census.registryVersion,
+            provenance: census.provenance,
+            accounting: census.accounting,
+            constructCounts: census.constructCounts,
+            constructOccurrences: census.constructOccurrences,
+            levelCounts: census.levelCounts,
+            unrecognised: census.unrecognised,
+            unrecognisedOverflow: census.unrecognisedOverflow,
+            structureFindings: census.structureFindings,
+            structureFindingsOverflow: census.structureFindingsOverflow,
+            unrecognisedOutsideStatements: census.unrecognisedOutsideStatements,
+            semanticAssessment: webcoreSemanticAssessment(semanticModel, webcoreSemanticEvidence()),
+            truncation: census.truncation
+        ]
+        
+        
+        body.meta = [
+            elapsedMs: (now() - started),
+            resultBytes: webcoreCoverageJson(body + [meta: [:]], constructs).getBytes('UTF-8').length,
+            decoderSchema: WEBCORE_COVERAGE_SCHEMA,
+            cached: false
+        ]
+        return [http: 200, body: body]
+    } catch (Exception ignored) {
+        return webcoreCoverageOutcome('error', 'coverage-failed', 422, appId)
+    } finally {
+        webcoreCoverageRelease(appId, stamp)
+    }
+}
+
+
 
 
 
@@ -4405,6 +7405,63 @@ boolean isStatefulCapability(String settingType) {
     return STATEFUL_CAPABILITIES.contains(settingType)
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+List unusedConstraintDeviceIds(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { e ->
+        if (e instanceof Map && e.name != null) st["${e.name}"] = e.value
+    }
+    List actionList = (st.actionList ?: []) as List
+    if (!actionList) return []
+
+    Map actions = (st.actions ?: [:]) as Map
+    Map evalMap = (st.eval ?: [:]) as Map
+
+    Set<String> liveGroups = new LinkedHashSet<String>()
+    if (st.hasPredicate == true) liveGroups << '0'
+    actionList.each { a ->
+        Object r = ((actions["${a}"] ?: [:]) as Map).rule
+        if (r != null) liveGroups << "${r}"
+    }
+
+    Set<String> liveConditions = new LinkedHashSet<String>()
+    liveGroups.each { String g ->
+        (evalMap[g] instanceof List ? evalMap[g] as List : []).each { item ->
+            String c = "${item}"
+            if (!(c in ['AND', 'OR', 'NOT', '(', ')'])) liveConditions << c
+        }
+    }
+
+    Set<String> used = new LinkedHashSet<String>()
+    Set<String> idle = new LinkedHashSet<String>()
+    (data.appSettings ?: []).each { s ->
+        if (!(s instanceof Map)) return
+        String n = "${s.name}"
+        if (!n.startsWith('rDev_')) return
+        Map dl = s.deviceList as Map
+        if (!dl) return
+        boolean live = liveConditions.contains(n.substring(5))
+        dl.keySet().each { if (live) used << "${it}" else idle << "${it}" }
+    }
+    idle.removeAll(used)
+    return idle.toList()
+}
+
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
     
     
@@ -5087,6 +8144,128 @@ List buildHasComponentEdges(Set nodeIds, Map deviceParents) {
     return result
 }
 
+
+
+
+
+
+
+String webcoreDeviceHashToken(String deviceId) {
+    MessageDigest md = MessageDigest.getInstance('MD5')
+    byte[] digest = md.digest("core.${deviceId}".getBytes('UTF-8'))
+    StringBuilder hex = new StringBuilder()
+    digest.each { byte b -> hex << String.format('%02x', b & 0xFF) }
+    return ":${hex}:"
+}
+
+
+
+
+
+
+
+
+
+
+Map buildWebcoreDeviceHashIndexes(Map appInfo) {
+    Map<String, Map<String, String>> resolvable = [:]
+    Map<String, Set<String>> ambiguous = [:]
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        Map appMap = info as Map
+        if ("${appMap.type ?: ''}".trim() != 'webCoRE') return
+        Map<String, String> index = [:]
+        Set<String> collided = [] as Set<String>
+        ((appMap.webcorePermittedDeviceIds ?: []) as List).each { Object devId ->
+            String id = "${devId}"
+            String hash = webcoreDeviceHashToken(id)
+            if (index.containsKey(hash) && index[hash] != id) {
+                collided << hash
+            } else if (!collided.contains(hash)) {
+                index[hash] = id
+            }
+        }
+        collided.each { String hash -> index.remove(hash) }
+        resolvable[appId] = index
+        ambiguous[appId] = collided
+    }
+    return [resolvable: resolvable, ambiguous: ambiguous]
+}
+
+
+
+
+
+Map resolveWebcoreDeviceToken(String token, String parentAppId, Map hashIndexes, Map labels) {
+    if (!parentAppId) return [issue: 'missing-parent-device-index']
+    Map resolvableByParent = hashIndexes.resolvable as Map
+    Map ambiguousByParent = hashIndexes.ambiguous as Map
+    if (!resolvableByParent.containsKey(parentAppId)) return [issue: 'missing-parent-device-index']
+    Set<String> ambiguousHashes = (ambiguousByParent[parentAppId] ?: []) as Set<String>
+    if (ambiguousHashes.contains(token)) return [issue: 'ambiguous-device-hash']
+    Map index = resolvableByParent[parentAppId] as Map
+    String deviceId = index[token] as String
+    if (!deviceId) return [issue: 'unresolved-device-hash']
+    if (!labels.containsKey(deviceId)) return [issue: 'unresolved-device-hash']
+    return [deviceId: deviceId]
+}
+
+
+
+
+
+
+
+List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, Map labels) {
+    (flow ?: []).each { step ->
+        if (!(step instanceof Map)) return
+        Map s = step as Map
+        List tokens = (s.deviceTokens ?: []) as List
+        if (tokens) {
+            List devices = (s.devices ?: []) as List
+            tokens.each { Object raw ->
+                Map resolved = resolveWebcoreDeviceToken("${raw}", parentAppId, hashIndexes, labels)
+                String name = resolved.deviceId ? "${labels[resolved.deviceId as String]}" : 'unresolved device'
+                if (!devices.contains(name)) devices << name
+            }
+            s.devices = devices
+        }
+        
+        
+        
+        List parts = (s.conditionParts ?: []) as List
+        if (parts) {
+            Map tokenNames = [:]
+            
+            
+            
+            Closure collectTokens
+            collectTokens = { List list ->
+                list.each { Object raw ->
+                    if (!(raw instanceof Map)) return
+                    Map part = raw as Map
+                    if (part.group) { collectTokens((part.parts ?: []) as List); return }
+                    ((part.deviceTokens ?: []) as List).each { Object token ->
+                        String key = "${token}"
+                        if (tokenNames.containsKey(key)) return
+                        Map resolved = resolveWebcoreDeviceToken(key, parentAppId, hashIndexes, labels)
+                        if (resolved.deviceId) tokenNames[key] = "${labels[resolved.deviceId as String]}"
+                    }
+                }
+            }
+            collectTokens(parts)
+            String text = webcoreFlowConditionText(parts, "${s.conditionJoiner ?: 'and'}", tokenNames)
+            
+            
+            if (text) {
+                if (s.ctrl) s.cond = text
+                else { s.label = text; s.cond = '' }
+            }
+        }
+    }
+    return flow ?: []
+}
+
 Map buildGraph() {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
@@ -5095,6 +8274,10 @@ Map buildGraph() {
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
+    
+    
+    
+    Map webcoreDeviceHashIndexes = buildWebcoreDeviceHashIndexes(appInfo)
 
     Map<String, Map> nodes = [:]
     List<Map> edges = []
@@ -5129,20 +8312,57 @@ Map buildGraph() {
         
         
         
-        if (!"${appMap.type}".startsWith('Rule-')) return
         String classifyAppNodeId = "a${appId}"
-        Map classified = classifyRuleVariableReferences(
-            (appMap.hubVarWrites ?: []) as List,
-            (appMap.hubVarReads ?: []) as List,
-            (appMap.localVariables ?: []) as List,
-            hubVarInventoryVars,
-            classifyAppNodeId
-        )
-        ruleVariables[classifyAppNodeId] = [
-            localVariables: (appMap.localVariables ?: []) as List,
-            variableReferences: classified.variableReferences,
-            nonResolvedVariableReferences: classified.nonResolvedVariableReferences,
-        ]
+        if ("${appMap.type}".startsWith('Rule-')) {
+            Map classified = classifyRuleVariableReferences(
+                (appMap.hubVarWrites ?: []) as List,
+                (appMap.hubVarReads ?: []) as List,
+                (appMap.localVariables ?: []) as List,
+                hubVarInventoryVars,
+                classifyAppNodeId
+            )
+            ruleVariables[classifyAppNodeId] = [
+                localVariables: (appMap.localVariables ?: []) as List,
+                variableReferences: classified.variableReferences,
+                nonResolvedVariableReferences: classified.nonResolvedVariableReferences,
+            ]
+        } else if ("${appMap.type ?: ''}".trim() == 'webCoRE Piston') {
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            List localDefs = ((appMap.webcoreLocalVariableDefinitions ?: []) as List).collect { Map d ->
+                [
+                    identity: "${classifyAppNodeId}:${d.name}",
+                    name: d.name,
+                    variableType: null,
+                    engineVariableType: d.engineVariableType,
+                    engine: 'webCoRE',
+                ]
+            }
+            Map identityByName = [:]
+            localDefs.each { Map d -> identityByName[d.name as String] = d.identity }
+            List refs = []
+            ((appMap.webcoreLocalVariableWrites ?: []) as List).each { Object rawName ->
+                String identity = identityByName["${rawName}"]
+                if (identity) refs << [scope: 'local', operation: 'write', localIdentity: identity, name: "${rawName}", usageRole: null]
+            }
+            ((appMap.webcoreLocalVariableReads ?: []) as List).each { Object rawName ->
+                String identity = identityByName["${rawName}"]
+                if (identity) refs << [scope: 'local', operation: 'read', localIdentity: identity, name: "${rawName}", usageRole: 'unknown-read']
+            }
+            ruleVariables[classifyAppNodeId] = [
+                localVariables: localDefs,
+                variableReferences: refs,
+                nonResolvedVariableReferences: [],
+            ]
+        }
     }
 
     
@@ -5174,6 +8394,16 @@ Map buildGraph() {
     
     
     List unresolvedHubVarReferences = []
+    List webcoreVariableDecodeIssues = []
+    
+    
+    
+    
+    
+    
+    
+    Map<String, String> webcoreDeviceRelationshipCoverage = [:]
+    List webcoreDeviceRelationshipIssues = []
     ruleVariables.each { String ruleAppNodeId, Map rv ->
         ((rv.nonResolvedVariableReferences ?: []) as List).each { Map r ->
             if (r.status == 'unresolved' && r.candidateScopes == ['hub']) {
@@ -5226,7 +8456,13 @@ Map buildGraph() {
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
-        Map roles = (appMap.roles ?: [:]) as Map
+        String normalizedAppType = (appMap.type ?: '').toString().trim()
+        boolean webcoreDeviceRelationshipsSuppressed = normalizedAppType == 'webCoRE' || normalizedAppType == 'webCoRE Piston'
+        
+        
+        
+        
+        Map roles = webcoreDeviceRelationshipsSuppressed ? [:] : ((appMap.roles ?: [:]) as Map)
         
         
         
@@ -5253,9 +8489,35 @@ Map buildGraph() {
         
         
         
-        boolean hasVarRelationship = ((ruleVariables["a${appId}"]?.variableReferences ?: []) as List)
+        boolean hasRuleVarRelationship = ((ruleVariables["a${appId}"]?.variableReferences ?: []) as List)
             .any { Map r -> r.scope == 'hub' }
-        boolean inert = !unreadable && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
+        List webcoreRelationshipNames = []
+        webcoreRelationshipNames.addAll((appMap.webcoreHubVarReads ?: []) as List)
+        webcoreRelationshipNames.addAll((appMap.webcoreHubVarWrites ?: []) as List)
+        webcoreRelationshipNames.addAll((appMap.webcoreHubVarUses ?: []) as List)
+        boolean hasWebcoreVarRelationship = webcoreRelationshipNames.any { Object rawName ->
+            String canonical = canonicalHubVariableName("${rawName}", hubVarInventoryVars)
+            canonical && hubVarInventoryVars.containsKey(canonical)
+        }
+        boolean hasVarRelationship = hasRuleVarRelationship || hasWebcoreVarRelationship
+        boolean webcoreVariableDecodeFailed = appMap.webcoreVariableDecodeStatus == 'error'
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        boolean webcorePistonHasDeviceEvidence = normalizedAppType == 'webCoRE Piston' && (
+            !((appMap.webcoreDeviceReads ?: []) as List).isEmpty() ||
+            !((appMap.webcoreDeviceActions ?: []) as List).isEmpty() ||
+            !((appMap.webcoreUnsupportedDeviceRefs ?: [:]) as Map).isEmpty()
+        )
+        boolean webcorePistonDeviceRelationshipsUndecoded = normalizedAppType == 'webCoRE Piston' &&
+            (webcoreVariableDecodeFailed || webcorePistonHasDeviceEvidence)
+        boolean inert = !unreadable && !webcoreVariableDecodeFailed && !webcorePistonDeviceRelationshipsUndecoded && !roles && !(appMap.ruleLinks ?: []) && !(appMap.endpoints ?: []) && !hasVarRelationship
         String appNodeId = "a${appId}"
         
         
@@ -5294,6 +8556,17 @@ Map buildGraph() {
         if (appMap.disabled) nodes[appNodeId].disabled = true
         if (appMap.paused) nodes[appNodeId].paused = true
         if (appMap.broken) nodes[appNodeId].broken = true
+        if (appMap.webcoreVariableDecodeStatus) {
+            nodes[appNodeId].webcoreVariableDecodeStatus = "${appMap.webcoreVariableDecodeStatus}"
+        }
+        if (webcoreDeviceRelationshipsSuppressed) {
+            nodes[appNodeId].webcoreDeviceRelationshipsSuppressed = true
+        }
+        if (webcoreVariableDecodeFailed) {
+            String errorCode = "${appMap.webcoreVariableDecodeError ?: 'decode-failed'}"
+            nodes[appNodeId].webcoreVariableDecodeError = errorCode
+            webcoreVariableDecodeIssues << [appId: appNodeId, error: errorCode]
+        }
         if (unreadable) {
             nodes[appNodeId].unreadable = true
             nodes[appNodeId].reason = subtitle
@@ -5353,7 +8626,16 @@ Map buildGraph() {
         
         
         
-        if (appMap.flow) flows[appNodeId] = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
+        if (appMap.flow) {
+            List resolvedFlow = resolveFlowTargets(appMap.flow as List, appInfo, nameCache)
+            
+            
+            if ("${appMap.type ?: ''}" == 'webCoRE Piston') {
+                resolvedFlow = resolveWebcoreFlowDevices(resolvedFlow, "${appMap.parent ?: ''}",
+                        webcoreDeviceHashIndexes, labels)
+            }
+            flows[appNodeId] = resolvedFlow
+        }
         else if (priorFlows[appNodeId]) flows[appNodeId] = priorFlows[appNodeId]
 
         roles.each { String devId, devRoles ->
@@ -5376,12 +8658,16 @@ Map buildGraph() {
                 if (note) nodes[devNodeId].title = "${nodes[devNodeId].title} (noted: ${note})"
             }
             List statefulDevices = (appMap.stateful ?: []) as List
+            List deadConstraints = (appMap.unusedConstraints ?: []) as List
             (devRoles as List).each { String role ->
                 String key = "${appNodeId}|${devNodeId}|${role}"
                 if (seen.contains(key)) return
                 seen << key
                 Map edge = [from: appNodeId, to: devNodeId, kind: role]
                 if (role == 'action' && statefulDevices.contains(devId)) edge.stateful = true
+                
+                
+                if (role == 'constraint' && deadConstraints.contains(devId)) edge.unused = true
                 edges << edge
             }
         }
@@ -5498,6 +8784,136 @@ Map buildGraph() {
         
         
         
+        ((appMap.webcoreHubVarWrites ?: []) as List).each { Object rawName ->
+            String originalName = "${rawName}"
+            String canonicalName = canonicalHubVariableName(originalName, hubVarInventoryVars)
+            if (!canonicalName || !hubVarInventoryVars.containsKey(canonicalName)) {
+                unresolvedHubVarReferences << [name: originalName, appId: appNodeId, kind: 'write', engine: 'webCoRE']
+                return
+            }
+            String varNodeId = "v${canonicalName}"
+            String key = "${appNodeId}|${varNodeId}|write"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: varNodeId, kind: 'write']
+        }
+        ((appMap.webcoreHubVarReads ?: []) as List).each { Object rawName ->
+            String originalName = "${rawName}"
+            String canonicalName = canonicalHubVariableName(originalName, hubVarInventoryVars)
+            if (!canonicalName || !hubVarInventoryVars.containsKey(canonicalName)) {
+                unresolvedHubVarReferences << [name: originalName, appId: appNodeId, kind: 'read', engine: 'webCoRE']
+                return
+            }
+            String varNodeId = "v${canonicalName}"
+            String key = "${appNodeId}|${varNodeId}|read"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: varNodeId, kind: 'read', usageRole: 'unknown-read']
+        }
+        ((appMap.webcoreHubVarUses ?: []) as List).each { Object rawName ->
+            String originalName = "${rawName}"
+            String canonicalName = canonicalHubVariableName(originalName, hubVarInventoryVars)
+            if (!canonicalName || !hubVarInventoryVars.containsKey(canonicalName)) {
+                unresolvedHubVarReferences << [name: originalName, appId: appNodeId, kind: 'usesVar', engine: 'webCoRE']
+                return
+            }
+            String varNodeId = "v${canonicalName}"
+            String key = "${appNodeId}|${varNodeId}|usesVar"
+            if (seen.contains(key)) return
+            seen << key
+            edges << [from: appNodeId, to: varNodeId, kind: 'usesVar', direction: 'unknown']
+        }
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        if ("${appMap.type ?: ''}".trim() == 'webCoRE Piston') {
+            String parentAppId = appMap.parent as String
+            List<String> deviceIssueCodes = []
+            int deviceOperandCount = 0
+            ((appMap.webcoreDeviceReads ?: []) as List).each { Map ref ->
+                deviceOperandCount++
+                Map resolved = resolveWebcoreDeviceToken(ref.token as String, parentAppId, webcoreDeviceHashIndexes, labels)
+                if (resolved.issue) { deviceIssueCodes << (resolved.issue as String); return }
+                String devNodeId = "d${resolved.deviceId}"
+                
+                
+                
+                
+                
+                
+                String readKind = "${ref.role ?: ''}" == 'trigger' ? 'trigger'
+                        : ("${ref.role ?: ''}" == 'constraint' ? 'constraint' : 'deviceRead')
+                String key = "${appNodeId}|${devNodeId}|${readKind}"
+                if (seen.contains(key)) return
+                seen << key
+                
+                
+                
+                
+                
+                edges << [from: appNodeId, to: devNodeId, kind: readKind, attribute: ref.attribute]
+            }
+            ((appMap.webcoreDeviceActions ?: []) as List).each { Map ref ->
+                deviceOperandCount++
+                Map resolved = resolveWebcoreDeviceToken(ref.token as String, parentAppId, webcoreDeviceHashIndexes, labels)
+                if (resolved.issue) { deviceIssueCodes << (resolved.issue as String); return }
+                String devNodeId = "d${resolved.deviceId}"
+                String key = "${appNodeId}|${devNodeId}|action"
+                if (seen.contains(key)) return
+                seen << key
+                
+                
+                
+                
+                edges << [from: appNodeId, to: devNodeId, kind: 'action', stateful: null, commands: ref.commands]
+            }
+            
+            
+            
+            ((appMap.webcoreUnsupportedDeviceRefs ?: [:]) as Map).each { String code, Object count ->
+                int howMany = (count ?: 0) as Integer
+                deviceOperandCount += howMany
+                howMany.times { deviceIssueCodes << code }
+            }
+            String coverage
+            if (appMap.webcoreVariableDecodeStatus == 'error') {
+                coverage = 'error'
+            } else if (deviceOperandCount == 0) {
+                coverage = 'none'
+            } else if (deviceIssueCodes) {
+                coverage = 'partial'
+            } else {
+                coverage = 'complete'
+            }
+            webcoreDeviceRelationshipCoverage[appNodeId] = coverage
+            nodes[appNodeId].webcoreDeviceRelationshipCoverage = coverage
+            if (deviceIssueCodes) {
+                webcoreDeviceRelationshipIssues << [appId: appNodeId, codes: deviceIssueCodes]
+                nodes[appNodeId].webcoreDeviceRelationshipIssueCodes = deviceIssueCodes
+            }
+        }
+
+        
+        
+        
+        
+        
+        
         
         
         
@@ -5512,6 +8928,11 @@ Map buildGraph() {
                 nodes[identity] = nodeEntry(identity, d.name as String, 'localVariable', "Local Variable in ${ownerLabel}")
                 nodes[identity].ownerAppId = appNodeId
                 nodes[identity].variableType = d.variableType
+                
+                
+                
+                
+                if (d.engineVariableType) nodes[identity].engineVariableType = d.engineVariableType
             }
         }
 
@@ -5765,6 +9186,8 @@ Map buildGraph() {
 
     return [nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
+            webcoreVariableDecodeIssues: webcoreVariableDecodeIssues,
+            webcoreDeviceRelationshipIssues: webcoreDeviceRelationshipIssues,
             hubVariableConnectorCount: hubVarConnectorCount,
             
             
@@ -5783,6 +9206,11 @@ Map buildGraph() {
 void rebuildStoredGraph() {
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
+    
+    
+    Long rebuiltAt = now()
+    state.graphCommittedAtLocal = rebuiltAt
+    atomicState.graphCommittedAt = rebuiltAt
 }
 
 
@@ -6222,6 +9650,7 @@ mappings {
     path('/scan-status') { action: [ GET: 'scanStatusMapping' ] }
     path('/externals') { action: [ GET: 'externalsGetMapping', POST: 'externalsSaveMapping' ] }
     path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
+    path('/webcore-decode-coverage') { action: [ GET: 'webcoreDecodeCoverageMapping' ] }
 }
 
 
@@ -6635,9 +10064,26 @@ String buildMapHtml() {
     
     
     
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 8,
+        exportSchemaVersion: 13,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -6719,8 +10165,30 @@ String buildMapHtml() {
     font-style: normal;
     font-display: swap;
   }
-  html, body { margin:0; padding:0; height:100%; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
-  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:999px; font-size:0.85em; color:#121214; font-weight:600; width:375px; box-sizing:border-box; text-align:center; }
+  /* overflow:hidden - the page itself must never scroll. Confirmed live as
+     the real cause of a panel overlapping the control rail: opening a
+     modernPanel could make the page tall/wide enough to grow its own
+     scrollbar, which shrinks documentElement.clientWidth by the scrollbar's
+     width and shifts #controls (positioned via right:10px) left by exactly
+     that amount - after sizeModernPanel() had already measured and sized
+     the panel against the wider, scrollbar-free layout. Every panel already
+     scrolls its own content internally via .panelBody, and #network fills
+     100vh on its own - nothing here is meant to make the page itself
+     taller than the viewport, so removing its ability to scroll at all
+     removes the instability rather than working around it. */
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#062733; color:#eee; font-family:'Mulish', ui-sans-serif, system-ui, sans-serif; }
+  /* 6px, not a 999px pill. In this UI a pill means "clickable" - every other
+     999px element is a button, select or combobox trigger - so a pill on an
+     inert status readout borrowed a button's affordance and read as one. */
+  /* One width for the whole left column - status bar, legend and the classic
+     detail panel below them. Held in a variable so the three cannot drift
+     apart. 375px, matching at the NARROW end rather than the wide one: the
+     detail panel now narrows to the bars instead of the bars widening to it,
+     which keeps the map's own canvas as large as possible. #flowSub's cap
+     derives from this, and that cap is what drives the panel's shrink-to-fit
+     width, so changing this one number moves all three together. */
+  :root { --leftColWidth:375px; }
+  #status { position:absolute; top:10px; left:10px; z-index:10; background:#81BC00; border:1px solid #5c8500; padding:10px 14px; border-radius:6px; font-size:0.85em; color:#121214; font-weight:600; width:var(--leftColWidth); box-sizing:border-box; text-align:center; }
   /* Fixed width, matching #status exactly (was max-width, sized to
      content) - the two need to line up regardless of viewport width, not
      just coincidentally happen to at one particular size. */
@@ -6728,8 +10196,26 @@ String buildMapHtml() {
      off the bottom of the screen - smaller text plus a hard max-height/
      scroll safety net so it can never do that again regardless of viewport
      height or how much the legend itself grows later. */
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:12px; width:375px; box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
-  #controls { position:absolute; top:10px; right:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
+  /* 14px, matching #legendPanel's own explicit base - Gordon flagged the
+     compact and full legend reading at two different sizes live. Both are
+     now anchored to the same value rather than each picking its own. */
+  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:var(--leftColWidth); box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
+  /* z-index:9000, not 10 - the .cb-popup fix (z-index:9000 on the popup
+     itself) turned out not to be the real fix. CSS stacking is
+     hierarchical: a child's z-index only wins WITHIN its own ancestor's
+     stacking context, never against a sibling context. #controls and any
+     .modernPanel are siblings, each establishing their own stacking
+     context (both position:absolute with a real z-index) - so
+     .cb-popup's 9000 was only ever competing against other children of
+     #controls, never against panels at all, and #controls' own old
+     z-index:10 lost to any panel (panelTopZ starts at 20+) regardless of
+     what number the popup inside it claimed. Confirmed live before this
+     was written: raising #controls itself, not the popup, is what
+     actually put the popup on top - sampled 12 points across the popup's
+     full width where a panel overlapped it, and only every element
+     inside the popup rendered topmost once #controls' own z-index was
+     raised. */
+  #controls { position:absolute; top:10px; right:10px; z-index:9000; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
   /* Small bold letter-spaced label above each control - the same "eyebrow"
      treatment gordonthelander.github.io/HPM_Manifest_Crawl/ uses above its
      own headings (e.g. "COMMUNITY TOOLS FOR HUBITAT"), borrowed for shape/
@@ -6755,6 +10241,48 @@ String buildMapHtml() {
      stays on its own dark background rather than that site's light one. */
   #controls button { margin-top:2px; cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; }
   #controls button:hover { background:#1a4d6b; }
+  /* Phase 1 workspace shell (backlog item 1): same handlers, same ids, just
+     grouped so the panel reads as three zones - find something, act on the
+     current view, open a secondary tool - instead of one long list. No
+     graph/filter/export/panel-content behaviour changes here. */
+  /* Every internal gap in these two zones comes from one flex `gap`, not
+     margins on individual children - a per-element margin (e.g. a first-child
+     top margin standing in for the summary-to-label gap) reads as uneven the
+     moment a sibling's own margin differs, which is what Gordon flagged live.
+     Overriding the general label margin to 0 makes gap the only source of
+     spacing here.
+     The gap lives on #focusList, a plain div, not on #focusSection itself:
+     Chromium renders a <details> as summary + one internal ::details-content
+     box wrapping everything else, so a flex gap set directly on <details>
+     only ever sees those two boxes - confirmed live, it produced a correct
+     10px gap after the summary and 0px between every label after that,
+     since the labels were never the flex container's real children. */
+  #focusSection { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; display:flex; flex-direction:column; gap:10px; }
+  #focusSection summary { cursor:pointer; font-weight:800; font-size:11px; letter-spacing:0.6px; text-transform:uppercase; color:#7fb6d6; padding:2px; border-radius:4px; list-style:none; display:flex; justify-content:space-between; align-items:center; }
+  #focusSection summary::-webkit-details-marker { display:none; }
+  #focusSection summary::before { content:'>'; display:inline-block; margin-right:6px; transition:transform 0.1s; }
+  #focusSection[open] summary::before { transform:rotate(90deg); }
+  /* Dev-build-only marker so testers can never mistake this build for
+     production at a glance - deliberately red (not the panel's usual blue
+     accent) and only ever rendered when isDevBuild() is true server-side. */
+  .devBadge { color:#ff5555; text-transform:none; letter-spacing:0.2px; }
+  #focusSection summary:hover { background:rgba(255,255,255,0.10); }
+  #focusList { display:flex; flex-direction:column; gap:10px; }
+  #focusList label { margin-bottom:0; }
+  #workspaceHeader { border-bottom:1px solid #1e5878; padding-bottom:8px; margin-bottom:2px; display:flex; flex-direction:column; gap:10px; }
+  #workspaceHeader #showFilterLabel { margin-top:0; margin-bottom:0; }
+  #headerActions { display:flex; gap:8px; }
+  #headerActions button { flex:1; margin-top:2px; }
+  #toolRail { display:flex; flex-direction:column; gap:8px; }
+  #toolRail button { margin-top:0; }
+  #toolRail #exitMapBtn { margin-top:8px; }
+  /* Insights/External systems and Pivot tables/Device icons paired onto one
+     row each, per Gordon's own live mark - same flex:1-split pattern
+     #headerActions already uses for Show all/Fit map, factored into a
+     class since this now applies to two separate row wrappers rather than
+     one. */
+  .toolRailRow { display:flex; gap:8px; }
+  .toolRailRow button { flex:1; margin-top:0; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
      harness verified in Bucket/combobox-harness/. Closed control is a plain
@@ -6777,7 +10305,16 @@ String buildMapHtml() {
      150px control truncated every real app/device name to a few characters.
      #controls is pinned to the right edge of the screen, so the popup grows
      leftward off the button's right edge rather than off-screen. */
-  .cb-popup { position:absolute; z-index:50; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:12px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
+  /* z-index:9000, not 50 - panels' own z-index (panelTopZ in the JS below)
+     starts at 30 and increments by 1 on every single panel open, with no
+     ceiling, so across a long session it climbs past whatever fixed number
+     this used to be. Confirmed live: after enough panel switches this
+     session, an open panel was drawing on top of the Focus combobox popup
+     instead of under it. A combobox popup is always transient, top-level
+     interactive UI - nothing should ever legitimately need to sit above
+     it, so this is set far enough past any realistic panelTopZ value that
+     it does not need recalculating against that counter as it grows. */
+  .cb-popup { position:absolute; z-index:9000; right:0; width:480px; top:calc(100% + 2px); background:#041b23; border:1px solid #1e5878; border-radius:12px; box-shadow:0 6px 22px rgba(0,0,0,0.45); overflow:hidden; }
   /* The dedicated search field - first row of the popup, auto-focused on
      open, visually its own zone (bottom border) above the options list. */
   .cb-search { display:block; width:100%; box-sizing:border-box; padding:6px 8px; font:inherit; border:0; border-bottom:1px solid #1e5878; background:#0d3446; color:#eee; }
@@ -6794,33 +10331,58 @@ String buildMapHtml() {
      own, and vis-network's own canvas has no background fill so empty space
      around the graph shows whatever is layered underneath it). Fixed, not
      absolute - pinned to a fixed point on the actual screen regardless of
-     where physics settles the graph's own bounding box. Moved off dead
-     centre (was 50/50) since a fully-populated graph's own node cluster
-     tends to sit left-of-centre; positioned below #controls specifically,
-     horizontally centred under the Exit map button, per Gordon's own
-     instruction, confirmed against a live screenshot rather than guessed.
-     right, not left: #controls itself is anchored right:10px and 300px
-     wide, so its own horizontal centre is a fixed distance from the
-     viewport's RIGHT edge (10px + 150px = 160px) regardless of viewport
-     width - a left:X% value has no way to track that reliably, which is
-     why the panel's own 150px->300px widening (item, live 2026-09-02) threw
-     the previous left:82% off centre under Exit map. */
-  #hubWatermark { position:fixed; top:76%; right:160px; transform:translate(50%, -50%);
+     where physics settles the graph's own bounding box. Centre top per
+     Gordon's instruction (2026-09-09). Dead centre, large and faint: a real
+     background watermark rather than a small opaque object competing with
+     the graph for a corner. Every previous position (under Exit map, centre
+     top, beside the left column) was an attempt to find somewhere it did not
+     collide with something - at this size and opacity there is nowhere to
+     collide with, because it reads as ground rather than figure.
+     No runtime positioning: a fixed 50/50 with translate(-50%,-50%) needs no
+     measurement, so positionHubWatermark() and its resize/load hooks are gone
+     rather than left as no-ops. */
+  #hubWatermark { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
-  /* Hub photo specifically shown at half the Christmas tree's size, per
-     Gordon's request - the tree's own dimensions (38vw/38vh) are unaffected. */
-  #hubWatermark.hubPhoto { max-width:19vw; max-height:19vh; }
-  /* First shipped as a bare 1em glyph with no background - reported as "had to
-     go hunting for it". A visible pill with its own border and a hover state
-     reads as a button; a lone triangle in a wall of text does not. */
-  /* Matches the right-hand panel's own theme: blue accent border/background
-     on the toggle pill, letter-spaced accent-blue heading text. */
-  #legend-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; font-weight:800; letter-spacing:0.4px; color:#7fb6d6; padding:2px; border-radius:4px; }
-  #legend-head:hover { background:rgba(255,255,255,0.10); }
-  #legend-toggle { background:#123a52; border:1px solid #1e5878; color:#cfe9fb; font-size:1.15em; line-height:1; width:22px; height:22px; border-radius:999px; padding:0; cursor:pointer; }
-  #legend.collapsed #legend-body { display:none; }
-  #legend.collapsed { padding:6px 10px; }
+  /* Hub photo as the centre watermark: large, and much fainter than the tree.
+     The image is dark on transparent and sits on a dark canvas, so opacity has
+     a floor below which it vanishes entirely rather than reading as subtle -
+     0.18 is the starting point, tuned live rather than derived. */
+  #hubWatermark.hubPhoto { max-width:34vw; max-height:34vh; opacity:0.18; }
+  /* Backlog item 1 Phase 3 (A6): the legend used to be one element that was
+     either a single "Legend" header row or every one of ~20 rows at once -
+     permanently expensive canvas space the moment it was expanded, the exact
+     thing this replaces. #legend is now always just the 3 common roles plus
+     a button into the full reference, which lives in #legendPanel using the
+     same shared shell as every other panel (backlog item 1 Phase 2). Every
+     meaning/wording below is unchanged, just relocated - #legendPanel reuses
+     the global .legend-row/.swatch/.line/.note classes as-is. */
+  #legendMoreBtn { display:block; width:100%; margin-top:6px; text-align:center; }
+  /* Shared pill button for chrome living outside #controls (the compact
+     legend's "Full legend" button, the Resources panel's two relocated
+     buttons) - same look as #controls button, factored out because it is
+     no longer only #controls that needs it. */
+  .pillBtn { cursor:pointer; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; border-radius:999px; padding:6px 14px; font-weight:600; font-family:inherit; font-size:14px; }
+  .pillBtn:hover { background:#1a4d6b; }
+  /* Explicit 14px base - Gordon flagged the full legend panel's text as
+     inconsistently large live. #legendPanel is not a descendant of #legend
+     (which sets its own 12px), so .legend-row/.note etc had nothing to
+     inherit from but the page's own 16px default. 14px matches the app's
+     other standard body text (#controls and its combobox popups). */
+  #legendPanel { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
+                 font-size:14px; max-width:min(60vw, 640px); max-height:90vh; display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
+  #legendPanel h3 { margin:0 0 8px 0; font-size:0.95em; }
+  /* "Collapse Legend" instead of a bare X, per Gordon's request - the verb
+     pairs with "Full legend" on the compact legend's own button, making the
+     compact/full relationship explicit rather than relying on a close
+     glyph to imply it. Still .panelClose underneath (same close handler,
+     same hover/pill styling), just wider than the single-glyph case
+     .panelClose's own position:absolute assumes, so this one is a normal
+     right-aligned flex child instead - #flowHeader's close button needed
+     the identical override for the identical reason. */
+  #legendTopBar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  #legendTopBar h3 { margin:0; }
+  #legendPanelClose { position:static; white-space:nowrap; }
   .legend-row { display:flex; align-items:center; margin:3px 0; }
   /* Shape is per row now. The old single .swatch rule forced border-radius 50%
      on every swatch, so the legend drew a circle for an app that the map draws
@@ -6854,7 +10416,20 @@ String buildMapHtml() {
      compete for attention rather than blend in. The accent border reuses
      the app-node amber already established elsewhere on the page rather
      than introducing a new colour. */
-  #hint { position:absolute; bottom:16px; right:16px; z-index:15; background:#0a2530; padding:14px 18px; border-radius:6px;
+  /* right:360px, not 16px - #controls (right:10px, width:300px, no
+     box-sizing:border-box so its own 14px+14px padding renders it at a real
+     328px, not 300px) has grown to 11+ rows over this session's own
+     additions (five focus combos, the show filter, the full tool rail) and
+     can genuinely reach this far down the page on a fresh install with no
+     data-dependent shortening, so a bottom-right hint anchored the old,
+     closer 16px sat directly under it - #controls' z-index:9000 then
+     painted over it regardless of #hint's own z-index below, since a taller
+     sibling always wins that fight. Clearing it horizontally
+     (10 + 328 actual rendered width + 22 gap = 360, confirmed live against
+     the real rendered width, not the bare CSS number) is a permanent fix
+     that does not depend on either element's height, unlike a z-index
+     number would. */
+  #hint { position:absolute; bottom:16px; right:360px; z-index:15; background:#0a2530; padding:14px 18px; border-radius:6px;
           max-width:320px; font-size:0.85em; line-height:1.5; border:2px solid #e8a33d;
           box-shadow:0 4px 28px rgba(0,0,0,0.6), 0 0 0 4px rgba(232,163,61,0.12); }
   #hint b:first-child { display:block; font-size:1.25em; color:#e8a33d; margin-bottom:6px; }
@@ -6870,26 +10445,126 @@ String buildMapHtml() {
     #controls, #legend, #hint, #network, #flow, #status, #hubWatermark { display:none !important; }
     #smallscreen { display:block; padding:2em 1.5em; line-height:1.5; }
   }
-  #flow { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:12px 16px; border-radius:6px;
-          max-width:min(62vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
-  #flow h3 { margin:0 0 4px 0; font-size:0.95em; }
+  /* Shared by every panel now (backlog item 1 follow-up, same day as the
+     flow-only version above it): Gordon asked for the flow panel's own
+     draggable-green-header treatment to become the standard for all five,
+     not stay a one-off. One class each instead of five near-duplicate id
+     rules - a future panel gets this for free by using the class, not by
+     copying CSS. Deliberately has no width/height of its own - see
+     .modernPanelLarge below for why that half is separate.
+     box-sizing:border-box - without it, sizeModernPanel()'s JS-set
+     width/height are content-box sizes, and the panel's own 16px/16px
+     horizontal padding renders 32px wider than that - confirmed live, JS
+     set width to exactly the space free before the control rail and the
+     panel still rendered 32px into it, right up against border-box's
+     absence rather than any error in the free-space arithmetic itself. */
+  .modernPanel { position:absolute; top:100px; left:10px; z-index:20; background:rgba(4,20,27,0.96); padding:0 16px 12px 16px; border-radius:6px;
+                 box-sizing:border-box; font-size:13px;
+                 display:none; flex-direction:column; box-shadow:0 4px 24px rgba(0,0,0,0.5); }
+  /* Large by design, matching Gordon's own live-annotated "use the full
+     display area" mark - but only for panels that should actually fill it.
+     Split out from .modernPanel itself (backlog item 1 follow-up, later
+     the same day): Gordon flagged live that a rule flowchart opened inside
+     #flow had also grown to this same huge size, which he never asked for
+     - only the tool-rail panels (Insights included) were meant to. #flow
+     itself now always carries plain .modernPanel, and JS adds this class
+     on top only when it is about to show Insights specifically (see the
+     insightsBtn handler), removing it again for a rule flowchart/inert
+     app/unreferenced local variable in favour of .flowClassicSize instead
+     - #ext/#pivot/#icons/#releaseActivity carry this class permanently in
+     their own static markup, since they only ever have the one shape.
+     Width/height here are only the pre-JS fallback, same as top/left
+     already were. A guessed calc(100vw - Npx) here overlapped the control
+     rail live (Gordon's yellow-box screenshot, same session) once the
+     actual rail width/margins did not match the number this guessed -
+     sizeModernPanel(), called from bringToFront() the first time any given
+     panel opens each page load (then never again once the user has
+     dragged that panel - see makePanelDraggable()/panelCustomPosition),
+     measures the real #status and #controls elements with
+     getBoundingClientRect() and sets left/top/width/height from that, the
+     same "measure the real DOM, do not guess a number" approach
+     visibleRegion() already uses for the graph's own framing. */
+  .modernPanel.modernPanelLarge { width:calc(100vw - 340px); height:calc(100vh - 70px); }
+  /* #flow's own bounds from before backlog item 1's "unify all five
+     panels" change - restored for the rule-flowchart/inert-app/
+     unreferenced-variable case specifically, per Gordon's explicit "the
+     workflow panel must remain as it was". Sizes to its own content within
+     these bounds (no forced width/height, unlike .modernPanelLarge) -
+     sizeModernPanel() only sets left/top when this class is present
+     instead of .modernPanelLarge, leaving width/height to CSS exactly as
+     the original draggable-flow-panel commit did. */
+  /* Capped to the left column, not min(62vw,900px). Capping #flowSub alone was
+     not enough: the panel shrink-to-fits its WIDEST child, so the inert panel's
+     own prose, the community card and a wide mermaid box each pushed it out to
+     a different width, which is why the left column looked ragged as you moved
+     between apps. Everything text now wraps inside one fixed width instead. */
+  .flowClassicSize { max-width:var(--leftColWidth); max-height:90vh; }
+  /* A decoded flowchart is the one child that cannot wrap - it is an SVG with
+     its own intrinsic size. Scroll it inside the panel rather than letting it
+     set the panel's width, which is what the cap above exists to prevent. */
+  #flowChart { overflow-x:auto; }
+  /* Zoomed in, the chart is wider than the panel on purpose. The panel body
+     scrolls it instead, so the sideways scrollbar stays at the panel's edge. */
+  #flow.flowZoomed #flowChart { overflow-x:visible; }
+  /* The drag handle, and the visual cue that a panel can be dragged at all -
+     solid, saturated green (the app's own established accent, same as
+     Community utilities/the status pill) is deliberately not part of this
+     page's otherwise dark/blue palette, so it reads as "this bar behaves
+     differently" rather than blending in as ordinary chrome. Negative
+     side/top margins cancel .modernPanel's own padding so the bar reaches
+     the panel's true edges instead of sitting inset within it, with a
+     matching border-radius on just the top two corners. */
+  .modernPanelHeader { cursor:move; user-select:none; background:#81BC00; flex:none; margin:0 -16px 10px -16px; padding:8px 12px 8px 16px;
+                        border-radius:6px 6px 0 0; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .modernPanelHeader h3 { color:#121214; margin:0; font-size:0.95em; }
+  /* A normal flex child instead of .panelClose's own position:absolute -
+     legendPanel needs the identical override for the identical reason (see
+     #legendTopBar below), applied separately there since it is not one of
+     the five modernPanel panels. */
+  .modernPanelHeader .panelClose { position:static; color:#121214; }
   #flow h4 { margin:14px 0 4px 0; font-size:0.9em; color:#cfe3ea; }
-  #flow ul { margin:4px 0 0 0; padding-left:18px; }
-  #flow li { margin:5px 0; font-size:0.82em; line-height:1.35; }
+  /* One declaration only. These were previously duplicated 26 lines apart at
+     equal specificity, so the cascade merged them per-property into
+     margin/font-size from the later pair and line-height from the earlier -
+     a value neither rule stated, and unreadable from either one alone. */
+  #flow ul { margin:4px 0 10px 0; padding-left:18px; }
+  #flow li { margin:5px 0; font-size:0.85em; line-height:1.35; }
   #flow p { margin:4px 0; }
   #flow .sub { opacity:0.7; font-size:0.78em; margin-bottom:10px; }
+  /* #flow has no explicit width in classic mode (.flowClassicSize is a
+     max-width cap, not a width) - it shrink-to-fits, and the browser's
+     shrink-to-fit measures every child's UNWRAPPED preferred width, not
+     its wrapped one. This one caption line is the widest thing classic
+     mode ever contains by far (the mermaid diagram itself typically
+     renders well under 300px), so without a cap of its own it dragged the
+     whole panel out to however wide it takes to fit "Decoded execution
+     order..." on one line - confirmed live, matched the panel's rendered
+     width to the pixel. #flowSub specifically, not the shared .sub class -
+     Insights reuses .sub for its own "Used by"/"Controlling apps" detail
+     rows at the full large-panel width, which this must not narrow. */
+  #flowSub { max-width:calc(var(--leftColWidth) - 32px); }
+  /* A webCoRE panel draws no mermaid, so its content sat flush at the panel
+     padding while an RM panel's flow cards start about 24px further in,
+     shifting everything sideways as you switch between the two. Reserves that
+     same gutter. #flowSub's own cap drops by the identical amount so the
+     panel's shrink-to-fit preferred width is unchanged - that cap is what
+     stops one caption line dragging the whole panel wide (see above). */
+  #flow.wcIndent #flowSub,
+  #flow.wcIndent #ruleVariablesCard,
+  #flow.wcIndent #communityCard { margin-left:24px; }
+  #flow.wcIndent #decodeCoverageCard { margin-left:24px; }
+  #flow.wcIndent #flowSub { max-width:calc(var(--leftColWidth) - 56px); }
+  #flowSub.webcoreNotice { color:#ff6b6b; font-weight:700; }
   #flow a { color:#7fb6d6; text-decoration:none; }
   #flow a:hover { text-decoration:underline; }
-  /* Above the title, where a back affordance is looked for, and clear of the
-     close button in the same corner. */
-  #flowBack { font-size:0.8em; margin:0 0 6px 0; padding-right:20px; display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  /* Above the flowchart, where a back affordance is looked for - now below
+     the green header bar rather than above the title, since the title
+     moved into that bar. */
+  #flowBack { font-size:0.8em; margin:8px 0 6px 0; display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
   /* A link, not a button, so it reads as part of the same breadcrumb line
      rather than a separate control competing for attention. */
   #flowExit { color:#7fb8d4; cursor:pointer; text-decoration:none; white-space:nowrap; }
   #flowExit:hover { text-decoration:underline; }
-  #flow ul { margin:4px 0 10px 0; padding-left:18px; }
-  #flow li { margin:2px 0; font-size:0.85em; }
-  #flowClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Below whatever showFlow()/showInertPanel() put in #flowChart, not inside
      it - #flowChart gets fully overwritten on every re-render (a fresh
      mermaid SVG, or a fresh inert-app summary), which would wipe this out if
@@ -6903,13 +10578,25 @@ String buildMapHtml() {
      against #flow's own dark theme is the clearest way to say so at a glance.
      Overrides every #flow-inherited color (h4/.sub/a) that would otherwise
      stay light-on-light here. */
-  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:50%; }
+  /* A px cap, never 50%. #flow shrink-to-fits, so a percentage here is
+     circular: the browser sized the panel from this card's UNWRAPPED preferred
+     width and then drew the card at half of that, which is why a CUS or INT
+     panel rendered about 860px wide around a 440px card with the right half
+     empty. Same shrink-to-fit trap documented on #flowSub above. */
+  #communityCard { margin-top:14px; padding:12px 14px; border-radius:6px; background:#eef3f5; color:#1a2733; max-width:calc(var(--leftColWidth) - 32px); box-sizing:border-box; }
   #communityCard h4 { color:#1a2733; margin-top:0; }
   #communityCard .sub { color:#4a5a63; }
   #communityCard a { color:#1565c0; }
   #communityCard .ccBadge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:0.75em; margin:0 6px 6px 0; background:#d7e6ea; color:#2c4a55; }
   #communityCard .ccCaution { color:#a05a1f; }
   #communityCard .ccLinks a { margin-right:12px; }
+  /* Decode coverage card (v2.2.9). Dark, unlike the light community card above,
+     because it reports on this app rather than quoting an outside source. */
+  #decodeCoverageCard { margin-top:14px; padding:12px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.03); max-width:calc(var(--leftColWidth) - 32px); box-sizing:border-box; }
+  #decodeCoverageCard h4 { margin:0 0 6px; }
+  #decodeCoverageCard h5 { margin:10px 0 4px; font-size:0.85em; }
+  #decodeCoverageCard .dcCaution { color:#d9a441; }
+  #decodeCoverageCard .dcPartial { font-weight:700; margin:4px 0; }
   #communityCard.ccClickable { cursor:pointer; }
   #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
@@ -6920,12 +10607,9 @@ String buildMapHtml() {
      adding this card's CSS crossed it. This empty interpolation splits the
      constant in two without changing anything rendered; needed again if this
      block grows much further. */
-  #ext { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-         max-width:min(74vw, 1040px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #ext h3 { margin:0 0 4px 0; font-size:0.95em; }
   #ext .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #ext table { border-collapse:collapse; width:100%; font-size:0.8em; }
-  #ext th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #ext th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #ext td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   #ext tr.unclassified td { background:rgba(217,83,79,0.09); }
   #ext tr.grouphdr td { background:#0a2029; border-top:1px solid #2a4a57; padding-top:9px; padding-bottom:7px; }
@@ -6942,35 +10626,31 @@ String buildMapHtml() {
   #ext .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:1px 6px; font-size:0.95em; }
   #ext .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #ext .msg { font-size:0.8em; margin-left:6px; }
-  #extClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
-  /* Its own panel rather than reusing #ext or #flow's markup - a table of
-     links and a small query builder is a different shape of content from
-     either (a settings form, a rule flowchart), and this file's convention
-     throughout is one panel's CSS per panel rather than a shared class. */
-  #pivot { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(80vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #pivot h3 { margin:0 0 4px 0; font-size:16px; }
+  /* Its own panel rather than reusing #ext or #flow's markup for CONTENT - a
+     table of links and a small query builder is a different shape of content
+     from either (a settings form, a rule flowchart), so each panel still owns
+     its own table/tag/form CSS below. The outer chrome - position, size,
+     background, close button, header-fixed/content-scrolling behaviour - is
+     the one thing genuinely identical across all five panels, and now lives
+     entirely in .modernPanel/.modernPanelHeader/.panelBody/.panelClose
+     instead of five copies of the same shell rules. */
   #pivot .sub { opacity:0.72; font-size:14px; margin:0 0 12px 0; line-height:1.4; }
   #pivot a { color:#7fb6d6; text-decoration:none; }
   #pivot a:hover { text-decoration:underline; }
   #pivot table { border-collapse:collapse; width:100%; font-size:14px; }
-  #pivot th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #pivot th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #pivot td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   #pivot select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:14px; font-family:inherit; }
   #pivot label { font-size:14px; display:flex; align-items:center; gap:4px; }
   #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:14px; margin:0 4px 4px 0; }
   #pivot .rowbtn:hover { border-color:#4a7a94; color:#cfe3ea; }
-  #pivotClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
-  /* Its own panel rather than reusing #ext's markup, same "one panel's CSS
-     per panel" convention, even though the table shape is similar - this one
-     needs a search box and can run to ~200 rows, #ext's does not. */
-  #icons { position:absolute; top:100px; left:10px; z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           max-width:min(74vw, 900px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #icons h3 { margin:0 0 4px 0; font-size:0.95em; }
+  /* Its own panel rather than reusing #ext's markup for CONTENT, same as
+     above - this one needs a search box and can run to ~200 rows, #ext's
+     does not. */
   #icons .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
   #icons input[type=search] { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:4px 7px; font-size:0.9em; font-family:inherit; width:240px; margin-bottom:10px; }
   #icons table { border-collapse:collapse; width:100%; font-size:0.8em; }
-  #icons th { text-align:left; padding:5px 8px; border-bottom:1px solid #2a4a57; color:#cfe3ea; font-weight:600; white-space:nowrap; }
+  #icons th { text-align:left; padding:5px 8px; color:#cfe3ea; font-weight:600; white-space:nowrap; }
   #icons td { padding:4px 8px; border-bottom:1px solid #16323c; vertical-align:top; }
   /* Same AMIcons glyph the map itself draws for this device (ICON_GLYPHS),
      shown here too so the effective icon is visible at a glance instead of
@@ -6980,7 +10660,6 @@ String buildMapHtml() {
   #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #icons .msg { font-size:0.8em; margin-left:6px; }
-  #iconsClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
   /* Insights. Rendered into #flowChart, so it inherits #flow typography and
      only what is specific to the dashboard layout lives here. */
   /* An explicit readable base in px, then sizes at or near 1em of it. The
@@ -7038,44 +10717,98 @@ String buildMapHtml() {
   #insRoot a { color:#7fb6d6; text-decoration:none; }
   #insRoot a:hover { text-decoration:underline; }
   @media (max-width: 1100px) { #insRoot .insCards { grid-template-columns:repeat(2, 1fr); } }
-  /* Same "one panel's own CSS" convention as #ext/#pivot/#icons above, not a
-     reused class - see those panels' own comments for why. */
-  /* An explicit width, not just max-width like the other panels here - this
-     one needs it for a real reason, not copied without thought. The others
-     size themselves from their own content (a table's natural column
-     widths); an iframe has none of its own the browser can see, so
-     "width:100%" on it had nothing concrete to resolve against inside a
-     shrink-to-fit, width-less parent and silently fell back to a browser
-     default around 300px regardless of max-width - confirmed live, this is
-     exactly what was cramping the chart, not the CSS gap that later comment
-     used to describe as the whole story. Matches #pivot's own max-width
-     figure - the widest existing panel - which also happens to match the
-     spec's own stated upper design bound of 1100 CSS pixels
-     (community_release_activity_embed_spec.md section 3.3). */
-  /* Centered, unlike #flow/#ext/#pivot/#icons' shared top:100px/left:10px
-     corner placement - a deliberate departure for this one panel, not an
-     oversight of the convention. A rule flowchart or a data table reads
-     fine pinned to a corner; a wide chart the user is meant to actually
-     look at does not. 92vw (up from 80vw) reaches the 1100px cap on more
-     realistic window widths - the cap itself stays at 1100px, the embed's
-     own stated design bound (section 3.3), since widening the panel past
-     what the chart itself was built and tested for would add empty space
-     around it, not a bigger chart. */
-  #releaseActivity { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:21; background:#041b23; padding:14px 18px; border-radius:6px;
-           width:min(92vw, 1100px); max-height:90vh; overflow:auto; display:none; box-shadow:0 4px 24px rgba(0,0,0,0.55); }
-  #releaseActivity h3 { margin:0 0 4px 0; font-size:0.95em; }
+  /* Content CSS only now - position/size joined .modernPanel with the other
+     four (Gordon's live direction: every panel uses the same large area and
+     look, not a one-off centred/corner-pinned mix). The iframe's own
+     width:100% still needs a parent with a real resolved width to size
+     against (an iframe has none of its own the browser can see) - confirmed
+     live this was what was cramping the chart originally, not a CSS gap -
+     and .modernPanel gives it one via its own explicit width, same as it
+     did when this panel had that width set directly. */
   #releaseActivity .sub { opacity:0.72; font-size:0.78em; margin:0 0 12px 0; line-height:1.4; }
-  #releaseActivity iframe { border:0; display:block; width:100%; height:500px; border-radius:4px; }
+  /* Gordon flagged a scrollbar live - a fixed 500px iframe plus the sub
+     line and the link row below it does not always fit .panelBody's own
+     available height, which now varies with the viewer's actual window
+     rather than the old ~90vh cap. .panelBody becomes a column flex
+     container for this one panel only, and the iframe (flex:1, min-height:0
+     so it can shrink rather than only grow) absorbs whatever vertical space
+     is actually left after the sub line and the link row below it - the
+     content now always exactly fits, rather than a fixed height sometimes
+     not. max-width+margin:auto also shrinks and centres it horizontally,
+     matching the 1100px bound this embed was actually designed/tested for
+     (see the comment above) rather than stretching it edge-to-edge across
+     a panel now far wider than that. */
+  #releaseActivity .panelBody { display:flex; flex-direction:column; }
+  /* position:relative + an explicit z-index (not "auto", the default) -
+     confirmed live this is required for a live <iframe> specifically: it
+     was rendering above the Focus combobox popup despite the popup's own
+     z-index being far higher (9000 vs the panel's own ~90s). A browsable
+     iframe gets its own compositing layer, and without an explicit z-index
+     of its own some browsers paint that layer above ordinary
+     higher-z-index siblings regardless of the surrounding stacking order -
+     a known quirk, not something specific to this app. z-index:1 is
+     already enough since it only needs to properly join its own parent's
+     (#releaseActivity, z-index ~90s) stacking context rather than escape it. */
+  #releaseActivity iframe { position:relative; z-index:1; border:0; display:block; width:100%; max-width:1100px; flex:1; min-height:0; border-radius:4px; margin:0 auto; align-self:center; }
   #releaseActivity a { color:#7fb6d6; text-decoration:none; }
   #releaseActivity a:hover { text-decoration:underline; }
-  #releaseActivityClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }${''}
+  /* Backlog item 1 Phase 2 - the shared shell for all five panels
+     (flow/Insights, ext, pivot, icons, releaseActivity). Each panel keeps its
+     own id rule above for position/background/max-width/max-height (those
+     genuinely differ - a centred iframe embed is not a corner-pinned table),
+     but the close button and the header-fixed/content-scrolling behaviour
+     were five copies of the same rule and the audit (A3) flagged the
+     scrolling half of that as a real defect: with overflow on the whole
+     panel, a tall Insights panel scrolled its own title out of view along
+     with the findings. Each panel id rule now sets flex-direction:column
+     (display stays none there - only bringToFront() flips it to flex) and
+     the panel's title/back-link stay outside .panelBody as ordinary static
+     children, so only .panelBody scrolls. */
+  .panelClose { position:absolute; top:8px; right:10px; cursor:pointer; background:none; border:none; color:#bbb; font-size:1.1em; }
+  .panelBody { flex:1; min-height:0; overflow:auto; }
+  /* The panel's own bottom edge, matching its green header, so classic #flow
+     terminates in a line rather than fading into dead space. A border rather
+     than a content ::after: now that classic mode shrinks to content
+     (sizeModernPanel), the panel edge IS where the content ends, and a border
+     cannot be pushed above the padding the way an in-flow line was. Classic
+     only - #flow also hosts Insights in large mode, which is a full-area
+     workspace and does not want a terminator. */
+  #flow.flowClassicSize { border-bottom:2px solid #81BC00; }
+  #ext, #pivot, #icons, #releaseActivity { border-bottom:2px solid #81BC00; }
+  /* Corner grip for resizing the normal flow view (v2.2.9). Hidden in the
+     full-area Insights view, which sizes itself. */
+  .panelResizeGrip { position:absolute; right:3px; bottom:3px; width:12px; height:12px; box-sizing:border-box; cursor:nwse-resize; border-right:2px solid #81BC00; border-bottom:2px solid #81BC00; opacity:0.7; }
+  .panelResizeGrip:hover { opacity:1; }
+  #flow.modernPanelLarge .panelResizeGrip { display:none; }
+  /* Once the user has chosen a size, the text sections use the width they
+     were given instead of staying capped to the left column. Placed after
+     the wcIndent caps, which share this specificity, so it wins by order. */
+  #flow.flowUserSized #flowSub,
+  #flow.flowUserSized #ruleVariablesCard,
+  #flow.flowUserSized #decodeCoverageCard,
+  #flow.flowUserSized #communityCard { max-width:none; }
+  /* Gordon flagged External systems/Pivot tables/Device icons's own table
+     headers scrolling off with the rows above them - the panel's outer title
+     (fixed by .panelBody above) was never the only header that could do
+     that. One rule covers every table in every current and future panel
+     body, rather than three copies. background matches these three panels'
+     own #041b23 exactly, needed so rows scrolling underneath don't show
+     through a sticky header with no fill of its own. box-shadow instead of
+     each th's own border-bottom - border-collapse:collapse plus
+     position:sticky is a known Chromium rendering bug (the collapsed border
+     belongs to the table, not the offset cell, and can flicker or vanish
+     while scrolling); a box-shadow paints the same 1px line without
+     participating in border collapsing at all. */
+  .panelBody th { position:sticky; top:0; z-index:1; background:#041b23; box-shadow:0 1px 0 #2a4a57; }${''}
 </style>
 </head>
 <body>
 <div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
 <div id="legend">
-  <div id="legend-head"><button id="legend-toggle" type="button" aria-expanded="true" aria-controls="legend-body">&#9662;</button><span>Legend</span></div>
-  <div id="legend-body">
+  <div id="legendCompactBody"></div>
+  <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
+</div>
+<div id="legendPanel"><div id="legendTopBar"><h3>Legend</h3><button id="legendPanelClose" class="panelClose pillBtn" type="button" title="Collapse back to the compact legend">Collapse Legend</button></div><div id="legendPanelBody" class="panelBody">
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
@@ -7096,90 +10829,69 @@ String buildMapHtml() {
   <div class="legend-row"><span class="swatch sw-dot" style="background:#c98b6b"></span><span class="line" style="border-color:#c98b6b; border-top-style:dotted"></span>Exposed - published to an external system</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#8090a0"></span><span class="line" style="border-color:#8090a0; border-top-style:dashed"></span>Owns - app created this device</div>
   <div class="legend-row"><span class="swatch sw-dot" style="background:#5c6bc0"></span><span class="line" style="border-color:#5c6bc0"></span>Has component - device-owned component of a parent device (e.g. Shelly, Bond, a Matter bridge)</div>
+  <div class="legend-row"><span class="line" style="border-color:#999"></span>Connector - a Hub Variable and its connector device hold the same value</div>
   <div class="legend-row"><span class="line" style="border-color:#4fb3a9"></span>Write - rule sets a Hub or Local Variable's value</div>
   <div class="legend-row"><span class="line" style="border-color:#8fd6cc"></span>Read - rule uses a Hub or Local Variable in its decoded logic</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f"></span>Runs - rule runs another rule's actions</div>
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule's pending Wait/Delay</div>
-  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's</div>
+  <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's Private Boolean</div>
   <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses or resumes another rule (focus the rule to see which)</div>
   <div class="legend-row"><span class="line ln-pat ln-thick" style="border-color:#cfd8dc; background:repeating-linear-gradient(to right,#cfd8dc 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time</div>
   <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
-  </div>
-</div>
-<script>
-  // Collapsible legend, asked for on the community thread: on a busy map it
-  // covers the bottom-left corner and there was no way to get it out of the
-  // way. The choice is remembered, because someone who folds it away once
-  // almost certainly wants it folded away next time.
-  //
-  // The handler sits on the whole header rather than the arrow, so the target
-  // is the full width rather than a 12px glyph. The button is inside the
-  // header, so it must NOT get its own listener or a click would toggle twice.
-  (function () {
-    var lg = document.getElementById('legend');
-    var tg = document.getElementById('legend-toggle');
-    var hd = document.getElementById('legend-head');
-    function apply(collapsed) {
-      if (collapsed) { lg.classList.add('collapsed'); } else { lg.classList.remove('collapsed'); }
-      tg.innerHTML = collapsed ? '&#9656;' : '&#9662;';
-      tg.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      try { localStorage.setItem('amLegendCollapsed', collapsed ? '1' : '0'); } catch (e) { }
-    }
-    var saved = '0';
-    try { saved = localStorage.getItem('amLegendCollapsed') || '0'; } catch (e) { }
-    apply(saved === '1');
-    // syncLegendVisibility is declared later in the file (with bringToFront)
-    // but this only runs on a later click, by which point it exists - same
-    // forward-reference as everywhere else in this file. Needed here because
-    // expanding the legend while a panel is open makes it tall enough to run
-    // behind that panel's content again, the same overlap collapsing this
-    // panel-open exemption was for in the first place - and collapsing it
-    // back while a panel is still open should bring it back into view.
-    hd.addEventListener('click', function () {
-      apply(!lg.classList.contains('collapsed'));
-      if (typeof syncLegendVisibility === 'function') syncLegendVisibility();
-    });
-  })();
-</script>
+</div></div>
 <div id="smallscreen">
   <h2>Best viewed on a desktop</h2>
   <p>Automation Map shows every app and device on your hub at once, with filter controls and rule flowcharts alongside. That needs a large screen and a mouse, so it is not made to work on a phone.</p>
   <p>Open this same link on a computer.</p>
 </div>
 <div id="controls">
-  <label>Focus app<span id="appComboMount"></span></label>
-  <label>Focus device<span id="deviceComboMount"></span></label>
-  <label>Focus hub variable<span id="hubVarComboMount"></span></label>
-  <label>Focus local variable<span id="localVarComboMount"></span></label>
-  <label id="showFilterLabel">Show<select id="kindFilter">
-    <option value="all">All relationships</option>
-    <option value="trigger">Triggers only</option>
-    <option value="constraint">Constraints only</option>
-    <option value="monitor">Monitored only</option>
-    <option value="action">Actions only</option>
-    <option value="exposed">Exposed only</option>
-    <option value="owns">Ownership only</option>
-    <option value="hasComponent">Has component only</option>
-    <option value="rulelinks">Rule to rule only</option>
-    <option value="depends">External systems only</option>
-  </select></label>
-  <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
-  <button id="insightsBtn" type="button">Insights</button>
-  <button id="extBtn" type="button">External systems</button>
-  <button id="pivotBtn" type="button">Pivot tables</button>
-  <button id="iconsBtn" type="button">Device icons</button>
-  <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
-  <button id="releaseActivityBtn" type="button" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-  <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
-  <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
+  <details id="focusSection" open>
+    <summary>Focus${isDevBuild() ? "<span class='devBadge'>Dev ${APP_VERSION}</span>" : ''}</summary>
+    <div id="focusList">
+      <label>Quick search<span id="searchAllComboMount"></span></label>
+      <label>Focus app<span id="appComboMount"></span></label>
+      <label>Focus device<span id="deviceComboMount"></span></label>
+      <label>Focus hub variable<span id="hubVarComboMount"></span></label>
+      <label>Focus local variable<span id="localVarComboMount"></span></label>
+    </div>
+  </details>
+  <div id="workspaceHeader">
+    <label id="showFilterLabel">Show<select id="kindFilter">
+      <option value="all">All relationships</option>
+      <option value="trigger">Triggers only</option>
+      <option value="constraint">Constraints only</option>
+      <option value="monitor">Monitored only</option>
+      <option value="action">Actions only</option>
+      <option value="exposed">Exposed only</option>
+      <option value="owns">Ownership only</option>
+      <option value="hasComponent">Has component only</option>
+      <option value="rulelinks">Rule to rule only</option>
+      <option value="depends">External systems only</option>
+      <option value="variables">Variable use only</option>
+      <option value="synchronizedWith">Variable connectors only</option>
+      <option value="deviceRead">webCoRE device state reads only</option>
+    </select></label>
+    <div id="headerActions">
+      <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
+      <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit map</button>
+    </div>
+  </div>
+  <div id="toolRail">
+    <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External systems</button></div>
+    <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
+    <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+    <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
+    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+    <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
+  </div>
 </div>
-<div id="flow"><button id="flowClose" type="button" title="Close">&times;</button><div id="flowBack" style="display:none"></div><h3 id="flowTitle"></h3><div class="sub" id="flowSub"></div><div id="flowChart"></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div>
-<div id="ext"><button id="extClose" type="button" title="Close">&times;</button><div id="extBody"></div></div>
-<div id="pivot"><button id="pivotClose" type="button" title="Close">&times;</button><div id="pivotBody"></div></div>
-<div id="icons"><button id="iconsClose" type="button" title="Close">&times;</button><div id="iconsBody"></div></div>
-<div id="releaseActivity"><button id="releaseActivityClose" type="button" title="Close">&times;</button><h3>Hubitat releases over time</h3><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody"></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
+<div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
+<div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
+<div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
+<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat releases over time</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -7209,8 +10921,77 @@ const GRAPH = ${jsonStr};
 const SCAN_META = ${scanMetaJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
-                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', hasComponent: '#5c6bc0' };
+                     depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0', synchronizedWith: '#999' };
 const groupColors = { app: '#e8a33d', device: '#5f7d8c', external: '#cfd8dc', hubVariable: '#4fb3a9', localVariable: '#7986cb' };
+
+// Contextual compact legend (Gordon's live feedback on backlog item 1 Phase
+// 3): the fixed Trigger/Action/Monitor rows were plain wrong for a view that
+// draws none of those - a focused rule showing Trigger/Action/Runs still
+// only listed Monitor among its three, with Runs (clearly on screen, red
+// dashed lines) nowhere in the legend at all. Rows now reflect exactly the
+// edge kinds and node groups actually drawn right now, computed from the
+// same live nodes/edges DataSets the graph itself renders from - not a
+// second, parallel classification that could drift from what is on screen.
+// Colours read from roleColors/groupColors above rather than being
+// hardcoded again, so the legend cannot show a colour the graph itself does
+// not actually use.
+const LEGEND_GROUP_ROWS = [
+  { group: 'app', html: '<span class="swatch sw-square" style="background:' + groupColors.app + '"></span>App' },
+  { group: 'device', html: '<span class="swatch sw-dot" style="background:' + groupColors.device + '"></span>Device' },
+  { group: 'external', html: '<span class="swatch sw-diamond" style="background:' + groupColors.external + '"></span>External system' },
+  { group: 'hubVariable', html: '<span class="swatch sw-triangle" style="color:' + groupColors.hubVariable + '"></span>Hub Variable' },
+  { group: 'localVariable', html: '<span class="swatch sw-triangle-down" style="color:' + groupColors.localVariable + '"></span>Local Variable' }
+];
+// key matches applyFilters()'s own edge.kind, with depends split by e.crit
+// exactly as the actual line rendering above splits it (dashes/width).
+const LEGEND_EDGE_ROWS = [
+  { key: 'trigger', html: '<span class="swatch sw-dot" style="background:' + roleColors.trigger + '"></span><span class="line" style="border-color:' + roleColors.trigger + '"></span>Trigger - app listens to this device' },
+  { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '"></span>Constraint - condition / required expression' },
+  { key: 'monitor', html: '<span class="swatch sw-dot" style="background:' + roleColors.monitor + '"></span><span class="line" style="border-color:' + roleColors.monitor + '"></span>Monitor - app reads the state of this device' },
+  { key: 'action', html: '<span class="swatch sw-dot" style="background:' + roleColors.action + '"></span><span class="line" style="border-color:' + roleColors.action + '"></span>Action - app can command this device' },
+  { key: 'exposed', html: '<span class="swatch sw-dot" style="background:' + roleColors.exposed + '"></span><span class="line" style="border-color:' + roleColors.exposed + '; border-top-style:dotted"></span>Exposed - published to an external system' },
+  { key: 'owns', html: '<span class="swatch sw-dot" style="background:' + roleColors.owns + '"></span><span class="line" style="border-color:' + roleColors.owns + '; border-top-style:dashed"></span>Owns - app created this device' },
+  { key: 'hasComponent', html: '<span class="swatch sw-dot" style="background:' + roleColors.hasComponent + '"></span><span class="line" style="border-color:' + roleColors.hasComponent + '"></span>Has component - device-owned component of a parent device' },
+  { key: 'synchronizedWith', html: '<span class="line" style="border-color:' + roleColors.synchronizedWith + '"></span>Connector - a Hub Variable and its connector device hold the same value' },
+  { key: 'write', html: '<span class="line" style="border-color:' + roleColors.write + '"></span>Write - rule sets the value of a Hub or Local Variable' },
+  { key: 'read', html: '<span class="line" style="border-color:' + roleColors.read + '"></span>Read - rule uses a Hub or Local Variable in its decoded logic' },
+  { key: 'usesVar', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.usesVar + ' 0 5px,transparent 5px 9px)"></span>Uses - webCoRE piston references a Hub Variable; direction is unknown' },
+  { key: 'deviceRead', html: '<span class="swatch sw-dot" style="background:' + roleColors.deviceRead + '"></span><span class="line" style="border-color:' + roleColors.deviceRead + '"></span>Device read - webCoRE piston reads this device somewhere its role could not be attributed, such as an expression or a task parameter' },
+  { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs the actions of another rule' },
+  { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels a pending Wait/Delay on another rule' },
+  { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets the Private Boolean of another rule' },
+  { key: 'pauseResume', html: '<span class="line ln-pat ln-dashdot" style="color:' + roleColors.pauseResume + '"></span>Pause / resume - rule pauses or resumes another rule' },
+  { key: 'depends:RUNTIME', html: '<span class="line ln-pat ln-thick" style="border-color:' + roleColors.depends + '; background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time' },
+  { key: 'depends:SETUP', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage' }
+];
+// Called from applyFilters() right after nodes/edges are rebuilt, and once
+// at page load for the initial whole-hub view - the two places those
+// DataSets actually change.
+//
+// nodeList takes the pre-styling node array (shownNodes in applyFilters(),
+// ALL_NODES by default here) rather than reading document group off the
+// live `nodes` DataSet - styledNode()'s own returned object never includes
+// n.group at all (only uses it to pick color/shape/size, then drops it), so
+// nodes.get() here would silently see every node as group:undefined.
+// Confirmed live: an early version of this read from the live DataSet
+// directly and every group row vanished, whole-hub view included. Edges are
+// fine read live - the edge styling map explicitly keeps kind/crit in its
+// output object.
+function updateCompactLegend(nodeList) {
+  const el = document.getElementById('legendCompactBody');
+  if (!el) return;
+  const groupsShown = {};
+  (nodeList || ALL_NODES).forEach(function (n) { groupsShown[n.group] = true; });
+  const kindsShown = {};
+  edges.get().forEach(function (e) {
+    kindsShown[e.kind] = true;
+    if (e.kind === 'depends') kindsShown['depends:' + (e.crit === 'RUNTIME' ? 'RUNTIME' : 'SETUP')] = true;
+  });
+  let html = '';
+  LEGEND_GROUP_ROWS.forEach(function (r) { if (groupsShown[r.group]) html += '<div class="legend-row">' + r.html + '</div>'; });
+  LEGEND_EDGE_ROWS.forEach(function (r) { if (kindsShown[r.key]) html += '<div class="legend-row">' + r.html + '</div>'; });
+  el.innerHTML = html || '<div class="note">Nothing on screen yet.</div>';
+}
 
 // Device icon glyphs, keyed by n.icon (see ICON_RULES/autoDetectIconKey in the
 // Groovy source - the Groovy side decides WHICH key a device gets, this side
@@ -7270,6 +11051,7 @@ function iconImageDataURL(iconKey, fillColor) {
 // Rule-to-rule kinds. These join two apps rather than an app and a device, so
 // they must never take part in colouring a device by its role.
 const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
+const VARIABLE_KINDS = ['write', 'read', 'usesVar'];
 
 // Human-readable form of every edge kind, reused by the legend's own wording
 // so a pivot table and the graph never describe the same relationship two
@@ -7277,7 +11059,8 @@ const RULE_LINK_KINDS = ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
 const KIND_LABEL = {
   trigger: 'Trigger', constraint: 'Constraint', monitor: 'Monitor', action: 'Action',
   exposed: 'Exposed', owns: 'Owns', hasComponent: 'Has component', runs: 'Runs', cancelTimedActions: 'Cancel timed actions',
-  setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read'
+  setspb: 'Private Boolean', pauseResume: 'Pause/resume', depends: 'Depends on', write: 'Write', read: 'Read',
+  usesVar: 'Uses (direction unknown)', deviceRead: 'Device read (role not attributed)'
 };
 const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system', hubVariable: 'Hub Variable', localVariable: 'Local Variable' };
 
@@ -7296,9 +11079,9 @@ const GROUP_LABEL = { app: 'App', device: 'Device', external: 'External system',
 function pivotKindOptions(g1, g2) {
   const key = [g1, g2].sort().join('|');
   if (key === 'app|app') return ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'];
-  if (key === 'app|device') return ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'];
+  if (key === 'app|device') return ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns', 'deviceRead'];
   if (key === 'app|external') return ['depends'];
-  if (key === 'app|hubVariable') return ['write', 'read'];
+  if (key === 'app|hubVariable') return ['write', 'read', 'usesVar'];
   if (key === 'app|localVariable') return ['write', 'read'];
   return [];
 }
@@ -7310,26 +11093,33 @@ function pivotColOptions(rowGroup) {
 // query into pivotRows below, phrased the way a person would ask for it
 // rather than in row/column/kind terms.
 const PIVOT_PRESETS = [
-  { button: 'Rule → Rules affected', rows: 'app', cols: 'app',
+  { button: 'Rule &rarr; Rules affected', rows: 'app', cols: 'app',
     kinds: ['runs', 'cancelTimedActions', 'setspb', 'pauseResume'],
     rowLabel: 'Rule', colLabel: 'Rules affected' },
-  // ruleRows/ruleCols: without this, "Rule -> Devices" queried every app
-  // typed as an app - LIFX Light Manager or any other integration with a
-  // device edge would show up under a heading that says Rule. appType comes
-  // from buildGraph and is checked against the Rule-<engine> prefix, not
-  // against the display label, which the inert/unreadable states overwrite.
-  { button: 'Rule → Devices', rows: 'app', cols: 'device',
-    kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
-    rowLabel: 'Rule', colLabel: 'Devices', opts: { ruleRows: true } },
-  { button: 'Device → Rules', rows: 'device', cols: 'app',
-    kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns'],
-    rowLabel: 'Device', colLabel: 'Rules', opts: { ruleCols: true } },
-  { button: 'Rule → Hub Variables', rows: 'app', cols: 'hubVariable',
-    kinds: ['write', 'read'],
-    rowLabel: 'Rule', colLabel: 'Hub Variables', opts: { ruleRows: true } },
-  { button: 'Hub Variable → Rules', rows: 'hubVariable', cols: 'app',
-    kinds: ['write', 'read'],
-    rowLabel: 'Hub Variable', colLabel: 'Rules', opts: { ruleCols: true } },
+  // variableAutomationRows/Cols (v2.2.8, widened from the old ruleRows/
+  // ruleCols): without a node-type filter here, "Automation -> Devices"
+  // queried every app typed as an app - LIFX Light Manager or any other
+  // integration with a device edge would show up under a heading that says
+  // Automation. Widened from Rule-Machine-only to also admit webCoRE pistons
+  // now that they can carry real deviceRead/action edges - same
+  // isVariableAutomationNode() helper and rename already proven for the Hub
+  // Variable pivots just below, applied here for the identical reason: the
+  // new edges would otherwise exist on the graph but never appear in either
+  // pivot. appType comes from buildGraph and is checked against the
+  // Rule-<engine> prefix or the exact webCoRE piston type, not against the
+  // display label, which the inert/unreadable states overwrite.
+  { button: 'Automation &rarr; Devices', rows: 'app', cols: 'device',
+    kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns', 'deviceRead'],
+    rowLabel: 'Automation', colLabel: 'Devices', opts: { variableAutomationRows: true } },
+  { button: 'Device &rarr; Automations', rows: 'device', cols: 'app',
+    kinds: ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'owns', 'deviceRead'],
+    rowLabel: 'Device', colLabel: 'Automations', opts: { variableAutomationCols: true } },
+  { button: 'Automation &rarr; Hub Variables', rows: 'app', cols: 'hubVariable',
+    kinds: ['write', 'read', 'usesVar'],
+    rowLabel: 'Automation', colLabel: 'Hub Variables', opts: { variableAutomationRows: true } },
+  { button: 'Hub Variable &rarr; Automations', rows: 'hubVariable', cols: 'app',
+    kinds: ['write', 'read', 'usesVar'],
+    rowLabel: 'Hub Variable', colLabel: 'Automations', opts: { variableAutomationCols: true } },
 ];
 
 // The free-form builder (option B): same underlying query, but rows, columns
@@ -7343,6 +11133,9 @@ const PIVOT_PRESETS = [
 // the display label, which inert/unreadable states overwrite.
 function isRuleNode(n) {
   return !!(n && n.appType && n.appType.indexOf('Rule-') === 0);
+}
+function isVariableAutomationNode(n) {
+  return isRuleNode(n) || !!(n && n.appType === 'webCoRE Piston');
 }
 
 function pivotRows(rowGroup, colGroup, kinds, opts) {
@@ -7369,6 +11162,8 @@ function pivotRows(rowGroup, colGroup, kinds, opts) {
     }
     if (opts.ruleRows && !isRuleNode(rowNode)) return;
     if (opts.ruleCols && !isRuleNode(colNode)) return;
+    if (opts.variableAutomationRows && !isVariableAutomationNode(rowNode)) return;
+    if (opts.variableAutomationCols && !isVariableAutomationNode(colNode)) return;
     if (!groups[rowId]) groups[rowId] = [];
     const already = groups[rowId].some(function (t) { return t.id === colId && t.kind === e.kind; });
     if (!already) groups[rowId].push({ id: colId, title: colNode.title, kind: e.kind });
@@ -7376,6 +11171,7 @@ function pivotRows(rowGroup, colGroup, kinds, opts) {
 
   let typed = ALL_NODES.filter(function (n) { return n.group === rowGroup; });
   if (opts.ruleRows) typed = typed.filter(isRuleNode);
+  if (opts.variableAutomationRows) typed = typed.filter(isVariableAutomationNode);
   const rows = typed.map(function (n) {
     const targets = (groups[n.id] || []).slice().sort(function (a, b) { return a.title.localeCompare(b.title); });
     return { id: n.id, title: n.title, targets: targets };
@@ -7453,7 +11249,8 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   pairSeen[pairKey] = dupIndex;
   // Arrows follow the flow: a trigger or constraint feeds INTO the app, an
   // action or an owned device is driven BY it.
-  const inbound = (e.kind === 'trigger' || e.kind === 'constraint' || e.kind === 'monitor' || e.kind === 'read');
+  const inbound = (e.kind === 'trigger' || e.kind === 'constraint' || e.kind === 'monitor' || e.kind === 'read' || e.kind === 'deviceRead');
+  const directionUnknown = e.kind === 'usesVar';
   // A rule link always reads caller to target, and is drawn heavier than a
   // device relationship because it is the rarer and more surprising one.
   const isRuleLink = RULE_LINK_KINDS.indexOf(e.kind) !== -1;
@@ -7463,6 +11260,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'cancelTimedActions') dashes = [8, 4];
   else if (e.kind === 'setspb') dashes = [2, 3];
   else if (e.kind === 'pauseResume') dashes = [12, 4, 2, 4];
+  else if (e.kind === 'usesVar') dashes = [5, 4];
   // Always dashed, because a dependency on an external system is asserted by a
   // person, not read off the hub. Weight carries the part that matters
   // operationally: whether losing it stops the automation or merely stops you
@@ -7471,8 +11269,16 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
   const edge = {
-    id: i, from: e.from, to: e.to, kind: e.kind, stateful: e.stateful === true,
+    // stateful stays three-valued (v2.2.8): true, false, or null for a webCoRE
+    // action, where the command is proven but its lasting state is not. Every
+    // consumer tests `=== true` or truthiness, so null still reads as false.
+    id: i, from: e.from, to: e.to, kind: e.kind,
+    stateful: e.stateful === null ? null : (e.stateful === true),
     crit: e.crit || null,
+    // v2.2.8 decode evidence: a deviceRead's attribute, an action's command
+    // names. Never task parameter values.
+    attribute: e.attribute || null,
+    commands: e.commands || null,
     // v2.0.14, schema 4: carried through explicitly, same as every other
     // field here - this object is a fresh rendering-specific literal, not a
     // spread of `e`, so a field not listed here is silently dropped
@@ -7480,7 +11286,8 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     // GRAPH.edges directly).
     usageRole: e.usageRole || null,
     writeSource: e.writeSource || null,
-    arrows: inbound ? 'from' : 'to',
+    unused: e.unused === true,
+    arrows: directionUnknown ? '' : (inbound ? 'from' : 'to'),
     dashes: dashes,
     color: roleColors[e.kind] || '#999',
     width: width,
@@ -7567,10 +11374,16 @@ function styledNode(n, useFullLabel, roleByDevice) {
     // the status and is what the hover tooltip shows. The fallback matters: a
     // graph cached before draw existed has only title, and rendering undefined
     // would blank every label on the map rather than fail visibly.
-    id: n.id, label: useFullLabel ? (n.draw || n.title) : n.label, title: n.title, color: color,
+    id: n.id, label: useFullLabel ? (n.group === 'localVariable' ? localVarCanvasText(n) : (n.draw || n.title)) : n.label, title: n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
-    font: { color: '#fff', size: 13, strokeWidth: 5, strokeColor: '#062733', vadjust: -4 },
+    // 12, not 13, and a 4px stroke rather than 5. At FOCUS_MAX_ZOOM (1.05) this
+    // renders at most 12.6 screen-px against #controls button text's fixed
+    // 14px, so it is unambiguously smaller rather than 13.65 and arguably
+    // equal. The stroke matters as much as the size: 5px around a 12px glyph
+    // fattens every letter, so the text reads heavier and therefore larger
+    // than its nominal size, which is what kept it looking oversized.
+    font: { color: '#fff', size: 12, strokeWidth: 4, strokeColor: '#062733', vadjust: -4 },
     // Wraps a long label over several lines instead of drawing one wide ribbon
     // of text. vis.js does no label collision avoidance at all, so width is the
     // only lever there is: on a crowded sector three long names were painting
@@ -7637,6 +11450,10 @@ const network = new vis.Network(document.getElementById('network'), { nodes: nod
   interaction: { hover: true, tooltipDelay: 100 },
   edges: { smooth: { type: 'continuous' } }
 });
+// Initial whole-hub view - applyFilters() covers every later change, but
+// nothing runs it on first load since nodes/edges start populated directly
+// via the DataSet constructor above, not through applyFilters() itself.
+updateCompactLegend();
 
 // The very first device icons can be drawn before the AMIcons webfont has
 // actually finished downloading - @font-face loads asynchronously, but the
@@ -7671,6 +11488,15 @@ document.fonts.ready.then(function () {
 // scan, so nothing is drawn - a divider with nothing under it would be
 // confusing rather than informative.
 let shelfDivider = null;
+// The shelf and its label belong to the whole map only.
+var shelfDividerShown = true;
+
+// Device node id -> the tags to draw beside it on the next redraw, recomputed
+// by applyFilters because "unused" depends on what is currently on screen, not
+// on the node alone. focusNodeId is kept alongside it as the pivot the tags
+// mirror about.
+let nodeTags = {};
+let focusNodeId = null;
 
 function shelveInertNodes() {
   // n.unreferencedLocal (v2.1.6) shares this shelf on purpose - both flags
@@ -7749,9 +11575,82 @@ function shelveInertNodes() {
 // counteracts the zoom the same way vis-network already does for its labels,
 // so this reads at a constant size next to them rather than shrinking when
 // the view zooms out to fit the whole graph.
+// Grey plate, black text, angled 45 degrees off the icon so it clears the
+// node's own label, which vis-network always draws horizontally underneath.
+//
+// Mirrored about the middle of the view: a node on the left carries its tags
+// up-LEFT, one on the right carries them up-RIGHT, so a tag always points away
+// from the crowd instead of back through it. Both halves stay readable
+// left-to-right - the left side rotates the other way and lays its plates
+// backwards from the icon's edge rather than flipping the letters over.
+//
+// Drawn here rather than baked into the node's icon image because it depends on
+// the current filter, and iconImageDataURL caches one bitmap per (icon, colour)
+// pair for the whole session. Sizes divide by scale for the same reason the
+// shelf label below does - this is graph space, so a fixed font size shrinks to
+// nothing when the view zooms out.
+const TAG_FONT_PX = 9;
+function drawNodeTags(ctx, scale) {
+  const ids = Object.keys(nodeTags);
+  if (!ids.length) return;
+  const pos = network.getPositions(focusNodeId ? ids.concat(focusNodeId) : ids);
+
+  // Which side of the view a node is on. The focused app is the natural pivot
+  // when there is one, because the sector layout arranges everything around it;
+  // otherwise the centre of the viewport. Both are O(1) - this runs on every
+  // redraw, so asking for the position of every node on the map each frame was
+  // enough to stall the renderer on the whole-hub view.
+  const pivot = (focusNodeId && pos[focusNodeId]) ? pos[focusNodeId].x
+                                                  : network.getViewPosition().x;
+
+  ctx.save();
+  // Uppercase, Segoe UI, letter-spaced. At 9px the letterforms are doing all
+  // the work: lowercase ascenders and descenders collide, generic sans-serif
+  // resolves to Arial which is not hinted for this size, and the 45 degree
+  // rotation throws away subpixel rendering, so every diagonal stroke aliases.
+  // Colour cannot fix any of that - black on this plate is already about 17:1.
+  ctx.font = 'bold ' + (TAG_FONT_PX / scale) + 'px "Segoe UI", system-ui, sans-serif';
+  // Chrome 99+; older engines ignore it rather than failing, and measureText
+  // accounts for it where it applies. Scaled like every other size here.
+  ctx.letterSpacing = (0.6 / scale) + 'px';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  const padX = 5 / scale;
+  const padY = 3 / scale;
+  const h = TAG_FONT_PX / scale;
+  const gap = 3 / scale;
+  ids.forEach(function (id) {
+    const p = pos[id];
+    if (!p) return;
+    const left = p.x < pivot;
+    ctx.save();
+    // 15 is the device node radius set in styledNode, in these same units.
+    ctx.translate(p.x + (left ? -15 : 15), p.y - 3);
+    ctx.rotate(left ? (Math.PI / 4) : (-Math.PI / 4));
+    let cursor = 0;
+    nodeTags[id].forEach(function (tag) {
+      const text = tag.toUpperCase();
+      const w = ctx.measureText(text).width + padX * 2;
+      const x = left ? -(cursor + w) : cursor;
+      ctx.fillStyle = '#eef0f3';
+      ctx.fillRect(x, -h / 2 - padY, w, h + padY * 2);
+      // A defined edge, so the plate does not bleed into the dark canvas.
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 1 / scale;
+      ctx.strokeRect(x, -h / 2 - padY, w, h + padY * 2);
+      ctx.fillStyle = '#0d0d0d';
+      ctx.fillText(text, x + padX, 0);
+      cursor += w + gap;
+    });
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
 network.on('afterDrawing', function (ctx) {
-  if (!shelfDivider) return;
   const scale = network.getScale() || 1;
+  drawNodeTags(ctx, scale);
+  if (!shelfDivider || !shelfDividerShown) return;
   ctx.save();
   ctx.strokeStyle = 'rgba(255,255,255,0.35)';
   ctx.lineWidth = 1 / scale;
@@ -7773,7 +11672,20 @@ network.on('afterDrawing', function (ctx) {
 // applies to a narrowed view. Held as state rather than passed at each call
 // site so settle(), the resize refit and the focused-app path cannot disagree
 // about the zoom of the same view.
-const FOCUS_MAX_ZOOM = 2.0;
+//
+// Capped at 1.05, not left at 2.0 (Gordon, 2026-09-09): node label font is
+// 12 world-px (see styledNode), which lives in this same zoomable canvas
+// space, not screen pixels - at the old 2.0x it rendered around 26 screen-px,
+// nearly double #controls button text's fixed, non-zooming 14px. The rule is
+// that automatic framing must never make canvas text outshout the chrome
+// around it. 12 * 1.05 = 12.6, clearly under 14. The first attempt at this
+// paired the cap with a 13px font for 13.65, which was under 14 arithmetically
+// but still read as larger once the 5px label stroke was accounted for - the
+// font and the stroke were reduced rather than the cap lowered further.
+// This governs only the app's OWN automatic zoom-to-fit;
+// the user's own manual scroll-zoom can still exceed it deliberately, the
+// same way zooming into any map image enlarges its own labels.
+const FOCUS_MAX_ZOOM = 1.05;
 let currentFitOptions = { animation: false };
 
 // The area of the canvas actually free to draw in, in container pixels. Every
@@ -7907,7 +11819,26 @@ setTimeout(watchOverlayGeometry, 0);
 // map only. shelveInertNodes() reads ALL_NODES and ends in nodes.update(),
 // which is an upsert, so running it against a focused dataset silently added
 // every inert node back and collapsed the fit to a fraction of its scale.
-function settle(shelve) {
+// Each drawn view owns the canvas until the next one is drawn, whether or not it
+// settles. vis delivers stabilizationIterationsDone to every pending listener, so
+// an older settle's listener or timer would otherwise shelve, frame or reveal a
+// view it no longer owns.
+var settleSeq = 0;
+function revealNetwork() {
+  const el = document.getElementById('network');
+  if (el) el.style.opacity = '';
+}
+function layoutView(placed, wholeMap) {
+  const owner = ++settleSeq;
+  if (placed) {
+    fitCurrentView();
+    revealNetwork();
+  } else {
+    network.setOptions({ physics: { enabled: true } });
+    settle(wholeMap, owner);
+  }
+}
+function settle(shelve, owner) {
   // A narrowed view rebuilds the DataSet with physics live, so the nodes are
   // watched flying apart and the framing then snaps the view back. The page's
   // own first settle never shows that because it happens before anything is
@@ -7918,16 +11849,16 @@ function settle(shelve) {
   // zero width, and fitCurrentView() measures that container to decide the
   // scale. It would frame against nothing and bail out.
   const canvasEl = document.getElementById('network');
-  const reveal = function () { if (canvasEl) canvasEl.style.opacity = ''; };
   if (!shelve && canvasEl) canvasEl.style.opacity = '0';
+  const mySettle = owner === undefined ? ++settleSeq : owner;
   let finished = false;
   const finish = function () {
-    if (finished) return;
+    if (finished || mySettle !== settleSeq) return;
     finished = true;
     network.setOptions({ physics: { enabled: false } });
     if (shelve) shelveInertNodes();
     fitCurrentView();
-    reveal();
+    revealNetwork();
   };
   network.once('stabilizationIterationsDone', finish);
   // vis does not always emit that event, and when it does not the fit never
@@ -7935,14 +11866,16 @@ function settle(shelve) {
   // focus: six nodes left at whole-hub scale in a three-pixel blob. The
   // fallback is deliberately limited to narrowed views - shelve is true only
   // for the whole-hub map, whose startup path has been broken twice by changes
-  // around this and is left exactly as it was. A handful of nodes settles well
-  // inside this delay, so the timer only fires when the event genuinely did
-  // not, and finish() is guarded so both routes cannot run it twice.
+  // around this and is left exactly as it was. The timer only fires when the
+  // event did not, and finish() is guarded so both routes cannot run it twice.
   if (!shelve) {
+    // Run the layout to rest before framing. Measured on the Dev hub, the timer
+    // alone froze a Hub Variable 41px from its connector, labels overlapping.
+    network.stabilize(200);
     setTimeout(finish, 1500);
     // Last resort. finish() already reveals and is guarded, but the canvas must
     // never be left invisible if anything above throws.
-    setTimeout(reveal, 4000);
+    setTimeout(function () { if (mySettle === settleSeq) revealNetwork(); }, 4000);
   }
 }
 settle(true);
@@ -7975,6 +11908,8 @@ settle(true);
 // entry, so the first Back press after opening would appear to do nothing.
 network.once('stabilizationIterationsDone', function () {
   setTimeout(function () {
+    // A focus picked before the first settle finished is kept, not reset.
+    if (currentFocus()) return;
     poppingHistory = true;
     exitToWholeMap();
     poppingHistory = false;
@@ -8039,6 +11974,26 @@ function neighborhood(nodeId, edgePool) {
   return { ids: ids, edgeList: edgeList };
 }
 
+// The inert shelf belongs to the whole map. In a narrowed view a pinned inert node
+// would stay at its shelf coordinates, far from the neighbour it is shown beside.
+function releaseShelfPins(styled) {
+  styled.forEach(function (s) {
+    if (!INERT_POS[s.id] || !s.fixed) return;
+    delete s.x;
+    delete s.y;
+    s.fixed = false;
+    s.physics = true;
+  });
+}
+
+// The edges a Show filter keeps. Rule links and variable use each span several kinds.
+function edgesForKindFilter(kindVal, edges) {
+  if (kindVal === 'all') return edges;
+  if (kindVal === 'rulelinks') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
+  if (kindVal === 'variables') return edges.filter(function (e) { return VARIABLE_KINDS.indexOf(e.kind) !== -1; });
+  return edges.filter(function (e) { return e.kind === kindVal; });
+}
+
 function applyFilters() {
   const appVal = appSelect.getValue();
   const devVal = deviceSelect.getValue();
@@ -8046,16 +12001,11 @@ function applyFilters() {
   const localVarVal = localVarSelect.getValue();
   const kindVal = document.getElementById('kindFilter').value;
 
-  let pool = ALL_EDGES;
-  if (kindVal === 'rulelinks') {
-    pool = ALL_EDGES.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
-  } else if (kindVal !== 'all') {
-    pool = ALL_EDGES.filter(function (e) { return e.kind === kindVal; });
-  }
+  const pool = edgesForKindFilter(kindVal, ALL_EDGES);
 
   let ids = null;
   let shownEdges = pool;
-  const focusId = appVal !== '__all__' ? appVal : (devVal !== '__all__' ? devVal : (hubVarVal !== '__all__' ? hubVarVal : (localVarVal !== '__all__' ? localVarVal : null)));
+  const focusId = currentFocus();
   if (focusId) {
     const focus = neighborhood(focusId, pool);
     ids = focus.ids; shownEdges = focus.edgeList;
@@ -8086,7 +12036,48 @@ function applyFilters() {
   }
 
   const shownNodes = ids ? ALL_NODES.filter(function (n) { return ids[n.id]; }) : ALL_NODES;
+
+  // Tags drawn beside a device icon. Two kinds:
+  //
+  //   disabled  the hub has the device switched off, so nothing reaches it
+  //   unused    every relationship visible in THIS view is a constraint that
+  //             nothing evaluates
+  //
+  // Scoping "unused" to the drawn edges is what keeps the claim honest in both
+  // views: with an app focused those edges are that app's own, which is the
+  // question being asked; on the whole map a device that is a live trigger for
+  // some other rule still has a live edge and so is never tagged, even though
+  // one rule holds a dead condition on it.
+  nodeTags = {};
+  focusNodeId = focusId || null;
+  // Focused views only. On the whole hub these read as free-floating labels -
+  // a handful of tags scattered across 350 nodes, one of them out in open space
+  // with no visible owner - and at fit-everything zoom the plate is bigger than
+  // the node it belongs to, so it dominates a view whose job is shape and
+  // density rather than per-device detail.
+  if (focusId) {
+    const deviceIds = {};
+    shownNodes.forEach(function (n) {
+      if (n.group !== 'device') return;
+      deviceIds[n.id] = true;
+      if (n.disabled) nodeTags[n.id] = ['disabled'];
+    });
+    const seenByNode = {};
+    shownEdges.forEach(function (e) {
+      [e.from, e.to].forEach(function (id) {
+        if (!deviceIds[id]) return;
+        if (!seenByNode[id]) seenByNode[id] = { total: 0, dead: 0 };
+        seenByNode[id].total++;
+        if (e.kind === 'constraint' && e.unused) seenByNode[id].dead++;
+      });
+    });
+    Object.keys(seenByNode).forEach(function (id) {
+      const c = seenByNode[id];
+      if (c.total > 0 && c.total === c.dead) nodeTags[id] = (nodeTags[id] || []).concat('unused');
+    });
+  }
   const styled = shownNodes.map(function (n) { return styledNode(n, !!focusId, roleByDevice); });
+  if (ids !== null) releaseShelfPins(styled);
 
   // With one app focused the whole neighbourhood is known, so it can be laid
   // out deliberately instead of being left to settle. See sectorLayout.
@@ -8108,20 +12099,17 @@ function applyFilters() {
 
   nodes.clear(); nodes.add(styled);
   edges.clear(); edges.add(shownEdges);
+  updateCompactLegend(shownNodes);
 
   // ids is null only when nothing is focused AND the relationship filter is
   // "all" - exactly the start-up / Show all view the shelf belongs to. Any
   // narrowed view skips the shelf and is allowed to magnify instead.
   const wholeMap = (ids === null);
+  shelfDividerShown = wholeMap;
   currentFitOptions = wholeMap ? { animation: false }
                                : { animation: false, maxZoomLevel: FOCUS_MAX_ZOOM };
 
-  if (placed) {
-    fitCurrentView();
-  } else {
-    network.setOptions({ physics: { enabled: true } });
-    settle(wholeMap);
-  }
+  layoutView(placed, wholeMap);
 }
 
 // ---------------------------------------------------------------------------
@@ -8157,11 +12145,22 @@ function applyFilters() {
 // false)" lands squarely on top of one labelled "Master Bedroom Button".
 // Putting neighbouring sectors on different circles separates them regardless
 // of how long the labels are.
+// Every relationship kind that has a PROVEN direction belongs in a sector. A
+// kind missing here is not neutral: it falls through to fallbackSector(), which
+// sends anything that is not a rule or an external system to 'outputs'. That is
+// how variable reads and webCoRE device reads ended up drawn on the output side
+// with the actions, so a piston (which is almost entirely reads and writes)
+// collapsed into one fan on the right instead of splitting input/output the way
+// every Rule Machine and VRB panel does. Affects Rule Machine variable reads
+// and writes equally - it was never webCoRE-specific.
+//
+// usesVar is deliberately absent: its direction is explicitly unproven, and
+// placing it on either side would assert one. It keeps the fallback.
 const SECTORS = [
-  { name: 'external', kinds: ['depends'],                          from: 55,  to: 125, radius: 430 },
-  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor'], from: 145, to: 215, radius: 300 },
-  { name: 'rules',    kinds: RULE_LINK_KINDS,                      from: 235, to: 305, radius: 420 },
-  { name: 'outputs',  kinds: ['action', 'owns', 'exposed'],        from: 325, to: 395, radius: 320 },
+  { name: 'external', kinds: ['depends'],                                             from: 55,  to: 125, radius: 430 },
+  { name: 'inputs',   kinds: ['trigger', 'constraint', 'monitor', 'read', 'deviceRead'], from: 145, to: 215, radius: 300 },
+  { name: 'rules',    kinds: RULE_LINK_KINDS,                                         from: 235, to: 305, radius: 420 },
+  { name: 'outputs',  kinds: ['action', 'owns', 'exposed', 'write'],                  from: 325, to: 395, radius: 320 },
 ];
 
 function sectorIndex(name) {
@@ -8246,7 +12245,14 @@ const FLOWS = GRAPH.flows || {};
 // separately, see buildExportPayload().
 const RULE_VARIABLES = GRAPH.ruleVariables || {};
 if (window.mermaid) {
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false } });
+  // A bare top-level fontSize option does nothing on this pinned mermaid
+  // build (10.9.8) - confirmed live, still measured 16px with it set. The
+  // theme's own themeVariables.fontSize is what actually reaches the
+  // rendered node text; confirmed live via mermaid.render() directly before
+  // changing this, not assumed. Added per Gordon's request - the rendered
+  // node text (mermaid's own 16px default) was the dominant reason the
+  // panel ran large.
+  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '12px' } });
 }
 
 // Written without regex literals on purpose: this whole page is a Groovy
@@ -8287,7 +12293,12 @@ function mermaidFor(steps) {
     else lines.push('  ' + id + '["' + text + '"]');
     if (kind === 'trigger') styles.push('  style ' + id + ' fill:#4a2f5e,stroke:#9b59b6,color:#fff');
     else if (kind === 'required') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
-    else if (kind === 'cond') styles.push('  style ' + id + ' fill:#123a4a,stroke:#4aa3c7,color:#fff');
+    // The map's own constraint colour, not a fourth blue of this chart's own.
+    // A condition was teal on the map and blue in the chart beside it, which is
+    // the same contradiction the device-read roles fixed. A required expression
+    // shares it: the map gives both one colour, and the shape tells them apart.
+    else if (kind === 'cond') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
+    else if (kind === 'end') styles.push('  style ' + id + ' fill:#2b2b2b,stroke:#777,color:#bbb');
     else styles.push('  style ' + id + ' fill:#33502a,stroke:#7fae42,color:#fff');
     return id;
   }
@@ -8367,6 +12378,14 @@ function mermaidFor(steps) {
     tails = f.branchTails.concat(tails).concat(f.pendingFalse);
   }
 
+  // A decision whose false path leads nowhere otherwise draws as a diamond with
+  // one exit, which reads as a decision that was never made. Once more than one
+  // end is open, they are joined to an explicit end node so every branch
+  // visibly terminates - including the "no" that simply does nothing.
+  if (tails.length > 1) {
+    connect(emit('stadium', 'end', 'end'));
+  }
+
   // Double-escaped on purpose. This page is a Groovy GString, so a single
   // backslash is consumed by Groovy and would emit a real newline inside this
   // string literal - a JavaScript syntax error that kills the whole page.
@@ -8377,6 +12396,385 @@ function mermaidFor(steps) {
 // below must keep working regardless, so nothing here is allowed to throw.
 const flowPanel = document.getElementById('flow') || { style: {} };
 const flowChart = document.getElementById('flowChart') || document.createElement('div');
+
+// Draggable flow panel (Gordon's live request): defaults to sitting below
+// the legend on first open each page load, then stays wherever the user
+// drags it for every later open - repositioning it back to default on
+// every focus change would make dragging pointless, since this panel closes
+// and reopens on almost every click.
+// Generalized from the flow-panel-only version (same day): Gordon wants
+// every modernPanel panel draggable with this same below-the-legend
+// default, not just flow. A WeakMap rather than five separate booleans -
+// keyed by the panel element itself, so adding a sixth panel later needs no
+// new flag variable, just one more entry in the setup list near the bottom
+// of this script (after every panel's own const exists).
+const panelCustomPosition = new WeakMap();
+// Measures the real #status pill and #controls rail rather than guessing a
+// viewport-relative number for any of left/top/width/height - the CSS
+// fallback that used to size this (calc(100vw - 340px)) overlapped the
+// control rail live once the actual numbers did not match what 340
+// assumed. left/top sit just clear of #status (top-left) rather than the
+// legend now that the legend hides for every panel including flow (no
+// legend visible to anchor against at open time in the common case); width
+// stops short of #controls' own left edge, height reaches the bottom of
+// the viewport - the same free-area idea visibleRegion() already applies
+// to the graph itself, applied here to a panel instead.
+// #flow is the one panel that shows genuinely different shapes of content
+// (Insights, a rule flowchart, an inert-app summary, an unreferenced local
+// variable) - only Insights should use the large shared display area, per
+// Gordon's explicit correction live ("the workflow panel must remain as it
+// was"). Called right before bringToFront(flowPanel) at every one of
+// #flow's four opening call sites, so sizeModernPanel() (which reads
+// modernPanelLarge) always sees the right mode for what is about to show.
+function setFlowSizeMode(large) {
+  flowPanel.classList.toggle('modernPanelLarge', large);
+  flowPanel.classList.toggle('flowClassicSize', !large);
+  // sizeModernPanel() only ever set width for the large case (height is now
+  // always set, both modes - see its own comment), and had no reason to
+  // clear it again, so once #flow had been opened large even once its
+  // inline width stuck around afterwards. CSS max-width then merely capped
+  // that leftover value instead of the panel ever going back to
+  // shrink-wrapping its own content, so a narrow rule flowchart still
+  // rendered at the full 900px cap - most of it empty space - instead of
+  // the width its own content actually needs. Clearing it here hands width
+  // back to .flowClassicSize's max-width and the content itself, exactly as
+  // if the panel had never been large at all.
+  if (!large) {
+    flowPanel.style.width = '';
+    if (!startFlowItemIfNew()) {
+      restoreFlowUserPosition();
+      applyFlowUserSize();
+    }
+  } else if (flowUserSize) {
+    // Insights sizes itself to the full work area. A size chosen for the
+    // normal view is not carried into it, so remember where the normal view
+    // was, once, and give the panel the measured sizing of a first open.
+    if (!flowUserPosition) flowUserPosition = { left: flowPanel.style.left, top: flowPanel.style.top };
+    clearFlowInlineSize();
+    sizeModernPanel(flowPanel);
+  }
+  if (large) clearFlowZoomStyle(); else applyFlowZoom();
+}
+function sizeModernPanel(panel) {
+  const statusEl = document.getElementById('status');
+  const controlsEl = document.getElementById('controls');
+  const statusRect = statusEl ? statusEl.getBoundingClientRect() : null;
+  const controlsRect = controlsEl ? controlsEl.getBoundingClientRect() : null;
+  const gap = 14;
+  const left = 10;
+  // Classic-mode #flow is the one panel that opens with the legend still
+  // visible beside it (syncLegendVisibility), so status-bar-only positioning
+  // put it directly on top of the legend - same left:10px corner, same
+  // area, legend simply painted underneath. Give it the legend's actual
+  // bottom edge too (rect stays accurate even mid-transition, since
+  // visibility:hidden still lays the legend out) so it opens below the
+  // legend instead of over it, whatever the legend's current content height.
+  const legendEl = document.getElementById('legend');
+  const isFlowClassic = panel === flowPanel && !panel.classList.contains('modernPanelLarge');
+  const legendBottom = (isFlowClassic && legendEl) ? legendEl.getBoundingClientRect().bottom : 0;
+  const top = Math.max(statusRect ? statusRect.bottom : 45, legendBottom) + gap;
+  panel.style.left = left + 'px';
+  panel.style.top = top + 'px';
+  // A large panel keeps a fixed height: it is a full-area workspace and should
+  // fill it. Classic #flow instead shrinks to its own content and caps, so a
+  // short panel ends where its content ends rather than trailing into dead
+  // space down to the viewport bottom.
+  //
+  // Why max-height works here when .flowClassicSize's own max-height:90vh did
+  // not: 90vh is measured against the viewport, not against where this panel
+  // starts, so a panel opening at top:300px could still be 90vh tall and spill
+  // past the bottom - which is the failure the always-set height was added to
+  // fix. This value is the actual space remaining below `top`, so the cap binds
+  // at the right place, the container height becomes definite once content
+  // exceeds it, and .panelBody's flex:1 + min-height:0 + overflow:auto scrolls
+  // exactly as before.
+  const available = Math.max(200, window.innerHeight - top - 10);
+  if (panel.classList.contains('modernPanelLarge')) {
+    panel.style.maxHeight = '';
+    panel.style.height = available + 'px';
+  } else {
+    panel.style.height = '';
+    panel.style.maxHeight = available + 'px';
+  }
+  // Width stays classic mode's own business - only the large-area case
+  // (.modernPanelLarge) forces one. #flow in its classic mode (a rule
+  // flowchart/inert app/unreferenced variable, .flowClassicSize instead)
+  // sizes its width from its own CSS max-width and its actual content, same
+  // as before backlog item 1's "unify all five panels" change gave it a
+  // forced pixel size it was never meant to have.
+  if (!panel.classList.contains('modernPanelLarge')) return;
+  const rightEdge = controlsRect ? controlsRect.left : (window.innerWidth - 320);
+  panel.style.width = Math.max(200, rightEdge - left - gap) + 'px';
+}
+function makePanelDraggable(panel, header) {
+  if (!header || !panel || typeof panel.getBoundingClientRect !== 'function') return;
+  let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+  header.addEventListener('mousedown', function (e) {
+    // The close button lives inside this same bar - a click there must
+    // close the panel, not start a drag.
+    if (e.target.closest('.panelClose')) return;
+    dragging = true;
+    panelCustomPosition.set(panel, true);
+    const rect = panel.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    startLeft = rect.left; startTop = rect.top;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    panel.style.left = (startLeft + (e.clientX - startX)) + 'px';
+    panel.style.top = (startTop + (e.clientY - startY)) + 'px';
+  });
+  document.addEventListener('mouseup', function () {
+    if (!dragging) return;
+    dragging = false;
+    // Dragging only moves the panel, never resizes it, so the
+    // ResizeObserver watchOverlayGeometry() relies on elsewhere never
+    // fires for this - but visibleRegion() decides free canvas space from
+    // every panel's own position too, not just its size, so a narrowed
+    // view can genuinely have more or less room after a drag. One fit once
+    // the drag actually ends, not on every mousemove.
+    fitCurrentView();
+  });
+}
+makePanelDraggable(flowPanel, document.getElementById('flowHeader'));
+// Flow panel resize (v2.2.9). The normal flow view can carry a lot of data, so
+// it can be resized from its corner grip as well as dragged by its header. A
+// user size lasts for the page session, the same as a dragged position, and is
+// never carried into the full-area Insights view, which sizes itself.
+// Double-clicking the header puts size and position back to their defaults.
+// var rather than let: setFlowSizeMode reads this, and a let would throw if a
+// panel ever opened before this line had run.
+var flowUserSize = null;
+// Where the normal view was when Insights re-placed the panel, so returning
+// from Insights puts it back rather than leaving it at the Insights position.
+var flowUserPosition = null;
+// The item the normal view was last placed for, and the item now being shown.
+// When they differ a new item was picked, and the panel starts again from the
+// default position.
+var flowItemId = null;
+var flowShownItemId = null;
+const FLOW_MIN_WIDTH = 280;
+const FLOW_MIN_HEIGHT = 160;
+
+function clampFlowSize(width, height, rect) {
+  const maxWidth = Math.max(FLOW_MIN_WIDTH, window.innerWidth - rect.left - 10);
+  const maxHeight = Math.max(FLOW_MIN_HEIGHT, window.innerHeight - rect.top - 10);
+  return {
+    width: Math.round(Math.min(Math.max(width, FLOW_MIN_WIDTH), maxWidth)),
+    height: Math.round(Math.min(Math.max(height, FLOW_MIN_HEIGHT), maxHeight))
+  };
+}
+
+function applyFlowUserSize() {
+  if (!flowUserSize) return;
+  // The normal view caps its width to the left column and its height to the
+  // space below it. A size the user chose deliberately replaces both caps, and
+  // the text sections follow it instead of staying column-narrow.
+  flowPanel.classList.add('flowUserSized');
+  flowPanel.style.maxWidth = 'none';
+  flowPanel.style.maxHeight = 'none';
+  flowPanel.style.width = flowUserSize.width + 'px';
+  flowPanel.style.height = flowUserSize.height + 'px';
+}
+
+function clearFlowInlineSize() {
+  flowPanel.classList.remove('flowUserSized');
+  flowPanel.style.maxWidth = '';
+  flowPanel.style.maxHeight = '';
+  flowPanel.style.width = '';
+  flowPanel.style.height = '';
+}
+
+function makeFlowResizable(panel, grip) {
+  if (!grip || !panel || typeof panel.getBoundingClientRect !== 'function') return;
+  let resizing = false, startX = 0, startY = 0, startWidth = 0, startHeight = 0;
+  grip.addEventListener('mousedown', function (e) {
+    if (panel.classList.contains('modernPanelLarge')) return;
+    resizing = true;
+    const rect = panel.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    startWidth = rect.width; startHeight = rect.height;
+    // Keep the panel where it is on its next open, as a drag does. Without
+    // this the first-open sizing would cap the new height straight back.
+    panelCustomPosition.set(panel, true);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!resizing) return;
+    flowUserSize = clampFlowSize(startWidth + (e.clientX - startX), startHeight + (e.clientY - startY),
+      panel.getBoundingClientRect());
+    applyFlowUserSize();
+  });
+  document.addEventListener('mouseup', function () {
+    resizing = false;
+  });
+}
+
+function restoreFlowUserPosition() {
+  if (!flowUserPosition) return;
+  flowPanel.style.left = flowUserPosition.left;
+  flowPanel.style.top = flowUserPosition.top;
+  flowUserPosition = null;
+  clampFlowPosition();
+  // The window may have changed while Insights was open.
+  if (flowUserSize) flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
+}
+
+// Called wherever an item opens in the flow panel, before the panel is sized.
+function noteFlowItem(node) {
+  flowShownItemId = node && node.id !== undefined && node.id !== null ? String(node.id) : null;
+}
+
+function flowStylePosition() {
+  return { left: parseFloat(flowPanel.style.left) || 0, top: parseFloat(flowPanel.style.top) || 0 };
+}
+
+// The header is the only way to move the panel back, so it may never sit off
+// screen, in either view of this panel. Reads the inline position rather than
+// the rendered box, so it works while the panel is still hidden.
+function clampFlowPosition() {
+  const header = document.getElementById('flowHeader');
+  const headerHeight = (header && header.offsetHeight) || 40;
+  const width = flowPanel.offsetWidth || parseFloat(flowPanel.style.width) || 375;
+  const pos = flowStylePosition();
+  const left = Math.round(Math.min(Math.max(pos.left, 0), Math.max(0, window.innerWidth - width)));
+  const top = Math.round(Math.min(Math.max(pos.top, 0), Math.max(0, window.innerHeight - headerHeight)));
+  const changed = left !== Math.round(pos.left) || top !== Math.round(pos.top);
+  flowPanel.style.left = left + 'px';
+  flowPanel.style.top = top + 'px';
+  return changed;
+}
+
+// Every newly picked item starts the normal view at its default size and position,
+// so its edges line up with the legend. Only reopening the same item keeps a chosen size.
+// Keyed on the item actually shown, not on focusGenerationSeq, which also moves
+// when the panel is closed or replaced by Insights. Reopening the same item leaves
+// the position alone. Returns true when it placed the panel.
+function startFlowItemIfNew() {
+  if (flowItemId === flowShownItemId) return false;
+  flowItemId = flowShownItemId;
+  flowUserPosition = null;
+  flowUserSize = null;
+  // Zoom is part of the default layout, exactly as resetFlowPanelLayout()
+  // treats it. Without this a new item kept the previous item's zoom, which
+  // looks like the panel failing to go back to its default size - the chosen
+  // size was cleared but the content was still being scaled.
+  flowZoom = 1;
+  clearFlowZoomStyle();
+  clearFlowInlineSize();
+  panelCustomPosition.delete(flowPanel);
+  return true;
+}
+
+function resetFlowPanelLayout() {
+  flowUserSize = null;
+  flowUserPosition = null;
+  flowZoom = 1;
+  clearFlowZoomStyle();
+  panelCustomPosition.delete(flowPanel);
+  clearFlowInlineSize();
+  sizeModernPanel(flowPanel);
+}
+
+makeFlowResizable(flowPanel, document.getElementById('flowResize'));
+
+const flowResizeHeader = document.getElementById('flowHeader');
+if (flowResizeHeader) {
+  flowResizeHeader.addEventListener('dblclick', function (e) {
+    if (e.target.closest('.panelClose')) return;
+    resetFlowPanelLayout();
+  });
+}
+
+// Keeps the header inside the window while it is being dragged. These run after
+// makePanelDraggable has moved the panel, because they were registered after it,
+// so the shared drag helper and the other panels are left exactly as they were.
+let flowHeaderDragging = false;
+if (flowResizeHeader) {
+  flowResizeHeader.addEventListener('mousedown', function (e) {
+    if (!e.target.closest('.panelClose')) flowHeaderDragging = true;
+  });
+}
+document.addEventListener('mousemove', function () {
+  if (flowHeaderDragging) clampFlowPosition();
+});
+document.addEventListener('mouseup', function () {
+  if (!flowHeaderDragging) return;
+  flowHeaderDragging = false;
+  // The drag helper has already re-fitted the map; do it again only if the
+  // clamp moved the panel afterwards.
+  if (clampFlowPosition()) fitCurrentView();
+});
+
+// A smaller window could otherwise leave the header or the grip out of reach.
+window.addEventListener('resize', function () {
+  if (flowPanel.style.display !== 'flex') return;
+  clampFlowPosition();
+  if (!flowUserSize || flowPanel.classList.contains('modernPanelLarge')) return;
+  flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
+  applyFlowUserSize();
+});
+// Panel zoom. Ctrl with the mouse wheel over the normal flow view zooms its
+// content instead of the whole page, which a large flowchart needs. Held while
+// the same item stays open and cleared when a new one is picked, exactly like a
+// chosen size, reset by the header double-click, and not applied to the
+// full-area Insights view. The zoom sits on a wrapper inside the
+// scrolling body: zooming the body itself would grow the panel, not its content.
+var flowZoom = 1;
+const FLOW_ZOOM_MIN = 0.5;
+const FLOW_ZOOM_MAX = 2.5;
+
+function applyFlowZoom() {
+  const inner = document.getElementById('flowZoom');
+  if (!inner) return;
+  inner.style.zoom = flowZoom === 1 ? '' : String(flowZoom);
+  flowPanel.classList.toggle('flowZoomed', flowZoom !== 1);
+}
+
+function clearFlowZoomStyle() {
+  const inner = document.getElementById('flowZoom');
+  if (inner) inner.style.zoom = '';
+  flowPanel.classList.remove('flowZoomed');
+}
+
+function nextFlowZoom(current, deltaY) {
+  // One mouse wheel notch is about 100; a trackpad pinch sends many small steps.
+  const step = Math.max(-200, Math.min(200, deltaY));
+  const next = current * Math.pow(1.0015, -step);
+  return Math.round(Math.min(FLOW_ZOOM_MAX, Math.max(FLOW_ZOOM_MIN, next)) * 100) / 100;
+}
+
+function handleFlowWheel(e) {
+  if (!e.ctrlKey || flowPanel.classList.contains('modernPanelLarge')) return;
+  e.preventDefault();
+  const previous = flowZoom;
+  flowZoom = nextFlowZoom(flowZoom, e.deltaY);
+  if (flowZoom === previous) return;
+  const body = document.getElementById('flowBody');
+  if (!body) { applyFlowZoom(); return; }
+  // Keep the content under the pointer in place as it grows or shrinks.
+  const box = body.getBoundingClientRect();
+  const offsetX = e.clientX - box.left;
+  const offsetY = e.clientY - box.top;
+  const contentX = body.scrollLeft + offsetX;
+  const contentY = body.scrollTop + offsetY;
+  applyFlowZoom();
+  const ratio = flowZoom / previous;
+  body.scrollLeft = contentX * ratio - offsetX;
+  body.scrollTop = contentY * ratio - offsetY;
+}
+
+// Non-passive, or the browser ignores preventDefault and zooms the page anyway.
+if (typeof flowPanel.addEventListener === 'function') {
+  flowPanel.addEventListener('wheel', handleFlowWheel, { passive: false });
+}
+// End flow panel resize.
+// Legend is entirely static markup - no *Load() function, nothing to fetch
+// or rebuild on open - so declared here rather than beside ext/pivot/icons's
+// own dynamic-render code further down the file.
+const legendPanel = document.getElementById('legendPanel') || { style: {} };
 
 // The four floating panels (flow/Insights, External systems, Pivot tables,
 // Device icons) started with fixed CSS z-index values, so whichever one
@@ -8398,12 +12796,13 @@ const flowChart = document.getElementById('flowChart') || document.createElement
 // whole script has already finished its first pass and all of them exist -
 // same as every other forward reference in this file.
 //
-// The collapsed legend is one line sitting entirely above where these panels
-// start (top:100px, well below its own ~93px bottom edge), so it no longer
-// needs to hide for a panel the way it used to - only the expanded legend is
-// still tall enough to run behind panel content (the original "ghost text
-// across the table" problem this hiding was built for). Hint has no
-// collapsed form, so it keeps hiding for any open panel same as before.
+// Correction, same day: the legend hiding itself while a panel is open was
+// tried and explicitly rejected live - Gordon wants the legend to stay put
+// regardless of what else is open, not disappear. #flow is what moved
+// instead (see its own CSS - floating/centred rather than corner-pinned at
+// the legend's own top:10px/left:10px corner), so the two no longer share
+// space in the first place and neither needs to hide for the other. #hint
+// still hides for any open panel, unchanged from before any of this.
 ${''}
 // Single source of truth for panel coordination - bringToFront,
 // syncLegendVisibility and closeSecondaryPanels all read it, so a new panel is
@@ -8412,16 +12811,29 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
   const lg = document.getElementById('legend');
   const hn = document.getElementById('hint');
+  // Every panel hides the legend while open, EXCEPT #flow specifically
+  // when it is in its classic size mode (a rule flowchart, inert app, or
+  // unreferenced local variable - see setFlowSizeMode()). That mode is
+  // small and positioned to stay clear of the legend's own corner, same as
+  // it was before this session's "unify all five panels" change - Gordon
+  // caught this regression live: reverting #flow's classic mode back to
+  // its old size (a separate, earlier fix) left this function still
+  // hiding the legend for it anyway, because the comment this replaced
+  // was written when every #flow open was still the large case and had no
+  // reason to distinguish. #flow in its large mode (Insights) still hides
+  // the legend, same as every other panel.
   const panelOpen = allPanels().some(function (p) {
-    return p && getComputedStyle(p).display !== 'none';
+    if (!p || getComputedStyle(p).display === 'none') return false;
+    if (p === flowPanel && !flowPanel.classList.contains('modernPanelLarge')) return false;
+    return true;
   });
-  if (lg) lg.style.visibility = (panelOpen && !lg.classList.contains('collapsed')) ? 'hidden' : '';
+  if (lg) lg.style.visibility = panelOpen ? 'hidden' : '';
   if (hn) hn.style.visibility = panelOpen ? 'hidden' : '';
 }
 
@@ -8432,12 +12844,25 @@ function syncLegendVisibility() {
 // way, and only in one place.
 let panelTopZ = 30;
 function bringToFront(panel) {
+  // Opening any other panel hides the flow panel, so a render still pending
+  // for the flow panel must not come back and replace it.
+  if (panel !== flowPanel) beginSelectionGeneration();
   allPanels().forEach(function (p) {
     if (p && p !== panel) p.style.display = 'none';
   });
   panelTopZ += 1;
   panel.style.zIndex = panelTopZ;
-  panel.style.display = 'block';
+  // Sized/positioned against the real status pill and control rail, first
+  // open only for each individual panel - see sizeModernPanel()/
+  // panelCustomPosition's own comments for why this doesn't run again once
+  // the user has dragged that panel.
+  if (panel.classList && panel.classList.contains('modernPanel') && !panelCustomPosition.get(panel)) sizeModernPanel(panel);
+  // flex, not block: every panel is now display:flex; flex-direction:column
+  // (backlog item 1 Phase 2) so its .panelBody can be the one child that
+  // scrolls while the title/close stay fixed - block would still render the
+  // panel, but the column layout and .panelBody's flex:1 sizing depend on
+  // the parent actually being a flex container.
+  panel.style.display = 'flex';
   syncLegendVisibility();
   // The panel now covers part of the canvas, so a narrowed view needs
   // re-framing into what is left. No-ops on the whole-hub map.
@@ -8452,19 +12877,60 @@ function bringToFront(panel) {
 // So it gets a panel of its own: what the hub says it holds, and a way through
 // to whatever it holds. For a container that turns a dead end into the most
 // direct route to its children on the whole map.
+function setFlowSub(text, isWebcoreNotice) {
+  const el = document.getElementById('flowSub');
+  el.textContent = text;
+  el.classList.toggle('webcoreNotice', !!isWebcoreNotice);
+  flowPanel.classList.remove('wcIndent');
+}
+
+// Called after setFlowSub, which clears the class unconditionally.
+function setFlowWebcoreIndent(node) {
+  const t = node && node.appType;
+  flowPanel.classList.toggle('wcIndent', t === 'webCoRE' || t === 'webCoRE Piston');
+}
+
+// v2.2.8: one message per real device-decode coverage outcome, replacing the
+// old blanket "no piston device relationships are ever shown" text now that
+// direct reads/actions are actually decoded per piston. Deliberately free of
+// apostrophes and other non-ASCII punctuation - a stray one already broke
+// two other UI strings (v2.2.7) once shipped.
+function webcorePistonDeviceCoverageMessage(node) {
+  const coverage = node.webcoreDeviceRelationshipCoverage;
+  if (coverage === 'error') {
+    return 'This piston device configuration could not be decoded safely. Saved Hub Variable and local variable relationships, when present, are still shown below.';
+  }
+  if (coverage === 'complete') {
+    return 'Direct device reads and actions below are decoded from saved configuration. A read in an event or a condition is shown under the trigger or constraint role the piston decoded it in; a read anywhere else, such as an expression or a task parameter, is shown as an unattributed device read.';
+  }
+  if (coverage === 'partial') {
+    return 'Some direct device reads or actions below are decoded from saved configuration. At least one device reference in this piston could not be resolved and is not shown - see Insights for the coverage gap.';
+  }
+  return 'This piston has saved device configuration with no direct physical-device read or action found in it. A variable-backed or runtime-selected device reference, if present, is not decoded.';
+}
+
 function showInertPanel(node) {
-  document.getElementById('flowTitle').textContent = node.title;
+  document.getElementById('flowTitle').textContent = appOptionText(node);
   // Two different findings that used to render identically: a fetch that
   // threw leaves the same empty roles/ruleLinks/endpoints as an app that
   // genuinely references nothing, but "the hub would not answer" and "this
   // app really does nothing" are not the same thing to tell a user.
-  document.getElementById('flowSub').textContent = node.unreadable ?
+  // v2.2.8: a webCoRE piston only ever reaches this panel when its own
+  // device decode was clean AND found genuinely zero device operands (see
+  // webcorePistonHasDeviceEvidence in buildGraph) - an ordinary, unremarkable
+  // finding, not a coverage gap, so it does not need the red notice styling.
+  setFlowSub(node.unreadable ?
     'The hub could not answer for this app during the scan. What it references is unknown, not empty - rescan to try again.' :
-    'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.';
+    (node.webcoreDeviceRelationshipsSuppressed && node.appType === 'webCoRE' ?
+      'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.' :
+      (node.appType === 'webCoRE Piston' ?
+        'This piston has saved configuration that was fully decoded and genuinely references no device, Hub Variable or declared local variable.' :
+        'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.')), false);
+  setFlowWebcoreIndent(node);
 
   let html = node.unreadable ?
     '<h3>Could not be read</h3><p class="sub">' + extEsc(node.errorDetail || 'No further detail was recorded.') + '</p>' :
-    '<h3>' + extEsc(node.reason || 'References nothing') + '</h3>';
+    ((node.reason && node.title.indexOf('(' + node.reason + ')') >= 0) ? '' : '<h3>' + extEsc(node.reason || 'References nothing') + '</h3>');
   const facts = [];
   if (node.sched) facts.push(node.sched + ' scheduled job' + (node.sched === 1 ? '' : 's'));
   if (node.subs) facts.push(node.subs + ' event subscription' + (node.subs === 1 ? '' : 's'));
@@ -8532,7 +12998,10 @@ function showInertPanel(node) {
   // evidence included) correctly clears the container via that function's
   // own empty-state branch, not a separate ad hoc clear here.
   renderRuleVariablesCard(node.id);
+  noteFlowItem(node);
+  renderDecodeCoverageCard(node);
   renderCommunityCard(node);
+  setFlowSizeMode(false);
   bringToFront(flowPanel);
 }
 
@@ -8545,21 +13014,23 @@ function showInertPanel(node) {
 // growing app-shaped fields that make no sense on a variable.
 function showUnreferencedLocalPanel(node) {
   const owner = ALL_NODES.filter(function (n) { return n.id === node.ownerAppId; })[0];
-  document.getElementById('flowTitle').textContent = node.title + ' (Local Variable)';
-  document.getElementById('flowSub').textContent = 'Declared in ' + (owner ? owner.title : 'a rule no longer on this map') + '.';
+  document.getElementById('flowTitle').textContent = localVarOptionText(node);
+  setFlowSub(owner ? '' : 'The rule that declared it is no longer on this map.', false);
   flowChart.innerHTML = '<p class="sub">No proven decoded reference in this rule - not read in a trigger, condition or action, and not written.</p>';
   // Both correctly no-op on a non-rule/non-app node (their own group checks
   // already handle that) - called anyway so switching here from a rule with
   // stale content in either card actually clears it, the same discipline
   // the review 296 correction established for showInertPanel above.
   renderRuleVariablesCard(node.id);
+  noteFlowItem(node);
+  renderDecodeCoverageCard(node);
   renderCommunityCard(node);
+  setFlowSizeMode(false);
   bringToFront(flowPanel);
 }
 
 function showFlow(appId) {
-  // Captured after focusNode() has already bumped it for the selection that
-  // led here - see focusGenerationSeq's own comment for why this exists.
+  // Captured after the caller began this selection's generation.
   const mySelectionSeq = focusGenerationSeq;
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
@@ -8570,22 +13041,38 @@ function showFlow(appId) {
     // or not (this used to just hide the panel and show nothing at all,
     // which is exactly what selecting an app like LIFX Light Manager did
     // before the card existed).
-    document.getElementById('flowTitle').textContent = node ? node.title : 'App details';
-    document.getElementById('flowSub').textContent = 'This app has no decoded rule flow to show.';
+    document.getElementById('flowTitle').textContent = node ? appOptionText(node) : 'App details';
+    const isPistonNotice = node && node.appType === 'webCoRE Piston';
+    // v2.2.8: direct device reads/actions are now decoded per piston - only
+    // the coverage gaps ('partial'/'error') still read as an attention-
+    // worthy notice; 'complete' and 'none' are both ordinary outcomes, not
+    // something to flag in red.
+    // Red only for a real coverage gap. The webCoRE parent sentence is an explanation, not a fault.
+    const isWebcoreNotice = isPistonNotice &&
+      (node.webcoreDeviceRelationshipCoverage === 'partial' || node.webcoreDeviceRelationshipCoverage === 'error');
+    setFlowSub(isPistonNotice
+      ? webcorePistonDeviceCoverageMessage(node)
+      : (node && node.appType === 'webCoRE' && node.webcoreDeviceRelationshipsSuppressed
+        ? 'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.'
+        : 'This app has no decoded rule flow to show.'), isWebcoreNotice);
+    setFlowWebcoreIndent(node);
     flowChart.innerHTML = '';
     // Gate C (v2.1.4): a rule can have variable evidence even when its step
     // sequence itself could not be decoded (or genuinely has none) - shown
     // regardless of which branch of this function is taken.
     renderRuleVariablesCard(appId);
+    noteFlowItem(node);
+    renderDecodeCoverageCard(node);
     renderCommunityCard(node);
+    setFlowSizeMode(false);
     bringToFront(flowPanel);
     return;
   }
-  document.getElementById('flowTitle').textContent = node ? node.title : 'Rule flow';
+  document.getElementById('flowTitle').textContent = node ? appOptionText(node) : 'Rule flow';
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
   // backslash-escaped quote is consumed by Groovy and ends the JS string early -
   // a syntax error that kills the entire page.
-  document.getElementById('flowSub').textContent = 'Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.';
+  setFlowSub('Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
@@ -8596,13 +13083,19 @@ function showFlow(appId) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
     renderRuleVariablesCard(appId);
+    noteFlowItem(node);
+    renderDecodeCoverageCard(node);
     renderCommunityCard(node);
+    setFlowSizeMode(false);
     bringToFront(flowPanel);
   }).catch(function (err) {
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.textContent = 'Could not render this rule: ' + err.message;
     renderRuleVariablesCard(appId);
+    noteFlowItem(node);
+    renderDecodeCoverageCard(node);
     renderCommunityCard(node);
+    setFlowSizeMode(false);
     bringToFront(flowPanel);
   });
 }
@@ -8621,10 +13114,35 @@ function renderRuleVariablesCard(appId) {
   const rv = RULE_VARIABLES[appId];
   const refs = (rv && rv.variableReferences) || [];
   const nonResolved = (rv && rv.nonResolvedVariableReferences) || [];
-  if (!refs.length && !nonResolved.length) { box.innerHTML = ''; return; }
+  const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
+  const webcoreVariableEdges = ALL_EDGES.filter(function (e) {
+    if (!(node && node.appType === 'webCoRE Piston' && e.from === appId)) return false;
+    if (!(e.kind === 'read' || e.kind === 'write' || e.kind === 'usesVar')) return false;
+    // Hub targets only: this list is headed "Hub" and hard-codes [HVR], and a
+    // piston's own locals are already rendered by the generic Local section.
+    const t = ALL_NODES.filter(function (n) { return n.id === e.to; })[0];
+    return !!t && t.group === 'hubVariable';
+  }).map(function (e) {
+    const target = ALL_NODES.filter(function (n) { return n.id === e.to; })[0];
+    return { name: target ? target.title : e.to, operation: e.kind };
+  }).sort(function (a, b) { return a.name.localeCompare(b.name) || a.operation.localeCompare(b.operation); });
+  // v2.2.8: direct device reads/actions, same generic edge list every other
+  // relationship on this card already reads from - deviceRead is from:
+  // app, to: device (matching the generic device-role edge convention);
+  // action here is indistinguishable from a Rule Machine action edge by
+  // design, since both mean the same thing.
+  const webcoreDeviceEdges = ALL_EDGES.filter(function (e) {
+    return node && node.appType === 'webCoRE Piston' && e.from === appId &&
+      (e.kind === 'deviceRead' || e.kind === 'action');
+  }).map(function (e) {
+    const target = ALL_NODES.filter(function (n) { return n.id === e.to; })[0];
+    return { name: target ? target.title : e.to, icon: target ? target.icon : null, operation: e.kind, attribute: e.attribute, commands: e.commands };
+  }).sort(function (a, b) { return a.name.localeCompare(b.name) || a.operation.localeCompare(b.operation); });
+  const webcoreIssue = node && node.webcoreVariableDecodeError;
+  if (!refs.length && !nonResolved.length && !webcoreVariableEdges.length && !webcoreDeviceEdges.length && !webcoreIssue) { box.innerHTML = ''; return; }
 
   // tag is the same [XXX] convention as the Focus dropdowns (queue 305/306) -
-  // LOC/HVR reflect only the already-proven scope filter below, never guessed.
+  // LOC/WCV/HVR reflect only the already-proven scope filter below, never guessed.
   function line(name, operation, usageRole, tag) {
     const op = operation === 'write' ? 'writes' : 'reads';
     const role = usageRole ? ' (' + extEsc(usageRole) + ')' : '';
@@ -8632,27 +13150,60 @@ function renderRuleVariablesCard(appId) {
     return '<li>' + prefix + extEsc(name) + ' - ' + op + role + '</li>';
   }
 
-  const localItems = refs.filter(function (r) { return r.scope === 'local'; })
-    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'LOC'); });
-  const hubItems = refs.filter(function (r) { return r.scope === 'hub'; })
+  // One visible row per variable, operation and role. The saved references stay one
+  // per field for evidence and export; only identical visible rows are merged here.
+  function distinctBy(list, keyOf) {
+    const seen = {};
+    return list.filter(function (r) {
+      const key = keyOf(r);
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+  const referenceKey = function (r) { return JSON.stringify([r.scope, r.canonicalName || r.name, r.operation, r.usageRole || null]); };
+
+  const localItems = distinctBy(refs.filter(function (r) { return r.scope === 'local'; }), referenceKey)
+    .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, localVarTag(appId)); });
+  const hubItems = distinctBy(refs.filter(function (r) { return r.scope === 'hub'; }), referenceKey)
     .map(function (r) { return line(r.canonicalName || r.name, r.operation, r.usageRole, 'HVR'); });
-  const reviewItems = nonResolved.map(function (r) {
+  const reviewItems = distinctBy(nonResolved, function (r) { return JSON.stringify([r.name, r.operation, r.status]); }).map(function (r) {
     const reason = r.status === 'ambiguous' ? 'scope not distinguishable from configuration' : 'no matching definition found';
     return '<li>' + extEsc(r.name) + ' - ' + (r.operation === 'write' ? 'writes' : 'reads') + ', ' + reason + '</li>';
   });
 
-  if (!localItems.length && !hubItems.length && !reviewItems.length) { box.innerHTML = ''; return; }
+  if (!localItems.length && !hubItems.length && !reviewItems.length && !webcoreVariableEdges.length && !webcoreDeviceEdges.length && !webcoreIssue) { box.innerHTML = ''; return; }
 
-  let html = '<h4>Variables used by this rule</h4>';
+  let html = '<h4>Variables used by this automation</h4>';
   if (localItems.length) html += '<p class="sub">Local</p><ul>' + localItems.join('') + '</ul>';
   if (hubItems.length) html += '<p class="sub">Hub</p><ul>' + hubItems.join('') + '</ul>';
+  if (webcoreVariableEdges.length) {
+    html += '<p class="sub">Hub, decoded from webCoRE</p><ul>' + webcoreVariableEdges.map(function (entry) {
+      const operation = entry.operation === 'write' ? 'writes' :
+        entry.operation === 'read' ? 'reads' : 'uses (direction unknown)';
+      return '<li>[HVR] ' + extEsc(entry.name) + ' - ' + operation + '</li>';
+    }).join('') + '</ul>';
+  }
+  if (webcoreDeviceEdges.length) {
+    html += '<p class="sub">Devices, decoded from webCoRE</p><ul>' + webcoreDeviceEdges.map(function (entry) {
+      const detail = entry.operation === 'deviceRead'
+        ? 'reads' + (entry.attribute ? ' (' + extEsc(entry.attribute) + ')' : '')
+        : 'commands' + (entry.commands && entry.commands.length ? ' (' + entry.commands.map(extEsc).join(', ') + ')' : '');
+      const devTag = '[' + (DEVICE_ICON_TAGS[entry.icon] || 'UNK') + '] ';
+      return '<li>' + devTag + extEsc(entry.name) + ' - ' + detail + '</li>';
+    }).join('') + '</ul>';
+  }
   if (reviewItems.length) html += '<p class="sub">Needs review</p><ul>' + reviewItems.join('') + '</ul>';
+  if (webcoreIssue) {
+    html += '<p class="sub">webCoRE Hub Variable references could not be decoded (' + extEsc(webcoreIssue) + '). Other mapped relationships for this piston remain valid.</p>';
+  }
   box.innerHTML = html;
 }
 
 const flowCloseBtn = document.getElementById('flowClose');
 if (flowCloseBtn) {
   flowCloseBtn.addEventListener('click', function () {
+    beginSelectionGeneration();
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     fitCurrentView();
@@ -8685,11 +13236,11 @@ const COMMUNITY_CONTEXT_AUTHORITY_LABELS = {
 const COMMUNITY_CONTEXT_LINK_LABELS = { record: 'Full record', documentation: 'Documentation', community: 'Community support', source: 'Source' };
 let communityContextPromise = null;
 let communityCardRequestSeq = 0;
-// Bumped once per focusNode() call, any selection type. Guards showFlow()'s
-// async Mermaid render: that promise can still be pending when a later
-// selection has changed the screen, and letting it write flowChart or reopen
-// the panel would silently restore a stale selection.
+// The one selection generation. Every path that selects, closes or replaces
+// the flow panel begins a new generation before touching the screen, so a
+// Mermaid render or coverage request started earlier knows it is stale.
 let focusGenerationSeq = 0;
+function beginSelectionGeneration() { focusGenerationSeq += 1; }
 
 // One request for the whole page view, whichever app is selected first -
 // later selections reuse this same promise (spec 3.2 steps 2-4).
@@ -8981,6 +13532,99 @@ function ccApplyClickable(box, url) {
   } : null;
 }
 
+// Decode coverage card (v2.2.9). On demand only: focusing a piston renders the
+// button and nothing else, and one press makes one request. Every label is plain
+// ASCII with no apostrophes, because this script lives inside a Groovy GString and
+// a stray quote has broken this page before. Dynamic text goes through extEsc.
+const COVERAGE_URL = amPickURL('${getLocalURL('webcore-decode-coverage')}', '${getCloudURL('webcore-decode-coverage')}');
+let coverageRequestSeq = 0;
+let coverageAppId = null;
+let coverageInFlight = false;
+
+// The graph node id carries an 'a' prefix; the hub app id does not.
+function coverageHubAppId(nodeId) {
+  const s = String(nodeId === null || nodeId === undefined ? '' : nodeId);
+  return s.charAt(0) === 'a' ? s.slice(1) : s;
+}
+
+function decodeCoverageResultHtml(body) {
+  // The chart is now the honest surface for what a piston does: anything not
+  // understood is drawn as a visible "not decoded" block. What the chart cannot
+  // show is a field this decoder has never seen - a webCoRE version saving
+  // something new - so that is all this reports, and only when it is non-zero.
+  const gaps = body.unrecognised || [];
+  const unknownTotal = gaps.length + (body.unrecognisedOverflow || 0);
+  const mismatches = body.structureFindings || [];
+  const mismatchTotal = mismatches.length + (Number(body.structureFindingsOverflow) || 0);
+  const total = unknownTotal + mismatchTotal;
+  if (!total && body.status !== 'truncated') return '';
+  if (body.status === 'truncated') {
+    return '<h4>Decode coverage</h4><p class="sub">A safety bound was reached before the whole piston was walked.</p>';
+  }
+  return '<h4>Decode coverage</h4><p class="sub">' + extEsc(total) + ' ' +
+    (total === 1 ? 'field' : 'fields') + ' not identified in the saved piston.</p>';
+}
+
+// Silent unless there is something to say. A piston with nothing unidentified, a
+// piston never saved, a busy or failed check - none of those are things a person
+// reading their automation can act on, and the chart already shows what is and
+// is not understood.
+function decodeCoverageOutcomeHtml(body) {
+  if (body.status === 'complete' || body.status === 'truncated') return decodeCoverageResultHtml(body);
+  return '';
+}
+
+// Called wherever the community card renders, so it resets on every selection.
+// Bumping the request sequence here is what makes a response for an earlier
+// selection arrive to nothing.
+function renderDecodeCoverageCard(node) {
+  const box = document.getElementById('decodeCoverageCard');
+  if (!box) return;
+  coverageRequestSeq++;
+  coverageInFlight = false;
+  if (!node || node.appType !== 'webCoRE Piston') {
+    coverageAppId = null;
+    box.innerHTML = '';
+    box.hidden = true;
+    return;
+  }
+  coverageAppId = node.id;
+  // No button. The only thing left worth reporting is a field this decoder has
+  // never seen, which a user cannot act on and should not have to ask for, so
+  // the check runs on selection and the card stays hidden unless it finds one.
+  box.hidden = true;
+  box.innerHTML = '';
+  requestDecodeCoverage();
+}
+
+function requestDecodeCoverage() {
+  const box = document.getElementById('decodeCoverageCard');
+  if (!box || !coverageAppId || coverageInFlight) return;
+  const mySelectionSeq = focusGenerationSeq;
+  const seq = ++coverageRequestSeq;
+  coverageInFlight = true;
+  const url = COVERAGE_URL + '&appId=' + encodeURIComponent(coverageHubAppId(coverageAppId));
+  fetch(url, { cache: 'no-store', credentials: 'omit' })
+    .then(function (resp) {
+      return resp.json().then(function (body) { return body; }, function () { return {}; });
+    })
+    .then(function (body) {
+      if (seq !== coverageRequestSeq || mySelectionSeq !== focusGenerationSeq) return;
+      coverageInFlight = false;
+      const html = decodeCoverageOutcomeHtml(body || {});
+      box.innerHTML = html;
+      box.hidden = !html;
+    })
+    .catch(function () {
+      if (seq !== coverageRequestSeq || mySelectionSeq !== focusGenerationSeq) return;
+      coverageInFlight = false;
+      // A check that could not run is a decoder problem, not something to
+      // interrupt someone reading a piston. It stays silent.
+      box.innerHTML = '';
+      box.hidden = true;
+    });
+}
+
 function renderCommunityCard(node) {
   const box = document.getElementById('communityCard');
   if (!box) return;
@@ -9029,6 +13673,15 @@ const APP_TYPE_TAGS = {
   'Button Rule-5.1': 'BTN',
   'Button Controller-5.1': 'BTN',
   'Button Controllers': 'BTN',
+  // webCoRE gets real tags rather than the CUS catch-all: CUS means this app
+  // has not been recognised, and a piston is now the most deeply decoded
+  // non-Rule-Machine type here. WCE is the parent engine holding pistons, WCP
+  // one piston, mirroring how Rule Machine and Rule-5.1 are tagged separately.
+  // Not INT: every INT app declares an external system and a depends edge,
+  // and webCoRE declares neither, so it would be the only one that depends on
+  // nothing external.
+  'webCoRE': 'WCE',
+  'webCoRE Piston': 'WCP',
   'Chromecast Integration': 'INT',
   'CoCoHue - Hue Bridge Integration': 'INT',
   'Google Home': 'INT',
@@ -9044,7 +13697,14 @@ const APP_TYPE_TAGS = {
   'Hubitat® Dashboard': 'HUB'
 };
 function appOptionText(n) {
-  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + n.title;
+  let title = n.title;
+  const typeSuffix = n.appType ? ' (' + n.appType + ')' : '';
+  if (typeSuffix && title.length > typeSuffix.length && title.slice(-typeSuffix.length) === typeSuffix) {
+    const head = title.slice(0, -typeSuffix.length);
+    // Only when the label is exactly the type name, as in Tapo Integration (Tapo Integration).
+    if (head === n.appType) title = head;
+  }
+  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + title;
 }
 
 // Same purely-decorative prefix for devices, reusing n.icon - the existing
@@ -9097,10 +13757,27 @@ function hubVarOptionText(n) {
 // runs once per dropdown render, not once per keystroke.
 const APP_TITLE_BY_ID = {};
 ALL_NODES.forEach(function (n) { if (n.group === 'app') APP_TITLE_BY_ID[n.id] = n.title; });
+// The one place a Local Variable's name and owner are split out of its node title,
+// so the dropdowns, Quick Search, the canvas and its panel all name the owner once.
+function localVarDisplay(n) {
+  const marker = ' (Local Variable in ';
+  const cut = n.title.indexOf(marker);
+  if (cut > 0 && n.title.slice(-1) === ')') return { name: n.title.slice(0, cut), owner: n.title.slice(cut + marker.length, -1) };
+  const owner = ALL_NODES.filter(function (a) { return a.id === n.ownerAppId; })[0];
+  return { name: n.title, owner: owner ? owner.title : 'an unknown rule' };
+}
+// A webCoRE piston local is tagged WCV and every other rule local LOC (Gordon, 2026-09-11).
+function localVarTag(ownerAppId) {
+  const owner = ALL_NODES.filter(function (a) { return a.id === ownerAppId; })[0];
+  return owner && owner.appType === 'webCoRE Piston' ? 'WCV' : 'LOC';
+}
 function localVarOptionText(n) {
-  const ownerTitle = APP_TITLE_BY_ID[n.ownerAppId] || 'an unknown rule';
-  const unused = n.unreferencedLocal ? ', unused' : '';
-  return '[LOC] ' + n.title + ' (in ' + ownerTitle + unused + ')';
+  const d = localVarDisplay(n);
+  return '[' + localVarTag(n.ownerAppId) + '] ' + d.name + ' (in ' + d.owner + (n.unreferencedLocal ? ', unused' : '') + ')';
+}
+function localVarCanvasText(n) {
+  const d = localVarDisplay(n);
+  return d.name + ' (in ' + d.owner + ')';
 }
 function pickOptionText(n, group) {
   if (group === 'app') return appOptionText(n);
@@ -9221,8 +13898,9 @@ function pickOptionText(n, group) {
       });
     }
 
-    // Filter on title only, keep the current selection visible even when it
-    // no longer matches - same contract fillSelect() used to guarantee.
+    // Filter on the text each row shows, so a visible tag such as [WCP] is
+    // searchable. Keep the current selection visible even when it no longer
+    // matches - same contract fillSelect() used to guarantee.
     function computeRows(term) {
       var q = (term || '').toLowerCase();
       var out = [];
@@ -9233,10 +13911,11 @@ function pickOptionText(n, group) {
       var shown = 0;
       for (var i = 0; i < items.length; i++) {
         var n = items[i];
-        if (q && String(n.title).toLowerCase().indexOf(q) < 0) { continue; }
+        var rowText = n.optionText != null ? n.optionText : n.title;
+        if (q && String(rowText).toLowerCase().indexOf(q) < 0) { continue; }
         out.push({
           value: n.id,
-          label: n.optionText != null ? n.optionText : n.title,
+          label: rowText,
           disabled: !!(n.disabled || n.paused)
         });
         seen[n.id] = true;
@@ -9508,6 +14187,20 @@ ${''}
 // Returns raw ids and maps: the panel wants display names and the export
 // wants {id,name} refs, so formatting stays with each renderer.
 function deriveInsightData() {
+  // v2.2.8: counts only the webCoRE device-decode issue codes that represent
+  // a genuine reconciliation gap (something this scan should have been able
+  // to resolve and could not) - a variable-backed or runtime-selected device
+  // reference is an expected, by-design coverage limit, not a gap, and must
+  // not make the scan read as incomplete. Local to this function (not a
+  // top-level helper) so the test harness's own extractFunction('deriveInsightData')
+  // - one function, brace-matched, evaluated standalone - keeps working
+  // without needing a second extraction entry.
+  const WEBCORE_DEVICE_RECONCILIATION_GAP_CODES = ['unresolved-device-hash', 'ambiguous-device-hash', 'missing-parent-device-index'];
+  function webcoreDeviceReconciliationGapCount(issues) {
+    return (issues || []).reduce(function (sum, issue) {
+      return sum + (issue.codes || []).filter(function (code) { return WEBCORE_DEVICE_RECONCILIATION_GAP_CODES.indexOf(code) !== -1; }).length;
+    }, 0);
+  }
   const missingIds = {};
   ALL_NODES.forEach(function (n) { if (n.missing) missingIds[n.id] = true; });
   const referencesTo = {};
@@ -9524,6 +14217,7 @@ function deriveInsightData() {
   const touched = {};
   const hubVarReaders = {};
   const hubVarWriters = {};
+  const hubVarUsers = {};
   ALL_EDGES.forEach(function (e) {
     touched[e.to] = true;
     if (e.kind === 'read') {
@@ -9532,6 +14226,9 @@ function deriveInsightData() {
     } else if (e.kind === 'write') {
       if (!hubVarWriters[e.to]) hubVarWriters[e.to] = [];
       if (hubVarWriters[e.to].indexOf(e.from) < 0) hubVarWriters[e.to].push(e.from);
+    } else if (e.kind === 'usesVar') {
+      if (!hubVarUsers[e.to]) hubVarUsers[e.to] = [];
+      if (hubVarUsers[e.to].indexOf(e.from) < 0) hubVarUsers[e.to].push(e.from);
     }
     if (e.kind !== 'action') return;
     if (!anyCommanders[e.to]) anyCommanders[e.to] = [];
@@ -9607,17 +14304,34 @@ function deriveInsightData() {
     hubVar: {
       readers: hubVarReaders,
       writers: hubVarWriters,
-      noDecodedUsage: hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id]; }),
+      users: hubVarUsers,
+      noDecodedUsage: hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id] && !hubVarUsers[id]; }),
       readersWithoutDecodedWriter: hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; }),
       writersWithoutDecodedReader: hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; }),
       multipleWriters: hubVarIds.filter(function (id) { return hubVarWriters[id] && hubVarWriters[id].length > 1; }),
-      unresolvedReferences: (GRAPH.hubVariableUnresolvedReferences || [])
+      directionUnknownUsage: hubVarIds.filter(function (id) { return !!hubVarUsers[id]; }),
+      unresolvedReferences: (GRAPH.hubVariableUnresolvedReferences || []),
+      webcoreDecodeIssues: (GRAPH.webcoreVariableDecodeIssues || [])
+    },
+    // v2.2.8: real device-decode coverage, replacing the fixed "device
+    // relationships are not decoded" era. codes distinguishes genuine
+    // reconciliation gaps (unresolved/ambiguous hash, missing parent index -
+    // something this scan should have been able to resolve and could not)
+    // from expected, by-design coverage limits (a variable-backed or
+    // runtime-selected device reference, which no static decode can ever
+    // resolve) - only the former counts toward scan.status below.
+    webcoreDevice: {
+      issues: (GRAPH.webcoreDeviceRelationshipIssues || [])
     },
     scan: {
       status: SCAN_META.scanError ? 'failed'
-        : ((SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0) ? 'complete-with-gaps' : 'complete'),
+        : ((SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0 ||
+            (GRAPH.webcoreVariableDecodeIssues || []).length > 0 ||
+            webcoreDeviceReconciliationGapCount(GRAPH.webcoreDeviceRelationshipIssues) > 0) ? 'complete-with-gaps' : 'complete'),
       appsUnreadable: SCAN_META.appsUnreadable || 0,
       devicesUnreadable: SCAN_META.devicesUnreadable || 0,
+      webcoreVariableDecodeIssues: (GRAPH.webcoreVariableDecodeIssues || []).length,
+      webcoreDeviceReconciliationGaps: webcoreDeviceReconciliationGapCount(GRAPH.webcoreDeviceRelationshipIssues),
       error: SCAN_META.scanError || null
     }
   };
@@ -9677,6 +14391,15 @@ function insightGuidance() {
         meaning: 'Decoded rules write this Hub Variable, but no decoded rule reads it.',
         normal: 'A dashboard, Connector or external integration may consume it without producing a decoded read edge.',
         next: 'Confirm whether anything outside the decoded rules still uses the value before removing the writer or variable.'
+      },
+      variableDirectionUnknown: {
+        meaning: 'A webCoRE piston references this Hub Variable, but its saved operand alone does not prove whether that occurrence reads or writes it.',
+        normal: 'The relationship is intentionally conservative. It confirms use without inventing a direction.',
+        next: 'Open the named piston if you need to distinguish how it uses the variable.'
+      },
+      webcoreVariableDecodeIssue: {
+        meaning: 'The piston was read, but its saved webCoRE variable configuration could not be decoded safely.',
+        next: 'Open and save the piston, then scan again. If the issue remains, record the fixed error code before changing anything.'
       },
       unresolvedVariableReference: {
         meaning: 'A decoded rule names a Hub Variable that is absent from the hub inventory.',
@@ -9810,7 +14533,8 @@ function buildInsights() {
   // --- Needs attention: only things genuinely wrong -----------------------
   const scanBad = D.scan.status !== 'complete';
   const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0) +
-    D.brokenApps.length + D.inactiveInvoked.length + D.disabledDevicesInUse.length;
+    D.brokenApps.length + D.inactiveInvoked.length + D.disabledDevicesInUse.length +
+    D.hubVar.webcoreDecodeIssues.length;
   let attentionBody = '';
   if (scanBad) {
     const what = D.scan.status === 'failed'
@@ -9840,6 +14564,13 @@ function buildInsights() {
     attentionBody += rows(D.disabledDevicesInUse,
       function (id) { return (D.disabledDeviceUsers[id] || []).length + ' automations'; },
       function (id) { return advice('disabledDeviceInUse') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.disabledDeviceUsers[id]) + '</p>'; });
+  }
+  if (D.hubVar.webcoreDecodeIssues.length) {
+    attentionBody += '<p class="insLead">' + D.hubVar.webcoreDecodeIssues.length + ' webCoRE piston(s) have saved variable configuration that could not be decoded safely.</p>' + advice('webcoreVariableDecodeIssue') + '<ul class="insPlain">';
+    D.hubVar.webcoreDecodeIssues.slice(0, 10).forEach(function (issue) {
+      attentionBody += '<li>' + extEsc(nameOf[issue.appId] || issue.appId) + ' <span class="sub">' + extEsc(issue.error || 'decode-failed') + '</span></li>';
+    });
+    attentionBody += '</ul>';
   }
 
   // --- Shared control to confirm: review prompts, not faults ---------------
@@ -9906,7 +14637,7 @@ function buildInsights() {
   // expected pattern.
   const inactiveQuiet = D.inactiveApps.filter(function (id) { return D.inactiveInvoked.indexOf(id) < 0; });
   const normalCount = D.readOnly.length + D.notifiedOnly.length + containers.length +
-    hv.noDecodedUsage.length + inactiveQuiet.length + D.unreferencedLocals.length;
+    hv.noDecodedUsage.length + hv.directionUnknownUsage.length + inactiveQuiet.length + D.unreferencedLocals.length;
   let normalBody = '';
   if (D.notifiedOnly.length) {
     normalBody += '<p class="insLead">' + D.notifiedOnly.length + ' device(s) are commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
@@ -9944,6 +14675,12 @@ function buildInsights() {
     normalBody += '<p class="insLead">' + hv.noDecodedUsage.length + ' hub variable(s) have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode.</p>';
     normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, function () { return advice('variableWithoutDecodedUsage'); });
   }
+  if (hv.directionUnknownUsage.length) {
+    normalBody += '<p class="insLead">' + hv.directionUnknownUsage.length + ' hub variable(s) are referenced by webCoRE with direction intentionally left unknown.</p>';
+    normalBody += rows(hv.directionUnknownUsage,
+      function (id) { return hv.users[id].length + ' webCoRE piston' + (hv.users[id].length === 1 ? '' : 's'); },
+      function (id) { return advice('variableDirectionUnknown') + '<p class="sub"><b>Used by:</b> ' + appLinks(hv.users[id]) + '</p>'; });
+  }
 
   // --- Assemble ------------------------------------------------------------
   const cards = [
@@ -9977,12 +14714,17 @@ function buildInsights() {
 }
 
 document.getElementById('insightsBtn').addEventListener('click', function () {
+  beginSelectionGeneration();
   document.getElementById('flowTitle').textContent = 'Automation health';
-  document.getElementById('flowSub').textContent = '';
+  setFlowSub('', false);
   flowChart.innerHTML = buildInsights();
   // Every other write to flowChart pairs it with this - Insights was the one
   // gap, leaving a previously-focused app's community card visible under it.
+  renderDecodeCoverageCard(null);
+  const varsBox = document.getElementById('ruleVariablesCard');
+  if (varsBox) varsBox.innerHTML = '';
   renderCommunityCard(null);
+  setFlowSizeMode(true);
   bringToFront(flowPanel);
 });
 
@@ -10158,7 +14900,6 @@ function pivotRunCustom() {
 // the shell was already there from a previous open this page load.
 function pivotOpen() {
   pivotBody.innerHTML =
-    '<h3>Pivot tables</h3>' +
     '<p class="sub">Cross-reference what is already on the map - presets on the left, or build your own on the right. Both read the same relationships already drawn, so nothing here re-scans the hub.</p>' +
     '<div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px; margin-bottom:14px">' +
     '<div>' + PIVOT_PRESETS.map(function (p, i) {
@@ -10198,7 +14939,7 @@ function extEsc(s) {
 }
 
 function extLoad() {
-  extBody.innerHTML = '<h3>External systems</h3><p class="sub">Loading...</p>';
+  extBody.innerHTML = '<p class="sub">Loading...</p>';
   fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -10212,7 +14953,7 @@ function extLoad() {
       });
     })
     .catch(function (e) {
-      extBody.innerHTML = '<h3>External systems</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
+      extBody.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
     });
 }
 
@@ -10333,8 +15074,7 @@ function extRender(message) {
   const suggested = groups.unknown.filter(function (t) { return !!extEvidenceBadge(t); });
   const bare = groups.unknown.filter(function (t) { return !extEvidenceBadge(t); });
 
-  let h = '<h3>External systems</h3>';
-  h += '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
+  let h = '<p class="sub">What each app needs <b>outside</b> your hub. The hub cannot detect this, so it is declared here and drawn on the map as a diamond with a dashed line. ' +
        'Apps sharing a system share one node, which is what makes it possible to ask what breaks if that system goes down.</p>';
 
   // Everything already answered, collapsed to a count rather than listed:
@@ -10744,13 +15484,28 @@ const iconsPanel = document.getElementById('icons');
 const iconsBody = document.getElementById('iconsBody');
 let ICONS = null;
 
+// makePanelDraggable() itself is defined much earlier (with flowPanel's own
+// call), but ext/pivot/releaseActivity/icons's own panel consts are each
+// declared beside their own *Load()/render code, scattered through the
+// file - this is the point after the last of them (iconsPanel) exists, so
+// it is the one safe place to wire up all four remaining panels at once
+// rather than four separate call sites each needing its own header lookup.
+[
+  { panel: extPanel, id: 'ext' },
+  { panel: pivotPanel, id: 'pivot' },
+  { panel: releaseActivityPanel, id: 'releaseActivity' },
+  { panel: iconsPanel, id: 'icons' }
+].forEach(function (p) {
+  makePanelDraggable(p.panel, document.querySelector('#' + p.id + ' .modernPanelHeader'));
+});
+
 function iconsLoad() {
-  iconsBody.innerHTML = '<h3>Device icons</h3><p class="sub">Loading...</p>';
+  iconsBody.innerHTML = '<p class="sub">Loading...</p>';
   fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
     .then(function (d) { ICONS = d; iconsRender(''); })
     .catch(function (e) {
-      iconsBody.innerHTML = '<h3>Device icons</h3><p class="sub">Could not load: ' + extEsc(e) + '</p>';
+      iconsBody.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
     });
 }
 
@@ -10769,8 +15524,7 @@ function iconsRender(message, filter) {
     return (labels[a] || a).localeCompare(labels[b] || b);
   });
 
-  let h = '<h3>Device icons</h3>';
-  h += '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
+  let h = '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
        'light, an unrecognised one gets a "?". Wrong for a particular device? Pick the right one below and Save. ' +
        'Left as "?"? Add a note so you remember what it actually is - it also appears in the tooltip for that ' +
        'device on the map. Reload the map page afterwards to see it redrawn.</p>';
@@ -11075,6 +15829,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // reported Connector deviceId is trusted unconditionally, so
   // no case exists for this export to flag as unresolved.
   const hubVarWriters = INS.hubVar.writers;
+  const hubVarUsers = INS.hubVar.users;
   const noDecodedUsage = INS.hubVar.noDecodedUsage.map(function (id) { return ref(id, nameOf); });
   const readersWithoutDecodedWriter = INS.hubVar.readersWithoutDecodedWriter.map(function (id) { return ref(id, nameOf); });
   const writersWithoutDecodedReader = INS.hubVar.writersWithoutDecodedReader.map(function (id) { return ref(id, nameOf); });
@@ -11083,6 +15838,12 @@ function buildExportPayload(ext, icons, failedFetches) {
   });
   const unresolvedHubVarReferences = INS.hubVar.unresolvedReferences.map(function (r) {
     return { name: r.name, kind: r.kind, referencedBy: ref(r.appId, nameOf) };
+  });
+  const directionUnknownHubVarUsage = INS.hubVar.directionUnknownUsage.map(function (id) {
+    return { variable: ref(id, nameOf), usedBy: (hubVarUsers[id] || []).map(function (a) { return ref(a, nameOf); }) };
+  });
+  const webcoreVariableDecodeIssues = INS.hubVar.webcoreDecodeIssues.map(function (issue) {
+    return { app: ref(issue.appId, nameOf), error: issue.error || 'decode-failed' };
   });
 
   const devices = ALL_NODES.filter(function (n) { return n.group === 'device'; }).map(function (n) {
@@ -11108,7 +15869,19 @@ function buildExportPayload(ext, icons, failedFetches) {
         n.unscanned ? 'unscanned' : n.inert ? 'inert' : 'active',
       parentId: n.parent || null,
       childIds: n.kids || [],
-      hasDecodedFlow: !!flowIds[n.id]
+      hasDecodedFlow: !!flowIds[n.id],
+      hubVariableDecode: n.appType === 'webCoRE Piston' ? {
+        status: n.webcoreVariableDecodeStatus || 'not-present',
+        relationships: ['read', 'write', 'usesVar'],
+        error: n.webcoreVariableDecodeError || null
+      } : null,
+      // v2.2.8: real per-piston coverage, decoded directly from saved
+      // configuration - complete/partial/none/error, not a blanket
+      // not-decoded. The parent app never gets a value beyond
+      // parent-permissions-omitted; its own permission selections are never
+      // presented as a piston's actual device use.
+      deviceRelationshipCoverage: n.appType === 'webCoRE Piston' ? (n.webcoreDeviceRelationshipCoverage || 'none') :
+        (n.appType === 'webCoRE' ? 'parent-permissions-omitted' : null)
     };
   });
   const externalSystems = ALL_NODES.filter(function (n) { return n.group === 'external'; }).map(function (n) {
@@ -11144,11 +15917,18 @@ function buildExportPayload(ext, icons, failedFetches) {
       fromId: e.from, fromName: nameOf[e.from] || e.from,
       toId: e.to, toName: nameOf[e.to] || e.to,
       relationship: e.kind,
+      direction: (e.kind === 'usesVar' || e.kind === 'deviceRead') ? 'unknown' : null,
       // Only meaningful for 'action' edges (can this app leave the device in
       // a lasting state, versus a momentary command) - null rather than
       // false everywhere else, so it does not look like a real "no" for a
-      // relationship kind the field was never about.
-      stateful: e.kind === 'action' ? !!e.stateful : null,
+      // relationship kind the field was never about. A webCoRE action edge
+      // sets stateful explicitly to null (v2.2.8) - the command name is
+      // proven, whether it leaves a lasting state is not, and that is a
+      // genuinely different thing from Rule Machine's own confirmed-false
+      // (a recognized capability this app's own STATEFUL_CAPABILITIES
+      // catalogue proved momentary) - !!e.stateful alone would have silently
+      // collapsed both into the same false.
+      stateful: e.kind === 'action' ? (e.stateful === null ? null : !!e.stateful) : null,
       // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated on
       // proven Hub or Local Variable read edges (schema 6, v2.1.6, extends
       // this to Local reads) - a single trusted role (condition/trigger/
@@ -11159,7 +15939,14 @@ function buildExportPayload(ext, icons, failedFetches) {
       // discovered device set - null on every other relationship kind for
       // both fields.
       usageRole: e.usageRole || null,
-      writeSource: e.writeSource || null
+      writeSource: e.writeSource || null,
+      // v2.2.8: bounded evidence only - the saved attribute a piston device
+      // read decoded, or the command names a webCoRE action decoded. Never task
+      // parameter values, never raw hashes. null on every other edge kind. A
+      // piston read now carries the trigger or constraint role it was decoded
+      // in, so the attribute rides those kinds too, not deviceRead alone.
+      attribute: (e.kind === 'deviceRead' || e.kind === 'trigger' || e.kind === 'constraint') ? (e.attribute || null) : null,
+      commands: (e.kind === 'action' && e.commands) ? e.commands : null
     };
   });
   // Flow steps' own "devices" field is really a display list, not always
@@ -11268,8 +16055,14 @@ function buildExportPayload(ext, icons, failedFetches) {
   // "complete" now specifically means neither happened, not just that
   // nothing threw at the top level.
   const scanStatus = SCAN_META.scanError ? 'failed'
-    : (SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0) ? 'complete-with-gaps'
+    : (SCAN_META.appsUnreadable > 0 || SCAN_META.devicesUnreadable > 0 || webcoreVariableDecodeIssues.length > 0) ? 'complete-with-gaps'
     : 'complete';
+  const webcoreAppIds = {};
+  apps.forEach(function (a) { if (a.appType === 'webCoRE Piston') webcoreAppIds[a.id] = true; });
+  const webcoreVariableEdges = edges.filter(function (e) {
+    return webcoreAppIds[e.fromId] &&
+      (e.relationship === 'read' || e.relationship === 'write' || e.relationship === 'usesVar');
+  });
   const summary = {
     deviceCount: devices.length,
     appCount: apps.length,
@@ -11277,6 +16070,11 @@ function buildExportPayload(ext, icons, failedFetches) {
     hubVariableCount: hubVariables.length,
     hubVariablesWithConnectorCount: hubVariables.filter(function (v) { return !!v.connector; }).length,
     unresolvedHubVariableReferenceCount: unresolvedHubVarReferences.length,
+    webcoreHubVariableUseCount: webcoreVariableEdges.length,
+    webcoreHubVariableReadCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'read'; }).length,
+    webcoreHubVariableWriteCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'write'; }).length,
+    webcoreHubVariableUnknownUseCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'usesVar'; }).length,
+    webcoreVariableDecodeIssueCount: webcoreVariableDecodeIssues.length,
     edgeCount: edges.length,
     decodedRuleFlowCount: ruleFlows.length,
     contestedDeviceCount: contested.length,
@@ -11286,7 +16084,13 @@ function buildExportPayload(ext, icons, failedFetches) {
     // v2.1.4, schema 5 (Gate C): decoded evidence from the rules this export
     // could read, NOT a hub-wide inventory the way hubVariableCount above is
     // - see the limitations entry on this distinction.
-    localVariableCount: ruleFlows.reduce(function (sum, f) { return sum + (f.localVariables ? f.localVariables.length : 0); }, 0),
+    // v2.2.8: counted directly from graph nodes, not summed from
+    // ruleFlows[].localVariables - a webCoRE piston's own local variables
+    // had no ruleFlows entry when that sum was written, so it silently missed
+    // every one of them once webCoRE locals existed at all. Pistons do carry a
+    // decoded flow now, but their locals still live in localVariables[] rather
+    // than nested under ruleFlows[], so this stays computed from the nodes.
+    localVariableCount: ALL_NODES.filter(function (n) { return n.group === 'localVariable'; }).length,
     nonResolvedVariableReferenceCount: ruleFlows.reduce(function (sum, f) { return sum + (f.nonResolvedVariableReferences ? f.nonResolvedVariableReferences.length : 0); }, 0)
   };
   // What "apps[].hasDecodedFlow: false" can mean beyond "not a rule at
@@ -11294,12 +16098,13 @@ function buildExportPayload(ext, icons, failedFetches) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
-    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation, webCoRE. They still appear in devices/apps/edges with their device relationships - only the step-by-step logic in ruleFlows is unavailable for them.',
-    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Hub and Local Variable read/write edges are read from Rule Machine 5.1 only - a rule on another engine will not produce these even if it does the equivalent thing.',
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case is not decoded, a switch default branch is not drawn, and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
+    'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
     'Hub Variable names are household data. Values are absent from this export entirely unless a future explicit opt-in adds them - currentValue is always null here.',
-    'A Hub Variable with no decoded reader or writer (insights.hubVariables.noDecodedUsage) may still be used by an app or integration this export cannot decode - absence of a decoded edge is not proof the variable is unused.',
+    'A Hub Variable with no decoded read, write or usesVar relationship (insights.hubVariables.noDecodedUsage) may still be used by an app or integration this export cannot decode - absence of a decoded edge is not proof the variable is unused.',
+    'webCoRE Hub Variable edges come only from statically stored structures whose names begin @@ and reconcile to the authoritative Hub Variable inventory. Evaluated variable operands are reads; explicit setVariable targets, loop counters and matching/non-matching device captures are writes. A dynamically constructed target name is invisible and never guessed.',
     'Multiple writers on a Hub Variable (insights.hubVariables.multipleWriters) are not proof of a race condition - static configuration proves shared writers, not simultaneous execution.',
     'A Hub Variable connector is a synchronized projection of the same shared state (relationship: synchronizedWith), not an independent value - do not treat the variable and its connector device as two different things to reconcile.',
     'A Hub Variable write edge with a deviceAttribute writeSource means the rule copies or derives its write from that device attribute - it does not mean the device writes the Hub Variable directly.',
@@ -11334,11 +16139,12 @@ function buildExportPayload(ext, icons, failedFetches) {
     'Cite node IDs alongside names wherever ambiguity could matter - names are not guaranteed unique.',
     'Qualify any conclusion built on a gap: scan.status other than complete, or a ruleFlows reference marked unresolved or ambiguous.',
     'Use edges for topology and ruleFlows for step-by-step rule logic - do not infer logic the export did not report.',
+    'Treat a usesVar edge as direction unknown. It proves a saved webCoRE reference to an inventory-confirmed Hub Variable, never a read or write on its own.',
     'Static configuration is not proof of runtime behaviour - do not claim it is.',
     'Do not frame contested devices, inert apps, or any other count as evidence the hub is in a bad state. A hub with dozens of rules and hundreds of devices will always show some of these as a normal by-product of scale - contested devices in particular are usually several ordinary rules sharing one light or switch (motion, time-of-day, manual override), not automations fighting. Avoid adversarial words - fighting, broken as an unqualified judgment, conflict - for anything the export itself does not use that word for; state the plain mechanism instead (the last app to run decides the outcome) and let the user judge whether it is intentional.',
     'State a count in proportion to the whole (e.g. "30 of 194 devices" rather than a bare "30 devices") so the user can judge scale themselves rather than be primed by an isolated number.',
     'Never infer a missing relationship solely because two names look similar.',
-    'Resolve a write/read edge target by its id against hubVariables[] first, then ruleFlows[].localVariables[] (matched by identity) - never by assuming every such edge targets a Hub Variable, and never by joining on the toName field alone.',
+    'Resolve a write/read edge target by its id against hubVariables[] first, then ruleFlows[].localVariables[] (matched by identity) - never by assuming every such edge targets a Hub Variable, and never by joining on the toName field alone. A usesVar edge always targets an inventory-confirmed hubVariables[] entry.',
     'Never join a ruleFlows[] localVariables or variableReferences record to anything outside its own appId by name alone - Local Variable identity is owner-scoped (see localIdentity), and the same visible name in two different rules is two different variables. A nonResolvedVariableReferences record with status "ambiguous" must be reported as genuinely ambiguous, never resolved to either scope by guessing.',
     'Open a first response with a short plain-language summary of what was understood - counts plus two or three specific named apps or devices as evidence the file was actually read, not a templated response.',
     'State findings before recommendations, in visibly separate sections.',
@@ -11360,6 +16166,11 @@ function buildExportPayload(ext, icons, failedFetches) {
       status: scanStatus,
       appsUnreadable: SCAN_META.appsUnreadable || 0,
       devicesUnreadable: SCAN_META.devicesUnreadable || 0,
+      webcoreVariableDecodeIssues: webcoreVariableDecodeIssues,
+      // v2.2.8, schema 12: genuine device-hash reconciliation failures only -
+      // an expected coverage limit (a variable-backed or runtime-selected
+      // device) is not counted here and does not affect status above.
+      webcoreDeviceReconciliationGaps: INS.scan.webcoreDeviceReconciliationGaps || 0,
       // v2.0.14, schema 4 (parent spec 6.1/11.2): inventory completeness kept
       // separate from relationship-decoder completeness - a consumer must not
       // assume one implies the other.
@@ -11371,8 +16182,8 @@ function buildExportPayload(ext, icons, failedFetches) {
       },
       hubVariableRelationships: {
         status: 'partial',
-        supportedEngines: ['Rule Machine 5.1'],
-        limitations: ['Other app engines may use Hub Variables without exposing a decoded edge.']
+        supportedEngines: ['Rule Machine 5.1 read/write', 'webCoRE saved-configuration read/write'],
+        limitations: ['webCoRE direction is classified only where its persisted structure maps to a source-proven runtime read or write; dynamically constructed target names remain invisible.', 'webCoRE parent device permissions are still omitted because a permission does not prove use; piston-to-device relationships ARE decoded from saved configuration as of v2.2.8, per piston, with per-piston coverage in apps[].deviceRelationshipCoverage.', 'Other app engines may use Hub Variables without exposing a decoded edge.']
       }
     },
     summary: summary,
@@ -11382,14 +16193,15 @@ function buildExportPayload(ext, icons, failedFetches) {
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
-      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE).',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation). webCoRE pistons carry a decoded flow (v2.3.0). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a rule sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present only nested, in ruleFlows[].localVariables[], keyed by identity - flatten that collection once rather than assuming hubVariables[] alone is complete). A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole (schema 4, extended to Local Variable reads in schema 6) is populated on proven Hub or Local Variable read edges: a single trusted role (e.g. "condition", "trigger") when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; null on every other edge, including writes. writeSource (schema 4) is Hub-write specific - populated only on a Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); null otherwise, including on every Local Variable edge and when a source detail exists but could not be resolved to an ID.',
+      localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
-      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 4) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded reader or writer at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory; the rule may reference a renamed/deleted variable, or inventory may have been incomplete for this scan). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
-      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but appsUnreadable and/or devicesUnreadable is above zero - some apps or devices could not be read and are simply missing from this export, not just from ruleFlows), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are the counts behind that status - also see apps[].status for which specific apps were affected. hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry - see that schema entry for why a weaker-guarantee node is no longer manufactured here. hubVariableRelationships describes which app engines Hub Variable read/write edges can be decoded from (currently Rule Machine 5.1 only) - independent of inventory status.',
-      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others - see hubVariables[].connector and insights.hubVariables.unresolvedReferences for the underlying data. localVariableCount and nonResolvedVariableReferenceCount (schema 5, v2.1.4) total ruleFlows[].localVariables and ruleFlows[].nonResolvedVariableReferences across every decoded rule - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
+      scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',
+      summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others. webcoreHubVariableUseCount and webcoreVariableDecodeIssueCount summarize all webCoRE variable edges and fixed-code decode gaps; schema 10 adds separate read, write and unknown-use counts. localVariableCount (schema 12, v2.2.8) is counted directly from every owner-scoped Local Variable graph node across all supported engines - see the top-level localVariables[] array - not summed from ruleFlows[].localVariables alone, since a webCoRE piston never gets a ruleFlows entry at all. nonResolvedVariableReferenceCount (schema 5, v2.1.4) still totals ruleFlows[].nonResolvedVariableReferences across every decoded rule specifically - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
       recommendedAiBehaviour: 'How an AI reading this file should behave, in three parts. Epistemic: identify versions, distinguish fact from inference, cite IDs over names, qualify conclusions built on a scan gap or an unresolved/ambiguous reference, never guess a relationship from name similarity alone. Tone: counts like contested devices or inert apps are normal at scale, not evidence of a bad state - avoid adversarial words (fighting, conflict, broken as an unqualified judgment) for anything the export itself does not use that word for, and state a count in proportion to the whole rather than in isolation. Response shape: open with a short plain-language summary naming a few specific apps or devices as evidence the file was actually read, state findings before recommendations, surface scan-quality caveats up front, and when more than one thing is worth pursuing offer it as a short menu and ask which to explore unless the request or the evidence makes the next investigation unambiguous, in which case proceed with it directly - every option offered must read as investigate or explain, never as an action taken or promised, since nothing here authorises any change to the hub.',
       insightGuidance: 'The same deterministic interpretation catalogue shown in the on-hub Insights panel. categories explains each group and its recommended priority; findings gives what the observation means, why it may be normal when applicable, and what to check next. It is guidance for investigation, never authority to change the hub.'
@@ -11398,6 +16210,27 @@ function buildExportPayload(ext, icons, failedFetches) {
     apps: apps,
     externalSystems: externalSystems,
     hubVariables: hubVariables,
+    // v2.2.8, schema 12: every owner-scoped Local Variable definition across
+    // every supported engine, not only the Rule Machine projection nested in
+    // ruleFlows[].localVariables (a webCoRE piston never gets a ruleFlows
+    // entry at all, so that array alone silently missed every webCoRE local -
+    // the same gap summary.localVariableCount below has already been fixed
+    // to read from graph nodes directly rather than repeating it here).
+    localVariables: ALL_NODES.filter(function (n) { return n.group === 'localVariable'; }).map(function (n) {
+      // engine comes from the OWNING app node: a localVariable node has no
+      // appType of its own, so reading it here labels every local Rule Machine.
+      const owner = n.ownerAppId ? ALL_NODES.filter(function (o) { return o.id === n.ownerAppId; })[0] : null;
+      return {
+        identity: n.id,
+        name: nameOf[n.id],
+        ownerAppId: n.ownerAppId || null,
+        ownerAppName: n.ownerAppId ? (nameOf[n.ownerAppId] || null) : null,
+        engine: (owner && owner.appType === 'webCoRE Piston') ? 'webCoRE' : 'Rule Machine',
+        variableType: n.variableType || null,
+        engineVariableType: n.engineVariableType || null,
+        unreferenced: !!n.unreferencedLocal
+      };
+    }),
     edges: edges,
     ruleFlows: ruleFlows,
     insights: {
@@ -11421,7 +16254,9 @@ function buildExportPayload(ext, icons, failedFetches) {
         readersWithoutDecodedWriter: readersWithoutDecodedWriter,
         writersWithoutDecodedReader: writersWithoutDecodedReader,
         multipleWriters: multipleHubVarWriters,
-        unresolvedReferences: unresolvedHubVarReferences
+        directionUnknownUsage: directionUnknownHubVarUsage,
+        unresolvedReferences: unresolvedHubVarReferences,
+        webcoreDecodeIssues: webcoreVariableDecodeIssues
       }
     },
     externalSystemDeclarations: ext ? (ext.entries || []) : null,
@@ -11471,6 +16306,17 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   pivotPanel.style.display = 'none';
   syncLegendVisibility();
 });
+// The tool rail's own "Legend" button was removed (Gordon's live call - it
+// opened the exact same panel as this "Full legend" link right next to the
+// compact legend, and having both was pure redundancy, not two genuinely
+// different paths). This is the only opener left.
+document.getElementById('legendMoreBtn').addEventListener('click', function () {
+  bringToFront(legendPanel);
+});
+document.getElementById('legendPanelClose').addEventListener('click', function () {
+  legendPanel.style.display = 'none';
+  syncLegendVisibility();
+});
 
 // The whole-hub view is inevitably dense, so say what to do with it rather than
 // dropping the user straight into a few hundred nodes with no starting point.
@@ -11486,9 +16332,9 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   const hint = document.createElement('div');
   hint.id = 'hint';
   hint.innerHTML = '<b>Start here</b><br>' +
-    'This is every app and device on your hub at once, so it looks busy - that is expected.<br><br>' +
-    '<b>Click any node</b> to drill in, or use the dropdowns above to search by app or device instead. Click a rule and you also get a flowchart of how it works. Click one of its devices to see everything else touching that device.<br><br>' +
-    '<b>Other panels:</b> Insights (devices several apps share), External systems, Pivot tables, Device icons.<br><br>' +
+    'This is every app, device, variable and external system on your hub at once, so it looks busy - that is expected.<br><br>' +
+    '<b>Click any node</b> to drill in, or use Quick Search or the dropdowns above to jump straight to an app, device or variable. Click a rule and you also get a flowchart of how it works. Click one of its devices to see everything else touching that device.<br><br>' +
+    '<b>Other panels:</b> Insights (a health check for the whole map), External systems, Pivot tables, Device icons, Hubitat release activity.<br><br>' +
     'Take your time to explore.' +
     '<div style="margin-top:12px"><button id="hintClose" type="button">Got it</button></div>';
   document.body.appendChild(hint);
@@ -11502,7 +16348,19 @@ document.getElementById('pivotClose').addEventListener('click', function () {
 // one clears the other three) the same way the old <select> 'change'
 // listeners did - setValue() never fires onChange itself, so these resets
 // cannot recurse into each other.
-const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...', function (value) {
+//
+// Named (not inline) as of backlog item 1 Phase 3: the grouped entity search
+// prototype (searchAllSelect, below) needs to trigger the exact same focus
+// behaviour as picking directly from one of these four, and reusing these
+// functions by reference is how that is guaranteed identical rather than
+// reimplemented and risking drift. Every reference to appSelect/deviceSelect/
+// hubVarSelect/localVarSelect below still resolves correctly despite being
+// used before its own const line further down - none of these functions runs
+// until a later click, by which point all four consts exist, same as every
+// other forward reference already in this file.
+function onAppFocusChange(value) {
+  beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     deviceSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -11516,8 +16374,10 @@ const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...'
   } else {
     showFlow(value);
   }
-});
-const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'search devices...', function (value) {
+}
+function onDeviceFocusChange(value) {
+  beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     hubVarSelect.setValue('__all__');
@@ -11527,8 +16387,10 @@ const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'sea
   flowPanel.style.display = 'none';
   syncLegendVisibility();
   applyFilters();
-});
-const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub variables', 'search hub variables...', function (value) {
+}
+function onHubVarFocusChange(value) {
+  beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -11538,8 +16400,10 @@ const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub varia
   flowPanel.style.display = 'none';
   syncLegendVisibility();
   applyFilters();
-});
-const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All local variables', 'search local variables...', function (value, item) {
+}
+function onLocalVarFocusChange(value, item) {
+  beginSelectionGeneration();
+  externalFocusId = null;
   if (value !== '__all__') {
     appSelect.setValue('__all__');
     deviceSelect.setValue('__all__');
@@ -11555,6 +16419,59 @@ const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All loc
     flowPanel.style.display = 'none';
     syncLegendVisibility();
     applyFilters();
+  }
+}
+const appSelect = initCombo('appComboMount', 'app', 'All apps', 'search apps...', onAppFocusChange);
+const deviceSelect = initCombo('deviceComboMount', 'device', 'All devices', 'search devices...', onDeviceFocusChange);
+const hubVarSelect = initCombo('hubVarComboMount', 'hubVariable', 'All hub variables', 'search hub variables...', onHubVarFocusChange);
+const localVarSelect = initCombo('localVarComboMount', 'localVariable', 'All local variables', 'search local variables...', onLocalVarFocusChange);
+
+// Grouped entity search prototype (backlog item 1 Phase 3), sitting
+// alongside the four selectors above rather than replacing them - the doc's
+// own gate is that this has to reproduce identical results before the old
+// ones can go. It does not reimplement focus behaviour at all: on pick, it
+// forwards straight into the exact same onXFocusChange function the matching
+// dropdown itself uses, so any correctness the four selectors already have
+// is inherited rather than re-proven.
+//
+// Builds its own item objects rather than reusing the ALL_NODES entries the
+// four selectors above read directly - those objects get n.optionText
+// overwritten by initCombo() for their own dropdown's decoration, and reusing
+// the same object here would silently rewrite that dropdown's own display
+// text to this one's group-prefixed version. Copies only what a combobox
+// item needs, so the two can never collide.
+const SEARCH_ALL_GROUP_LABEL = { app: 'App', device: 'Device', hubVariable: 'Hub Variable', localVariable: 'Local Variable', external: 'External system' };
+const searchAllItems = ALL_NODES.filter(function (n) {
+  return SEARCH_ALL_GROUP_LABEL.hasOwnProperty(n.group);
+}).map(function (n) {
+  return {
+    id: n.id,
+    title: n.title,
+    optionText: SEARCH_ALL_GROUP_LABEL[n.group] + ' - ' + pickOptionText(n, n.group),
+    disabled: n.disabled,
+    paused: n.paused,
+    unreferencedLocal: n.unreferencedLocal,
+    group: n.group
+  };
+});
+const searchAllSelect = createCombobox({
+  mount: document.getElementById('searchAllComboMount'),
+  allLabel: 'Search apps, devices, hub & local variables, external systems',
+  placeholder: 'search everything...',
+  items: searchAllItems,
+  onChange: function (value, item) {
+    if (value === '__all__' || !item) return;
+    if (item.group === 'app') { appSelect.setValue(value); onAppFocusChange(value); }
+    else if (item.group === 'device') { deviceSelect.setValue(value); onDeviceFocusChange(value); }
+    else if (item.group === 'hubVariable') { hubVarSelect.setValue(value); onHubVarFocusChange(value); }
+    else if (item.group === 'localVariable') { localVarSelect.setValue(value); onLocalVarFocusChange(value, item); }
+    // External systems have no Focus dropdown; focusNode() holds one as its own
+    // focus while every dropdown shows All.
+    else if (item.group === 'external') { focusNode(value); }
+    // A jump tool, not a fifth persistent selection state alongside the other
+    // four - resets to blank immediately after dispatching. The one matching
+    // dropdown above already shows the real state (set two lines up).
+    searchAllSelect.setValue('__all__');
   }
 });
 
@@ -11584,12 +16501,16 @@ function focusLabel(id) {
   return n ? n.title : 'the whole map';
 }
 
+// An external system focused from Quick Search or the canvas. It has no Focus
+// dropdown, so it is held here while all four dropdowns show All. var, not let:
+// applyFilters can run before this line does.
+var externalFocusId = null;
 function currentFocus() {
   if (appSelect.getValue() !== '__all__') return appSelect.getValue();
   if (deviceSelect.getValue() !== '__all__') return deviceSelect.getValue();
   if (hubVarSelect.getValue() !== '__all__') return hubVarSelect.getValue();
   if (localVarSelect.getValue() !== '__all__') return localVarSelect.getValue();
-  return null;
+  return externalFocusId || null;
 }
 
 // Return to the unfiltered whole map in one step, regardless of how many
@@ -11633,6 +16554,8 @@ function closeSecondaryPanels() {
 }
 
 function exitToWholeMap() {
+  beginSelectionGeneration();
+  externalFocusId = null;
   appSelect.setValue('__all__');
   deviceSelect.setValue('__all__');
   hubVarSelect.setValue('__all__');
@@ -11675,7 +16598,7 @@ function renderBackLink() {
 function focusNode(id) {
   const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
   if (!node) return false;
-  focusGenerationSeq += 1;
+  beginSelectionGeneration();
   if (!poppingHistory) {
     const from = currentFocus();
     if (from !== id) {
@@ -11688,6 +16611,7 @@ function focusNode(id) {
   // a moment later anyway - redundant there, but harmless, and it means
   // this one call is correct for every path through this function rather
   // than needing to be threaded into each branch separately.
+  externalFocusId = null;
   closeSecondaryPanels();
   if (node.group === 'app') {
     appSelect.setValue(node.id, node.title);
@@ -11737,6 +16661,15 @@ function focusNode(id) {
       syncLegendVisibility();
       applyFilters();
     }
+  } else if (node.group === 'external') {
+    externalFocusId = node.id;
+    appSelect.setValue('__all__');
+    deviceSelect.setValue('__all__');
+    hubVarSelect.setValue('__all__');
+    localVarSelect.setValue('__all__');
+    flowPanel.style.display = 'none';
+    syncLegendVisibility();
+    applyFilters();
   } else {
     deviceSelect.setValue(node.id, node.title);
     appSelect.setValue('__all__');
@@ -11894,6 +16827,12 @@ document.getElementById('resetBtn').addEventListener('click', function () {
   const fitPosition = network.getViewPosition();
   const fitScale = network.getScale();
   network.moveTo({ position: fitPosition, scale: fitScale * 0.6, animation: false });
+});
+// Re-fits whatever is currently shown (whole map or a focused view) without
+// changing what's focused - fitCurrentView() already knows which case it is
+// from the live DataSet, same path panel open/close and resize already use.
+document.getElementById('fitMapBtn').addEventListener('click', function () {
+  fitCurrentView();
 });
 // A separate site Automation Map does not control, so it opens in a new tab
 // rather than replacing this one - the map is mid-session state (whatever is
