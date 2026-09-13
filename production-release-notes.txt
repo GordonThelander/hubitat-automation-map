@@ -5,7 +5,7 @@ Since the last production release (2.2.3):
 - webCoRE pistons now draw as flowcharts, like Rule Machine, Notifier and Visual Rule Builder rules: statement order, if/else-if/else branches, loops, condition text, nested condition groups, and each task's parameters beside its command, for example setLevel(40). Anything that cannot be shown in full, such as a condition with a time window, is marked "not decoded" rather than half-written.
 - webCoRE pistons now show the devices they actually read and command. A device read in an event or condition is shown as a trigger or constraint, matching Rule Machine and the flowchart. The devices merely permitted in webCoRE's own settings are no longer presented as used.
 - webCoRE piston local variables appear as their own nodes, and piston Hub Variable reads and writes are shown separately.
-- A Decode coverage card shows how much of a selected piston Automation Map understands, and lists what it cannot yet explain.
+- Selecting a webCoRE piston also checks its complete saved structure and notes any fields Automation Map cannot identify.
 - Insights, External systems, Pivot tables, Device icons and Hubitat release activity now open in one consistent movable panel, and the compact legend shows only what the current view contains.
 - The flowchart panel returns to its normal size when you select a different app.
 - Quick Search and the Focus lists also match the tags shown on each row, such as [WCP].
