@@ -40,6 +40,23 @@ pinned webCoRE source and the shipped v2.3.0 implementation:
 boundary without adding case-value semantics that are not yet proven. No implementation is authorized
 by this backlog entry.
 
+### 33. Remote access: the page stays on "Remote scanning" after the scan finishes
+
+Seen on the 2.3.0 preprod install (2026-09-13) through remoteaccess.aws.hubitat.com: the scan completed
+cleanly, but the page stayed on "Remote scanning, this page will refresh once done." until Done was
+pressed. Not a 2.3.0 regression: this path has shipped unchanged since 2.0.11 and is in production.
+
+**Established.** Off the hub's own origin the page cannot poll `/scan-status` (Hubitat's cloud API sends
+no CORS headers), so `amProgressPoll()` returns immediately on the cloud path. The only thing that
+moves the page on is the dynamicPage `refreshInterval` of 60s while a scan is active.
+
+**Hypothesis, not confirmed.** Either the remote UI does not honour `refreshInterval`, or its refresh
+rendered from a snapshot that still showed the scan running. Needs a remote reproduction with the
+page left open for more than 60s after completion.
+
+**Next action:** reproduce remotely, then choose between a bounded JS reload on the cloud path while
+a scan is active, and fixing whatever stops the 60s refresh.
+
 ### 31. A dead constraint on a device that also has a live relationship
 
 Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression
