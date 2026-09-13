@@ -16,6 +16,30 @@ history, not in this delivery list.
 
 ## Now
 
+### 32. webCoRE 2.3.0 source and description inconsistencies found during reference review
+
+Issues found while checking the standalone developer reference against the
+pinned webCoRE source and the shipped v2.3.0 implementation:
+
+- `generate-construct-registry.groovy` records `clearFuelStream`, `readFuelStream` and
+  `writeFuelStream` as executor-only. They are declared conditionally inside `virtualCommands()` when
+  `graphsOn()` is true; the catalogue extractor misses that block. Only `internal_fade` and
+  `sendNotificationToContacts` are genuinely executor-only at the pinned revision.
+- The flow builder draws switch cases as `case not decoded` and omits the default branch, while its
+  comment says the default location is unproven. The semantic evidence separately promotes
+  `statement.switch.default.v1` and reads `e` as the default. The evidence, implementation comment and
+  user-facing limitation need one consistent statement before default rendering is expanded.
+- Fixed for 2.3.0 (2026-09-13): the AI export's `apps` description no longer lists webCoRE among
+  engines whose flow is never decoded.
+- Fixed for 2.3.0 (2026-09-13): a flow condition whose value could not be transcribed rendered half-written
+  (`Lamp's switch is`), and a list or map constant printed as raw text. A condition now renders only when
+  every value its comparison takes prints; unknown and timed comparisons fall back to "not decoded", and
+  two-value comparisons show both values. Drawing a timed comparison's window (`to`/`to2`) is not done.
+
+**Next action:** correct the registry extractor, then reconcile the switch evidence and rendering
+boundary without adding case-value semantics that are not yet proven. No implementation is authorized
+by this backlog entry.
+
 ### 31. A dead constraint on a device that also has a live relationship
 
 Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression

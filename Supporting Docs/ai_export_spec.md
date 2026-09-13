@@ -967,7 +967,12 @@ subject (a device and its attribute, or a variable, virtual, argument or constan
 stored), the saved operator with its underscores removed, and the right-hand operand. It is composed
 only when every part can be named in full, which means every device token in it resolved to a real
 name. If any part cannot be, the whole condition falls back to the explicitly undecoded step rather
-than printing half a sentence.
+than printing half a sentence. The number of values a comparison takes comes from the `(sP)` field of
+webCoRE's own comparison catalogue: every one must print (a two-value comparison reads
+`time is between 08:00 and 17:00`), a list or map constant does not print, and a comparison with a
+`(sT)` time window (`was`, `stays`, `changed`, `did_not_change` forms) or an operator outside the
+catalogue falls back, since the window is not transcribed. Before 2026-09-13 an untranscribable value
+was silently dropped, which could render `Lamp's switch is`.
 
 **Nested condition groups.** A group is composed as a bracketed sub-sentence joined by its own saved
 operator, so a grouped condition reads as `(mode is Home or mode is Away) and phase is Night` rather
