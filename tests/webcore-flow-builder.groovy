@@ -214,6 +214,33 @@ check(String.valueOf(builder.webcoreFlowOperandText([t: 'c', c: 'closed'])) == '
       builder.webcoreFlowOperandText([t: 'e']) == '' && builder.webcoreFlowOperandText([:]) == '',
     'operand text is transcribed for known kinds and blank for the rest')
 
+check(builder.webcoreFlowOperandText([t: 'c', c: [a: 1]]) == '' && builder.webcoreFlowOperandText([t: 'c', c: ['x']]) == '' &&
+      String.valueOf(builder.webcoreFlowOperandText([t: 'c', c: 40])) == '40',
+    'a map or list constant yields no text; a scalar constant still prints')
+
+def partsFor = { Map condition -> builder.webcoreFlowConditionParts([c: [condition]], null) as List }
+def textFor = { Map condition -> builder.webcoreFlowConditionText(partsFor(condition), 'and', [:]) }
+check(String.valueOf(textFor([t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Home']])) == 'mode is Home',
+    'a complete one-value condition still renders')
+check(textFor([t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'e', exp: [:]]]) == '',
+    'a condition whose value cannot be transcribed falls back instead of rendering "mode is"')
+check(textFor([t: 'condition', co: 'is', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: [a: 1]]]) == '',
+    'a map constant value falls back')
+check(String.valueOf(textFor([t: 'condition', co: 'is_between', lo: [t: 'v', v: 'time'],
+        ro: [t: 'c', c: '08:00'], ro2: [t: 'c', c: '17:00']])) == 'time is between 08:00 and 17:00',
+    'a two-value comparison renders both values')
+check(textFor([t: 'condition', co: 'is_between', lo: [t: 'v', v: 'time'], ro: [t: 'c', c: '08:00']]) == '',
+    'a two-value comparison missing its second value falls back')
+check(textFor([t: 'condition', co: 'was', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Home']]) == '',
+    'a timed comparison falls back rather than dropping its time window')
+check(textFor([t: 'condition', co: 'mystery', lo: [t: 'v', v: 'mode'], ro: [t: 'c', c: 'Home']]) == '',
+    'an unknown comparison falls back')
+check(String.valueOf(textFor([t: 'condition', co: 'changes', lo: [t: 'v', v: 'mode'], ro2: [t: 'c']])) == 'mode changes',
+    'a no-value comparison ignores an empty saved operand and renders')
+check(builder.webcoreFlowComparisonValueCounts().keySet().every { builder.webcoreFlowTriggerComparisons().contains(it) || builder.webcoreFlowConditionComparisons().contains(it) } &&
+      builder.webcoreFlowComparisonValueCounts().size() == 51,
+    'the value-count table holds exactly the 51 untimed comparisons of the pinned catalogue')
+
 // ---- triggers are split out of an if, the way webCoRE itself splits them ----
 
 check(builder.webcoreFlowIsTrigger([co: 'changes']) && builder.webcoreFlowIsTrigger([co: 'rises_above']) &&

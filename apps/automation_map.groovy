@@ -4314,25 +4314,57 @@ List webcoreFlowConditionParts(Map st, Boolean triggersWanted = null, int depth 
         }
         Map lo = (condition.lo instanceof Map) ? condition.lo as Map : [:]
         Map ro = (condition.ro instanceof Map) ? condition.ro as Map : [:]
+        Map ro2 = (condition.ro2 instanceof Map) ? condition.ro2 as Map : [:]
+        String co = String.valueOf(condition.co ?: '')
+        // Every value the comparison takes must print, or the part is opaque and the
+        // whole label falls back. An unknown or timed comparison is opaque too: its
+        // time window lives in to/to2, which is not transcribed.
+        Object arity = webcoreFlowComparisonValueCounts()[co]
+        String value = webcoreFlowOperandText(ro)
+        String value2 = webcoreFlowOperandText(ro2)
+        if (arity == null || ((arity as int) >= 1 && !value) || ((arity as int) == 2 && !value2)) {
+            parts << [opaque: true]
+            return
+        }
         parts << [opaque: false,
                   deviceTokens: webcoreFlowDeviceTokens(lo),
                   subject: webcoreFlowOperandText(lo),
                   attribute: "${lo.a ?: ''}",
-                  op: "${condition.co ?: ''}".replace('_', ' '),
-                  value: webcoreFlowOperandText(ro)]
+                  op: co.replace('_', ' '),
+                  value: (arity as int) >= 1 ? value : '',
+                  value2: (arity as int) == 2 ? value2 : '']
     }
     return parts
 }
 
+// Value operands (ro, ro2) each untimed comparison takes, from the (sP) field of
+// getChildComparisons() at the pinned source. Comparisons with a (sT) time window
+// (changed, was*, stays*, did_not_change) are deliberately absent.
+Map webcoreFlowComparisonValueCounts() {
+    return [arrives: 2, becomes_even: 0, becomes_odd: 0, changes: 0, changes_away_from: 1,
+            changes_away_from_any_of: 1, changes_to: 1, changes_to_any_of: 1, does_not_drop: 0,
+            does_not_rise: 0, drops: 0, drops_below: 1, drops_to_or_below: 1, enters_range: 2,
+            event_occurs: 0, executes: 1, exits_range: 2, gets: 1, gets_any: 0, happens_daily_at: 1,
+            is: 1, is_after: 1, is_any: 0, is_any_of: 1, is_before: 1, is_between: 2,
+            is_different_than: 1, is_equal_to: 1, is_even: 0, is_greater_than: 1,
+            is_greater_than_or_equal_to: 1, is_inside_of_range: 2, is_less_than: 1,
+            is_less_than_or_equal_to: 1, is_not: 1, is_not_any_of: 1, is_not_between: 2, is_odd: 0,
+            is_outside_of_range: 2, receives: 1, remains_above: 1, remains_above_or_equal_to: 1,
+            remains_below: 1, remains_below_or_equal_to: 1, remains_even: 0, remains_inside_of_range: 2,
+            remains_odd: 0, remains_outside_of_range: 2, rises: 0, rises_above: 1, rises_to_or_above: 1]
+}
+
 // Transcribes an operand's own saved spelling. No comparison meaning is claimed:
-// a variable, virtual name, argument or constant is printed exactly as stored,
-// and any other kind yields nothing rather than a guess.
+// a variable, virtual name, argument or scalar constant is printed exactly as
+// stored, and any other kind, including a list or map constant, yields nothing.
 String webcoreFlowOperandText(Map operand) {
     switch ("${operand?.t ?: ''}") {
         case 'v': return "${operand.v ?: ''}"
         case 'x': return "${operand.x ?: ''}"
         case 'u': return "${operand.u ?: ''}"
-        case 'c': return operand.c == null ? '' : "${operand.c}"
+        case 'c':
+            Object c = operand.c
+            return (c instanceof CharSequence || c instanceof Number || c instanceof Boolean) ? "${c}" : ''
     }
     return ''
 }
@@ -4371,6 +4403,7 @@ String webcoreFlowConditionText(List parts, String joiner, Map tokenNames) {
         String line = subject
         if ("${part.op ?: ''}") line = "${line} ${part.op}"
         if ("${part.value ?: ''}") line = "${line} ${part.value}"
+        if ("${part.value2 ?: ''}") line = "${line} and ${part.value2}"
         rendered << line
     }
     return rendered.join(" ${joiner} ")
@@ -16108,7 +16141,7 @@ function buildExportPayload(ext, icons, failedFetches) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
-    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, or an operand kind with no transcription. A switch case is not decoded, a switch default branch is not drawn, and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case is not decoded, a switch default branch is not drawn, and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
@@ -16203,7 +16236,7 @@ function buildExportPayload(ext, icons, failedFetches) {
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
-      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation, webCoRE). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation). webCoRE pistons carry a decoded flow (v2.3.0). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
