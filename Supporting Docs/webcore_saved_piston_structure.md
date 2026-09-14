@@ -518,3 +518,120 @@ Measured on a Hubitat C-8 development hub, 2026-09.
     yields text.
 
   Graph schema 15, export schema 13.
+
+## 11. Migration assessment (Dev v2.3.1)
+
+Automation Map rates each piston for Rule Machine 5.1 and Visual Rule Builder 2.0 (VRB2). This section
+records the webCoRE behaviour the rating depends on, the hub proofs behind it, and how the rating is
+computed. Source line numbers refer to the pinned `webcore-piston.groovy` and `webcore.groovy`.
+
+### 11.1 Re-sent same-state events
+
+A driver can send an event whose value equals the current value with `isStateChange: true`. The platform
+delivers it to subscribers. webCoRE treats it differently depending on where the comparison sits.
+
+| Construct | Runs on a re-sent same state | Evidence |
+| --- | --- | --- |
+| webCoRE `on` block event | Yes | `executeStatement` `case sON` (line 4105) matches the current event against the block's events with no old-value test |
+| webCoRE IF `changes`, `changes to`, `changes away from` | No | `comp_changes` and `comp_changes_to` (lines 8455-8456) require `valueCacheChanged(r9,lv) != null` |
+| webCoRE `rises above` / `drops below` | No | `comp_rises_above` (line 8464) is `old <= v && new > v`; a repeat cannot cross |
+| VRB2 state trigger (`Turns on`) | Yes | hub proof, rule 3262 |
+| Rule Machine `*changed*` trigger | No | hub proof, rule 3267 (14:41) |
+| Rule Machine `Switch turns on` trigger | Yes | hub proof, rule 3267 (16:29) |
+
+Proof method, on a C-8 with firmware 2.5.1.183 and Rule-5.1 version 5.1.8, with rules paused between runs:
+
+```groovy
+// Test driver command: re-send the current value as a state change.
+def emitOnAgain() { sendEvent(name: 'switch', value: 'on', isStateChange: true) }
+```
+
+Turn the switch off, resume the rule, turn it on (a real change), then call `emitOnAgain()`, and read the
+output device's events.
+
+**Crossing baseline.** Both `comp_rises_above` and `comp_rises_to_or_above` (line 8465, `old < v && new >= v`)
+return false when there is no cached old value. VRB2's crossing test is the same inequality as the strict
+form, but its first event after setup may take the old value from device history, so it can fire once where
+webCoRE would not.
+
+### 11.2 Named colours
+
+`setColor` with a colour name resolves through `getColors()` in `webcore.groovy` (from line 6099). Each entry
+holds `name`, `rgb`, `h` (0-360), `s` and `l`. `gtColor` (piston, from line 5509) converts it:
+
+```groovy
+[hex: color.rgb, hue: Math.round(color.h / 3.6), saturation: color.s, level: color.l]
+```
+
+"Blue" is `h: 240, s: 100, l: 50`, so the device receives `setColor([hue: 67, saturation: 100, level: 50])`.
+
+| Target | "Blue" sent to the device | Evidence |
+| --- | --- | --- |
+| webCoRE | hue 67, saturation 100, level 50 | source, above |
+| VRB2 `setColor` given `{h: 67, s: 100, b: 50}` | hue 67, saturation 100, level 50 | hub proof, rule 3264 |
+| Rule Machine Set Color "Blue", level 50 | hue 66, saturation 100, level 50 | hub proof, rule 3267 (15:11) |
+
+Rule Machine's own colour table rounds Blue one hue step lower than webCoRE.
+
+### 11.3 Comparison and command vocabulary
+
+- **Comparisons.** `comparisonsFLD` (`webcore.groovy` line 5685) has separate `conditions` and `triggers`
+  maps. The saved `co` key uses underscores (`changes_to`, `is_greater_than_or_equal_to`).
+- **Any of.** An `is any of` or `changes to any of` right operand is one comma-separated string in `ro.c`,
+  split at run time (`comp_is_any_of`, line 8378). One value behaves as a plain `is` or `changes to`.
+- **Commands.** `commandsFLD` (`webcore.groovy` line 5350) lists 138 device commands. `virtualCommands()`
+  (line 5539) lists 64 webCoRE commands, including `noop`.
+- **Device variables.** A variable's saved device list may hold a non-device identifier, which the piston
+  treats as an operand rather than a device (lines 9223-9238). Automation Map treats any entry in an action's
+  `d` list that is not a `:hex32:` device token as a runtime-selected target.
+
+### 11.4 How the rating works
+
+The rating answers two separate questions.
+
+1. **Level (1-5):** how directly the piston maps, from an equivalence table built from the three catalogues
+   (webCoRE commands, comparisons and statements; the Rule Machine trigger, condition and action catalogue;
+   the VRB2 schema).
+2. **Automatic conversion:** shown separately, and only where Automation Map's converters have been proven
+   on a hub.
+
+Each component gets a verdict per engine.
+
+| Verdict | Meaning | Effort points |
+| --- | --- | --- |
+| yes | direct equivalent, same behaviour | 0 |
+| warning | behaviour differs only by an extra run, and the piston uses only fixed-value commands | 0 |
+| partial | works with a named change, or behaviour differs | 1 |
+| no | needs a workaround or a different design | 2 (3 for a structural statement) |
+| unassessed | not recognised | the piston is Not assessed |
+
+**Levels:**
+- 0 points: level 1 at five components or fewer, otherwise level 2;
+- 1-2 points: level 3;
+- 3-6 points: level 4;
+- 7 or more: level 5;
+- a broken source (an invalid expression, a missing hub variable or device): level 5.
+
+**Rules that shape the verdicts:**
+- **Exact comparisons.** Triggers and conditions are rated by exact comparison. VRB2 is further refined by
+  attribute and value, for example `motion stays active` has no VRB2 trigger.
+- **Extra-run warnings.** An extra-run difference (a `changes` comparison inside an IF, or VRB2's crossing
+  baseline) is a warning only when every command is on a fixed-value list: on, off, setLevel, setColor,
+  colour temperature, mode, thermostat and fan setters, setVolume, mute, unmute and log, with no computed
+  values. Otherwise it is partial.
+- **Plain `changes` for Rule Machine.** It maps to `*changed*`, which ignores a re-sent state, so it carries
+  no extra-run difference.
+- **Fail closed.** Any unrecognised part, including a command on a device variable, makes the whole piston
+  Not assessed rather than an estimate.
+- **Disabled statements** (`di`) are removed before any fact is derived: triggers, device references and
+  source problems.
+- **VRB2 topology.** One rule has one trigger group, one decision and linear THEN, ELSE and common actions.
+  The following count as rework:
+  - actions before the decision, including inside an `on` block;
+  - several triggers joined with AND;
+  - a second decision;
+  - a nested decision.
+
+**Tests** (development repository): 52 golden cases written from the semantics above, coverage of every
+command in the pinned catalogues, and a consistency suite over 67 pistons with 394 single-part removals.
+The live endpoint matched the offline harness on all 25 development pistons.
