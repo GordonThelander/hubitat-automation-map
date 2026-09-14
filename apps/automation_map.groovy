@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit 05fa11debd410406a648d470e239bd621ef09666; developer
+ * builder from the annotated Dev source at commit 7e6dd6aa0cd0611433928887e98878e49588c9a7; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/05fa11debd410406a648d470e239bd621ef09666/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/7e6dd6aa0cd0611433928887e98878e49588c9a7/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.3.0'
+@Field static final String APP_VERSION = '2.3.1'
 
 
 
@@ -6259,6 +6259,1602 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
 
 
 
+@Field static final Map WEBCORE_MIGRATION_LEVELS = [1: 'Automatic, simple', 2: 'Automatic, more steps', 3: 'A little to finish by hand',
+                                                     4: 'A lot to finish by hand', 5: 'Easier to rebuild from scratch']
+@Field static final int WEBCORE_MIGRATION_SIMPLE_COMPONENTS = 5
+
+
+@Field static final List WEBCORE_RM_PROVEN_COLOURS = ['Blue']
+@Field static final Map WEBCORE_MIGRATION_TRIGGER_ATTRS = [switch: ['on', 'off'], motion: ['active', 'inactive'], contact: ['open', 'closed']]
+@Field static final Map WEBCORE_MIGRATION_LOCAL_TYPES = [string: 'String', integer: 'Number', boolean: 'Boolean']
+@Field static final List WEBCORE_MIGRATION_TRIGGER_COMPARISONS = ['changes', 'changes to', 'changes away from', 'gets', 'rises', 'drops',
+    'rises above', 'drops below', 'stays', 'stays equal to', 'happens daily at', 'event occurs', 'receives']
+@Field static final List WEBCORE_MIGRATION_CONDITION_FIELDS = ['$', 't', 'co', 'ct', 'sm', 'ts', 'fs', 's', 'lo', 'ro', 'ro2', 'to', 'to2', 'z']
+@Field static final List WEBCORE_MIGRATION_STATEMENT_FIELDS = ['$', 't', 'a', 'c', 's', 'e', 'ei', 'k', 'd', 'r', 'rop', 'o', 'z', 'di', 'tcp']
+@Field static final List WEBCORE_MIGRATION_TASK_FIELDS = ['$', 'c', 'p', 'm', 'z']
+
+String webcoreMigrationStr(Object o) { return o == null ? "null" : o.toString() }
+
+boolean webcoreMigrationEmpty(Object v) {
+    if (v == null) return true
+    if (v instanceof String) return (v as String).isEmpty()
+    if (v instanceof Number) return (v as Number) == 0
+    if (v instanceof Boolean) return !(v as Boolean)
+    if (v instanceof Collection) return (v as Collection).isEmpty()
+    if (v instanceof Map) return (v as Map).isEmpty()
+    return false
+}
+
+List webcoreMigrationUnmodelled(Map node, List fields) {
+    return node.keySet().collect { webcoreMigrationStr(it) }.findAll { String k -> !(k in fields) && !webcoreMigrationEmpty(node[k]) }
+}
+
+
+String webcoreMigrationLocation(String path) {
+    if (path == 'root') return 'Piston settings'
+    Map names = [s: 'statement', e: 'else statement', k: 'task', v: 'variable', c: 'condition']
+    List parts = []
+    path.split('[.]').each { String seg ->
+        int open = seg.indexOf('[')
+        String index = open > 0 && seg.endsWith(']') ? seg.substring(open + 1, seg.length() - 1) : ''
+        if (index ==~ /^[0-9]+$/) parts << "${names[seg.substring(0, open)] ?: seg.substring(0, open)} ${(index as int) + 1}".toString()
+    }
+    String text = parts.join(' > ')
+    return text ? text.substring(0, 1).toUpperCase() + text.substring(1) : path
+}
+
+Map webcoreMigrationAssessment(Map piston, Map hubVariableTypes, Set knownDeviceTokens) {
+    List blockers = []
+    List sourceProblems = []
+    Closure block = { String path, String reason, String kind, String group = null, int parts = 1 ->
+        blockers << [path: path, location: webcoreMigrationLocation(path), reason: reason, kind: kind, group: group, parts: parts]
+    }
+    
+    
+    Closure countConditions
+    countConditions = { Object l ->
+        int n = 0
+        ((l instanceof List) ? (l as List) : []).each { Object c ->
+            if (!(c instanceof Map)) return
+            if ((c as Map).t in ['condition', 'event']) n++
+            n += countConditions((c as Map).c) as int
+        }
+        return n
+    }
+    Closure countComponents
+    countComponents = { Object l ->
+        int n = 0
+        ((l instanceof List) ? (l as List) : []).each { Object raw ->
+            if (!(raw instanceof Map) || (raw as Map).di) return
+            Map st = raw as Map
+            if (st.t != 'action') n++
+            n += countConditions(st.c) as int
+            ((st.k instanceof List) ? (st.k as List) : []).each { Object k -> if (k instanceof Map && (k as Map).c != 'noop') n++ }
+            ((st.ei instanceof List) ? (st.ei as List) : []).each { Object ei -> if (ei instanceof Map) n += (countConditions((ei as Map).c) as int) + (countComponents((ei as Map).s) as int) }
+            n += (countComponents(st.s) as int) + (countComponents(st.e) as int)
+            ((st.cs instanceof List) ? (st.cs as List) : []).each { Object cs -> if (cs instanceof Map) n += countComponents((cs as Map).s) as int }
+        }
+        return n
+    }
+    Closure componentsOf = { Map st -> Math.max(1, countComponents([st]) as int) }
+
+    List statements = (piston.s instanceof List) ? (piston.s as List) : []
+    String statementsJson = JsonOutput.toJson(statements)
+
+    
+    if (statementsJson.contains('"ok":false')) sourceProblems << 'an expression webCoRE itself marks invalid'
+    (statementsJson =~ /"x":"@@([^"]+)"/).each { List m -> if (!hubVariableTypes.containsKey(m[1])) sourceProblems << "hub variable ${m[1]} does not exist".toString() }
+    int unknownDevices = 0
+    (statementsJson =~ /":[0-9a-f]{32}:"/).each { Object m -> String t = webcoreMigrationStr(m); if (!knownDeviceTokens.contains(t.substring(1, t.length() - 1))) unknownDevices++ }
+    if (unknownDevices) sourceProblems << "${unknownDevices} device ${unknownDevices == 1 ? 'reference' : 'references'} not found on this hub".toString()
+    sourceProblems = sourceProblems.unique()
+    List noEquivalent = []
+    if (statementsJson.contains('"o":"followed by"')) noEquivalent << 'followed-by condition group'
+    if (statementsJson.contains('"t":"each"')) noEquivalent << 'for-each over devices'
+    if (statementsJson.contains('"t":"for"')) noEquivalent << 'counted for loop'
+
+    Map localType = [:]
+    int localCount = 0
+    ((piston.v instanceof List) ? (piston.v as List) : []).eachWithIndex { Object raw, int i ->
+        if (!(raw instanceof Map)) return
+        Map v = raw as Map
+        String name = webcoreMigrationStr(v.n)
+        String type = WEBCORE_MIGRATION_LOCAL_TYPES[webcoreMigrationStr(v.t)]
+        boolean referenced = statementsJson.contains(name) || (v.v instanceof Map && (v.v as Map).t != 'c')
+        if (!type) { if (referenced) block("v[${i}]".toString(), "local variable ${name} (${v.t}) has no Rule Machine type", 'structural'); return }
+        localType[name] = type
+        localCount++
+    }
+    Set globalsUsed = [] as Set
+    Closure globalType = { Object x ->
+        String s = webcoreMigrationStr(x)
+        if (!s.startsWith('@@')) return null
+        String name = s.substring(2)
+        String type = hubVariableTypes[name]
+        if (!type || !(type in ['String', 'Number', 'Boolean']) || !(name ==~ /^[A-Za-z][A-Za-z0-9_]{0,63}$/)) return null
+        globalsUsed << name
+        return type
+    }
+    Closure deviceOperand = { Object lo ->
+        if (!(lo instanceof Map)) return false
+        Map o = lo as Map
+        return o.t == 'p' && o.d instanceof List && (o.d as List).size() == 1 && WEBCORE_MIGRATION_TRIGGER_ATTRS.containsKey(webcoreMigrationStr(o.a)) &&
+            knownDeviceTokens.contains(webcoreMigrationStr((o.d as List)[0]))
+    }
+    Closure conditionModelled = { Map c ->
+        !webcoreMigrationUnmodelled(c, WEBCORE_MIGRATION_CONDITION_FIELDS) && webcoreMigrationEmpty(c.ts) && webcoreMigrationEmpty(c.fs) && (c.sm in [null, '', 'auto'])
+    }
+    Closure normCo = { Object co -> webcoreMigrationStr(co ?: '').replace('_', ' ') }
+    Closure conditionSupported = { Object raw ->
+        if (!(raw instanceof Map)) return false
+        Map c = raw as Map
+        if (c.t != 'condition' || !conditionModelled(c)) return false
+        Map ro = (c.ro instanceof Map) ? (c.ro as Map) : [:]
+        if (normCo(c.co) != 'is' || ro.t != 'c') return false
+        if (deviceOperand(c.lo)) return webcoreMigrationStr(ro.c) in (WEBCORE_MIGRATION_TRIGGER_ATTRS[webcoreMigrationStr((c.lo as Map).a)] as List)
+        return (c.lo instanceof Map) && (c.lo as Map).t == 'x' && localType[webcoreMigrationStr((c.lo as Map).x)] == 'String'
+    }
+    Closure triggerSupported = { Object raw, boolean isEvent ->
+        if (!(raw instanceof Map)) return false
+        Map c = raw as Map
+        if (!conditionModelled(c)) return false
+        String co = isEvent ? 'changes' : normCo(c.co)
+        Map lo = (c.lo instanceof Map) ? (c.lo as Map) : [:]
+        if (lo.t == 'x' && co == 'changes') return globalType(lo.x) != null
+        if (!deviceOperand(lo)) return false
+        if (co == 'changes') return true
+        Map ro = (c.ro instanceof Map) ? (c.ro as Map) : [:]
+        return co == 'changes to' && ro.t == 'c' && webcoreMigrationStr(ro.c) in (WEBCORE_MIGRATION_TRIGGER_ATTRS[webcoreMigrationStr(lo.a)] as List)
+    }
+
+    int triggers = 0
+    int ifs = 0
+    int actions = 0
+    boolean hasElse = false
+    boolean onTriggers = false
+    Closure taskSupported = { Map st, Map k ->
+        if (k.m) return false
+        List params = (k.p instanceof List) ? (k.p as List) : []
+        String cmd = webcoreMigrationStr(k.c)
+        if (cmd == 'noop') return 'noop'
+        if (cmd == 'log' && params.size() >= 2 && params[0] instanceof Map && params[1] instanceof Map) {
+            Map level = params[0] as Map; Map msg = params[1] as Map
+            Map consoleParam = (params.size() > 2 && params[2] instanceof Map) ? (params[2] as Map) : null
+            return level.t == 'c' && level.c == 'info' && msg.t == 'c' && msg.c instanceof String && msg.c &&
+                (consoleParam == null || webcoreMigrationStr(consoleParam.c) == 'false')
+        }
+        if (cmd in ['on', 'off']) {
+            List devs = (st.d instanceof List) ? (st.d as List) : []
+            return !params && devs && devs.every { knownDeviceTokens.contains(webcoreMigrationStr(it)) }
+        }
+        if (cmd == 'setColor' && params && params[0] instanceof Map) {
+            List devs = (st.d instanceof List) ? (st.d as List) : []
+            String colour = webcoreMigrationStr((params[0] as Map).s ?: (params[0] as Map).c)
+            boolean restEmpty = params.drop(1).every { it == null || (it instanceof Map && webcoreMigrationEmpty((it as Map).c) && webcoreMigrationEmpty((it as Map).s)) }
+            return colour in WEBCORE_RM_PROVEN_COLOURS && restEmpty && devs && devs.every { knownDeviceTokens.contains(webcoreMigrationStr(it)) }
+        }
+        if (cmd == 'setVariable' && params.size() == 2 && params[0] instanceof Map && params[1] instanceof Map) {
+            String target = webcoreMigrationStr((params[0] as Map).x)
+            Map value = params[1] as Map
+            if (!target.startsWith('@') && localType.containsKey(target)) {
+                if (value.t == 'c') {
+                    String t = localType[target]
+                    return t != 'Number' || (webcoreMigrationStr(value.c) ==~ /^-?[0-9]+$/)
+                }
+                if (value.t == 'x' && globalType(value.x) != null) return true
+            }
+            String tType = globalType(target)
+            if (tType == 'Number' && value.t == 'c' && (webcoreMigrationStr(value.c) ==~ /^-?[0-9]+$/)) return true
+            if (tType == 'String' && value.t == 'x' && globalType(value.x) == 'String') return true
+            if (tType && value.t == 'x' && localType.containsKey(webcoreMigrationStr(value.x))) return true
+        }
+        return false
+    }
+
+    
+    Closure triggerReason = { Map c ->
+        Map lo = (c.lo instanceof Map) ? (c.lo as Map) : [:]
+        String co = normCo(c.co)
+        if (!conditionModelled(c)) return 'IF trigger uses settings with no automatic Rule Machine build yet'
+        if (lo.t == 'x') {
+            String name = webcoreMigrationStr(lo.x)
+            if (!name.startsWith('@@')) return 'IF trigger on a local variable has no Rule Machine equivalent'
+            String type = hubVariableTypes[name.substring(2)]
+            if (!type) return 'IF trigger on a hub variable this hub does not have'
+            if (!(type in ['String', 'Number', 'Boolean'])) return "IF trigger on a ${type} hub variable is not proven with Rule Machine yet".toString()
+            if (!(name.substring(2) ==~ /^[A-Za-z][A-Za-z0-9_]{0,63}$/)) return 'IF trigger on a hub variable whose name has spaces or symbols is not proven with Rule Machine yet'
+            return "IF trigger comparison ${co} on a hub variable is not proven with Rule Machine yet".toString()
+        }
+        if (lo.t == 'p') {
+            if (!WEBCORE_MIGRATION_TRIGGER_ATTRS.containsKey(webcoreMigrationStr(lo.a))) return "IF trigger on the ${lo.a} attribute is not proven with Rule Machine yet".toString()
+            if (!(lo.d instanceof List) || (lo.d as List).size() != 1) return 'IF trigger on several devices at once is not proven with Rule Machine yet'
+            return "IF trigger comparison ${co} is not proven with Rule Machine yet".toString()
+        }
+        return 'IF trigger on this kind of value has no automatic Rule Machine build yet'
+    }
+    Closure ifReason = { Map st, String base ->
+        List conds = (st.c instanceof List) ? (st.c as List) : []
+        List trig = conds.findAll { it instanceof Map && normCo((it as Map).co) in WEBCORE_MIGRATION_TRIGGER_COMPARISONS }
+        List plain = conds.findAll { !(it in trig) }
+        if (!webcoreMigrationEmpty(st.ei)) return 'IF with ELSE IF branches has no automatic Rule Machine build yet'
+        if (conds.size() > 1 && st.o != 'and') return "IF with conditions joined by ${webcoreMigrationStr(st.o ?: 'or').toUpperCase()} has no automatic Rule Machine build yet".toString()
+        if (trig.size() > 1) return 'IF with several triggers has no automatic Rule Machine build yet'
+        if (trig && base != 's') return 'IF trigger inside another block has no automatic Rule Machine build yet'
+        if (trig && !webcoreMigrationEmpty(st.e)) return 'IF trigger with an ELSE branch has no automatic Rule Machine build yet'
+        if (trig && !triggerSupported(trig[0], false)) return triggerReason(trig[0] as Map)
+        if (plain.size() > 1) return 'IF with several conditions has no automatic Rule Machine build yet'
+        if (plain && (plain[0] as Map).t == 'group') return "IF with a condition group (${webcoreMigrationStr((plain[0] as Map).o ?: 'and').toUpperCase()}) has no automatic Rule Machine build yet".toString()
+        if (plain) return "IF condition (${normCo((plain[0] as Map).co) ?: 'unknown'}) is not proven with Rule Machine yet".toString()
+        return 'IF with no conditions has no automatic Rule Machine build yet'
+    }
+
+    Closure convertBlock
+    convertBlock = { Object list, String base ->
+        ((list instanceof List) ? (list as List) : []).eachWithIndex { Object raw, int i ->
+            if (!(raw instanceof Map)) return
+            Map st = raw as Map
+            String path = "${base}[${i}]"
+            if (st.di) return
+            if (st.t in ['action', 'if', 'on']) {
+                List extra = webcoreMigrationUnmodelled(st, WEBCORE_MIGRATION_STATEMENT_FIELDS)
+                if (extra) { block(path, "${st.t} has unmodelled settings (${extra.join(', ')})", 'structural', null, componentsOf(st)); return }
+                if (st.tcp != null && st.tcp != 'c') { block(path, "${st.t} has a non-default task cancellation policy", 'structural', null, componentsOf(st)); return }
+                if (!webcoreMigrationEmpty(st.rop) && st.rop != 'and') { block(path, "${st.t} has a restriction operator", 'structural', null, componentsOf(st)); return }
+            }
+            if (st.t == 'on' && base == 's' && statements.size() == 1 && webcoreMigrationEmpty(st.r)) {
+                List evts = (st.c instanceof List) ? (st.c as List) : []
+                if (evts && evts.every { it instanceof Map && (it as Map).t == 'event' && triggerSupported(it, true) }) {
+                    onTriggers = true; triggers += evts.size(); convertBlock(st.s, "${path}.s"); return
+                }
+            }
+            if (!webcoreMigrationEmpty(st.r)) { block(path, "${st.t} uses statement restrictions", 'structural', null, componentsOf(st)); return }
+            if (webcoreMigrationStr(st.a) == '1') { block(path, "${st.t} uses asynchronous execution", 'structural', null, componentsOf(st)); return }
+            if (st.t == 'action') {
+                ((st.k instanceof List) ? (st.k as List) : []).eachWithIndex { Object kr, int j ->
+                    if (!(kr instanceof Map)) return
+                    Map k = kr as Map
+                    String kPath = "${path}.k[${j}]"
+                    List extra = webcoreMigrationUnmodelled(k, WEBCORE_MIGRATION_TASK_FIELDS)
+                    if (extra) { block(kPath, "task ${k.c} has unmodelled settings", 'structural'); return }
+                    Object ok = taskSupported(st, k)
+                    if (ok == 'noop') return
+                    if (ok) { actions++; return }
+                    block(kPath, "${k.c} is not yet supported for automatic Rule Machine migration", webcoreMigrationStr(k.c) == 'cancelTasks' ? 'structural' : 'action')
+                }
+                return
+            }
+            if (st.t == 'if' && webcoreMigrationEmpty(st.ei)) {
+                List conds = (st.c instanceof List) ? (st.c as List) : []
+                if (conds.size() == 1 || st.o == 'and') {
+                    List trig = conds.findAll { it instanceof Map && normCo((it as Map).co) in WEBCORE_MIGRATION_TRIGGER_COMPARISONS }
+                    List plain = conds.findAll { !(it in trig) }
+                    boolean noElse = webcoreMigrationEmpty(st.e)
+                    if (!trig && plain.size() == 1 && conditionSupported(plain[0])) {
+                        ifs++; if (!noElse) hasElse = true
+                        convertBlock(st.s, "${path}.s"); convertBlock(st.e, "${path}.e"); return
+                    }
+                    if (base == 's' && trig.size() == 1 && !plain && noElse && triggerSupported(trig[0], false)) {
+                        triggers++; convertBlock(st.s, "${path}.s"); return
+                    }
+                    if (base == 's' && trig.size() == 1 && plain.size() == 1 && noElse && triggerSupported(trig[0], false) && conditionSupported(plain[0])) {
+                        triggers++; ifs++; convertBlock(st.s, "${path}.s"); return
+                    }
+                }
+            }
+            block(path, st.t == 'if' ? ifReason(st, base) : "${st.t} statement is outside what can be rebuilt automatically".toString(), 'structural', null, componentsOf(st))
+        }
+    }
+    convertBlock(statements, 's')
+    if (triggers > 1 && !onTriggers) block('root', 'several IF triggers need webCoRE event semantics', 'structural')
+
+    
+    if (!webcoreMigrationEmpty(piston.r)) block('root', 'piston restrictions', 'structural')
+    if (!webcoreMigrationEmpty(piston.rop) && piston.rop != 'and') block('root', 'piston restriction operator', 'structural')
+    if (piston.o instanceof Map) (piston.o as Map).each { k, v -> if (!webcoreMigrationEmpty(v)) block('root', "piston option ${k}", 'structural') }
+    piston.keySet().collect { webcoreMigrationStr(it) }.each { String k ->
+        if (!(k in ['id', 'n', 'z', 's', 'v', 'o', 'r', 'rop']) && !webcoreMigrationEmpty(piston[k])) block('root', "unmodelled piston setting ${k}", 'structural')
+    }
+
+    
+    List conditions = []
+    boolean timerOrOn = false
+    Closure collectConditions
+    collectConditions = { Object l ->
+        ((l instanceof List) ? (l as List) : []).each { Object c ->
+            if (!(c instanceof Map)) return
+            if ((c as Map).t in ['condition', 'event']) conditions << c
+            collectConditions((c as Map).c)
+        }
+    }
+    Closure walkStatements
+    walkStatements = { Object l ->
+        ((l instanceof List) ? (l as List) : []).each { Object raw ->
+            if (!(raw instanceof Map) || (raw as Map).di) return
+            Map st = raw as Map
+            if (st.t in ['every', 'on']) timerOrOn = true
+            collectConditions(st.c)
+            ((st.ei instanceof List) ? (st.ei as List) : []).each { Object ei -> if (ei instanceof Map) { collectConditions((ei as Map).c); walkStatements((ei as Map).s) } }
+            walkStatements(st.s); walkStatements(st.e)
+            ((st.cs instanceof List) ? (st.cs as List) : []).each { Object cs -> if (cs instanceof Map) walkStatements((cs as Map).s) }
+        }
+    }
+    walkStatements(statements)
+    Closure isTrigger = { Map c -> c.t == 'event' || normCo(c.co) in WEBCORE_MIGRATION_TRIGGER_COMPARISONS }
+    boolean wcHasTriggers = conditions.any { isTrigger(it as Map) } || timerOrOn
+    Set subscribed = [] as Set
+    conditions.eachWithIndex { Object raw, int conditionIndex ->
+        Map c = raw as Map
+        String sm = c.sm ?: 'auto'
+        String group = "subscription:${conditionIndex}".toString()
+        if (wcHasTriggers) {
+            if (!isTrigger(c) && sm == 'always') block('root', 'a condition subscribes to events alongside the triggers', 'structural', group)
+            return
+        }
+        if (sm == 'never') return
+        [c.lo, c.ro, c.ro2].each { Object o ->
+            if (!(o instanceof Map)) return
+            Map om = o as Map
+            if (om.t == 'c' || om.t == null || (om.t == 'x' && !webcoreMigrationStr(om.x).startsWith('@'))) return
+            if (o.is(c.lo) && deviceOperand(o)) { subscribed << "${(om.d as List)[0]}|${om.a}"; return }
+            block('root', "a condition subscribes to a ${om.t == 'v' ? 'virtual device' : om.t == 'x' ? 'variable' : om.t == 'p' ? 'device list' : 'value'} with no Rule Machine trigger", 'structural', group)
+        }
+    }
+    if (!wcHasTriggers) triggers += subscribed.size()
+    blockers = blockers.unique { (it.path as String) + "|" + (it.reason as String) }
+
+    
+    
+    Map effortByKey = [:]
+    blockers.each { Map b ->
+        String r = b.reason as String
+        int effort = b.kind == 'action' ? 1 :
+            ((r ==~ /^(while|repeat|switch|do|every|for|each|break|exit) .*/) || r.contains('asynchronous') || r.contains('IF triggers')) ? 3 : 2
+        b.effort = effort
+        effortByKey[(b.group ?: "${b.path}|${r}").toString()] = effort
+    }
+    int points = (effortByKey.values().sum() ?: 0) as int
+    Map partsByKey = [:]
+    blockers.each { Map b -> partsByKey[(b.group ?: "${b.path}|${b.reason}").toString()] = b.parts as int }
+    
+    int outsideStatements = (partsByKey.findAll { k, v -> k.startsWith('v[') || k.startsWith('root|') || k.startsWith('subscription:') }.values().sum() ?: 0) as int
+    int totalComponents = (countComponents(statements) as int) + outsideStatements
+    int manualComponents = (partsByKey.values().sum() ?: 0) as int
+    if (manualComponents > totalComponents) totalComponents = manualComponents
+
+    int level
+    List summary = []
+    if (sourceProblems || noEquivalent) {
+        level = 5
+        sourceProblems.each { summary << "Fix the piston first: ${it}".toString() }
+        noEquivalent.each { summary << "No Rule Machine equivalent: ${it}".toString() }
+    } else if (points) {
+        level = points <= 2 ? 3 : points <= 6 ? 4 : 5
+        summary << "${manualComponents} of ${totalComponents} ${totalComponents == 1 ? 'component' : 'components'} ${manualComponents == 1 ? 'needs' : 'need'} doing by hand".toString()
+        if (level == 5) summary << 'Rebuilding it from scratch is likely easier'
+        if (actions || triggers || ifs) summary << 'Everything else can migrate automatically'
+    } else {
+        level = totalComponents <= WEBCORE_MIGRATION_SIMPLE_COMPONENTS ? 1 : 2
+        summary << 'Automatic migration possible'
+    }
+    return [
+        ruleMachine: [level: level, label: WEBCORE_MIGRATION_LEVELS[level], summary: summary,
+                      counts: [triggers: triggers, conditions: ifs, actions: actions, blockers: blockers.size(), effortPoints: points,
+                               components: totalComponents, manualComponents: manualComponents],
+                      blockers: blockers.take(25).collect { [location: it.location, reason: it.reason, effort: it.effort, components: it.parts, manual: it.kind == 'action' ? 'action' : 'structure'] },
+                      blockersOverflow: Math.max(0, blockers.size() - 25)],
+        visualRuleBuilder: [level: null, label: 'Not assessed yet',
+                            summary: ['Visual Rule Builder conversion has not been built yet, so no rating is given.']]
+    ]
+}
+
+Map webcoreMigrationAssessmentMapping() {
+    Map result = webcoreMigrationAssessmentResult(webcoreMigrationStr(params?.appId ?: ''))
+    return render(status: result.http as Integer, contentType: 'application/json', data: JsonOutput.toJson(result.body))
+}
+
+Map webcoreMigrationAssessmentResult(String rawAppId) {
+    Map limits = webcoreCoverageLimits()
+    clearAbandonedScan()
+    if (scanEffectivelyActive()) return [http: 409, body: [status: 'busy', error: 'scan-active']]
+    String appId = rawAppId == null ? '' : rawAppId.trim()
+    if (!appId || appId.length() > (limits.maxAppIdLength as Integer) || !(appId ==~ /^[0-9]+$/)) {
+        return [http: 400, body: [status: 'invalid-request', error: 'invalid-app-id']]
+    }
+    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Object entry = appInfo[appId]
+    if (!(entry instanceof Map) || webcoreMigrationStr((entry as Map).type ?: '').trim() != 'webCoRE Piston') {
+        return [http: 400, body: [status: 'invalid-request', error: 'not-a-piston']]
+    }
+    String claimKey = "migration:${appId}"
+    Long stamp = webcoreCoverageClaim(claimKey, now(), limits.claimTtlMs as Long)
+    if (stamp == null) return [http: 409, body: [status: 'busy', error: 'assessment-in-flight']]
+    try {
+        Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}", limits.loopbackTimeoutSec as Integer, [contentType: 'application/json'])
+        if (!fetched.ok || !(fetched.data instanceof Map)) return [http: 422, body: [status: 'error', error: 'source-unavailable']]
+        Map decoded = decodeWebcorePistonDocument(fetched.data as Map)
+        if (decoded.status == 'not-present') return [http: 200, body: [status: 'not-present']]
+        if (decoded.status != 'complete' || !(decoded.document instanceof Map)) return [http: 422, body: [status: 'error', error: 'decode-failed']]
+
+        Map inventory = (((state.hubVariableInventory ?: [:]) as Map).variables ?: [:]) as Map
+        Map hubVariableTypes = [:]
+        inventory.each { k, v -> hubVariableTypes[webcoreMigrationStr(k)] = normalizeHubVariableType((v instanceof Map) ? webcoreMigrationStr((v as Map).type) : null) }
+        String parentId = webcoreMigrationStr((entry as Map).parent ?: '')
+        Map indexes = buildWebcoreDeviceHashIndexes(appInfo)
+        Map parentIndex = (((indexes.resolvable ?: [:]) as Map)[parentId] ?: [:]) as Map
+        Set knownTokens = parentIndex.keySet().collect { webcoreMigrationStr(it) } as Set
+        Map tokenToDeviceId = [:]
+        parentIndex.each { k, v -> if ("${v}" ==~ /^[0-9]+$/) tokenToDeviceId["${k}".toString()] = "${v}" as Integer }
+        Map rating = webcoreMigrationRating(decoded.document as Map, hubVariableTypes, tokenToDeviceId)
+        return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine, visualRuleBuilder: rating.visualRuleBuilder]]
+    } catch (Exception ignored) {
+        return [http: 422, body: [status: 'error', error: 'assessment-failed']]
+    } finally {
+        webcoreCoverageRelease(claimKey, stamp)
+    }
+}
+
+
+
+
+
+
+
+
+
+
+@Field static final List WEBCORE_VRB_PROVEN = ['trigger.switch.event', 'trigger.switch.subscription', 'trigger.motion.event', 'trigger.motion.subscription',
+    'trigger.contact.event', 'trigger.contact.subscription', 'condition.switch.is', 'condition.motion.is', 'condition.contact.is',
+    'action.on', 'action.off', 'action.toggle', 'action.setLevel', 'action.setColorTemperature', 'action.setColor.named']
+@Field static final Map WEBCORE_VRB_TRIGGER_EVENTS = [
+    switch: [field: 'switches', event: 'switchEvent', values: [on: 'Turns on', off: 'Turns off']],
+    motion: [field: 'motionSensors', event: 'motionSensorEvent', values: [active: 'Motion starts', inactive: 'Motion stops']],
+    contact: [field: 'contactSensors', event: 'contactSensorEvent', values: [open: 'Contact opens', closed: 'Contact closes']]]
+@Field static final Map WEBCORE_VRB_CONDITION_STATES = [
+    switch: [type: 'switchCondition', field: 'switches', state: 'switchState', values: [on: 'Turned on', off: 'Turned off']],
+    motion: [type: 'motionCondition', field: 'motionSensors', state: 'motionSensorState', values: [active: 'Motion is active', inactive: 'Motion is inactive']],
+    contact: [type: 'contactCondition', field: 'contactSensors', state: 'contactSensorState', values: [open: 'Contact is open', closed: 'Contact is closed']]]
+
+@Field static final Map WEBCORE_VRB_COLOURS = [
+    'Alice Blue': [208, 100, 97],
+    'Antique White': [34, 78, 91],
+    'Aqua': [180, 100, 50],
+    'Aquamarine': [160, 100, 75],
+    'Azure': [180, 100, 97],
+    'Beige': [60, 56, 91],
+    'Bisque': [33, 100, 88],
+    'Blanched Almond': [36, 100, 90],
+    'Blue': [240, 100, 50],
+    'Blue Violet': [271, 76, 53],
+    'Brown': [0, 59, 41],
+    'Burly Wood': [34, 57, 70],
+    'Cadet Blue': [182, 25, 50],
+    'Chartreuse': [90, 100, 50],
+    'Chocolate': [25, 75, 47],
+    'Cool White': [187, 19, 96],
+    'Coral': [16, 100, 66],
+    'Corn Flower Blue': [219, 79, 66],
+    'Corn Silk': [48, 100, 93],
+    'Crimson': [348, 83, 58],
+    'Cyan': [180, 100, 50],
+    'Dark Blue': [240, 100, 27],
+    'Dark Cyan': [180, 100, 27],
+    'Dark Golden Rod': [43, 89, 38],
+    'Dark Gray': [0, 0, 66],
+    'Dark Green': [120, 100, 20],
+    'Dark Khaki': [56, 38, 58],
+    'Dark Magenta': [300, 100, 27],
+    'Dark Olive Green': [82, 39, 30],
+    'Dark Orange': [33, 100, 50],
+    'Dark Orchid': [280, 61, 50],
+    'Dark Red': [0, 100, 27],
+    'Dark Salmon': [15, 72, 70],
+    'Dark Sea Green': [120, 25, 65],
+    'Dark Slate Blue': [248, 39, 39],
+    'Dark Slate Gray': [180, 25, 25],
+    'Dark Turquoise': [181, 100, 41],
+    'Dark Violet': [282, 100, 41],
+    'Daylight White': [191, 9, 90],
+    'Deep Pink': [328, 100, 54],
+    'Deep Sky Blue': [195, 100, 50],
+    'Dim Gray': [0, 0, 41],
+    'Dodger Blue': [210, 100, 56],
+    'Fire Brick': [0, 68, 42],
+    'Floral White': [40, 100, 97],
+    'Forest Green': [120, 61, 34],
+    'Fuchsia': [300, 100, 50],
+    'Gainsboro': [0, 0, 86],
+    'Ghost White': [240, 100, 99],
+    'Gold': [51, 100, 50],
+    'Golden Rod': [43, 74, 49],
+    'Gray': [0, 0, 50],
+    'Green': [120, 100, 25],
+    'Green Yellow': [84, 100, 59],
+    'Honeydew': [120, 100, 97],
+    'Hot Pink': [330, 100, 71],
+    'Indian Red': [0, 53, 58],
+    'Indigo': [275, 100, 25],
+    'Ivory': [60, 100, 97],
+    'Khaki': [54, 77, 75],
+    'Lavender': [240, 67, 94],
+    'Lavender Blush': [340, 100, 97],
+    'Lawn Green': [90, 100, 49],
+    'Lemon Chiffon': [54, 100, 90],
+    'Light Blue': [195, 53, 79],
+    'Light Coral': [0, 79, 72],
+    'Light Cyan': [180, 100, 94],
+    'Light Golden Rod Yellow': [60, 80, 90],
+    'Light Gray': [0, 0, 83],
+    'Light Green': [120, 73, 75],
+    'Light Pink': [351, 100, 86],
+    'Light Salmon': [17, 100, 74],
+    'Light Sea Green': [177, 70, 41],
+    'Light Sky Blue': [203, 92, 75],
+    'Light Slate Gray': [210, 14, 53],
+    'Light Steel Blue': [214, 41, 78],
+    'Light Yellow': [60, 100, 94],
+    'Lime': [120, 100, 50],
+    'Lime Green': [120, 61, 50],
+    'Linen': [30, 67, 94],
+    'Maroon': [0, 100, 25],
+    'Medium Aquamarine': [160, 51, 60],
+    'Medium Blue': [240, 100, 40],
+    'Medium Orchid': [288, 59, 58],
+    'Medium Purple': [260, 60, 65],
+    'Medium Sea Green': [147, 50, 47],
+    'Medium Slate Blue': [249, 80, 67],
+    'Medium Spring Green': [157, 100, 49],
+    'Medium Turquoise': [178, 60, 55],
+    'Medium Violet Red': [322, 81, 43],
+    'Midnight Blue': [240, 64, 27],
+    'Mint Cream': [150, 100, 98],
+    'Misty Rose': [6, 100, 94],
+    'Moccasin': [38, 100, 85],
+    'Navajo White': [36, 100, 84],
+    'Navy': [240, 100, 25],
+    'Old Lace': [39, 85, 95],
+    'Olive': [60, 100, 25],
+    'Olive Drab': [80, 60, 35],
+    'Orange': [39, 100, 50],
+    'Orange Red': [16, 100, 50],
+    'Orchid': [302, 59, 65],
+    'Pale Golden Rod': [55, 67, 80],
+    'Pale Green': [120, 93, 79],
+    'Pale Turquoise': [180, 65, 81],
+    'Pale Violet Red': [340, 60, 65],
+    'Papaya Whip': [37, 100, 92],
+    'Peach Puff': [28, 100, 86],
+    'Peru': [30, 59, 53],
+    'Pink': [350, 100, 88],
+    'Plum': [300, 47, 75],
+    'Powder Blue': [187, 52, 80],
+    'Purple': [300, 100, 25],
+    'Red': [0, 100, 50],
+    'Rosy Brown': [0, 25, 65],
+    'Royal Blue': [225, 73, 57],
+    'Saddle Brown': [25, 76, 31],
+    'Salmon': [6, 93, 71],
+    'Sandy Brown': [28, 87, 67],
+    'Sea Green': [146, 50, 36],
+    'Sea Shell': [25, 100, 97],
+    'Sienna': [19, 56, 40],
+    'Silver': [0, 0, 75],
+    'Sky Blue': [197, 71, 73],
+    'Slate Blue': [248, 53, 58],
+    'Slate Gray': [210, 13, 50],
+    'Snow': [0, 100, 99],
+    'Soft White': [83, 44, 67],
+    'Spring Green': [150, 100, 50],
+    'Steel Blue': [207, 44, 49],
+    'Tan': [34, 44, 69],
+    'Teal': [180, 100, 25],
+    'Thistle': [300, 24, 80],
+    'Tomato': [9, 100, 64],
+    'Turquoise': [174, 72, 56],
+    'Violet': [300, 76, 72],
+    'Warm White': [72, 20, 72],
+    'Wheat': [39, 77, 83],
+    'White': [0, 0, 100],
+    'White Smoke': [0, 0, 96],
+    'Yellow': [60, 100, 50],
+    'Yellow Green': [80, 61, 50]
+]
+
+int webcoreVrbCountComponents(Object l) {
+    int n = 0
+    ((l instanceof List) ? (l as List) : []).each { Object raw ->
+        if (!(raw instanceof Map) || (raw as Map).di) return
+        Map st = raw as Map
+        if (st.t != 'action') n++
+        n += webcoreVrbCountConditions(st.c)
+        ((st.k instanceof List) ? (st.k as List) : []).each { Object k -> if (k instanceof Map && (k as Map).c != 'noop') n++ }
+        ((st.ei instanceof List) ? (st.ei as List) : []).each { Object ei -> if (ei instanceof Map) n += webcoreVrbCountConditions((ei as Map).c) + webcoreVrbCountComponents((ei as Map).s) }
+        n += webcoreVrbCountComponents(st.s) + webcoreVrbCountComponents(st.e)
+        ((st.cs instanceof List) ? (st.cs as List) : []).each { Object cs -> if (cs instanceof Map) n += webcoreVrbCountComponents((cs as Map).s) }
+    }
+    return n
+}
+
+int webcoreVrbCountConditions(Object l) {
+    int n = 0
+    ((l instanceof List) ? (l as List) : []).each { Object c ->
+        if (!(c instanceof Map)) return
+        if ((c as Map).t in ['condition', 'event']) n++
+        n += webcoreVrbCountConditions((c as Map).c)
+    }
+    return n
+}
+
+Map webcoreVrbAssessment(Map piston, Map hubVariableTypes, Map tokenToDeviceId, List provenOverride = null) {
+    List provenRows = provenOverride != null ? provenOverride : WEBCORE_VRB_PROVEN
+    List blockers = []
+    Set rowsUsed = [] as Set
+    List fatal = []
+    Closure block = { String path, String reason, String kind, int effort, int parts, String group = null ->
+        blockers << [path: path, location: webcoreMigrationLocation(path), reason: reason, kind: kind, effort: effort, parts: Math.max(1, parts), group: group]
+    }
+    
+    Closure useRow = { String row, String path, String what, int effort, int parts ->
+        rowsUsed << row
+        if (row in provenRows) return true
+        block(path, "${what} is not proven with Visual Rule Builder yet".toString(), 'unproven', effort, parts)
+        return false
+    }
+    List statements = ((piston.s instanceof List) ? (piston.s as List) : []).findAll { it instanceof Map && !(it as Map).di }
+    String statementsJson = JsonOutput.toJson(piston.s instanceof List ? piston.s : [])
+    int totalComponents = webcoreVrbCountComponents(statements)
+
+    
+    if (statementsJson.contains('"ok":false')) fatal << 'Fix the piston first: an expression webCoRE itself marks invalid'
+    (statementsJson =~ /"x":"@@([^"]+)"/).each { List m -> if (!hubVariableTypes.containsKey(m[1])) fatal << "Fix the piston first: hub variable ${m[1]} does not exist".toString() }
+    int unknownDevices = 0
+    (statementsJson =~ /":[0-9a-f]{32}:"/).each { Object m -> String t = webcoreMigrationStr(m); if (!tokenToDeviceId.containsKey(t.substring(1, t.length() - 1))) unknownDevices++ }
+    if (unknownDevices) fatal << "Fix the piston first: ${unknownDevices} device ${unknownDevices == 1 ? 'reference' : 'references'} not found on this hub".toString()
+    if (statementsJson.contains('"o":"followed by"')) fatal << 'No Visual Rule Builder equivalent: followed-by condition group'
+    if (statementsJson.contains('"t":"each"') || statementsJson.contains('"t":"for"')) fatal << 'No Visual Rule Builder equivalent: loops over devices or counts'
+
+    
+    
+    Map localNames = [:]
+    ((piston.v instanceof List) ? (piston.v as List) : []).each { Object raw -> if (raw instanceof Map) localNames[webcoreMigrationStr((raw as Map).n)] = true }
+    Closure isVariableOperand = { Object o -> o instanceof Map && (o as Map).t == 'x' }
+    Closure deviceId = { Object token -> tokenToDeviceId[webcoreMigrationStr(token)] }
+    Closure singletonDevice = { Object o ->
+        if (!(o instanceof Map)) return null
+        Map m = o as Map
+        if (m.t != 'p' || !(m.d instanceof List) || (m.d as List).size() != 1) return null
+        if (!(webcoreMigrationStr(m.p ?: 'a') in ['a', 'null'])) return null
+        return deviceId((m.d as List)[0])
+    }
+    Closure normCo = { Object co -> webcoreMigrationStr(co ?: '').replace('_', ' ') }
+    Closure modelled = { Map c ->
+        !webcoreMigrationUnmodelled(c, WEBCORE_MIGRATION_CONDITION_FIELDS) && webcoreMigrationEmpty(c.ts) && webcoreMigrationEmpty(c.fs) && (c.sm in [null, '', 'auto'])
+    }
+    List triggerNodes = []
+    List decisionConditions = []
+    Closure addTriggerNodes = { String attr, Object devId, List values ->
+        Map spec = WEBCORE_VRB_TRIGGER_EVENTS[attr] as Map
+        values.each { String v ->
+            String label = (spec.values as Map)[v] as String
+            if (!triggerNodes.any { Map t -> t.attr == attr && t.devId == devId && t.value == label }) triggerNodes << [attr: attr, devId: devId, value: label]
+        }
+    }
+    
+    Closure mapTrigger = { Map c, String path, boolean isEvent ->
+        String co = isEvent ? 'changes' : normCo(c.co)
+        Map lo = (c.lo instanceof Map) ? (c.lo as Map) : [:]
+        if (isVariableOperand(lo)) { fatal << 'No Visual Rule Builder equivalent: a variable change triggers this piston'; return false }
+        if (!modelled(c)) { block(path, 'Trigger uses settings Visual Rule Builder cannot express', 'structural', 2, 1); return false }
+        Object devId = singletonDevice(lo)
+        String attr = webcoreMigrationStr(lo.a)
+        if (devId == null || !WEBCORE_VRB_TRIGGER_EVENTS.containsKey(attr)) { block(path, 'Trigger on this device or attribute has no Visual Rule Builder trigger', 'structural', 2, 1); return false }
+        List states = ((WEBCORE_VRB_TRIGGER_EVENTS[attr] as Map).values as Map).keySet().collect { webcoreMigrationStr(it) }
+        if (isEvent) {
+            addTriggerNodes(attr, devId, states)
+            return useRow("trigger.${attr}.event".toString(), path, "An on ${attr} event", 2, 1)
+        }
+        
+        
+        Map ro = (c.ro instanceof Map) ? (c.ro as Map) : [:]
+        if (co == 'changes' || (co == 'changes to' && ro.t == 'c' && webcoreMigrationStr(ro.c) in states)) {
+            block(path, "A ${co} trigger only fires on a real change in webCoRE, but Visual Rule Builder also fires when a device re-sends the same state".toString(), 'structural', 2, 1)
+            return false
+        }
+        block(path, "Trigger comparison ${co} has no Visual Rule Builder trigger".toString(), 'structural', 2, 1)
+        return false
+    }
+    Closure mapCondition = { Object raw, String path ->
+        if (!(raw instanceof Map)) return false
+        Map c = raw as Map
+        if (c.t == 'group') { block(path, 'Condition groups have no Visual Rule Builder equivalent', 'structural', 2, webcoreVrbCountConditions([c])); return false }
+        if (c.n) { block(path, 'Negated conditions are not mapped to Visual Rule Builder', 'structural', 2, 1); return false }
+        Map lo = (c.lo instanceof Map) ? (c.lo as Map) : [:]
+        Map ro = (c.ro instanceof Map) ? (c.ro as Map) : [:]
+        if (isVariableOperand(lo) || isVariableOperand(ro)) { fatal << 'No Visual Rule Builder equivalent: a variable controls a condition'; return false }
+        if (!modelled(c)) { block(path, 'Condition uses settings Visual Rule Builder cannot express', 'structural', 2, 1); return false }
+        Object devId = singletonDevice(lo)
+        String attr = webcoreMigrationStr(lo.a)
+        Map spec = WEBCORE_VRB_CONDITION_STATES[attr] as Map
+        if (devId == null || spec == null || normCo(c.co) != 'is' || ro.t != 'c' || !((spec.values as Map).containsKey(webcoreMigrationStr(ro.c)))) {
+            block(path, "Condition (${normCo(c.co) ?: 'unknown'}) has no Visual Rule Builder equivalent".toString(), 'structural', 2, 1)
+            return false
+        }
+        decisionConditions << [type: spec.type, config: [(spec.field): [devId], (spec.state): (spec.values as Map)[webcoreMigrationStr(ro.c)]]]
+        return useRow("condition.${attr}.is".toString(), path, "A ${attr} condition", 2, 1)
+    }
+
+    
+    int actionCount = 0
+    Closure mapActions
+    mapActions = { Object list, String base ->
+        List nodes = []
+        ((list instanceof List) ? (list as List) : []).eachWithIndex { Object raw, int i ->
+            if (!(raw instanceof Map) || (raw as Map).di) return
+            Map st = raw as Map
+            String path = "${base}[${i}]"
+            if (st.t != 'action') { block(path, "${st.t} inside a branch does not fit the single Visual Rule Builder decision".toString(), 'structural', 3, webcoreVrbCountComponents([st])); return }
+            List extra = webcoreMigrationUnmodelled(st, WEBCORE_MIGRATION_STATEMENT_FIELDS)
+            if (extra || (st.tcp != null && st.tcp != 'c') || !webcoreMigrationEmpty(st.r) || webcoreMigrationStr(st.a) == '1') {
+                block(path, 'Action statement uses settings Visual Rule Builder cannot express', 'structural', 2, webcoreVrbCountComponents([st])); return
+            }
+            List devIds = ((st.d instanceof List) ? (st.d as List) : []).collect { deviceId(it) }
+            ((st.k instanceof List) ? (st.k as List) : []).eachWithIndex { Object kr, int j ->
+                if (!(kr instanceof Map)) return
+                Map k = kr as Map
+                String kPath = "${path}.k[${j}]"
+                String cmd = webcoreMigrationStr(k.c)
+                List params = (k.p instanceof List) ? (k.p as List) : []
+                if (webcoreMigrationUnmodelled(k, WEBCORE_MIGRATION_TASK_FIELDS) || k.m) { block(kPath, "${cmd} uses settings Visual Rule Builder cannot express".toString(), 'action', 1, 1); return }
+                if (cmd == 'noop') return
+                if (cmd == 'setVariable') {
+                    String target = params && params[0] instanceof Map ? webcoreMigrationStr((params[0] as Map).x) : ''
+                    
+                    if (target && !target.startsWith('@') && localNames.containsKey(target) && statementsJson.split('"x":"' + target + '"', -1).length <= 2) return
+                    block(kPath, 'Visual Rule Builder has no variables', 'action', 1, 1); return
+                }
+                if (cmd == 'wait') { block(kPath, 'A wait behaves differently in Visual Rule Builder (waits persist and are not cancelled when conditions change)', 'structural', 2, 1); return }
+                if (cmd == 'cancelTasks') { block(kPath, 'cancelTasks has no equivalent in Visual Rule Builder', 'structural', 2, 1); return }
+                boolean literal = params.every { it == null || (it instanceof Map && ((it as Map).t in ['c', 's'] || webcoreMigrationEmpty((it as Map).t))) }
+                if (!literal) { block(kPath, "${cmd} takes a value from an expression or variable".toString(), 'action', 1, 1); return }
+                if (!devIds || devIds.any { it == null }) { block(kPath, "${cmd} has no Visual Rule Builder action".toString(), 'action', 1, 1); return }
+                Closure param = { int idx -> (params.size() > idx && params[idx] instanceof Map) ? (params[idx] as Map) : [:] }
+                Closure restEmpty = { int from -> (from..<Math.max(from, params.size())).every { int idx -> webcoreMigrationEmpty(param(idx).c) && webcoreMigrationEmpty(param(idx).s) } }
+                Map node = null
+                String row = null
+                if (cmd in ['on', 'off', 'toggle'] && restEmpty(0)) {
+                    node = [type: cmd == 'on' ? 'turnOn' : cmd == 'off' ? 'turnOff' : 'toggle', config: [switches: devIds]]
+                    row = "action.${cmd}".toString()
+                } else if (cmd == 'setLevel' && webcoreMigrationStr(param(0).c) ==~ /^[0-9]{1,3}$/ && (param(0).c as int) <= 100 && restEmpty(1)) {
+                    node = [type: 'setBrightness', config: [dimmers: devIds, brightness: param(0).c as int]]
+                    row = 'action.setLevel'
+                } else if (cmd == 'setColorTemperature' && webcoreMigrationStr(param(0).c) ==~ /^[0-9]{3,5}$/ && restEmpty(1)) {
+                    node = [type: 'setColorTemp', config: [colorTempBulbs: devIds, colorTemp: param(0).c as int]]
+                    row = 'action.setColorTemperature'
+                } else if (cmd == 'setColor' && restEmpty(1)) {
+                    String name = webcoreMigrationStr(param(0).s ?: param(0).c)
+                    List hsl = WEBCORE_VRB_COLOURS[name] as List
+                    if (hsl) {
+                        
+                        node = [type: 'setColor', config: [colorBulbs: devIds, color: [h: Math.round((hsl[0] as int) / 3.6d) as int, s: hsl[1] as int, b: hsl[2] as int]]]
+                        row = 'action.setColor.named'
+                    }
+                }
+                if (node == null) { block(kPath, "${cmd} has no Visual Rule Builder action".toString(), 'action', 1, 1); return }
+                actionCount++
+                if (useRow(row, kPath, "The ${cmd} action".toString(), 1, 1)) nodes << node
+            }
+        }
+        return nodes
+    }
+
+    
+    if (!webcoreMigrationEmpty(piston.r)) block('root', 'Piston restrictions have no Visual Rule Builder equivalent', 'structural', 2, 1)
+    if (piston.o instanceof Map) (piston.o as Map).each { k, v -> if (!webcoreMigrationEmpty(v)) block('root', "Piston option ${k} has no Visual Rule Builder equivalent".toString(), 'structural', 2, 1) }
+    piston.keySet().collect { webcoreMigrationStr(it) }.each { String k ->
+        if (!(k in ['id', 'n', 'z', 's', 'v', 'o', 'r', 'rop']) && !webcoreMigrationEmpty(piston[k])) block('root', "Unmodelled piston setting ${k}".toString(), 'structural', 2, 1)
+    }
+
+    
+    List thenNodes = []
+    List elseNodes = []
+    List tailNodes = []
+    String decisionType = 'all'
+    int ifIndex = statements.findIndexOf { (it as Map).t == 'if' }
+    int onIndex = statements.findIndexOf { (it as Map).t == 'on' }
+    List allStatements = (piston.s instanceof List) ? (piston.s as List) : []
+    Closure pathOf = { Map st -> "s[${allStatements.indexOf(st)}]".toString() }
+    statements.each { Object raw ->
+        Map st = raw as Map
+        if (!(st.t in ['if', 'on', 'action'])) block(pathOf(st), "${st.t} does not fit the single Visual Rule Builder decision".toString(), 'structural', 3, webcoreVrbCountComponents([st]))
+    }
+    List ifs = statements.findAll { (it as Map).t == 'if' }
+    List ons = statements.findAll { (it as Map).t == 'on' }
+    if (ifs.size() + ons.size() > 1) {
+        (ifs + ons).drop(1).each { Object raw -> block(pathOf(raw as Map), 'A second IF or on block needs a second Visual Rule Builder rule', 'structural', 3, webcoreVrbCountComponents([raw])) }
+    }
+    Map head = (ifs + ons) ? ((ifs + ons).min { statements.indexOf(it) } as Map) : null
+    if (head != null) {
+        int headIndex = statements.indexOf(head)
+        statements.take(headIndex).each { Object raw -> if ((raw as Map).t == 'action') block(pathOf(raw as Map), 'Actions before the decision do not fit a Visual Rule Builder rule', 'structural', 3, webcoreVrbCountComponents([raw])) }
+        String hp = pathOf(head)
+        List extra = webcoreMigrationUnmodelled(head, WEBCORE_MIGRATION_STATEMENT_FIELDS)
+        if (extra || (head.tcp != null && head.tcp != 'c') || !webcoreMigrationEmpty(head.r)) {
+            block(hp, "${head.t} uses settings Visual Rule Builder cannot express".toString(), 'structural', 2, webcoreVrbCountComponents([head]))
+        } else if (head.t == 'on' && statements.size() > 1) {
+            block(hp, 'An on block alongside other statements does not fit a Visual Rule Builder rule', 'structural', 3, webcoreVrbCountComponents([head]))
+        } else if (head.t == 'on') {
+            List evts = (head.c instanceof List) ? (head.c as List) : []
+            evts.eachWithIndex { Object e, int j -> if (e instanceof Map) mapTrigger(e as Map, "${hp}.c[${j}]".toString(), true) }
+            thenNodes = mapActions(head.s, "${hp}.s".toString())
+        } else if (!webcoreMigrationEmpty(head.ei)) {
+            block(hp, 'IF with ELSE IF branches does not fit the single Visual Rule Builder decision', 'structural', 3, webcoreVrbCountComponents([head]))
+        } else if ("${head.a}" == '1') {
+            block(hp, 'IF uses asynchronous execution', 'structural', 3, webcoreVrbCountComponents([head]))
+        } else {
+            List conds = (head.c instanceof List) ? (head.c as List) : []
+            decisionType = (conds.size() > 1 && head.o == 'or') ? 'any' : 'all'
+            if (conds.size() > 1 && !(head.o in ['and', 'or'])) block(hp, "IF joining conditions with ${head.o} does not fit Visual Rule Builder".toString(), 'structural', 2, conds.size())
+            List trig = conds.findAll { it instanceof Map && (it as Map).t == 'condition' && normCo((it as Map).co) in WEBCORE_MIGRATION_TRIGGER_COMPARISONS }
+            List plain = conds.findAll { !(it in trig) }
+            if (trig && decisionType == 'any') {
+                block(hp, 'An IF mixing a trigger with OR conditions does not fit Visual Rule Builder', 'structural', 2, conds.size())
+            } else {
+                trig.each { Object c -> mapTrigger(c as Map, "${hp}.c[${conds.indexOf(c)}]".toString(), false) }
+                plain.each { Object c -> mapCondition(c, "${hp}.c[${conds.indexOf(c)}]".toString()) }
+                if (!trig) {
+                    
+                    
+                    conds.eachWithIndex { Object raw, int j ->
+                        if (!(raw instanceof Map)) return
+                        Map c = raw as Map
+                        [c.lo, c.ro, c.ro2].each { Object o ->
+                            if (!(o instanceof Map)) return
+                            Map om = o as Map
+                            if (om.t == 'c' || om.t == null || (om.t == 'x' && !webcoreMigrationStr(om.x).startsWith('@'))) return
+                            Object devId = o.is(c.lo) ? singletonDevice(o) : null
+                            String attr = webcoreMigrationStr(om.a)
+                            if (devId == null || !WEBCORE_VRB_TRIGGER_EVENTS.containsKey(attr)) {
+                                if (!(om.t == 'x')) block("${hp}.c[${j}]".toString(), 'The piston wakes on a value Visual Rule Builder cannot watch', 'structural', 2, 1)
+                                return
+                            }
+                            addTriggerNodes(attr, devId, ((WEBCORE_VRB_TRIGGER_EVENTS[attr] as Map).values as Map).keySet().collect { webcoreMigrationStr(it) })
+                            useRow("trigger.${attr}.subscription".toString(), "${hp}.c[${j}]".toString(), "Waking on ${attr} changes without a trigger".toString(), 2, 0)
+                        }
+                    }
+                }
+                thenNodes = mapActions(head.s, "${hp}.s".toString())
+                elseNodes = mapActions(head.e, "${hp}.e".toString())
+            }
+        }
+        tailNodes = mapActions(statements.drop(headIndex + 1).findAll { (it as Map).t == 'action' }, "s[after]")
+        blockers.each { Map b -> if (b.path?.startsWith('s[after]')) b.location = 'After the decision' }
+    } else {
+        thenNodes = mapActions(statements.findAll { (it as Map).t == 'action' }, 's')
+    }
+    
+    boolean hasTriggerSource = statementsJson.contains('"t":"every"') || statementsJson.contains('"t":"on"') || statementsJson.contains('"t":"if"')
+    if (!triggerNodes && !fatal && !hasTriggerSource) block('root', 'Visual Rule Builder needs a trigger and this piston has none', 'structural', 2, 1)
+
+    blockers = blockers.unique { (it.path as String) + '|' + (it.reason as String) }
+    int points = (blockers.collect { it.effort as int }.sum() ?: 0) as int
+    int manualComponents = (blockers.collect { it.parts as int }.sum() ?: 0) as int
+    if (manualComponents > totalComponents) totalComponents = manualComponents
+    fatal = fatal.unique()
+
+    int level
+    List summary = []
+    if (fatal) {
+        level = 5
+        summary.addAll(fatal)
+    } else if (points) {
+        level = points <= 2 ? 3 : points <= 6 ? 4 : 5
+        summary << "${manualComponents} of ${totalComponents} ${totalComponents == 1 ? 'component' : 'components'} ${manualComponents == 1 ? 'needs' : 'need'} doing by hand".toString()
+        if (level == 5) summary << 'Rebuilding it from scratch is likely easier'
+    } else {
+        level = totalComponents <= WEBCORE_MIGRATION_SIMPLE_COMPONENTS ? 1 : 2
+        summary << 'Automatic migration possible'
+    }
+
+    Map document = null
+    if (level <= 2) {
+        List nodes = []
+        List edges = []
+        triggerNodes.eachWithIndex { Map t, int i ->
+            Map spec = WEBCORE_VRB_TRIGGER_EVENTS[t.attr] as Map
+            nodes << [id: "trigger-${i + 1}".toString(), kind: 'trigger', type: t.attr, config: [(spec.field): [t.devId], (spec.event): t.value]]
+            edges << [from: "trigger-${i + 1}".toString(), to: 'trigger-merge', port: 'next']
+        }
+        nodes << [id: 'trigger-merge', kind: 'merge', type: 'triggerMerge', config: [:]]
+        nodes << [id: 'decision', kind: 'decision', type: decisionType,
+                  config: [conditions: (0..<decisionConditions.size()).collect { int i -> [id: "condition-${i + 1}".toString(), type: (decisionConditions[i] as Map).type, config: (decisionConditions[i] as Map).config] }]]
+        edges << [from: 'trigger-merge', to: 'decision', port: 'next']
+        Closure chain = { List actions, String prefix, String firstFrom, String firstPort ->
+            String from = firstFrom
+            String port = firstPort
+            actions.eachWithIndex { Map a, int i ->
+                String id = "${prefix}-${i + 1}".toString()
+                nodes << [id: id, kind: 'action', type: a.type, config: a.config]
+                edges << [from: from, to: id, port: port]
+                from = id
+                port = 'next'
+            }
+            return [from, port]
+        }
+        List thenEnd = chain(thenNodes, 'then', 'decision', 'true')
+        List elseEnd = chain(elseNodes, 'else', 'decision', 'false')
+        if (tailNodes) {
+            nodes << [id: 'branch-merge', kind: 'merge', type: 'branchMerge', config: [:]]
+            edges << [from: thenEnd[0], to: 'branch-merge', port: thenEnd[1]]
+            edges << [from: elseEnd[0], to: 'branch-merge', port: elseEnd[1]]
+            chain(tailNodes, 'tail', 'branch-merge', 'next')
+        }
+        document = [version: 1, nodes: nodes, edges: edges]
+    }
+
+    return [level: level, label: WEBCORE_MIGRATION_LEVELS[level], summary: summary,
+            counts: [components: totalComponents, manualComponents: manualComponents, effortPoints: points,
+                     triggers: triggerNodes.size(), conditions: decisionConditions.size(), actions: actionCount],
+            blockers: blockers.take(25).collect { [location: it.location, reason: it.reason, effort: it.effort, components: it.parts, manual: it.kind] },
+            blockersOverflow: Math.max(0, blockers.size() - 25),
+            rowsUsed: rowsUsed.sort(), unprovenRows: rowsUsed.findAll { !(it in provenRows) }.sort(),
+            document: document]
+}
+
+
+
+
+
+
+
+@Field static final Map WEBCORE_RATING_LEVELS = [1: 'Direct equivalent, simple', 2: 'Direct equivalent, more steps',
+                                                  3: 'A little rework', 4: 'A lot of rework', 5: 'Easier to rebuild from scratch']
+@Field static final int WEBCORE_RATING_SIMPLE_COMPONENTS = 5
+
+
+
+@Field static final Map WEBCORE_EQUIVALENCE = [
+    
+    'stmt.if': ['IF', 'yes', '', 'yes', 'one decision per Visual Rule Builder rule'],
+    'stmt.elseif': ['ELSE IF branch', 'yes', '', 'no', 'Visual Rule Builder has one decision; each ELSE IF needs its own rule'],
+    'stmt.if.extra': ['Another IF', 'yes', '', 'partial', 'needs a separate Visual Rule Builder rule'],
+    'stmt.if.nested': ['IF inside another block', 'yes', '', 'no', 'Visual Rule Builder cannot nest decisions'],
+    'stmt.actionsBeforeDecision': ['Actions before the IF', 'yes', '', 'partial', 'move them into a separate Visual Rule Builder rule'],
+    'stmt.switch': ['Switch statement', 'partial', 'rebuild as IF / ELSE IF', 'no', 'Visual Rule Builder has one decision'],
+    'stmt.while': ['While loop', 'partial', 'rebuild with Repeat While', 'no', 'Visual Rule Builder has no loops'],
+    'stmt.repeat': ['Repeat loop', 'partial', 'rebuild with Repeat While', 'no', 'Visual Rule Builder has no loops'],
+    'stmt.for': ['For loop', 'partial', 'rebuild with Repeat n times', 'no', 'Visual Rule Builder has no loops'],
+    'stmt.each': ['For each device', 'no', 'Rule Machine cannot loop over a device list', 'no', 'Visual Rule Builder has no loops'],
+    'stmt.do': ['Do block', 'yes', '', 'yes', ''],
+    'stmt.break': ['Break', 'yes', 'Stop Repeating Actions', 'no', 'Visual Rule Builder has no loops'],
+    'stmt.exit': ['Exit', 'yes', 'Exit Rule', 'no', 'Visual Rule Builder cannot stop part way'],
+    'stmt.on': ['On event block', 'yes', 'triggers', 'yes', 'triggers'],
+    'stmt.on.extra': ['Another on event block', 'partial', 'combine triggers or use a separate rule', 'partial', 'needs a separate Visual Rule Builder rule'],
+    'stmt.every': ['Every (timer)', 'yes', 'Periodic Schedule or Certain Time trigger', 'partial', 'daily times only (time of day, sunrise, sunset)'],
+    'stmt.triggersAnd': ['Several triggers joined with AND', 'partial', 'triggers combine with OR: make all but one a condition', 'partial', 'triggers combine with OR: make all but one a condition'],
+    'setting.restriction': ['Restriction', 'yes', 'Required Expression', 'partial', 'add it to the decision'],
+    'setting.async': ['Asynchronous execution', 'partial', 'Rule Machine runs actions in order', 'partial', 'Visual Rule Builder runs actions in order'],
+    'setting.taskPolicy': ['Task cancellation or execution policy', 'partial', 'use cancelable delays', 'no', 'no equivalent'],
+    'setting.pistonOption': ['Piston option', 'partial', 'review the option', 'partial', 'review the option'],
+    'setting.localVariable': ['Local variable', 'yes', 'local variable', 'no', 'Visual Rule Builder has no variables'],
+    
+    'trig.device.changes': ['Changes, changes to or changes away from', 'yes', 'changed / becomes trigger', 'yes', 'state trigger'],
+    'trig.device.changesAnyOf': ['Changes to or away from any of several values', 'partial', 'one trigger per value', 'partial', 'one trigger per value'],
+    'trig.device.cross': ['Rises above or drops below', 'partial', 'crossing-only behaviour is not verified for Rule Machine', 'partial', 'threshold trigger; the first event after setup may use device history as its starting value, where webCoRE waits for its own'],
+    'trig.device.crossInclusive': ['Rises to or above, or drops to or below', 'partial', 'crossing-only behaviour is not verified for Rule Machine', 'partial', 'thresholds are strict: adjust the value'],
+    'trig.device.direction': ['Rises, drops, does not rise or does not drop', 'partial', 'compare with the previous value kept in a variable', 'no', 'no equivalent trigger'],
+    'trig.device.remains': ['Remains above, below, inside or outside', 'partial', 'rebuild as a trigger with a condition', 'no', 'no equivalent trigger'],
+    'trig.device.range': ['Enters or exits a range', 'partial', 'rebuild as triggers with a condition', 'partial', 'rebuild as threshold triggers with a condition'],
+    'trig.device.parity': ['Becomes or remains even or odd', 'no', 'no equivalent', 'no', 'no equivalent'],
+    'trig.device.stays': ['Is now and stays trigger', 'yes', 'and stays', 'yes', 'stays for'],
+    'trig.device.staysOther': ['Stays trigger with a list, range or parity', 'partial', 'rebuild with and stays on a simpler comparison', 'no', 'no equivalent'],
+    'trig.device.unchanged': ['Stays unchanged trigger', 'partial', 'rebuild with a timer', 'no', 'no equivalent'],
+    'trig.button': ['Button trigger', 'yes', 'Button trigger', 'yes', 'button trigger'],
+    'trig.time': ['Time of day trigger', 'yes', 'Certain Time trigger', 'yes', 'time of day or sunrise / sunset trigger'],
+    'trig.mode': ['Mode trigger', 'yes', 'Mode trigger', 'yes', 'mode trigger'],
+    'trig.hubVariable': ['Hub variable trigger', 'yes', 'Variable trigger', 'no', 'Visual Rule Builder has no variables'],
+    'trig.localVariable': ['Piston variable trigger', 'partial', 'use a hub variable', 'no', 'Visual Rule Builder has no variables'],
+    'trig.locationEvent': ['Hub or location event trigger', 'partial', 'check the matching Rule Machine trigger', 'no', 'no equivalent trigger'],
+    'trig.other': ['Other trigger', 'partial', 'check for a matching trigger', 'no', 'no equivalent trigger'],
+    
+    'cond.device.state': ['Is or is not', 'yes', 'condition', 'yes', 'condition'],
+    'cond.device.anyOf': ['Is or is not any of several values', 'yes', 'sub-expression with OR', 'partial', 'one condition per value in an any decision'],
+    'cond.device.equal': ['Is equal to or different than a number', 'yes', 'condition', 'partial', 'no equals test: use above and below'],
+    'cond.device.compare': ['Is less than or greater than', 'yes', 'condition', 'yes', 'above / below condition'],
+    'cond.device.compareInclusive': ['Is less or greater than or equal to', 'yes', 'condition', 'partial', 'thresholds are strict: adjust the value'],
+    'cond.device.range': ['Is inside of range', 'yes', 'two conditions', 'partial', 'two conditions'],
+    'cond.device.outsideRange': ['Is outside of range', 'yes', 'sub-expression with OR', 'no', 'needs OR inside the decision'],
+    'cond.device.history': ['Was / previous value condition', 'partial', 'rebuild with and stays or a variable', 'no', 'no history conditions'],
+    'cond.device.changedWithin': ['Changed or did not change within a time', 'partial', 'rebuild with and stays or a variable', 'no', 'no equivalent'],
+    'cond.device.parity': ['Is even or odd', 'no', 'no equivalent', 'no', 'no equivalent'],
+    'cond.time': ['Time condition', 'yes', 'Between two times', 'yes', 'time is between'],
+    'cond.date': ['Date or day condition', 'yes', 'days of week', 'partial', 'days of week only'],
+    'cond.mode': ['Mode condition', 'yes', 'Mode condition', 'yes', 'mode condition'],
+    'cond.hsm': ['Safety Monitor condition', 'yes', 'HSM status condition', 'no', 'no equivalent'],
+    'cond.hubVariable': ['Hub variable condition', 'yes', 'Variable condition', 'no', 'Visual Rule Builder has no variables'],
+    'cond.localVariable': ['Piston variable condition', 'yes', 'local variable condition', 'no', 'Visual Rule Builder has no variables'],
+    'cond.expression': ['Expression or argument condition', 'no', 'rewrite the logic', 'no', 'rewrite the logic'],
+    'cond.group': ['Condition group', 'yes', 'sub-expression', 'no', 'Visual Rule Builder has one flat condition list'],
+    'cond.followedBy': ['Followed-by sequence', 'no', 'no equivalent', 'no', 'no equivalent'],
+    'cond.constant': ['Comparison of two fixed values', 'partial', 'always true or always false: simplify it away', 'partial', 'always true or always false: simplify it away'],
+    'cond.other': ['Other condition', 'partial', 'check for a matching condition', 'no', 'no equivalent'],
+    
+    'act.switch': ['On / off', 'yes', 'Switch action', 'yes', 'turn on / off'],
+    'act.toggle': ['Toggle', 'yes', 'Toggle', 'yes', 'toggle'],
+    'act.level': ['Set level', 'yes', 'Set Dimmer', 'yes', 'set brightness'],
+    'act.color': ['Set colour', 'yes', 'Set Color', 'yes', 'set colour'],
+    'act.colorPart': ['Set hue or saturation alone', 'yes', 'Run Custom Action', 'partial', 'set the full colour instead'],
+    'act.colorTransition': ['Set adjusted colour (with a transition)', 'partial', 'Set Color has no transition time', 'partial', 'set colour has no transition time'],
+    'act.colorTemp': ['Set colour temperature', 'yes', 'Set Color Temperature', 'yes', 'set colour temperature'],
+    'act.effect': ['Set light effect', 'yes', 'Run Custom Action', 'yes', 'light effect'],
+    'act.effectStep': ['Next or previous light effect', 'yes', 'Run Custom Action', 'no', 'effects are chosen by number only'],
+    'act.lock': ['Lock / unlock', 'yes', 'Lock action', 'yes', 'lock / unlock'],
+    'act.openClose': ['Open / close', 'yes', 'door, valve or shade action', 'yes', 'garage, valve or shade action'],
+    'act.position': ['Position or tilt', 'yes', 'Shade position', 'no', 'no position action'],
+    'act.thermostat': ['Thermostat', 'yes', 'Thermostat action', 'yes', 'thermostat action'],
+    'act.fan': ['Set fan speed', 'yes', 'Fan action', 'yes', 'fan speed'],
+    'act.fanCycle': ['Cycle fan speed', 'yes', 'Run Custom Action', 'no', 'fixed speeds only'],
+    'act.speak': ['Speak', 'yes', 'Speak action', 'yes', 'speak'],
+    'act.media': ['Media player control', 'yes', 'media action', 'yes', 'media player'],
+    'act.mediaAdvanced': ['Tracks, sounds, or speak and restore', 'yes', 'Run Custom Action', 'no', 'no equivalent'],
+    'act.notify': ['Notification device', 'yes', 'Send notification', 'yes', 'send notification'],
+    'act.button': ['Push, hold, double tap or release', 'yes', 'Push button', 'yes', 'push button'],
+    'act.alarm': ['Siren and strobe together', 'yes', 'Siren action', 'yes', 'alarm on / off'],
+    'act.alarmPart': ['Siren only or strobe only', 'yes', 'Siren action', 'partial', 'Visual Rule Builder turns on siren and strobe together'],
+    'act.levelChange': ['Start / stop level change', 'yes', 'Start raise or lower', 'no', 'no equivalent'],
+    'act.refresh': ['Refresh / poll', 'yes', 'Refresh or Poll', 'no', 'no equivalent'],
+    'act.customCommand': ['Other device command', 'yes', 'Run Custom Action', 'no', 'no custom commands'],
+    'act.dynamicTarget': ['Command on a device variable', 'unassessed', 'target devices are not fixed', 'unassessed', 'target devices are not fixed'],
+    
+    'vact.wait': ['Wait', 'partial', 'webCoRE cancels waits when conditions change: add Cancel Delayed Actions where needed', 'partial', 'waits are not cancelled when conditions change'],
+    'vact.waitUntil': ['Wait until a time', 'yes', 'Wait for time', 'no', 'no equivalent'],
+    'vact.mode': ['Set location mode', 'yes', 'Set Mode', 'yes', 'set mode'],
+    'vact.hsm': ['Set Safety Monitor', 'yes', 'Arm / Disarm HSM', 'no', 'no equivalent'],
+    'vact.runRule': ['Run a rule', 'yes', 'Run Rule Actions', 'partial', 'the target must respond to Run Rule'],
+    'vact.runPiston': ['Run another piston', 'partial', 'rebuild the target piston as a rule first', 'partial', 'rebuild the target piston as a rule first'],
+    'vact.pauseRule': ['Pause or resume a piston', 'yes', 'Pause / Resume Rules', 'no', 'no equivalent'],
+    'vact.log': ['Log', 'yes', 'Log', 'no', 'no log action'],
+    'vact.push': ['Push notification', 'partial', 'choose a notification device', 'partial', 'choose a notification device'],
+    'vact.emailSms': ['Email or SMS', 'partial', 'send through a notification device', 'partial', 'send through a notification device'],
+    'vact.http': ['HTTP request', 'partial', 'check the method, headers and body fit HTTP GET / POST', 'no', 'no HTTP action'],
+    'vact.setVariable': ['Set variable', 'yes', 'Set Variable', 'no', 'Visual Rule Builder has no variables'],
+    'vact.flash': ['Flash', 'yes', 'Flash', 'no', 'no equivalent'],
+    'vact.flashColour': ['Flash a level or colour', 'partial', 'Flash turns the light on and off only', 'no', 'no equivalent'],
+    'vact.fade': ['Fade level or colour temperature', 'yes', 'Fade dimmer or colour temperature', 'no', 'no equivalent'],
+    'vact.fadeColour': ['Fade hue, saturation or infrared', 'partial', 'Rule Machine fades level and colour temperature only', 'no', 'no equivalent'],
+    'vact.adjust': ['Adjust level by', 'yes', 'Adjust dimmer', 'no', 'no equivalent'],
+    'vact.adjustColour': ['Adjust hue, saturation, colour temperature or infrared by', 'partial', 'Rule Machine adjusts dimmer level only', 'no', 'no equivalent'],
+    'vact.toggleLevel': ['Toggle level', 'yes', 'Toggle dimmer', 'no', 'no equivalent'],
+    'vact.toggleRandom': ['Toggle random device', 'no', 'no equivalent', 'no', 'no equivalent'],
+    'vact.cancelTasks': ['Cancel pending tasks', 'yes', 'Cancel Delayed Actions', 'partial', 'cancel waits (cancels all waits)'],
+    'vact.state': ['Save or restore state', 'yes', 'Capture / Restore', 'no', 'no equivalent'],
+    'vact.fileWrite': ['Write a file', 'yes', 'File Write / Append', 'no', 'no equivalent'],
+    'vact.fileRead': ['Read or delete a file', 'partial', 'File Delete only', 'no', 'no equivalent'],
+    'vact.integration': ['LIFX, IFTTT, tiles or fuel streams', 'no', 'no equivalent', 'no', 'no equivalent'],
+    'vact.parseJson': ['Parse JSON', 'no', 'no equivalent', 'no', 'no equivalent'],
+    'vact.wol': ['Wake on LAN', 'no', 'no equivalent', 'no', 'no equivalent'],
+    
+    'mod.dynamicValue': ['Value from an expression or variable', 'partial', 'use %variable% or a variable action', 'no', 'values must be fixed'],
+    'mod.complexParameters': ['Command parameters Run Custom Action cannot pass', 'partial', 'Run Custom Action takes text and number parameters', 'yes', ''],
+    'mod.negated': ['Negated condition', 'yes', 'NOT', 'partial', 'use the opposite state'],
+    'mod.allDevices': ['All devices must match', 'yes', 'all of these', 'no', 'conditions match any device'],
+    'mod.changesInIf': ['Changes comparison inside an IF', 'partial', 'turns on / turns off triggers also run when a device re-sends the same state (webCoRE does not)', 'partial', 'also runs when a device re-sends the same state (webCoRE does not)'],
+    'mod.interaction': ['Physical or digital only', 'partial', 'check the event type', 'no', 'no equivalent'],
+    'unknown': ['Not recognised', 'unassessed', 'not assessed yet', 'unassessed', 'not assessed yet']
+]
+@Field static final Map WEBCORE_COMMAND_ROWS = [
+    on: 'act.switch', off: 'act.switch', setSwitch: 'act.switch', toggle: 'act.toggle',
+    setLevel: 'act.level',
+    setColor: 'act.color', setHSLColor: 'act.color', setHue: 'act.colorPart', setSaturation: 'act.colorPart',
+    setAdjustedColor: 'act.colorTransition', setAdjustedHSLColor: 'act.colorTransition',
+    setColorTemperature: 'act.colorTemp', setEffect: 'act.effect', setNextEffect: 'act.effectStep', setPreviousEffect: 'act.effectStep',
+    lock: 'act.lock', unlock: 'act.lock', open: 'act.openClose', close: 'act.openClose',
+    setPosition: 'act.position', setTiltLevel: 'act.position', startPositionChange: 'act.position', stopPositionChange: 'act.position',
+    heat: 'act.thermostat', cool: 'act.thermostat', auto: 'act.thermostat', emergencyHeat: 'act.thermostat', eco: 'act.thermostat',
+    fanAuto: 'act.thermostat', fanOn: 'act.thermostat', fanCirculate: 'act.thermostat', setHeatingSetpoint: 'act.thermostat',
+    setCoolingSetpoint: 'act.thermostat', setThermostatMode: 'act.thermostat', setThermostatFanMode: 'act.thermostat', quickSetCool: 'act.thermostat', quickSetHeat: 'act.thermostat',
+    setSpeed: 'act.fan', cycleSpeed: 'act.fanCycle',
+    speak: 'act.speak',
+    setVolume: 'act.media', volumeUp: 'act.media', volumeDown: 'act.media', mute: 'act.media', unmute: 'act.media',
+    play: 'act.media', pause: 'act.media', stop: 'act.media', nextTrack: 'act.media', previousTrack: 'act.media',
+    playText: 'act.mediaAdvanced', playTextAndRestore: 'act.mediaAdvanced', playTextAndResume: 'act.mediaAdvanced', playTrack: 'act.mediaAdvanced',
+    playTrackAndRestore: 'act.mediaAdvanced', playTrackAndResume: 'act.mediaAdvanced', restoreTrack: 'act.mediaAdvanced', resumeTrack: 'act.mediaAdvanced',
+    setTrack: 'act.mediaAdvanced', playSound: 'act.mediaAdvanced', parallelSpeak: 'act.mediaAdvanced', parallelSpeakIgnoreDnd: 'act.mediaAdvanced',
+    parallelPlayAnnouncement: 'act.mediaAdvanced',
+    deviceNotification: 'act.notify', push: 'act.button', hold: 'act.button', doubleTap: 'act.button', release: 'act.button',
+    siren: 'act.alarmPart', strobe: 'act.alarmPart', both: 'act.alarm', startLevelChange: 'act.levelChange', stopLevelChange: 'act.levelChange',
+    refresh: 'act.refresh', poll: 'act.refresh',
+    wait: 'vact.wait', waitRandom: 'vact.wait', waitForTime: 'vact.waitUntil', waitForDateTime: 'vact.waitUntil',
+    setLocationMode: 'vact.mode', setAlarmSystemStatus: 'vact.hsm', executePiston: 'vact.runPiston', executeRule: 'vact.runRule',
+    pausePiston: 'vact.pauseRule', resumePiston: 'vact.pauseRule', log: 'vact.log',
+    sendPushNotification: 'vact.push', sendNotification: 'vact.push', sendNotificationToContacts: 'vact.push',
+    sendSMSNotification: 'vact.emailSms', sendEmail: 'vact.emailSms', httpRequest: 'vact.http', wolRequest: 'vact.wol', setVariable: 'vact.setVariable',
+    flash: 'vact.flash', emulatedFlash: 'vact.flash', flashNative: 'vact.flash', flashLevel: 'vact.flashColour', flashColor: 'vact.flashColour',
+    fadeLevel: 'vact.fade', fadeColorTemperature: 'vact.fade', fadeHue: 'vact.fadeColour', fadeSaturation: 'vact.fadeColour', fadeInfraredLevel: 'vact.fadeColour',
+    adjustLevel: 'vact.adjust', adjustHue: 'vact.adjustColour', adjustSaturation: 'vact.adjustColour', adjustColorTemperature: 'vact.adjustColour', adjustInfraredLevel: 'vact.adjustColour',
+    toggleLevel: 'vact.toggleLevel', toggleRandom: 'vact.toggleRandom', cancelTasks: 'vact.cancelTasks',
+    setState: 'vact.state', saveStateLocally: 'vact.state', saveStateGlobally: 'vact.state', loadStateLocally: 'vact.state', loadStateGlobally: 'vact.state',
+    writeFile: 'vact.fileWrite', appendFile: 'vact.fileWrite', readFile: 'vact.fileRead', deleteFile: 'vact.fileRead', parseJson: 'vact.parseJson',
+    lifxBreathe: 'vact.integration', lifxPulse: 'vact.integration', lifxScene: 'vact.integration', lifxState: 'vact.integration', lifxToggle: 'vact.integration',
+    iftttMaker: 'vact.integration', setTile: 'vact.integration', setTileColor: 'vact.integration', setTileFooter: 'vact.integration', setTileOTitle: 'vact.integration',
+    setTileText: 'vact.integration', setTileTitle: 'vact.integration', clearTile: 'vact.integration', clearFuelStream: 'vact.integration',
+    readFuelStream: 'vact.integration', writeFuelStream: 'vact.integration', writeToFuelStream: 'vact.integration', storeMedia: 'vact.integration'
+]
+@Field static final List WEBCORE_VIRTUAL_COMMANDS = ['wait', 'waitRandom', 'waitForTime', 'waitForDateTime', 'setLocationMode', 'setAlarmSystemStatus',
+    'executePiston', 'executeRule', 'pausePiston', 'resumePiston', 'log', 'sendPushNotification', 'sendNotification', 'sendNotificationToContacts',
+    'sendSMSNotification', 'sendEmail', 'httpRequest', 'wolRequest', 'setVariable', 'toggleRandom', 'cancelTasks', 'setState', 'saveStateLocally',
+    'saveStateGlobally', 'loadStateLocally', 'loadStateGlobally', 'writeFile', 'appendFile', 'readFile', 'deleteFile', 'parseJson', 'noop']
+
+@Field static final List WEBCORE_VRB_TRIGGER_ATTRIBUTES = ['switch', 'motion', 'contact', 'presence', 'acceleration', 'water', 'smoke', 'carbonMonoxide',
+    'alarm', 'temperature', 'humidity', 'illuminance', 'power', 'pushed', 'held', 'released', 'doubleTapped', 'lock', 'shock']
+@Field static final List WEBCORE_VRB_CONDITION_ATTRIBUTES = ['switch', 'motion', 'contact', 'presence', 'acceleration', 'water', 'smoke', 'carbonMonoxide',
+    'temperature', 'humidity', 'illuminance', 'power', 'lock', 'thermostatMode']
+@Field static final List WEBCORE_BUTTON_ATTRIBUTES = ['pushed', 'held', 'released', 'doubleTapped']
+
+@Field static final Map WEBCORE_VRB_EVENT_VALUES = [switch: ['on', 'off'], motion: ['active', 'inactive'], contact: ['open', 'closed'],
+    acceleration: ['active', 'inactive'], water: ['wet', 'dry'], smoke: ['detected', 'clear'], carbonMonoxide: ['detected', 'clear'],
+    lock: ['locked', 'unlocked'], shock: ['detected', 'clear'], presence: ['present', 'not present'], alarm: ['off', 'siren', 'strobe', 'both']]
+@Field static final Map WEBCORE_VRB_STAYS_VALUES = [switch: ['on', 'off'], motion: ['inactive'], contact: ['open', 'closed'], acceleration: ['inactive']]
+@Field static final Map WEBCORE_VRB_CONDITION_VALUES = [switch: ['on', 'off'], motion: ['active', 'inactive'], contact: ['open', 'closed'],
+    presence: ['present', 'not present'], acceleration: ['active', 'inactive'], water: ['wet', 'dry'], smoke: ['detected', 'clear'],
+    carbonMonoxide: ['detected', 'clear'], lock: ['locked', 'unlocked'], thermostatMode: ['auto', 'cool', 'heat', 'emergency heat', 'off']]
+@Field static final List WEBCORE_VRB_NUMERIC_ATTRIBUTES = ['temperature', 'humidity', 'illuminance', 'power']
+
+
+
+@Field static final List WEBCORE_REPEAT_SAFE_COMMANDS = ['on', 'off', 'setSwitch', 'setLevel', 'setColor', 'setHSLColor', 'setColorTemperature',
+    'setLocationMode', 'setHeatingSetpoint', 'setCoolingSetpoint', 'setThermostatMode', 'setThermostatFanMode', 'heat', 'cool', 'auto',
+    'emergencyHeat', 'fanAuto', 'fanOn', 'fanCirculate', 'setSpeed', 'setVolume', 'mute', 'unmute', 'log', 'noop']
+@Field static final List WEBCORE_EXTRA_RUN_DIFFERENCES = ['mod.changesInIf', 'trig.device.cross']
+
+@Field static final List WEBCORE_RM_CUSTOM_PARAM_TYPES = ['string', 'text', 'enum', 'integer', 'number', 'decimal']
+
+
+List webcoreRatingComponents(Map piston, Map hubVariableTypes) {
+    List out = []
+    Closure add = { String path, String row, Map ctx = [:] -> out << [path: path, row: row, mods: (ctx.mods ?: []), vrbRow: ctx.vrbRow, ctx: ctx] }
+    Closure str = { Object o -> webcoreMigrationStr(o) }
+    Closure co = { Object c -> str(c ?: '').replace('_', ' ') }
+    List triggerCo = ['changes', 'changes to', 'changes away from', 'changes to any of', 'changes away from any of', 'drops', 'does not drop',
+        'drops below', 'drops to or below', 'rises', 'does not rise', 'rises above', 'rises to or above', 'gets', 'gets any', 'event occurs',
+        'receives', 'happens daily at', 'arrives', 'executes', 'enters range', 'exits range', 'remains below', 'remains below or equal to',
+        'remains above', 'remains above or equal to', 'remains inside of range', 'remains outside of range', 'becomes even', 'becomes odd',
+        'remains even', 'remains odd', 'stays unchanged']
+    Closure isTriggerCo = { Object c -> co(c) in triggerCo || co(c).startsWith('stays') }
+    boolean pistonHasTriggers = false
+    String sJson = JsonOutput.toJson(piston.s instanceof List ? piston.s : [])
+    ['"t":"on"', '"t":"every"'].each { if (sJson.contains(it)) pistonHasTriggers = true }
+    triggerCo.each { if (sJson.contains('"co":"' + it.replace(' ', '_') + '"')) pistonHasTriggers = true }
+
+    
+    Closure classifyCondition
+    classifyCondition = { Object raw, String path, boolean isEvent, boolean inIf ->
+        if (!(raw instanceof Map)) return
+        Map c = raw as Map
+        if (c.t == 'group') {
+            if (str(c.o) == 'followed by') add(path, 'cond.followedBy')
+            else add(path, 'cond.group', [counted: false])
+            ((c.c instanceof List) ? (c.c as List) : []).eachWithIndex { Object inner, int i -> classifyCondition(inner, "${path}.c[${i}]".toString(), false, inIf) }
+            return
+        }
+        Map lo = (c.lo instanceof Map) ? (c.lo as Map) : [:]
+        Map ro = (c.ro instanceof Map) ? (c.ro as Map) : [:]
+        String comparison = isEvent ? 'changes' : co(c.co)
+        boolean trigger = isEvent || isTriggerCo(c.co)
+        List mods = []
+        if (c.n) mods << 'mod.negated'
+        if (str(lo.p ?: 'a') in ['p', 'd', 'physical', 'digital']) mods << 'mod.interaction'
+        if (lo.t == 'p' && lo.d instanceof List && (lo.d as List).size() > 1 && str(lo.g) == 'all') mods << 'mod.allDevices'
+        if ([ro, (c.ro2 instanceof Map ? c.ro2 : [:])].any { Map o -> o.t in ['e', 'x', 'u', 'p'] }) mods << 'mod.dynamicValue'
+        String attr = str(lo.a)
+        String row
+        
+        List values = ro.t == 'c' && ro.c != null ? str(ro.c).tokenize(',').collect { it.trim() }.findAll { it } : []
+        Map ctx = [attr: attr, trigger: trigger, comparison: comparison, deviceCount: (lo.d instanceof List) ? (lo.d as List).size() : 0,
+                   values: ro.t == 'c' ? values : null, grouping: str(lo.g ?: 'any')]
+        if (lo.t == 'c') {
+            row = 'cond.constant'
+        } else if (lo.t == 'x') {
+            String name = str(lo.x)
+            boolean hub = name.startsWith('@')
+            row = trigger ? (hub ? 'trig.hubVariable' : 'trig.localVariable') : (hub ? 'cond.hubVariable' : 'cond.localVariable')
+        } else if (lo.t in ['e', 'u']) {
+            row = trigger ? 'trig.other' : 'cond.expression'
+        } else if (lo.t == 'v') {
+            String v = str(lo.v)
+            if (v in ['time', 'date', 'datetime']) row = trigger ? 'trig.time' : (v == 'time' ? 'cond.time' : 'cond.date')
+            else if (v == 'mode') row = trigger ? 'trig.mode' : 'cond.mode'
+            else if (v.startsWith('alarmSystem') || v == 'hsmStatus') row = trigger ? 'trig.locationEvent' : 'cond.hsm'
+            else row = trigger ? 'trig.locationEvent' : 'cond.other'
+        } else if (lo.t == 'p') {
+            if (trigger) {
+                if (attr in WEBCORE_BUTTON_ATTRIBUTES || comparison in ['gets', 'gets any']) row = 'trig.button'
+                else if (comparison in ['changes', 'changes to', 'changes away from']) row = 'trig.device.changes'
+                else if (comparison in ['changes to any of', 'changes away from any of']) row = values.size() == 1 ? 'trig.device.changes' : 'trig.device.changesAnyOf'
+                else if (comparison in ['rises above', 'drops below']) row = 'trig.device.cross'
+                else if (comparison in ['rises to or above', 'drops to or below']) row = 'trig.device.crossInclusive'
+                else if (comparison in ['rises', 'drops', 'does not rise', 'does not drop']) row = 'trig.device.direction'
+                else if (comparison.startsWith('remains') && !(comparison in ['remains even', 'remains odd'])) row = 'trig.device.remains'
+                else if (comparison in ['enters range', 'exits range']) row = 'trig.device.range'
+                else if (comparison in ['becomes even', 'becomes odd', 'remains even', 'remains odd']) row = 'trig.device.parity'
+                else if (comparison == 'stays unchanged') row = 'trig.device.unchanged'
+                else if (comparison in ['stays', 'stays not', 'stays away from', 'stays equal to', 'stays different than', 'stays less than',
+                    'stays less than or equal to', 'stays greater than', 'stays greater than or equal to']) row = 'trig.device.stays'
+                else if (comparison.startsWith('stays')) row = 'trig.device.staysOther'
+                else row = 'trig.other'
+                if (inIf && comparison.startsWith('changes')) mods << 'mod.changesInIf'
+            } else {
+                if (comparison.startsWith('was')) row = 'cond.device.history'
+                else if (comparison in ['changed', 'did not change']) row = 'cond.device.changedWithin'
+                else if (comparison in ['is even', 'is odd']) row = 'cond.device.parity'
+                else if (comparison == 'is inside of range') row = 'cond.device.range'
+                else if (comparison == 'is outside of range') row = 'cond.device.outsideRange'
+                else if (comparison in ['is', 'is not']) row = 'cond.device.state'
+                else if (comparison in ['is any of', 'is not any of']) row = values.size() == 1 ? 'cond.device.state' : 'cond.device.anyOf'
+                else if (comparison in ['is equal to', 'is different than']) row = 'cond.device.equal'
+                else if (comparison in ['is less than', 'is greater than']) row = 'cond.device.compare'
+                else if (comparison in ['is less than or equal to', 'is greater than or equal to']) row = 'cond.device.compareInclusive'
+                else row = 'cond.other'
+            }
+        } else {
+            row = trigger ? 'trig.other' : 'cond.other'
+        }
+        if (row.startsWith('trig.device') || row == 'trig.button') ctx.vrbAttrSupported = attr in WEBCORE_VRB_TRIGGER_ATTRIBUTES
+        if (row.startsWith('cond.device')) ctx.vrbAttrSupported = attr in WEBCORE_VRB_CONDITION_ATTRIBUTES
+        
+        if (row.startsWith('cond.device') && !pistonHasTriggers) ctx.vrbAttrSupported = ctx.vrbAttrSupported && attr in WEBCORE_VRB_TRIGGER_ATTRIBUTES
+        ctx.mods = mods
+        add(path, row, ctx)
+    }
+
+    Closure classifyTasks = { Map st, String path ->
+        ((st.k instanceof List) ? (st.k as List) : []).eachWithIndex { Object raw, int j ->
+            if (!(raw instanceof Map)) return
+            Map k = raw as Map
+            String cmd = str(k.c)
+            if (cmd == 'noop') return
+            String row = WEBCORE_COMMAND_ROWS[cmd] ?: (WEBCORE_VIRTUAL_COMMANDS.contains(cmd) || !(st.d instanceof List) || !(st.d as List) ? 'unknown' : 'act.customCommand')
+            
+            if (!WEBCORE_VIRTUAL_COMMANDS.contains(cmd) && st.d instanceof List && (st.d as List).any { !(str(it) ==~ /^:[0-9a-f]{32}:$/) }) row = 'act.dynamicTarget'
+            List mods = []
+            List params = (k.p instanceof List) ? (k.p as List) : []
+            
+            List valueParams = cmd == 'setVariable' ? params.drop(1) : params
+            List dynamicTypes = cmd == 'setVariable' ? ['e', 'u'] : ['e', 'x', 'u']
+            if (valueParams.any { it instanceof Map && ((it as Map).t in dynamicTypes) }) mods << 'mod.dynamicValue'
+            if (((WEBCORE_EQUIVALENCE[row] ?: []) as List)[2] == 'Run Custom Action' &&
+                params.any { !(it instanceof Map) || (!((it as Map).t in ['e', 'x', 'u']) && ((it as Map).t != 'c' || ((it as Map).vt != null && !(str((it as Map).vt) in WEBCORE_RM_CUSTOM_PARAM_TYPES)))) }) mods << 'mod.complexParameters'
+            Map ctx = [mods: mods, command: cmd]
+            if (cmd == 'setVariable' && params && params[0] instanceof Map) ctx.variable = str((params[0] as Map).x)
+            add("${path}.k[${j}]".toString(), row, ctx)
+        }
+    }
+
+    
+    
+    
+    Closure walk
+    walk = { Object list, String base, int depth, int offset, Integer top ->
+        ((list instanceof List) ? (list as List) : []).eachWithIndex { Object raw, int i ->
+            if (!(raw instanceof Map) || (raw as Map).di) return
+            Map st = raw as Map
+            String path = "${base}[${i}]".toString()
+            Integer topIndex = top != null ? top : i
+            String t = str(st.t)
+            if (!webcoreMigrationEmpty(st.r)) add(path, 'setting.restriction')
+            if (str(st.a) == '1' && !(t in ['on', 'every'])) add(path, 'setting.async')
+            if ((st.tcp != null && st.tcp != 'c') || !webcoreMigrationEmpty(st.tep) || !webcoreMigrationEmpty(st.tsp)) add(path, 'setting.taskPolicy')
+            List conds = (st.c instanceof List) ? (st.c as List) : []
+            
+            int triggerConds = conds.count { it instanceof Map && (it as Map).t == 'condition' && isTriggerCo((it as Map).co) } as int
+            boolean orJoined = str(st.o ?: 'and') == 'or'
+            boolean triggerOnlyIf = t == 'if' && triggerConds == conds.size() && (triggerConds <= 1 || orJoined) &&
+                webcoreMigrationEmpty(st.e) && webcoreMigrationEmpty(st.ei)
+            if (t == 'if' && triggerConds > 1 && !orJoined) add(path, 'stmt.triggersAnd')
+            boolean holder = depth == 0 && (t in ['on', 'every'] || triggerOnlyIf)
+            int childOffset = holder ? 1 : offset
+            switch (t) {
+                case 'action': classifyTasks(st, path); break
+                case 'if':
+                    add(path, 'stmt.if', [depth: depth, effectiveDepth: depth - offset, holder: holder, top: topIndex])
+                    conds.eachWithIndex { Object c, int j -> classifyCondition(c, "${path}.c[${j}]".toString(), false, true) }
+                    ((st.ei instanceof List) ? (st.ei as List) : []).eachWithIndex { Object ei, int j ->
+                        if (!(ei instanceof Map)) return
+                        add("${path}.ei[${j}]".toString(), 'stmt.elseif')
+                        ((ei as Map).c instanceof List ? ((ei as Map).c as List) : []).eachWithIndex { Object c, int n -> classifyCondition(c, "${path}.ei[${j}].c[${n}]".toString(), false, true) }
+                        walk((ei as Map).s, "${path}.ei[${j}].s".toString(), depth + 1, childOffset, topIndex)
+                    }
+                    walk(st.s, "${path}.s".toString(), depth + 1, childOffset, topIndex)
+                    walk(st.e, "${path}.e".toString(), depth + 1, childOffset, topIndex)
+                    break
+                case 'on':
+                    add(path, 'stmt.on', [depth: depth, effectiveDepth: depth - offset, holder: holder, top: topIndex])
+                    conds.eachWithIndex { Object c, int j -> classifyCondition(c, "${path}.c[${j}]".toString(), true, false) }
+                    walk(st.s, "${path}.s".toString(), depth + 1, childOffset, topIndex)
+                    break
+                case 'every':
+                    add(path, 'stmt.every', [depth: depth, top: topIndex])
+                    walk(st.s, "${path}.s".toString(), depth + 1, childOffset, topIndex)
+                    break
+                case ['switch', 'while', 'repeat', 'for', 'each', 'do', 'break', 'exit']:
+                    add(path, "stmt.${t}".toString(), [depth: depth, top: topIndex])
+                    conds.eachWithIndex { Object c, int j -> classifyCondition(c, "${path}.c[${j}]".toString(), false, false) }
+                    walk(st.s, "${path}.s".toString(), depth + 1, offset, topIndex)
+                    ((st.cs instanceof List) ? (st.cs as List) : []).eachWithIndex { Object cs, int j -> if (cs instanceof Map) walk((cs as Map).s, "${path}.cs[${j}].s".toString(), depth + 1, offset, topIndex) }
+                    break
+                default:
+                    add(path, 'unknown', [statement: t])
+            }
+        }
+    }
+    walk(piston.s, 's', 0, 0, null)
+    if (!webcoreMigrationEmpty(piston.r)) add('root', 'setting.restriction')
+    if (piston.o instanceof Map) (piston.o as Map).each { k, v -> if (!webcoreMigrationEmpty(v)) add('root', 'setting.pistonOption', [option: str(k)]) }
+    
+    ((piston.v instanceof List) ? (piston.v as List) : []).eachWithIndex { Object raw, int i ->
+        if (!(raw instanceof Map)) return
+        String name = str((raw as Map).n)
+        
+        if (sJson.contains('"x":"' + name + '"')) add("v[${i}]".toString(), 'setting.localVariable', [variable: name, counted: false])
+    }
+    return out
+}
+
+
+
+
+List webcoreVrbDeviceVerdict(String row, Map ctx) {
+    String attr = ctx.attr as String
+    String cmp = ctx.comparison as String
+    List values = ctx.values as List
+    String v = values && values.size() == 1 ? values[0] as String : null
+    int devices = (ctx.deviceCount ?: 0) as int
+    boolean numeric = attr in WEBCORE_VRB_NUMERIC_ATTRIBUTES
+    List events = WEBCORE_VRB_EVENT_VALUES[attr] as List
+    switch (row) {
+        case 'trig.device.changes':
+            if (numeric) return ['no', 'no trigger for any change: use a threshold trigger']
+            if (!events) return null
+            if (cmp == 'changes') return attr in ['presence', 'alarm'] ? ['partial', 'one trigger per state'] : null
+            if (values == null) return null
+            if (!(v in events)) return ['no', "no trigger for ${attr} ${v}".toString()]
+            if (cmp == 'changes away from') return events.size() == 2 ? null : ['partial', 'one trigger per other state']
+            if (attr == 'alarm' && v != 'off') return ['partial', 'Alarm turns on also matches the other alarm states']
+            if (attr == 'presence' && v == 'not present' && devices > 1) return ['partial', 'Everyone leaves waits for every selected device']
+            return null
+        case ['trig.device.cross', 'trig.device.crossInclusive', 'trig.device.range', 'cond.device.equal', 'cond.device.compare',
+              'cond.device.compareInclusive', 'cond.device.range', 'cond.device.outsideRange']:
+            return numeric ? null : ['no', "no threshold for the ${attr} attribute".toString()]
+        case 'trig.device.stays':
+            if (attr == 'power' && cmp in ['stays greater than', 'stays less than']) return null
+            if (attr == 'power' && cmp in ['stays greater than or equal to', 'stays less than or equal to']) return ['partial', 'thresholds are strict: adjust the value']
+            List stays = WEBCORE_VRB_STAYS_VALUES[attr] as List
+            if (!stays || !(cmp in ['stays', 'stays not', 'stays away from'])) return ['no', 'no stays trigger for that comparison']
+            if (values == null) return null
+            String target = cmp == 'stays' ? v : (events && events.size() == 2 && v in events ? (events - [v])[0] as String : null)
+            return target in stays ? null : ['no', 'no stays trigger for that state']
+        case 'cond.device.state':
+            List states = WEBCORE_VRB_CONDITION_VALUES[attr] as List
+            if (numeric) return ['no', 'use above or below']
+            if (!states || values == null) return null
+            if (!(v in states)) return ['no', "no condition for ${attr} ${v}".toString()]
+            if (cmp in ['is not', 'is not any of'] && states.size() != 2) return ['partial', 'one condition per other state in an any decision']
+            String wanted = cmp in ['is not', 'is not any of'] ? (states - [v])[0] as String : v
+            if (devices > 1 && ctx.grouping != 'all' && ((attr == 'presence' && wanted == 'present') || (attr == 'lock' && wanted == 'locked'))) {
+                return ['partial', "Visual Rule Builder requires every device to be ${wanted}".toString()]
+            }
+            return null
+        default:
+            return null
+    }
+}
+
+
+Map webcoreRateEngine(List components, String engine, List sourceProblems) {
+    int ruleIndex = engine == 'rm' ? 1 : 3
+    List items = []
+    Integer firstUnit = null
+    boolean decisionTaken = false
+    boolean seenDecision = false
+    Closure verdictOf = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex] as String }
+    Closure noteOf = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex + 1] as String }
+    int counted = 0
+    
+    boolean repeatUnsafe = components.any { Map c ->
+        String r = c.row as String
+        Map cx = (c.ctx ?: [:]) as Map
+        (r.startsWith('act.') || r.startsWith('vact.') || (r == 'unknown' && cx.command != null)) &&
+            !(cx.command in WEBCORE_REPEAT_SAFE_COMMANDS && !(((cx.mods ?: []) as List).contains('mod.dynamicValue')))
+    }
+    Closure extraRun = { String r, String v, String n ->
+        (!repeatUnsafe && v == 'partial' && r in WEBCORE_EXTRA_RUN_DIFFERENCES && !(engine == 'rm' && r == 'trig.device.cross')) ?
+            ['warning', n + '; this piston uses fixed-value commands, so a repeated event may reissue them (and repeat any log entry)'] : [v, n]
+    }
+    components.each { Map comp ->
+        String row = comp.row as String
+        Map ctx = (comp.ctx ?: [:]) as Map
+        if (ctx.counted != false) counted++
+        String verdict = verdictOf(row)
+        String note = noteOf(row)
+        String effectiveRow = row
+        if (engine == 'vrb') {
+            
+            
+            
+            if (row in ['stmt.if', 'stmt.on', 'stmt.every']) {
+                Integer top = ctx.top as Integer
+                if (firstUnit == null) firstUnit = top
+                int eff = (ctx.effectiveDepth != null ? ctx.effectiveDepth : ctx.depth ?: 0) as int
+                if (row == 'stmt.every') {
+                    
+                } else if (eff > 0) {
+                    effectiveRow = 'stmt.if.nested'
+                } else if (top != firstUnit) {
+                    effectiveRow = row == 'stmt.on' ? 'stmt.on.extra' : 'stmt.if.extra'
+                } else if (row == 'stmt.if' && !ctx.holder) {
+                    if (decisionTaken) effectiveRow = 'stmt.if.extra'
+                    decisionTaken = true
+                }
+                verdict = verdictOf(effectiveRow); note = noteOf(effectiveRow)
+            }
+            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) { verdict = 'partial'; note = 'rebuild as time is between' }
+            if ((row.startsWith('trig.device') || row == 'trig.button' || row.startsWith('cond.device')) && ctx.vrbAttrSupported == false) {
+                verdict = 'no'; note = "Visual Rule Builder cannot use the ${ctx.attr} attribute".toString()
+            } else if (verdict != 'no') {
+                List refined = webcoreVrbDeviceVerdict(row, ctx)
+                if (refined) { verdict = refined[0] as String; note = refined[1] as String }
+            }
+            List er = extraRun(row, verdict, note)
+            verdict = er[0] as String; note = er[1] as String
+        } else {
+            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) { verdict = 'partial'; note = 'rebuild as Between two times' }
+            if (row in ['stmt.on']) { if (seenDecision) { effectiveRow = 'stmt.on.extra'; verdict = verdictOf(effectiveRow); note = noteOf(effectiveRow) }; seenDecision = true }
+        }
+        if (effectiveRow == 'setting.localVariable') return
+        if (verdict != 'yes') items << [path: comp.path, row: effectiveRow, verdict: verdict, note: note]
+        
+        if (verdict != 'no') ((ctx.mods ?: []) as List).each { String mod ->
+            String mv = verdictOf(mod)
+            
+            if (engine == 'rm' && mod == 'mod.changesInIf' && ctx.comparison == 'changes') mv = 'yes'
+            List em = extraRun(mod, mv, noteOf(mod))
+            if (mv != 'yes') items << [path: comp.path, row: mod, verdict: em[0], note: em[1], modifier: true]
+        }
+    }
+    if (engine == 'vrb') {
+        
+        int decisionIndex = components.findIndexOf { it.row == 'stmt.if' && !((it.ctx ?: [:]) as Map).holder && ((((it.ctx ?: [:]) as Map).effectiveDepth ?: 0) as int) == 0 }
+        if (decisionIndex > 0) {
+            components.take(decisionIndex).findAll { (it.row as String).startsWith('act.') || (it.row as String).startsWith('vact.') }.each { Map comp ->
+                items << [path: comp.path, row: 'stmt.actionsBeforeDecision', verdict: 'partial', note: noteOf('stmt.actionsBeforeDecision')]
+            }
+        }
+        boolean hasTrigger = components.any { (it.row as String).startsWith('trig.') || it.row in ['stmt.every'] } ||
+            components.any { (it.row as String).startsWith('cond.') }
+        if (!hasTrigger && components) items << [path: 'root', row: 'root.noTrigger', verdict: 'partial', note: 'add a trigger (Visual Rule Builder rules must have one)']
+    }
+    
+    int points = 0
+    Set manualPaths = [] as Set
+    items.each { Map it ->
+        String v = it.verdict as String
+        String r = it.row as String
+        
+        if (v == 'warning') { it.effort = 0; return }
+        int weight = v == 'partial' || v == 'unassessed' ? 1 : (r.startsWith('stmt.') || r == 'cond.followedBy' || r == 'cond.group' ? 3 : 2)
+        it.effort = weight
+        points += weight
+        manualPaths << it.path
+    }
+    int manual = Math.min(manualPaths.size(), Math.max(counted, manualPaths.size()))
+    int total = Math.max(counted, manual)
+    Integer level
+    List summary = []
+    boolean unassessed = items.any { it.verdict == 'unassessed' }
+    if (sourceProblems) {
+        level = 5
+        summary.addAll(sourceProblems.collect { "Fix the piston first: ${it}".toString() })
+    } else if (unassessed) {
+        
+        level = null
+        int unknown = items.count { it.verdict == 'unassessed' } as int
+        summary << "${unknown} ${unknown == 1 ? 'part is' : 'parts are'} not recognised yet: review this piston by hand".toString()
+    } else if (points == 0) {
+        level = total <= WEBCORE_RATING_SIMPLE_COMPONENTS ? 1 : 2
+        int warnings = items.count { it.verdict == 'warning' } as int
+        summary << (warnings ? 'Every part maps without manual changes' : 'Every part has a direct equivalent')
+        if (warnings) summary <<"${warnings} behaviour ${warnings == 1 ? 'warning' : 'warnings'} to read before enabling".toString()
+    } else {
+        level = points <= 2 ? 3 : points <= 6 ? 4 : 5
+        summary << "${manual} of ${total} ${total == 1 ? 'component' : 'components'} ${manual == 1 ? 'needs' : 'need'} rework".toString()
+    }
+    List shown = items.collect { Map it ->
+        String label = ((WEBCORE_EQUIVALENCE[it.row as String] ?: [it.row == 'root.noTrigger' ? 'No trigger' : 'Structure']) as List)[0] as String
+        [location: webcoreMigrationLocation(it.path as String), part: label, verdict: it.verdict, note: it.note, effort: it.effort]
+    }
+    return [level: level, label: level == null ? 'Not assessed' : WEBCORE_RATING_LEVELS[level], summary: summary,
+            counts: [components: total, manualComponents: manual, effortPoints: points],
+            blockers: shown.take(25), blockersOverflow: Math.max(0, shown.size() - 25)]
+}
+
+
+Object webcoreMigrationLive(Object node) {
+    if (node instanceof List) return (node as List).findAll { !(it instanceof Map && (it as Map).di) }.collect { webcoreMigrationLive(it) }
+    if (node instanceof Map) { Map copy = [:]; (node as Map).each { k, v -> copy[k] = webcoreMigrationLive(v) }; return copy }
+    return node
+}
+
+Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenToDeviceId) {
+    Map piston = new LinkedHashMap(originalPiston)
+    piston.s = webcoreMigrationLive(originalPiston.s instanceof List ? originalPiston.s : [])
+    String sJson = JsonOutput.toJson(piston.s)
+    List problems = []
+    if (sJson.contains('"ok":false')) problems << 'an expression webCoRE itself marks invalid'
+    (sJson =~ /"x":"@@([^"]+)"/).each { List m -> if (!hubVariableTypes.containsKey(m[1])) problems << "hub variable ${m[1]} does not exist".toString() }
+    
+    Set deviceTokens = [] as Set
+    Closure collectDevices
+    collectDevices = { Object node ->
+        if (node instanceof Map) {
+            (node as Map).each { k, v ->
+                if (webcoreMigrationStr(k) == 'd' && v instanceof List) (v as List).each { Object t -> if (webcoreMigrationStr(t) ==~ /^:[0-9a-f]{32}:$/) deviceTokens << webcoreMigrationStr(t) }
+                else collectDevices(v)
+            }
+        } else if (node instanceof List) {
+            (node as List).each { collectDevices(it) }
+        }
+    }
+    collectDevices(piston.s)
+    int unknownDevices = deviceTokens.count { !tokenToDeviceId.containsKey(it) } as int
+    if (unknownDevices) problems << "${unknownDevices} device ${unknownDevices == 1 ? 'reference' : 'references'} not found on this hub".toString()
+    problems = problems.unique()
+    List components = webcoreRatingComponents(piston, hubVariableTypes)
+    Map rm = webcoreRateEngine(components, 'rm', problems)
+    Map vrb = webcoreRateEngine(components, 'vrb', problems)
+    
+    Map rmAuto = webcoreMigrationAssessment(originalPiston, hubVariableTypes, tokenToDeviceId.keySet().collect { "${it}".toString() } as Set).ruleMachine as Map
+    Map vrbAuto = webcoreVrbAssessment(originalPiston, hubVariableTypes, tokenToDeviceId)
+    rm.automatic = [available: (rmAuto.counts as Map).blockers == 0 && !problems, parts: (rmAuto.counts as Map).blockers]
+    vrb.automatic = [available: (vrbAuto.level as int) <= 2, parts: (vrbAuto.counts as Map).manualComponents]
+    return [ruleMachine: rm, visualRuleBuilder: vrb, components: components.size()]
+}
+
+@Field static final Map WEBCORE_AUTOMATIC_NOTES = [
+    'stmt.if': ['IF with one condition or one trigger', 'one decision'],
+    'stmt.on': ['', 'switch, motion or contact events'],
+    'trig.device.changes': ['switch, motion or contact', 'events and condition wake-ups for switch, motion or contact'],
+    'trig.hubVariable': ['changes', ''],
+    'cond.device.state': ['switch, motion or contact (is)', 'switch, motion or contact (is, one device)'],
+    'cond.localVariable': ['String equals', ''],
+    'act.switch': ['on / off', 'on / off'],
+    'act.toggle': ['', 'toggle'],
+    'act.level': ['', 'set level'],
+    'act.colorTemp': ['', 'set colour temperature'],
+    'act.color': ['named colours checked so far: Blue', 'named webCoRE colours'],
+    'vact.log': ['info with a fixed message', ''],
+    'vact.setVariable': ['fixed values and variable copies', '']
+]
+
+
+Map webcoreMigrationMatrixMapping() {
+    Map categories = [stmt: 'Structure', setting: 'Piston setting', trig: 'Trigger', cond: 'Condition', act: 'Device command', vact: 'webCoRE command', mod: 'Modifier']
+    Map commandsByRow = [:]
+    WEBCORE_COMMAND_ROWS.each { k, v -> String row = webcoreMigrationStr(v); if (!commandsByRow.containsKey(row)) commandsByRow[row] = []; (commandsByRow[row] as List) << webcoreMigrationStr(k) }
+    List rows = []
+    WEBCORE_EQUIVALENCE.each { k, v ->
+        String row = webcoreMigrationStr(k)
+        if (row == 'unknown') return
+        List entry = v as List
+        List auto = (WEBCORE_AUTOMATIC_NOTES[row] ?: ['', '']) as List
+        rows << [row: row, category: categories[row.tokenize('.')[0]] ?: 'Other', label: entry[0], commands: (commandsByRow[row] ?: []).sort(),
+                 rm: entry[1], rmNote: entry[2], vrb: entry[3], vrbNote: entry[4], autoRm: auto[0], autoVrb: auto[1]]
+    }
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([rows: rows, levels: WEBCORE_RATING_LEVELS]))
+}
+
+
+
+
+
+
 
 
 
@@ -9651,6 +11247,8 @@ mappings {
     path('/externals') { action: [ GET: 'externalsGetMapping', POST: 'externalsSaveMapping' ] }
     path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
     path('/webcore-decode-coverage') { action: [ GET: 'webcoreDecodeCoverageMapping' ] }
+    path('/webcore-migration-assessment') { action: [ GET: 'webcoreMigrationAssessmentMapping' ] }
+    path('/webcore-migration-matrix') { action: [ GET: 'webcoreMigrationMatrixMapping' ] }
 }
 
 
@@ -10199,7 +11797,7 @@ String buildMapHtml() {
   /* 14px, matching #legendPanel's own explicit base - Gordon flagged the
      compact and full legend reading at two different sizes live. Both are
      now anchored to the same value rather than each picking its own. */
-  #legend { position:absolute; top:55px; left:10px; z-index:10; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:var(--leftColWidth); box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
+  #legend { position:absolute; top:55px; left:10px; z-index:8500; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; width:var(--leftColWidth); box-sizing:border-box; max-height:calc(100vh - 70px); overflow-y:auto; }
   /* z-index:9000, not 10 - the .cb-popup fix (z-index:9000 on the popup
      itself) turned out not to be the real fix. CSS stacking is
      hierarchical: a child's z-index only wins WITHIN its own ancestor's
@@ -10597,6 +12195,66 @@ String buildMapHtml() {
   #decodeCoverageCard h5 { margin:10px 0 4px; font-size:0.85em; }
   #decodeCoverageCard .dcCaution { color:#d9a441; }
   #decodeCoverageCard .dcPartial { font-weight:700; margin:4px 0; }
+  /* Migration assessment card (v2.3.1): collapsed to a header and two ratings, expands on click. */
+  /* Above every panel (panelTopZ climbs from 20), below the legend (8500) and the control rail (9000). */
+  #migrationCard { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:8000; width:340px; max-width:calc(100vw - 32px); max-height:calc(100vh - 40px); overflow-y:auto; border-radius:10px; border:2px solid #c2185b; background:rgba(4,20,27,0.96); box-shadow:0 4px 18px rgba(0,0,0,0.45); box-sizing:border-box; font-size:14px; }
+  #migrationCard .maBody li { margin:2px 0; }
+  #migrationCard .maScale { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-items:center; font-size:0.85em; }
+  #migrationCard .maToggle { display:flex; justify-content:space-between; align-items:center; width:100%; padding:10px 14px; border:0; background:#c2185b; color:#fff; font:inherit; font-weight:700; cursor:move; text-align:left; user-select:none; }
+  #migrationCard .maToggle:hover { background:#e0357f; }
+  #migrationCard .maToggleHint { font-weight:400; font-size:0.85em; opacity:0.9; }
+  #migrationCard .maRow { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  #migrationCard .maName { min-width:130px; }
+  #migrationCard .maBadge { display:inline-block; min-width:22px; text-align:center; border-radius:11px; padding:1px 6px; font-weight:700; color:#111; }
+  #migrationCard .maL1, #migrationCard .maL2 { background:#6cc070; }
+  #migrationCard .maL3 { background:#d9c441; }
+  #migrationCard .maL4 { background:#e0913a; }
+  #migrationCard .maL5 { background:#e0605a; }
+  #migrationCard .maNone { background:rgba(255,255,255,0.25); color:#eee; }
+  #migrationCard .maComponents { margin:-1px 0 4px 138px; font-size:0.8em; opacity:0.8; }
+  #migrationCard .maBody { padding:0 14px 10px; }
+  #migrationCard .maBody h5 { margin:10px 0 4px; font-size:0.85em; }
+  #migrationCard .maBody ul { margin:0 0 4px 18px; padding:0; }
+  /* Migration report panel (v2.3.1). */
+  #migrationReportBtn { border-color:#c2185b; }
+  #migrationReportBody .maL1, #migrationReportBody .maL2 { background:#6cc070; }
+  #migrationReportBody .maL3 { background:#d9c441; }
+  #migrationReportBody .maL4 { background:#e0913a; }
+  #migrationReportBody .maL5 { background:#e0605a; }
+  #migrationReportBody .maNone { background:rgba(255,255,255,0.25); color:#eee; }
+  #migrationReportBody .mrTabs { display:flex; gap:6px; border-bottom:1px solid rgba(255,255,255,0.14); margin-bottom:10px; }
+  #migrationReportBody .mrTabs button { background:none; border:0; border-bottom:3px solid transparent; border-radius:0; padding:8px 12px; color:inherit; opacity:0.7; }
+  #migrationReportBody .mrTabs button[aria-selected="true"] { opacity:1; border-bottom-color:#c2185b; }
+  #migrationReportBody .mrHead { display:grid; grid-template-columns:minmax(0,1fr) 340px 340px; gap:12px; align-items:end; margin:10px 0; padding:0 13px; }
+  #migrationReportBody .mrHead .mrFilters { margin:0; align-self:end; }
+  #migrationReportBody .mrEngineTop { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  #migrationReportBody .mrBar span[data-level] { cursor:pointer; }
+  #migrationReportBody .mrEngine { display:grid; gap:6px; padding:10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
+  #migrationReportBody .mrBar { display:flex; height:22px; border-radius:5px; overflow:hidden; background:rgba(255,255,255,0.06); }
+  #migrationReportBody .mrBar span { display:grid; place-items:center; color:#111; font-size:12px; font-weight:700; min-width:0; }
+  #migrationReportBody .mrBar .mrEmpty { color:inherit; font-weight:400; padding:0 8px; }
+  #migrationReportBody .mrFilters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0; }
+  #migrationReportBody .mrList { display:grid; gap:6px; }
+  #migrationReportBody .mrRow { border:1px solid rgba(255,255,255,0.12); border-radius:6px; }
+  #migrationReportBody .mrRow summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) 340px 340px; gap:12px; align-items:center; padding:8px 12px; }
+  #migrationReportBody .mrRow summary::-webkit-details-marker { display:none; }
+  #migrationReportBody .mrRow[open] summary { border-bottom:1px solid rgba(255,255,255,0.12); }
+  #migrationReportBody .mrName { overflow-wrap:anywhere; font-weight:600; }
+  #migrationReportBody .mrName a { color:inherit; text-decoration:underline; text-decoration-color:rgba(255,255,255,0.35); }
+  #migrationReportBody .mrCell { display:flex; gap:8px; align-items:center; font-size:0.9em; }
+  #migrationReportBody .mrBadge { display:inline-grid; place-items:center; flex:none; width:24px; height:24px; border-radius:50%; font-weight:700; color:#111; }
+  #migrationReportBody .mrDetail { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:8px 12px 12px; }
+  #migrationReportBody .mrDetail h5 { margin:4px 0 6px; }
+  #migrationReportBody .mrDetail ul { margin:0; padding-left:18px; display:grid; gap:4px; }
+  #migrationReportBody .mrTag { font-size:0.72em; text-transform:uppercase; letter-spacing:0.05em; padding:1px 5px; border-radius:4px; background:rgba(255,255,255,0.08); margin-right:5px; }
+  #migrationReportBody .mr_no { color:#ff8a80; } #migrationReportBody .mr_partial { color:#e8d15a; } #migrationReportBody .mr_warning { color:#f06292; } #migrationReportBody .mr_yes { color:#8fd694; }
+  #migrationReportBody .mrProgress { color:#f06292; }
+  #migrationReportBody .mrTableWrap { overflow-x:auto; }
+  #migrationReportBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
+  #migrationReportBody .mrTable th, #migrationReportBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
+  #migrationReportBody .mrV { font-weight:700; white-space:nowrap; }
+  #migrationReportBody .mrCmds { max-width:260px; overflow-wrap:anywhere; }
+  @media (max-width: 900px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary, #migrationReportBody .mrDetail { grid-template-columns:1fr; } }
   #communityCard.ccClickable { cursor:pointer; }
   #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
@@ -10882,14 +12540,17 @@ String buildMapHtml() {
     <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External systems</button></div>
     <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+    <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
     <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
     <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
+<div id="migrationCard" hidden></div>
 <div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
+<div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat releases over time</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
@@ -12811,7 +14472,7 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
@@ -13000,6 +14661,7 @@ function showInertPanel(node) {
   renderRuleVariablesCard(node.id);
   noteFlowItem(node);
   renderDecodeCoverageCard(node);
+  renderMigrationCard(node);
   renderCommunityCard(node);
   setFlowSizeMode(false);
   bringToFront(flowPanel);
@@ -13024,6 +14686,7 @@ function showUnreferencedLocalPanel(node) {
   renderRuleVariablesCard(node.id);
   noteFlowItem(node);
   renderDecodeCoverageCard(node);
+  renderMigrationCard(node);
   renderCommunityCard(node);
   setFlowSizeMode(false);
   bringToFront(flowPanel);
@@ -13063,6 +14726,7 @@ function showFlow(appId) {
     renderRuleVariablesCard(appId);
     noteFlowItem(node);
     renderDecodeCoverageCard(node);
+    renderMigrationCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
     bringToFront(flowPanel);
@@ -13085,6 +14749,7 @@ function showFlow(appId) {
     renderRuleVariablesCard(appId);
     noteFlowItem(node);
     renderDecodeCoverageCard(node);
+    renderMigrationCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
     bringToFront(flowPanel);
@@ -13094,6 +14759,7 @@ function showFlow(appId) {
     renderRuleVariablesCard(appId);
     noteFlowItem(node);
     renderDecodeCoverageCard(node);
+    renderMigrationCard(node);
     renderCommunityCard(node);
     setFlowSizeMode(false);
     bringToFront(flowPanel);
@@ -13240,7 +14906,7 @@ let communityCardRequestSeq = 0;
 // the flow panel begins a new generation before touching the screen, so a
 // Mermaid render or coverage request started earlier knows it is stale.
 let focusGenerationSeq = 0;
-function beginSelectionGeneration() { focusGenerationSeq += 1; }
+function beginSelectionGeneration() { focusGenerationSeq += 1; hideMigrationCard(); }
 
 // One request for the whole page view, whichever app is selected first -
 // later selections reuse this same promise (spec 3.2 steps 2-4).
@@ -13623,6 +15289,371 @@ function requestDecodeCoverage() {
       box.innerHTML = '';
       box.hidden = true;
     });
+}
+
+// Migration assessment card (v2.3.1). Fetched on piston selection. Collapsed it shows a header and
+// one rating each for Rule Machine and Visual Rule Builder; a click expands the reasons and the parts
+// that need manual work. Silent when the assessment cannot run. Labels avoid apostrophes because this
+// script lives inside a Groovy GString; dynamic text goes through extEsc.
+const MIGRATION_URL = amPickURL('${getLocalURL('webcore-migration-assessment')}', '${getCloudURL('webcore-migration-assessment')}');
+let migrationRequestSeq = 0;
+
+function migrationRowHtml(name, r) {
+  const hasLevel = r && r.level !== null && r.level !== undefined;
+  return '<div class="maRow"><span class="maName">' + extEsc(name) + '</span><span class="maBadge ' +
+    (hasLevel ? 'maL' + Number(r.level) : 'maNone') + '">' + (hasLevel ? extEsc(r.level) : '-') +
+    '</span><span class="maLabel">' + extEsc(r && r.label ? r.label : 'Not available') + '</span></div>';
+}
+
+function migrationComponentsHtml(r) {
+  const c = (r && r.counts) || {};
+  const auto = r && r.automatic ? (r.automatic.available ? 'automatic conversion potential' : 'no automatic conversion potential yet') : '';
+  const parts = c.components ? extEsc(c.components) + ' components, ' + (c.manualComponents ? extEsc(c.manualComponents) + ' need rework' : 'all direct') : '';
+  return '<div class="maComponents">' + [parts, auto].filter(function (x) { return x; }).join('; ') + '</div>';
+}
+
+function migrationBlockersHtml(r) {
+  const blockers = (r && r.blockers) || [];
+  const rework = blockers.filter(function (b) { return b.verdict !== 'warning'; });
+  const notes = blockers.filter(function (b) { return b.verdict === 'warning'; });
+  const item = function (b) { return '<li><b>' + extEsc(b.part) + '</b> (' + extEsc(b.location) + '): ' + extEsc(b.note) + '</li>'; };
+  let h = '';
+  if (rework.length) { h += '<h5>Needs rework</h5><ul>'; rework.forEach(function (b) { h += item(b); }); if (r.blockersOverflow) h += '<li>and ' + extEsc(r.blockersOverflow) + ' more</li>'; h += '</ul>'; }
+  if (notes.length) { h += '<h5>Warnings</h5><ul>'; notes.forEach(function (b) { h += item(b); }); h += '</ul>'; }
+  return h;
+}
+
+function migrationListHtml(items) {
+  let h = '<ul>';
+  (items || []).forEach(function (s) { h += '<li>' + extEsc(s) + '</li>'; });
+  return h + '</ul>';
+}
+
+function migrationCardHtml(body) {
+  const rm = body.ruleMachine || {};
+  const vrb = body.visualRuleBuilder || {};
+  const c = rm.counts || {};
+  let h = migrationRowHtml('Rule Machine', rm) + migrationComponentsHtml(rm) + migrationRowHtml('Visual Rule Builder', vrb) + migrationComponentsHtml(vrb);
+  h += '<h5>Rule Machine 5.1</h5>' + migrationListHtml(rm.summary);
+  h += migrationBlockersHtml(rm);
+  h += '<h5>Visual Rule Builder 2.0</h5>' + migrationListHtml(vrb.summary) + migrationBlockersHtml(vrb);
+  h += '<h5>Scale</h5><div class="maScale">' +
+    '<span class="maBadge maL1">1</span><span>Direct equivalent, simple</span>' +
+    '<span class="maBadge maL2">2</span><span>Direct equivalent, more steps</span>' +
+    '<span class="maBadge maL3">3</span><span>A little rework</span>' +
+    '<span class="maBadge maL4">4</span><span>A lot of rework</span>' +
+    '<span class="maBadge maL5">5</span><span>Easier to rebuild from scratch</span></div>' +
+    '<p class="sub">The level is how directly the piston maps. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
+  return h;
+}
+
+function hideMigrationCard() {
+  const box = document.getElementById('migrationCard');
+  if (!box) return;
+  migrationRequestSeq++;
+  box.innerHTML = '';
+  box.hidden = true;
+}
+
+// Selecting a piston shows only the floating Migration assessment button. Pressing it runs the
+// assessment once for this selection and opens the result; pressing again closes it.
+function renderMigrationCard(node) {
+  const box = document.getElementById('migrationCard');
+  if (!box) return;
+  hideMigrationCard();
+  if (!node || node.appType !== 'webCoRE Piston') return;
+  const seq = migrationRequestSeq;
+  const mySelectionSeq = focusGenerationSeq;
+  box.innerHTML = '<button type="button" class="maToggle" aria-expanded="false" title="Press to show or hide. Drag to move."><span>Migration assessment</span><span class="maToggleHint">Show</span></button><div class="maBody" hidden></div>';
+  box.hidden = false;
+  const toggle = box.querySelector('.maToggle');
+  const payload = box.querySelector('.maBody');
+  let loaded = false;
+  toggle.addEventListener('click', function () {
+    const open = payload.hidden;
+    payload.hidden = !open;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.querySelector('.maToggleHint').textContent = open ? 'Hide' : 'Show';
+    if (!open || loaded) return;
+    loaded = true;
+    payload.innerHTML = '<p class="sub">Assessing this piston...</p>';
+    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
+      .then(function (resp) {
+        return resp.json().then(function (body) { return body; }, function () { return {}; });
+      })
+      .then(function (body) {
+        if (seq !== migrationRequestSeq || mySelectionSeq !== focusGenerationSeq) return;
+        if (!body || body.status !== 'complete') {
+          loaded = false;
+          payload.innerHTML = '<p class="sub">' + (body && body.status === 'busy' ? 'A scan is running. Try again when it finishes.' : 'The assessment is not available right now.') + '</p>';
+          return;
+        }
+        payload.innerHTML = migrationCardHtml(body);
+      })
+      .catch(function () {
+        if (seq !== migrationRequestSeq || mySelectionSeq !== focusGenerationSeq) return;
+        loaded = false;
+        payload.innerHTML = '<p class="sub">The assessment is not available right now.</p>';
+      });
+  });
+}
+
+// The panel moves by dragging its magenta bar. A press without movement still shows or hides it. The
+// position is kept for the page view, because only the panel content is rebuilt on each selection.
+(function () {
+  const box = document.getElementById('migrationCard');
+  if (!box) return;
+  let drag = null;
+  let suppressClick = false;
+  box.addEventListener('mousedown', function (e) {
+    suppressClick = false;
+    if (e.button !== 0 || !e.target.closest('.maToggle')) return;
+    const rect = box.getBoundingClientRect();
+    drag = { x: e.clientX, y: e.clientY, left: rect.left, top: rect.top, moved: false };
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+    drag.moved = true;
+    box.style.transform = 'none';
+    box.style.left = Math.max(0, Math.min(window.innerWidth - 80, drag.left + dx)) + 'px';
+    box.style.top = Math.max(0, Math.min(window.innerHeight - 40, drag.top + dy)) + 'px';
+    e.preventDefault();
+  });
+  document.addEventListener('mouseup', function () {
+    if (drag && drag.moved) suppressClick = true;
+    drag = null;
+  });
+  box.addEventListener('click', function (e) {
+    if (!suppressClick) return;
+    suppressClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+})();
+
+
+// Migration report panel (v2.3.1). Rates every webCoRE piston on this hub for Rule Machine and Visual Rule Builder,
+// one piston at a time through the same endpoint the floating panel uses, and shows the construct matrix. Results are
+// kept for this page view; Reassess runs them again. Labels avoid apostrophes and template literals because this
+// script lives inside a Groovy GString; dynamic text goes through extEsc.
+const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix')}', '${getCloudURL('webcore-migration-matrix')}');
+const migrationReportPanel = document.getElementById('migrationReport');
+const migrationReportBody = document.getElementById('migrationReportBody');
+const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0 };
+const MR_ENGINES = [['ruleMachine', 'Rule Machine 5.1'], ['visualRuleBuilder', 'Visual Rule Builder 2.0']];
+const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'None', warning: 'Warning', unassessed: 'Not assessed' };
+
+function mrName(node) { return String(node.title || node.name || node.label || node.id); }
+
+function mrPistons() {
+  return ALL_NODES.filter(function (n) { return n.appType === 'webCoRE Piston'; })
+    .sort(function (a, b) { return mrName(a).localeCompare(mrName(b)); });
+}
+
+function mrOpen() {
+  bringToFront(migrationReportPanel);
+  if (!MR.results && !MR.running) mrRun(); else mrRender();
+}
+
+function mrRun() {
+  const pistons = mrPistons();
+  const seq = ++MR.runSeq;
+  MR.running = true;
+  MR.results = [];
+  mrRender();
+  let i = 0;
+  const next = function () {
+    if (seq !== MR.runSeq) return;
+    if (i >= pistons.length) { MR.running = false; mrRender(); return; }
+    const node = pistons[i++];
+    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
+      .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
+      .then(function (body) { MR.results.push({ node: node, body: body || {} }); })
+      .catch(function () { MR.results.push({ node: node, body: { status: 'error' } }); })
+      .then(function () { if (seq === MR.runSeq) { mrRender(); next(); } });
+  };
+  next();
+}
+
+function mrLoadMatrix() {
+  if (MR.matrix) return;
+  MR.matrix = 'loading';
+  fetch(MIGRATION_MATRIX_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { MR.matrix = d; mrRender(); })
+    .catch(function () { MR.matrix = 'error'; mrRender(); });
+}
+
+function mrBadge(level) {
+  if (level === null || level === undefined) return '<span class="mrBadge maNone" title="Not assessed">?</span>';
+  return '<span class="mrBadge maL' + Number(level) + '">' + extEsc(level) + '</span>';
+}
+
+function mrEngineHead(done, e, levelId) {
+  const counts = [1, 2, 3, 4, 5].map(function (l) { return done.filter(function (r) { return r.body[e[0]].level === l; }).length; });
+  const auto = done.filter(function (r) { return r.body[e[0]].automatic && r.body[e[0]].automatic.available; }).length;
+  const unrated = done.filter(function (r) { return r.body[e[0]].level === null || r.body[e[0]].level === undefined; }).length;
+  let bar = '';
+  counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
+  return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option value="null">Not assessed</option></select></label></div>' +
+    '<div class="mrBar">' + (bar || '<span class="mrEmpty">No results yet</span>') + '</div>' +
+    '<div class="sub">' + auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '') + '</div></div>';
+}
+
+function mrReasons(r) {
+  const fix = (r.summary || []).filter(function (s) { return s.indexOf('Fix') === 0; });
+  const items = (r.blockers || []).map(function (b) {
+    return '<li><span class="mrTag mr_' + extEsc(b.verdict) + '">' + extEsc(MR_VERDICT[b.verdict] || b.verdict) + '</span><b>' + extEsc(b.part) + '</b>: ' +
+      extEsc(b.note) + ' <span class="sub">' + extEsc(b.location) + '</span></li>';
+  });
+  const list = fix.map(function (s) { return '<li><span class="mrTag mr_no">Source</span>' + extEsc(s) + '</li>'; }).concat(items);
+  return list.length ? '<ul>' + list.join('') + '</ul>' : '<p class="sub">Every part has a direct equivalent.</p>';
+}
+
+function mrCell(r) {
+  const c = r.counts || {};
+  return '<span class="mrCell">' + mrBadge(r.level) + '<span>' + extEsc(r.label) + '<br><span class="sub">' + extEsc(c.components || 0) + ((c.components || 0) === 1 ? ' part, ' : ' parts, ') +
+    extEsc(c.manualComponents || 0) + ' rework' + (r.automatic && r.automatic.available ? ', automatic conversion potential' : '') + '</span></span></span>';
+}
+
+function mrRenderPistons() {
+  const pistons = mrPistons();
+  const done = (MR.results || []).filter(function (r) { return r.body.status === 'complete'; });
+  const failed = (MR.results || []).filter(function (r) { return r.body.status !== 'complete'; });
+  const levelRm = (document.getElementById('mrLevelRm') || {}).value || '';
+  const levelVrb = (document.getElementById('mrLevelVrb') || {}).value || '';
+  const text = ((document.getElementById('mrText') || {}).value || '').trim().toLowerCase();
+  const rows = done.filter(function (r) {
+    return (!levelRm || String(r.body.ruleMachine.level) === levelRm) && (!levelVrb || String(r.body.visualRuleBuilder.level) === levelVrb) &&
+      (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers)).toLowerCase().indexOf(text) !== -1);
+  });
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for both engines from one equivalence table. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
+  if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
+  h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
+  h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
+    '<button type="button" class="rowbtn" id="mrExportPistons"' + (done.length ? '' : ' disabled') + '>Export ratings CSV</button>' +
+    '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Reassess</button>' +
+    '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
+    mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') + '</div>';
+  h += '<div class="mrList">' + rows.map(function (r) {
+    return '<details class="mrRow"><summary><span class="mrName"><a href="#" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</a></span>' +
+      mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + '</summary>' +
+      '<div class="mrDetail"><div><h5>Rule Machine 5.1</h5>' + mrReasons(r.body.ruleMachine) + '</div><div><h5>Visual Rule Builder 2.0</h5>' + mrReasons(r.body.visualRuleBuilder) + '</div></div></details>';
+  }).join('') + '</div>';
+  if (failed.length) {
+    h += '<p class="sub">Not assessed: ' + failed.map(function (r) { return extEsc(mrName(r.node)) + (r.body.status === 'busy' ? ' (a scan is running)' : ''); }).join(', ') + '</p>';
+  }
+  return h;
+}
+
+function mrRenderMatrix() {
+  if (!MR.matrix || MR.matrix === 'loading') { mrLoadMatrix(); return '<p class="sub">Loading...</p>'; }
+  if (MR.matrix === 'error') return '<p>The construct matrix could not be loaded.</p>';
+  const text = ((document.getElementById('mrMatrixText') || {}).value || '').trim().toLowerCase();
+  const rows = MR.matrix.rows.filter(function (m) { return !text || [m.category, m.label, m.commands.join(' '), m.rmNote, m.vrbNote].join(' ').toLowerCase().indexOf(text) !== -1; });
+  const v = function (verdict, note) { return '<span class="mrV mr_' + extEsc(verdict) + '">' + extEsc(MR_VERDICT[verdict] || verdict) + '</span> ' + extEsc(note || ''); };
+  return '<p class="sub">How each webCoRE construct maps onto Rule Machine 5.1 and Visual Rule Builder 2.0. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>' +
+    '<div class="mrFilters"><label>Search <input id="mrMatrixText" type="search" placeholder="Construct or command"></label>' +
+    '<button type="button" class="rowbtn" id="mrExportMatrix">Export matrix CSV</button><span class="sub">' + rows.length + ' constructs</span></div>' +
+    '<div class="mrTableWrap"><table class="mrTable"><thead><tr><th>Category</th><th>webCoRE construct</th><th>Commands</th><th>Rule Machine 5.1</th><th>Visual Rule Builder 2.0</th><th>Automatic conversion potential</th></tr></thead><tbody>' +
+    rows.map(function (m) {
+      const proven = [m.autoRm ? 'Rule Machine: ' + extEsc(m.autoRm) : '', m.autoVrb ? 'Visual Rule Builder: ' + extEsc(m.autoVrb) : ''].filter(function (x) { return x; }).join('<br>');
+      return '<tr><td>' + extEsc(m.category) + '</td><td>' + extEsc(m.label) + '</td><td class="mrCmds">' + extEsc(m.commands.join(', ')) + '</td><td>' + v(m.rm, m.rmNote) + '</td><td>' + v(m.vrb, m.vrbNote) + '</td><td>' + (proven || '<span class="sub">none yet</span>') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+
+function mrRender() {
+  if (!migrationReportBody || getComputedStyle(migrationReportPanel).display === 'none') return;
+  const keep = {};
+  ['mrLevelRm', 'mrLevelVrb', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) keep[id] = el.value; });
+  const focused = document.activeElement ? document.activeElement.id : '';
+  const open = {};
+  document.querySelectorAll('#migrationReportBody details.mrRow[open] a[data-node]').forEach(function (a) { open[a.getAttribute('data-node')] = true; });
+  let h = '<div class="mrTabs"><button type="button" data-tab="pistons" aria-selected="' + (MR.tab === 'pistons') + '">Pistons</button>' +
+    '<button type="button" data-tab="matrix" aria-selected="' + (MR.tab === 'matrix') + '">Construct matrix</button></div>';
+  h += MR.tab === 'pistons' ? mrRenderPistons() : mrRenderMatrix();
+  migrationReportBody.innerHTML = h;
+  Object.keys(keep).forEach(function (id) { const el = document.getElementById(id); if (el) el.value = keep[id]; });
+  if (focused && document.getElementById(focused)) {
+    const el = document.getElementById(focused);
+    el.focus();
+    if (el.setSelectionRange && el.type === 'search') el.setSelectionRange(el.value.length, el.value.length);
+  }
+  document.querySelectorAll('#migrationReportBody details.mrRow a[data-node]').forEach(function (a) {
+    if (open[a.getAttribute('data-node')]) a.closest('details').open = true;
+    a.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      migrationReportPanel.style.display = 'none';
+      syncLegendVisibility();
+      focusNode(a.getAttribute('data-node'));
+    });
+  });
+  document.querySelectorAll('#migrationReportBody .mrTabs button').forEach(function (b) {
+    b.addEventListener('click', function () { MR.tab = b.getAttribute('data-tab'); mrRender(); });
+  });
+  ['mrLevelRm', 'mrLevelVrb', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) el.addEventListener('input', mrRender); });
+  document.querySelectorAll('#migrationReportBody [data-level-select]').forEach(function (seg) {
+    seg.addEventListener('click', function () {
+      const sel = document.getElementById(seg.getAttribute('data-level-select'));
+      sel.value = sel.value === seg.getAttribute('data-level') ? '' : seg.getAttribute('data-level');
+      mrRender();
+    });
+  });
+  const rerun = document.getElementById('mrRerun');
+  if (rerun) rerun.addEventListener('click', mrRun);
+  const exportPistons = document.getElementById('mrExportPistons');
+  if (exportPistons) exportPistons.addEventListener('click', mrExportPistonsCsv);
+  const exportMatrix = document.getElementById('mrExportMatrix');
+  if (exportMatrix) exportMatrix.addEventListener('click', mrExportMatrixCsv);
+}
+
+function mrCsvField(v) {
+  const s = String(v === null || v === undefined ? '' : v);
+  return (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf(String.fromCharCode(10)) !== -1) ? '"' + s.split('"').join('""') + '"' : s;
+}
+
+function mrDownload(name, rows) {
+  const text = rows.map(function (r) { return r.map(mrCsvField).join(','); }).join(String.fromCharCode(13, 10)) + String.fromCharCode(13, 10);
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function mrExportPistonsCsv() {
+  const reasons = function (r) {
+    return (r.summary || []).filter(function (s) { return s.indexOf('Fix') === 0; })
+      .concat((r.blockers || []).map(function (b) { return b.part + ' (' + b.location + '): ' + b.note + (b.verdict === 'warning' ? ' [warning]' : ''); })).join(' | ');
+  };
+  const rows = [['Piston id', 'Piston', 'Rule Machine level', 'Rule Machine rating', 'Rule Machine components', 'Rule Machine rework', 'Rule Machine automatic conversion potential', 'Rule Machine reasons',
+    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion potential', 'Visual Rule Builder reasons']];
+  (MR.results || []).filter(function (r) { return r.body.status === 'complete'; }).forEach(function (r) {
+    const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder;
+    rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'potential' : 'not yet', reasons(rm),
+      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'potential' : 'not yet', reasons(vrb)]);
+  });
+  mrDownload('webcore-piston-migration-ratings-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
+}
+
+function mrExportMatrixCsv() {
+  if (!MR.matrix || !MR.matrix.rows) return;
+  const word = { yes: 'Direct equivalent', partial: 'Partial (named change)', no: 'No equivalent', note: 'Direct equivalent (behaviour note)', unassessed: 'Not assessed' };
+  const rows = [['Category', 'webCoRE construct', 'webCoRE command', 'Rule Machine 5.1', 'Rule Machine note', 'Visual Rule Builder 2.0', 'Visual Rule Builder note',
+    'Automatic conversion potential: Rule Machine', 'Automatic conversion potential: Visual Rule Builder']];
+  MR.matrix.rows.forEach(function (m) {
+    (m.commands.length ? m.commands : ['']).forEach(function (cmd) {
+      rows.push([m.category, m.label, cmd, word[m.rm] || m.rm, m.rmNote, word[m.vrb] || m.vrb, m.vrbNote, m.autoRm || 'no', m.autoVrb || 'no']);
+    });
+  });
+  mrDownload('webcore-rm5-vrb2-compatibility-matrix.csv', rows);
 }
 
 function renderCommunityCard(node) {
@@ -15494,7 +17525,8 @@ let ICONS = null;
   { panel: extPanel, id: 'ext' },
   { panel: pivotPanel, id: 'pivot' },
   { panel: releaseActivityPanel, id: 'releaseActivity' },
-  { panel: iconsPanel, id: 'icons' }
+  { panel: iconsPanel, id: 'icons' },
+  { panel: migrationReportPanel, id: 'migrationReport' }
 ].forEach(function (p) {
   makePanelDraggable(p.panel, document.querySelector('#' + p.id + ' .modernPanelHeader'));
 });
@@ -16304,6 +18336,11 @@ document.getElementById('pivotBtn').addEventListener('click', function () {
 });
 document.getElementById('pivotClose').addEventListener('click', function () {
   pivotPanel.style.display = 'none';
+  syncLegendVisibility();
+});
+document.getElementById('migrationReportBtn').addEventListener('click', mrOpen);
+document.getElementById('migrationReportClose').addEventListener('click', function () {
+  migrationReportPanel.style.display = 'none';
   syncLegendVisibility();
 });
 // The tool rail's own "Legend" button was removed (Gordon's live call - it
