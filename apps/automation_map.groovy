@@ -15350,7 +15350,7 @@ function migrationRowHtml(name, r) {
 
 function migrationComponentsHtml(r) {
   const c = (r && r.counts) || {};
-  const auto = r && r.automatic ? (r.automatic.available ? 'automatic conversion possible' : 'automatic conversion not yet') : '';
+  const auto = r && r.automatic ? (r.automatic.available ? 'automatic conversion potential' : 'no automatic conversion potential yet') : '';
   const parts = c.components ? extEsc(c.components) + ' components, ' + (c.manualComponents ? extEsc(c.manualComponents) + ' need rework' : 'all direct') : '';
   return '<div class="maComponents">' + [parts, auto].filter(function (x) { return x; }).join('; ') + '</div>';
 }
@@ -15386,7 +15386,7 @@ function migrationCardHtml(body) {
     '<span class="maBadge maL3">3</span><span>A little rework</span>' +
     '<span class="maBadge maL4">4</span><span>A lot of rework</span>' +
     '<span class="maBadge maL5">5</span><span>Easier to rebuild from scratch</span></div>' +
-    '<p class="sub">The level is how directly the piston maps. Automatic conversion is shown separately, and only where this app has proven it on a hub.</p>';
+    '<p class="sub">The level is how directly the piston maps. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
   return h;
 }
 
@@ -15543,7 +15543,7 @@ function mrEngineHead(done, e, levelId) {
   counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
   return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option value="null">Not assessed</option></select></label></div>' +
     '<div class="mrBar">' + (bar || '<span class="mrEmpty">No results yet</span>') + '</div>' +
-    '<div class="sub">' + auto + ' of ' + done.length + ' with proven automatic conversion' + (unrated ? ', ' + unrated + ' not assessed' : '') + '</div></div>';
+    '<div class="sub">' + auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '') + '</div></div>';
 }
 
 function mrReasons(r) {
@@ -15559,7 +15559,7 @@ function mrReasons(r) {
 function mrCell(r) {
   const c = r.counts || {};
   return '<span class="mrCell">' + mrBadge(r.level) + '<span>' + extEsc(r.label) + '<br><span class="sub">' + extEsc(c.components || 0) + ((c.components || 0) === 1 ? ' part, ' : ' parts, ') +
-    extEsc(c.manualComponents || 0) + ' rework' + (r.automatic && r.automatic.available ? ', automatic conversion possible' : '') + '</span></span></span>';
+    extEsc(c.manualComponents || 0) + ' rework' + (r.automatic && r.automatic.available ? ', automatic conversion potential' : '') + '</span></span></span>';
 }
 
 function mrRenderPistons() {
@@ -15573,7 +15573,7 @@ function mrRenderPistons() {
     return (!levelRm || String(r.body.ruleMachine.level) === levelRm) && (!levelVrb || String(r.body.visualRuleBuilder.level) === levelVrb) &&
       (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers)).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for both engines from one equivalence table. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise; automatic conversion is shown only where it has been proven on a hub.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for both engines from one equivalence table. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
@@ -15598,10 +15598,10 @@ function mrRenderMatrix() {
   const text = ((document.getElementById('mrMatrixText') || {}).value || '').trim().toLowerCase();
   const rows = MR.matrix.rows.filter(function (m) { return !text || [m.category, m.label, m.commands.join(' '), m.rmNote, m.vrbNote].join(' ').toLowerCase().indexOf(text) !== -1; });
   const v = function (verdict, note) { return '<span class="mrV mr_' + extEsc(verdict) + '">' + extEsc(MR_VERDICT[verdict] || verdict) + '</span> ' + extEsc(note || ''); };
-  return '<p class="sub">How each webCoRE construct maps onto Rule Machine 5.1 and Visual Rule Builder 2.0. Proven means automatic conversion has been tested on a hub.</p>' +
+  return '<p class="sub">How each webCoRE construct maps onto Rule Machine 5.1 and Visual Rule Builder 2.0. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>' +
     '<div class="mrFilters"><label>Search <input id="mrMatrixText" type="search" placeholder="Construct or command"></label>' +
     '<button type="button" class="rowbtn" id="mrExportMatrix">Export matrix CSV</button><span class="sub">' + rows.length + ' constructs</span></div>' +
-    '<div class="mrTableWrap"><table class="mrTable"><thead><tr><th>Category</th><th>webCoRE construct</th><th>Commands</th><th>Rule Machine 5.1</th><th>Visual Rule Builder 2.0</th><th>Proven automatic conversion</th></tr></thead><tbody>' +
+    '<div class="mrTableWrap"><table class="mrTable"><thead><tr><th>Category</th><th>webCoRE construct</th><th>Commands</th><th>Rule Machine 5.1</th><th>Visual Rule Builder 2.0</th><th>Automatic conversion potential</th></tr></thead><tbody>' +
     rows.map(function (m) {
       const proven = [m.autoRm ? 'Rule Machine: ' + extEsc(m.autoRm) : '', m.autoVrb ? 'Visual Rule Builder: ' + extEsc(m.autoVrb) : ''].filter(function (x) { return x; }).join('<br>');
       return '<tr><td>' + extEsc(m.category) + '</td><td>' + extEsc(m.label) + '</td><td class="mrCmds">' + extEsc(m.commands.join(', ')) + '</td><td>' + v(m.rm, m.rmNote) + '</td><td>' + v(m.vrb, m.vrbNote) + '</td><td>' + (proven || '<span class="sub">none yet</span>') + '</td></tr>';
@@ -15676,12 +15676,12 @@ function mrExportPistonsCsv() {
     return (r.summary || []).filter(function (s) { return s.indexOf('Fix') === 0; })
       .concat((r.blockers || []).map(function (b) { return b.part + ' (' + b.location + '): ' + b.note + (b.verdict === 'warning' ? ' [warning]' : ''); })).join(' | ');
   };
-  const rows = [['Piston id', 'Piston', 'Rule Machine level', 'Rule Machine rating', 'Rule Machine components', 'Rule Machine rework', 'Rule Machine automatic conversion', 'Rule Machine reasons',
-    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion', 'Visual Rule Builder reasons']];
+  const rows = [['Piston id', 'Piston', 'Rule Machine level', 'Rule Machine rating', 'Rule Machine components', 'Rule Machine rework', 'Rule Machine automatic conversion potential', 'Rule Machine reasons',
+    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion potential', 'Visual Rule Builder reasons']];
   (MR.results || []).filter(function (r) { return r.body.status === 'complete'; }).forEach(function (r) {
     const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder;
-    rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'possible' : 'not yet', reasons(rm),
-      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'possible' : 'not yet', reasons(vrb)]);
+    rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'potential' : 'not yet', reasons(rm),
+      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'potential' : 'not yet', reasons(vrb)]);
   });
   mrDownload('webcore-piston-migration-ratings-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
 }
@@ -15690,7 +15690,7 @@ function mrExportMatrixCsv() {
   if (!MR.matrix || !MR.matrix.rows) return;
   const word = { yes: 'Direct equivalent', partial: 'Partial (named change)', no: 'No equivalent', note: 'Direct equivalent (behaviour note)', unassessed: 'Not assessed' };
   const rows = [['Category', 'webCoRE construct', 'webCoRE command', 'Rule Machine 5.1', 'Rule Machine note', 'Visual Rule Builder 2.0', 'Visual Rule Builder note',
-    'Automatic conversion proven: Rule Machine', 'Automatic conversion proven: Visual Rule Builder']];
+    'Automatic conversion potential: Rule Machine', 'Automatic conversion potential: Visual Rule Builder']];
   MR.matrix.rows.forEach(function (m) {
     (m.commands.length ? m.commands : ['']).forEach(function (cmd) {
       rows.push([m.category, m.label, cmd, word[m.rm] || m.rm, m.rmNote, word[m.vrb] || m.vrb, m.vrbNote, m.autoRm || 'no', m.autoVrb || 'no']);

@@ -1,16 +1,9 @@
-v2.3.0: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.
+v2.3.1: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.
 
-Since the last production release (2.2.3):
+Since the last production release (2.3.0):
 
-- webCoRE pistons now draw as flowcharts, like Rule Machine, Notifier and Visual Rule Builder rules: statement order, if/else-if/else branches, loops, condition text, nested condition groups, and each task's parameters beside its command, for example setLevel(40). Anything that cannot be shown in full, such as a condition with a time window, is marked "not decoded" rather than half-written.
-- webCoRE pistons now show the devices they actually read and command. A device read in an event or condition is shown as a trigger or constraint, matching Rule Machine and the flowchart. The devices merely permitted in webCoRE's own settings are no longer presented as used.
-- webCoRE piston local variables appear as their own nodes, and piston Hub Variable reads and writes are shown separately.
-- Selecting a webCoRE piston also checks its complete saved structure and notes any fields Automation Map cannot identify.
-- Insights, External systems, Pivot tables, Device icons and Hubitat release activity now open in one consistent movable panel, and the compact legend shows only what the current view contains.
-- The flowchart panel returns to its normal size when you select a different app.
-- Quick Search and the Focus lists also match the tags shown on each row, such as [WCP].
-- Routine scan housekeeping no longer appears as warnings in the hub log.
+- New webCoRE migration assessment. Select a webCoRE piston and press the Migration assessment button to see how directly it maps onto Rule Machine and onto Visual Rule Builder, rated from 1 (direct equivalent, simple) to 5 (easier to rebuild from scratch), with each part that needs rework and the change it needs.
+- Where the only difference is that a repeated device event could run the rule again, and the piston only sends fixed-value commands such as turning lights on or setting a level, the assessment shows a warning instead of rework. A piston with a part the assessment does not recognise is shown as Not assessed rather than given a guessed rating.
+- The new webCoRE Migration Assessment button in the control panel opens a report covering every piston on the hub, with a summary for each engine, level filters, a table of how each webCoRE construct maps, and CSV downloads.
 
-Privacy: no piston variable value is ever read, and the decoded piston and its raw configuration are never logged or exported. Constants saved in a condition or task parameter do appear in flowchart labels and the export.
-
-Run a scan after updating so the map and export pick up the new webCoRE relationships.
+Privacy: the assessment only reads each piston's saved structure. No variable value, message or device label is read, and nothing is created or changed on the hub.
