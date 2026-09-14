@@ -182,7 +182,7 @@ boolean showSanta() {
 // Named once here, not repeated as a literal in compatibilitySummary(),
 // so a future engine addition needs one edit rather than finding every
 // place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
-@Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0 (in Beta)'
+@Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0'
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 // Origin only (scheme+host), for the browser to compare against its own
 // window.location.hostname at fetch time. Kept as its own pattern rather than
@@ -503,6 +503,13 @@ String defaultAutoScanTime() {
 // - derived from it, not a second hardcoded time, so the two can never say
 // different things. Only used when autoScanTime is blank; an explicitly
 // chosen time is always scheduled from the input's own stored value instead.
+// The time the daily scan is actually set to, as HH:mm: the saved input when there is one, otherwise the default.
+String autoScanTimeLabel() {
+    String t = settings.autoScanTime ? "${settings.autoScanTime}" : ''
+    int i = t.indexOf('T')
+    return (i >= 0 && t.length() >= i + 6) ? t.substring(i + 1, i + 6) : defaultAutoScanTime()
+}
+
 String defaultAutoScanCron() {
     List parts = defaultAutoScanTime().tokenize(':')
     return "0 ${parts[1]} ${parts[0]} * * ?"
@@ -731,8 +738,12 @@ Map main() {
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
                         paragraph compatibilitySummary(g)
+                        paragraph '''<style type="text/css">
+a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
+a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
+</style>'''
                         href(
-                            name: 'mapLink', title: "<span style='color:#1976d2'>View Automation Map</span>",
+                            name: 'mapLink', title: 'View Automation Map',
                             description: 'Open the relationship graph',
                             url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                             style: 'embedded', state: 'complete', required: false,
@@ -772,13 +783,15 @@ Map main() {
   link.setAttribute('rel', 'noopener noreferrer');
 })();
 </script>'''
-                paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for Community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
+                paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
                 // Hubitat does not reliably render description: on bool/time
                 // inputs (confirmed live - item 8), so the explanation is a
                 // paragraph instead, which does render.
-                paragraph "Runs automatically once a day, on by default at ${defaultAutoScanTime()} - turn off below if you would rather press Scan yourself."
+                paragraph autoScanEffectivelyEnabled() ?
+                    "Runs automatically once a day at ${autoScanTimeLabel()}${autoScanTimeLabel() == defaultAutoScanTime() ? ' (the default)' : ''} - turn off below if you would rather press Scan yourself." :
+                    "Automatic daily scanning is off - turn it on below to scan once a day."
                 // Plain disclosure of the one outbound request this app makes
                 // on its own. The objection to the removed telemetry driver
                 // was never what it collected, it was that it phoned out
@@ -796,7 +809,9 @@ Map main() {
                     // default; Done persists whichever value (default or
                     // your own) is showing when you save, it doesn't change
                     // what's displayed.
-                    paragraph "Shown pre-filled at the default (${defaultAutoScanTime()}) below - leave it as-is to keep the default, or set your own time. Press Done to save whichever is showing."
+                    paragraph settings.autoScanTime && autoScanTimeLabel() != defaultAutoScanTime() ?
+                        "Set to ${autoScanTimeLabel()} below (the default is ${defaultAutoScanTime()}). Change it and press Done to save." :
+                        "Shown pre-filled at the default (${defaultAutoScanTime()}) below - leave it as-is to keep the default, or set your own time. Press Done to save whichever is showing."
                     input name: 'autoScanTime', type: 'time',
                         title: 'Time to run the scan',
                         defaultValue: defaultAutoScanTime(), required: false
@@ -846,11 +861,11 @@ Map baselineComparisonPage() {
             paragraph '''<style type="text/css">
 button.cancel, button.done, button[name="_action_done"] { display:none !important; }
 button[name^="_action_href_baselineComparisonBack|"] {
-  background:#2e7d32 !important;
-  border-color:#2e7d32 !important;
-  color:#fff !important;
+  background:#81BC00 !important;
+  border-color:#5c8500 !important;
+  color:#121214 !important;
 }
-button[name^="_action_href_baselineComparisonBack|"] span { color:#fff !important; }
+button[name^="_action_href_baselineComparisonBack|"] span { color:#121214 !important; }
 </style>'''
         }
         section {
@@ -1429,7 +1444,7 @@ String compatibilitySummary(Map graph) {
     }
     int devUnreadable = ((state.deviceIdsUnreadable ?: []) as List).size()
     if (devUnreadable > 0) {
-        s << "<b style='color:#c0392b'>${devUnreadable} device(s) could not be read</b> and are missing from this map, along with any app only discoverable through them. "
+        s << "<b style='color:#c0392b'>${devUnreadable} ${devUnreadable == 1 ? 'device' : 'devices'} could not be read</b> and are missing from this map, along with any app only discoverable through them. "
     }
     int appCount = (state.appInfo ?: [:]).size()
     int deviceCount = (state.deviceLabels ?: [:]).size()
@@ -1448,13 +1463,13 @@ String compatibilitySummary(Map graph) {
         int hubVarCount = (hubVarInv.count ?: 0) as Integer
         int hubVarConnCount = (state.hubVariableConnectorCount ?: 0) as Integer
         String variableLabel = hubVarCount == 1 ? 'Hub Variable' : 'Hub Variables'
-        String connectorLabel = hubVarConnCount == 1 ? '1 with a Connector' : "${hubVarConnCount} with Connectors"
+        String connectorLabel = hubVarConnCount == 1 ? '1 with a connector' : "${hubVarConnCount} with connectors"
         s << " and ${hubVarCount} ${variableLabel} (${connectorLabel})"
     }
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 (in Beta) and webCoRE pistons (in Beta: statement order, branching, condition text and task parameters). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 and webCoRE pistons (statement order, branching, condition text and task parameters). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
     return s.toString()
 }
 
@@ -6335,7 +6350,7 @@ List webcoreMigrationUnmodelled(Map node, List fields) {
 // "s[0].s[1].k[0]" -> "Statement 1 > statement 2 > task 1"
 String webcoreMigrationLocation(String path) {
     if (path == 'root') return 'Piston settings'
-    Map names = [s: 'statement', e: 'else statement', k: 'task', v: 'variable', c: 'condition']
+    Map names = [s: 'statement', e: 'else statement', ei: 'else if', cs: 'case', k: 'task', v: 'variable', c: 'condition']
     List parts = []
     path.split('[.]').each { String seg ->
         int open = seg.indexOf('[')
@@ -7256,17 +7271,17 @@ Map webcoreVrbAssessment(Map piston, Map hubVariableTypes, Map tokenToDeviceId, 
 // downgrades an extra-run difference to a zero-cost warning when the piston only uses WEBCORE_REPEAT_SAFE_COMMANDS.
 @Field static final Map WEBCORE_EQUIVALENCE = [
     // Statements and piston settings
-    'stmt.if': ['IF', 'yes', '', 'yes', 'one decision per Visual Rule Builder rule'],
-    'stmt.elseif': ['ELSE IF branch', 'yes', '', 'no', 'Visual Rule Builder has one decision; each ELSE IF needs its own rule'],
-    'stmt.if.extra': ['Another IF', 'yes', '', 'partial', 'needs a separate Visual Rule Builder rule'],
-    'stmt.if.nested': ['IF inside another block', 'yes', '', 'no', 'Visual Rule Builder cannot nest decisions'],
-    'stmt.actionsBeforeDecision': ['Actions before the IF', 'yes', '', 'partial', 'move them into a separate Visual Rule Builder rule'],
+    'stmt.if': ['IF', 'yes', 'IF-THEN', 'yes', 'one decision per Visual Rule Builder rule'],
+    'stmt.elseif': ['ELSE IF branch', 'yes', 'ELSE-IF', 'no', 'Visual Rule Builder has one decision; each ELSE IF needs its own rule'],
+    'stmt.if.extra': ['Another IF', 'yes', 'another IF-THEN', 'partial', 'needs a separate Visual Rule Builder rule'],
+    'stmt.if.nested': ['IF inside another block', 'yes', 'nested IF-THEN', 'no', 'Visual Rule Builder cannot nest decisions'],
+    'stmt.actionsBeforeDecision': ['Actions before the IF', 'yes', 'actions before the IF-THEN', 'partial', 'move them into a separate Visual Rule Builder rule'],
     'stmt.switch': ['Switch statement', 'partial', 'rebuild as IF / ELSE IF', 'no', 'Visual Rule Builder has one decision'],
     'stmt.while': ['While loop', 'partial', 'rebuild with Repeat While', 'no', 'Visual Rule Builder has no loops'],
     'stmt.repeat': ['Repeat loop', 'partial', 'rebuild with Repeat While', 'no', 'Visual Rule Builder has no loops'],
     'stmt.for': ['For loop', 'partial', 'rebuild with Repeat n times', 'no', 'Visual Rule Builder has no loops'],
     'stmt.each': ['For each device', 'no', 'Rule Machine cannot loop over a device list', 'no', 'Visual Rule Builder has no loops'],
-    'stmt.do': ['Do block', 'yes', '', 'yes', ''],
+    'stmt.do': ['Do block', 'yes', 'actions in order', 'yes', 'actions in order'],
     'stmt.break': ['Break', 'yes', 'Stop Repeating Actions', 'no', 'Visual Rule Builder has no loops'],
     'stmt.exit': ['Exit', 'yes', 'Exit Rule', 'no', 'Visual Rule Builder cannot stop part way'],
     'stmt.on': ['On event block', 'yes', 'triggers', 'yes', 'triggers'],
@@ -7376,7 +7391,7 @@ Map webcoreVrbAssessment(Map piston, Map hubVariableTypes, Map tokenToDeviceId, 
     'vact.wol': ['Wake on LAN', 'no', 'no equivalent', 'no', 'no equivalent'],
     // Modifiers
     'mod.dynamicValue': ['Value from an expression or variable', 'partial', 'use %variable% or a variable action', 'no', 'values must be fixed'],
-    'mod.complexParameters': ['Command parameters Run Custom Action cannot pass', 'partial', 'Run Custom Action takes text and number parameters', 'yes', ''],
+    'mod.complexParameters': ['Command parameters Run Custom Action cannot pass', 'partial', 'Run Custom Action takes text and number parameters', 'yes', 'no custom command parameters involved'],
     'mod.negated': ['Negated condition', 'yes', 'NOT', 'partial', 'use the opposite state'],
     'mod.allDevices': ['All devices must match', 'yes', 'all of these', 'no', 'conditions match any device'],
     'mod.changesInIf': ['Changes comparison inside an IF', 'partial', 'turns on / turns off triggers also run when a device re-sends the same state (webCoRE does not)', 'partial', 'also runs when a device re-sends the same state (webCoRE does not)'],
@@ -7807,7 +7822,7 @@ Map webcoreRateEngine(List components, String engine, List sourceProblems) {
         if (warnings) summary <<"${warnings} behaviour ${warnings == 1 ? 'warning' : 'warnings'} to read before enabling".toString()
     } else {
         level = points <= 2 ? 3 : points <= 6 ? 4 : 5
-        summary << "${manual} of ${total} ${total == 1 ? 'component' : 'components'} ${manual == 1 ? 'needs' : 'need'} rework".toString()
+        summary << "${manual} of ${total} ${total == 1 ? 'part' : 'parts'} ${manual == 1 ? 'needs' : 'need'} rework".toString()
     }
     List shown = items.collect { Map it ->
         String label = ((WEBCORE_EQUIVALENCE[it.row as String] ?: [it.row == 'root.noTrigger' ? 'No trigger' : 'Structure']) as List)[0] as String
@@ -8932,6 +8947,8 @@ String prettyMethod(String method) {
     // Both spellings kept - Gordon's own "Dehumidifyer" device is spelled
     // without the second i, and word-matching is exact, not fuzzy.
     [key: 'climate',   words: ['heater', 'dehumidifier', 'dehumidifyer', 'humidifier', 'aircon']],
+    // A driver that declares every measurement (Averaging Master children) says what it averages in its name.
+    [key: 'environmental', words: ['temperature', 'humidity', 'illuminance', 'lux']],
     [key: 'lighting',  words: ['light', 'lights', 'lamp', 'bulb']],
 ]
 
@@ -10878,8 +10895,8 @@ void rebuildStoredGraph() {
 
 @Field static final Map EXTERNAL_CRITICALITY = [
     RUNTIME       : 'Needed all the time',
-    MANAGEMENT    : 'Needed to configure it',
-    SETUP_ONLY    : 'Needed only at setup',
+    MANAGEMENT    : 'Needed only to manage it',
+    SETUP_ONLY    : 'Needed only to set it up',
     DISCOVERY_ONLY: 'Needed only to find devices',
 ]
 
@@ -10936,6 +10953,7 @@ void rebuildStoredGraph() {
     [type: 'Google Home',                      name: 'Google Home',       kind: 'platform',     crit: 'RUNTIME'],
     [type: 'Hubitat Package Manager',          name: 'GitHub',            kind: 'internet',     crit: 'MANAGEMENT'],
     [type: 'Meross MSG100 Garage Door Setup',  name: 'Meross Cloud',      kind: 'internet',     crit: 'SETUP_ONLY'],
+    [type: 'webCoRE',                          name: 'webCoRE dashboard', kind: 'internet',     crit: 'MANAGEMENT'],
 ]
 
 // ===================================================================================================================
@@ -11989,7 +12007,7 @@ String buildMapHtml() {
      The image is dark on transparent and sits on a dark canvas, so opacity has
      a floor below which it vanishes entirely rather than reading as subtle -
      0.18 is the starting point, tuned live rather than derived. */
-  #hubWatermark.hubPhoto { max-width:34vw; max-height:34vh; opacity:0.18; }
+  #hubWatermark.hubPhoto { max-width:34vw; max-height:34vh; opacity:0.08; }
   /* Backlog item 1 Phase 3 (A6): the legend used to be one element that was
      either a single "Legend" header row or every one of ~20 rows at once -
      permanently expensive canvas space the moment it was expanded, the exact
@@ -12046,9 +12064,9 @@ String buildMapHtml() {
      which is why pause/resume used to look identical to stops in the legend.
      These variants take their colour from the row's inline color, not from
      border-color, so a row using one must set color rather than border-color. */
-  .ln-pat { height:2px; border-top:none; }
+  .line.ln-pat { height:2px; border-top:none; }
   .ln-dashdot { background:repeating-linear-gradient(to right, currentColor 0 12px, transparent 12px 15px, currentColor 15px 17px, transparent 17px 22px); }
-  .ln-thick { height:3px; }
+  .line.ln-thick { height:3px; }
   .line { width:22px; height:0; border-top:2px solid #fff; margin-right:8px; display:inline-block; flex:none; }
   .note { opacity:0.75; font-size:14px; margin-top:6px; line-height:1.35; }
   /* Was easy to miss entirely - same dark background as the page itself,
@@ -12324,6 +12342,9 @@ String buildMapHtml() {
   #ext input[type=text], #ext select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #ext input[type=text] { width:150px; }
   #ext button { margin:0 4px 0 0; }
+  #ext .bar button, #icons .bar button, #migrationReportBody .rowbtn { background:#0f3340; border:1px solid #2a6a80; color:#e6f1f5; border-radius:6px; padding:4px 12px; cursor:pointer; }
+  #ext .bar button:hover, #icons .bar button:hover, #migrationReportBody .rowbtn:hover { border-color:#4a9ab4; }
+  #ext .bar button:disabled, #icons .bar button:disabled, #migrationReportBody .rowbtn:disabled { opacity:0.6; cursor:default; }
   #ext .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:1px 6px; font-size:0.95em; }
   #ext .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #ext .msg { font-size:0.8em; margin-left:6px; }
@@ -12345,6 +12366,7 @@ String buildMapHtml() {
   #pivot label { font-size:14px; display:flex; align-items:center; gap:4px; }
   #pivot .rowbtn { background:none; border:1px solid #2a4a57; color:#9fb4bc; border-radius:3px; cursor:pointer; padding:3px 8px; font-size:14px; margin:0 4px 4px 0; }
   #pivot .rowbtn:hover { border-color:#4a7a94; color:#cfe3ea; }
+  #pivot .rowbtn.active { border-color:#81BC00; color:#fff; }
   /* Its own panel rather than reusing #ext's markup for CONTENT, same as
      above - this one needs a search box and can run to ~200 rows, #ext's
      does not. */
@@ -12450,7 +12472,7 @@ String buildMapHtml() {
      a known quirk, not something specific to this app. z-index:1 is
      already enough since it only needs to properly join its own parent's
      (#releaseActivity, z-index ~90s) stacking context rather than escape it. */
-  #releaseActivity iframe { position:relative; z-index:1; border:0; display:block; width:100%; max-width:1100px; flex:1; min-height:0; border-radius:4px; margin:0 auto; align-self:center; }
+  #releaseActivity iframe { position:relative; z-index:1; border:0; display:block; width:100%; max-width:1100px; height:500px; max-height:calc(100vh - 180px); flex:none; border-radius:4px; margin:0 auto; align-self:center; }
   #releaseActivity a { color:#7fb6d6; text-decoration:none; }
   #releaseActivity a:hover { text-decoration:underline; }
   /* Backlog item 1 Phase 2 - the shared shell for all five panels
@@ -12509,7 +12531,7 @@ String buildMapHtml() {
   <div id="legendCompactBody"></div>
   <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
 </div>
-<div id="legendPanel"><div id="legendTopBar"><h3>Legend</h3><button id="legendPanelClose" class="panelClose pillBtn" type="button" title="Collapse back to the compact legend">Collapse Legend</button></div><div id="legendPanelBody" class="panelBody">
+<div id="legendPanel"><div id="legendTopBar"><h3>Legend</h3><button id="legendPanelClose" class="panelClose pillBtn" type="button" title="Collapse back to the compact legend">Collapse legend</button></div><div id="legendPanelBody" class="panelBody">
   <div class="legend-row"><span class="swatch sw-square" style="background:#e8a33d"></span>App</div>
   <div class="legend-row"><span class="swatch sw-square sw-outline"></span>Rule reached only as another rule's target</div>
   <div class="legend-row"><span class="swatch sw-square sw-missing"></span>Rule referenced but deleted - the action silently does nothing</div>
@@ -12538,7 +12560,7 @@ String buildMapHtml() {
   <div class="legend-row"><span class="line" style="border-color:#d9534f; border-top-style:dotted"></span>Private Boolean - rule sets another rule's Private Boolean</div>
   <div class="legend-row"><span class="line ln-pat ln-dashdot" style="color:#d9534f"></span>Pause / resume - rule pauses or resumes another rule (focus the rule to see which)</div>
   <div class="legend-row"><span class="line ln-pat ln-thick" style="border-color:#cfd8dc; background:repeating-linear-gradient(to right,#cfd8dc 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time</div>
-  <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage</div>
+  <div class="legend-row"><span class="line ln-pat" style="background:repeating-linear-gradient(to right,#cfd8dc 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up, manage or find devices</div>
   <div class="note">Arrows follow the flow: triggers and constraints point into the app, actions and owned devices point out of it.</div>
   <div class="note">Focus one app to colour its devices by role. A device holding two roles in one app gets two edges, and is coloured by the more significant one.</div>
 </div></div>
@@ -12585,7 +12607,7 @@ String buildMapHtml() {
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
     <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
     <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities</button>
+    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities &#8599;</button>
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
@@ -12595,7 +12617,7 @@ String buildMapHtml() {
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
-<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat releases over time</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -12651,22 +12673,22 @@ const LEGEND_GROUP_ROWS = [
 const LEGEND_EDGE_ROWS = [
   { key: 'trigger', html: '<span class="swatch sw-dot" style="background:' + roleColors.trigger + '"></span><span class="line" style="border-color:' + roleColors.trigger + '"></span>Trigger - app listens to this device' },
   { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '"></span>Constraint - condition / required expression' },
-  { key: 'monitor', html: '<span class="swatch sw-dot" style="background:' + roleColors.monitor + '"></span><span class="line" style="border-color:' + roleColors.monitor + '"></span>Monitor - app reads the state of this device' },
+  { key: 'monitor', html: '<span class="swatch sw-dot" style="background:' + roleColors.monitor + '"></span><span class="line" style="border-color:' + roleColors.monitor + '"></span>Monitor - app reads this device' + "'" + 's state' },
   { key: 'action', html: '<span class="swatch sw-dot" style="background:' + roleColors.action + '"></span><span class="line" style="border-color:' + roleColors.action + '"></span>Action - app can command this device' },
   { key: 'exposed', html: '<span class="swatch sw-dot" style="background:' + roleColors.exposed + '"></span><span class="line" style="border-color:' + roleColors.exposed + '; border-top-style:dotted"></span>Exposed - published to an external system' },
   { key: 'owns', html: '<span class="swatch sw-dot" style="background:' + roleColors.owns + '"></span><span class="line" style="border-color:' + roleColors.owns + '; border-top-style:dashed"></span>Owns - app created this device' },
   { key: 'hasComponent', html: '<span class="swatch sw-dot" style="background:' + roleColors.hasComponent + '"></span><span class="line" style="border-color:' + roleColors.hasComponent + '"></span>Has component - device-owned component of a parent device' },
   { key: 'synchronizedWith', html: '<span class="line" style="border-color:' + roleColors.synchronizedWith + '"></span>Connector - a Hub Variable and its connector device hold the same value' },
-  { key: 'write', html: '<span class="line" style="border-color:' + roleColors.write + '"></span>Write - rule sets the value of a Hub or Local Variable' },
+  { key: 'write', html: '<span class="line" style="border-color:' + roleColors.write + '"></span>Write - rule sets a Hub or Local Variable' + "'" + 's value' },
   { key: 'read', html: '<span class="line" style="border-color:' + roleColors.read + '"></span>Read - rule uses a Hub or Local Variable in its decoded logic' },
   { key: 'usesVar', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.usesVar + ' 0 5px,transparent 5px 9px)"></span>Uses - webCoRE piston references a Hub Variable; direction is unknown' },
   { key: 'deviceRead', html: '<span class="swatch sw-dot" style="background:' + roleColors.deviceRead + '"></span><span class="line" style="border-color:' + roleColors.deviceRead + '"></span>Device read - webCoRE piston reads this device somewhere its role could not be attributed, such as an expression or a task parameter' },
-  { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs the actions of another rule' },
-  { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels a pending Wait/Delay on another rule' },
-  { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets the Private Boolean of another rule' },
+  { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs another rule' + "'" + 's actions' },
+  { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule' + "'" + 's pending Wait/Delay' },
+  { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets another rule' + "'" + 's Private Boolean' },
   { key: 'pauseResume', html: '<span class="line ln-pat ln-dashdot" style="color:' + roleColors.pauseResume + '"></span>Pause / resume - rule pauses or resumes another rule' },
   { key: 'depends:RUNTIME', html: '<span class="line ln-pat ln-thick" style="border-color:' + roleColors.depends + '; background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time' },
-  { key: 'depends:SETUP', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up or manage' }
+  { key: 'depends:SETUP', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up, manage or find devices' }
 ];
 // Called from applyFilters() right after nodes/edges are rebuilt, and once
 // at page load for the initial whole-hub view - the two places those
@@ -13366,7 +13388,7 @@ network.on('afterDrawing', function (ctx) {
   ctx.font = (13 / scale) + 'px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'bottom';
-  ctx.fillText('Inert Nodes', shelfDivider.x1, shelfDivider.y - 4 / scale);
+  ctx.fillText('Not connected to anything', shelfDivider.x1, shelfDivider.y - 4 / scale);
   ctx.restore();
 });
 
@@ -14193,11 +14215,12 @@ function sizeModernPanel(panel) {
   // exceeds it, and .panelBody's flex:1 + min-height:0 + overflow:auto scrolls
   // exactly as before.
   const available = Math.max(200, window.innerHeight - top - 10);
-  if (panel.classList.contains('modernPanelLarge')) {
+  // The release activity panel holds one fixed-size chart, so it ends where the chart ends.
+  if (panel.classList.contains('modernPanelLarge') && panel.id !== 'releaseActivity') {
     panel.style.maxHeight = '';
     panel.style.height = available + 'px';
   } else {
-    panel.style.height = '';
+    panel.style.height = panel.id === 'releaseActivity' ? 'auto' : '';
     panel.style.maxHeight = available + 'px';
   }
   // Width stays classic mode's own business - only the large-area case
@@ -14208,7 +14231,7 @@ function sizeModernPanel(panel) {
   // forced pixel size it was never meant to have.
   if (!panel.classList.contains('modernPanelLarge')) return;
   const rightEdge = controlsRect ? controlsRect.left : (window.innerWidth - 320);
-  panel.style.width = Math.max(200, rightEdge - left - gap) + 'px';
+  panel.style.width = Math.max(200, Math.min(rightEdge - left - gap, panel.id === 'releaseActivity' ? 1160 : Infinity)) + 'px';
 }
 function makePanelDraggable(panel, header) {
   if (!header || !panel || typeof panel.getBoundingClientRect !== 'function') return;
@@ -14628,7 +14651,7 @@ function showInertPanel(node) {
     (node.webcoreDeviceRelationshipsSuppressed && node.appType === 'webCoRE' ?
       'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.' :
       (node.appType === 'webCoRE Piston' ?
-        'This piston has saved configuration that was fully decoded and genuinely references no device, Hub Variable or declared local variable.' :
+        'This piston references no device, Hub Variable or declared local variable in its saved configuration.' :
         'This app references no device, links to no rule and publishes no endpoint. What the hub does report about it is below.')), false);
   setFlowWebcoreIndent(node);
 
@@ -15351,7 +15374,7 @@ function migrationRowHtml(name, r) {
 function migrationComponentsHtml(r) {
   const c = (r && r.counts) || {};
   const auto = r && r.automatic ? (r.automatic.available ? 'automatic conversion potential' : 'no automatic conversion potential yet') : '';
-  const parts = c.components ? extEsc(c.components) + ' components, ' + (c.manualComponents ? extEsc(c.manualComponents) + ' need rework' : 'all direct') : '';
+  const parts = c.components ? extEsc(c.components) + (c.components === 1 ? ' part, ' : ' parts, ') + (c.manualComponents ? extEsc(c.manualComponents) + (c.manualComponents === 1 ? ' needs rework' : ' need rework') : 'all direct') : '';
   return '<div class="maComponents">' + [parts, auto].filter(function (x) { return x; }).join('; ') + '</div>';
 }
 
@@ -15487,7 +15510,7 @@ const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
 const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0 };
 const MR_ENGINES = [['ruleMachine', 'Rule Machine 5.1'], ['visualRuleBuilder', 'Visual Rule Builder 2.0']];
-const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'None', warning: 'Warning', unassessed: 'Not assessed' };
+const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'No equivalent', warning: 'Warning', unassessed: 'Not assessed' };
 
 function mrName(node) { return String(node.title || node.name || node.label || node.id); }
 
@@ -16026,7 +16049,7 @@ function pickOptionText(n, group) {
         r.el = li;
         elList.appendChild(li);
       }
-      elCount.textContent = res.shown + ' of ' + res.total + ' shown';
+      elCount.textContent = res.shown + ' of ' + res.total + ' items shown';
       // Keep the active row in range and reflect it.
       if (activeIndex >= rows.length) { activeIndex = rows.length - 1; }
       paintActive();
@@ -16613,34 +16636,34 @@ function buildInsights() {
   if (scanBad) {
     const what = D.scan.status === 'failed'
       ? 'The last scan did not finish, so everything below is incomplete.'
-      : 'The last scan finished but could not read ' + D.scan.appsUnreadable + ' app(s) and ' + D.scan.devicesUnreadable + ' device(s). Findings below may be missing those.';
+      : 'The last scan finished but could not read ' + amPlural(D.scan.appsUnreadable, 'app', 'apps') + ' and ' + amPlural(D.scan.devicesUnreadable, 'device', 'devices') + '. Findings below may be missing those.';
     attentionBody += '<p class="insLead">' + extEsc(what) + '</p>' + advice('scanIncomplete');
   }
   if (D.brokenTargets.length) {
-    attentionBody += '<p class="insLead">' + D.brokenTargets.length + ' rule target(s) no longer exist. The referencing action still runs and silently does nothing.</p>';
+    attentionBody += '<p class="insLead">' + amPlural(D.brokenTargets.length, 'rule target no longer exists', 'rule targets no longer exist') + '. The referencing action still runs and silently does nothing.</p>';
     attentionBody += rows(D.brokenTargets,
       function (id) { return (D.referencesTo[id] || []).length + ' referencing'; },
       function (id) { return advice('brokenRuleReference') + '<p class="sub"><b>Referenced by:</b> ' + appLinks(D.referencesTo[id]) + '</p>'; });
   }
   if (D.brokenApps.length) {
-    attentionBody += '<p class="insLead">' + D.brokenApps.length + ' rule(s) are marked broken by Hubitat itself.</p>';
+    attentionBody += '<p class="insLead">' + amPlural(D.brokenApps.length, 'rule is', 'rules are') + ' marked broken by Hubitat itself.</p>';
     attentionBody += rows(D.brokenApps, function () { return 'flagged by Hubitat'; },
       function () { return advice('ruleFlaggedBroken'); });
   }
   if (D.inactiveInvoked.length) {
-    attentionBody += '<p class="insLead">' + D.inactiveInvoked.length + ' paused or disabled rule(s) are still called by another rule, which silently does nothing at that step.</p>';
+    attentionBody += '<p class="insLead">' + amPlural(D.inactiveInvoked.length, 'paused or disabled rule is', 'paused or disabled rules are') + ' still called by another rule, which silently does nothing at that step.</p>';
     attentionBody += rows(D.inactiveInvoked,
       function (id) { return (D.invokedBy[id] || []).length + ' calling'; },
       function (id) { return advice('inactiveRuleInvoked') + '<p class="sub"><b>Called by:</b> ' + appLinks(D.invokedBy[id]) + '</p>'; });
   }
   if (D.disabledDevicesInUse.length) {
-    attentionBody += '<p class="insLead">' + D.disabledDevicesInUse.length + ' disabled device(s) are still commanded or used as a trigger. Those commands cannot land and those triggers cannot fire.</p>';
+    attentionBody += '<p class="insLead">' + amPlural(D.disabledDevicesInUse.length, 'disabled device is', 'disabled devices are') + ' still commanded or used as a trigger. Those commands cannot land and those triggers cannot fire.</p>';
     attentionBody += rows(D.disabledDevicesInUse,
       function (id) { return (D.disabledDeviceUsers[id] || []).length + ' automations'; },
       function (id) { return advice('disabledDeviceInUse') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.disabledDeviceUsers[id]) + '</p>'; });
   }
   if (D.hubVar.webcoreDecodeIssues.length) {
-    attentionBody += '<p class="insLead">' + D.hubVar.webcoreDecodeIssues.length + ' webCoRE piston(s) have saved variable configuration that could not be decoded safely.</p>' + advice('webcoreVariableDecodeIssue') + '<ul class="insPlain">';
+    attentionBody += '<p class="insLead">' + amPlural(D.hubVar.webcoreDecodeIssues.length, 'webCoRE piston has', 'webCoRE pistons have') + ' saved variable configuration that could not be decoded safely.</p>' + advice('webcoreVariableDecodeIssue') + '<ul class="insPlain">';
     D.hubVar.webcoreDecodeIssues.slice(0, 10).forEach(function (issue) {
       attentionBody += '<li>' + extEsc(nameOf[issue.appId] || issue.appId) + ' <span class="sub">' + extEsc(issue.error || 'decode-failed') + '</span></li>';
     });
@@ -16652,32 +16675,32 @@ function buildInsights() {
   const hubVarWorth = hv.multipleWriters.length + hv.readersWithoutDecodedWriter.length +
     hv.writersWithoutDecodedReader.length + hv.unresolvedReferences.length;
   const reviewCount = D.contested.length + hubVarWorth;
-  let reviewBody = '<p class="insLead">' + D.contested.length + ' device(s) have shared control. This is often intentional.</p>';
+  let reviewBody = '<p class="insLead">' + amPlural(D.contested.length, 'device has', 'devices have') + ' shared control. This is often intentional.</p>';
   reviewBody += rows(D.contested,
     function (id) { return D.statefulCommanders[id].length + ' automations'; },
     function (id) {
       return advice('contestedDevice') + '<p class="sub"><b>Controlling apps:</b> ' + appLinks(D.statefulCommanders[id]) + '</p>';
     });
   if (hv.multipleWriters.length) {
-    reviewBody += '<p class="insLead">' + hv.multipleWriters.length + ' hub variable(s) have more than one writer. Shared state, not automatically a race.</p>';
+    reviewBody += '<p class="insLead">' + amPlural(hv.multipleWriters.length, 'hub variable has', 'hub variables have') + ' more than one writer. Shared state, not automatically a race.</p>';
     reviewBody += rows(hv.multipleWriters,
       function (id) { return hv.writers[id].length + ' writers'; },
       function (id) { return advice('multipleVariableWriters') + '<p class="sub"><b>Written by:</b> ' + appLinks(hv.writers[id]) + '</p>'; });
   }
   if (hv.readersWithoutDecodedWriter.length) {
-    reviewBody += '<p class="insLead">' + hv.readersWithoutDecodedWriter.length + ' hub variable(s) are read but have no decoded rule writer.</p>';
+    reviewBody += '<p class="insLead">' + amPlural(hv.readersWithoutDecodedWriter.length, 'hub variable is read but has', 'hub variables are read but have') + ' no decoded rule writer.</p>';
     reviewBody += rows(hv.readersWithoutDecodedWriter,
       function (id) { return hv.readers[id].length + ' readers'; },
       function (id) { return advice('variableReadersWithoutWriter') + '<p class="sub"><b>Read by:</b> ' + appLinks(hv.readers[id]) + '</p>'; });
   }
   if (hv.writersWithoutDecodedReader.length) {
-    reviewBody += '<p class="insLead">' + hv.writersWithoutDecodedReader.length + ' hub variable(s) are written but have no decoded rule reader.</p>';
+    reviewBody += '<p class="insLead">' + amPlural(hv.writersWithoutDecodedReader.length, 'hub variable is written but has', 'hub variables are written but have') + ' no decoded rule reader.</p>';
     reviewBody += rows(hv.writersWithoutDecodedReader,
       function (id) { return hv.writers[id].length + ' writers'; },
       function (id) { return advice('variableWritersWithoutReader') + '<p class="sub"><b>Written by:</b> ' + appLinks(hv.writers[id]) + '</p>'; });
   }
   if (hv.unresolvedReferences.length) {
-    reviewBody += '<p class="insLead">' + hv.unresolvedReferences.length + ' rule reference(s) name a hub variable that is not in the hub inventory.</p>' + advice('unresolvedVariableReference') + '<ul class="insPlain">';
+    reviewBody += '<p class="insLead">' + amPlural(hv.unresolvedReferences.length, 'rule reference names', 'rule references name') + ' a hub variable that is not in the hub inventory.</p>' + advice('unresolvedVariableReference') + '<ul class="insPlain">';
     hv.unresolvedReferences.slice(0, 10).forEach(function (r) {
       reviewBody += '<li>' + extEsc(r.name) + ' <span class="sub">' + extEsc(r.kind || '') + ' by ' + extEsc(nameOf[r.appId] || r.appId || 'an app') + '</span></li>';
     });
@@ -16692,11 +16715,11 @@ function buildInsights() {
   const cleanupCount = D.untouched.length + orphanApps.length;
   let cleanupBody = '';
   if (D.untouched.length) {
-    cleanupBody += '<p class="insLead">' + D.untouched.length + ' device(s) are not referenced by any scanned app.</p>';
+    cleanupBody += '<p class="insLead">' + amPlural(D.untouched.length, 'device is', 'devices are') + ' not referenced by any scanned app.</p>';
     cleanupBody += rows(D.untouched, function () { return 'no mapped references'; }, function () { return advice('unreferencedDevice'); });
   }
   if (orphanApps.length) {
-    cleanupBody += '<p class="insLead">' + orphanApps.length + ' app(s) touch no device, link to no rule and hold nothing.</p>';
+    cleanupBody += '<p class="insLead">' + amPlural(orphanApps.length, 'app touches no device, links to no rule and holds nothing', 'apps touch no device, link to no rule and hold nothing') + '.</p>';
     cleanupBody += rows(orphanApps.map(function (n) { return n.id; }),
       function (id) {
         const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
@@ -16714,17 +16737,17 @@ function buildInsights() {
     hv.noDecodedUsage.length + hv.directionUnknownUsage.length + inactiveQuiet.length + D.unreferencedLocals.length;
   let normalBody = '';
   if (D.notifiedOnly.length) {
-    normalBody += '<p class="insLead">' + D.notifiedOnly.length + ' device(s) are commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
+    normalBody += '<p class="insLead">' + amPlural(D.notifiedOnly.length, 'device is', 'devices are') + ' commanded only by notifications, chimes or speech - nothing that leaves a lasting state. Normal for phones, speakers and brokers.</p>';
     normalBody += rows(D.notifiedOnly,
       function (id) { return D.anyCommanders[id].length + ' automations'; },
       function (id) { return advice('notificationOnly') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.anyCommanders[id]) + '</p>'; });
   }
   if (D.readOnly.length) {
-    normalBody += '<p class="insLead">' + D.readOnly.length + ' device(s) are never commanded in any form - referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
+    normalBody += '<p class="insLead">' + amPlural(D.readOnly.length, 'device is', 'devices are') + ' never commanded in any form - referenced only as triggers, constraints or monitored inputs. Expected for sensors.</p>';
     normalBody += rows(D.readOnly, function () { return 'monitored only'; }, function () { return advice('monitoredOnly'); });
   }
   if (containers.length) {
-    normalBody += '<p class="insLead">' + containers.length + ' app(s) hold other apps rather than touching devices themselves. Expected.</p>';
+    normalBody += '<p class="insLead">' + amPlural(containers.length, 'app holds', 'apps hold') + ' other apps rather than touching devices themselves. Expected.</p>';
     normalBody += rows(containers.map(function (n) { return n.id; }),
       function (id) {
         const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
@@ -16733,7 +16756,7 @@ function buildInsights() {
       }, function () { return advice('containerApp'); });
   }
   if (inactiveQuiet.length) {
-    normalBody += '<p class="insLead">' + inactiveQuiet.length + ' rule(s) are paused or disabled and nothing else calls them. Usually deliberate.</p>';
+    normalBody += '<p class="insLead">' + amPlural(inactiveQuiet.length, 'rule is paused or disabled and nothing else calls it', 'rules are paused or disabled and nothing else calls them') + '. Usually deliberate.</p>';
     normalBody += rows(inactiveQuiet,
       function (id) {
         const n = ALL_NODES.filter(function (x) { return x.id === id; })[0];
@@ -16741,16 +16764,16 @@ function buildInsights() {
       }, function () { return advice('inactiveRule'); });
   }
   if (D.unreferencedLocals.length) {
-    normalBody += '<p class="insLead">' + D.unreferencedLocals.length + ' local variable(s) are declared but have no decoded read or write in their own rule.</p>';
+    normalBody += '<p class="insLead">' + amPlural(D.unreferencedLocals.length, 'local variable is declared but has no decoded read or write in its own rule', 'local variables are declared but have no decoded read or write in their own rule') + '.</p>';
     normalBody += rows(D.unreferencedLocals, function () { return 'no decoded usage'; },
       function () { return advice('unreferencedLocalVariable'); });
   }
   if (hv.noDecodedUsage.length) {
-    normalBody += '<p class="insLead">' + hv.noDecodedUsage.length + ' hub variable(s) have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode.</p>';
+    normalBody += '<p class="insLead">' + amPlural(hv.noDecodedUsage.length, 'hub variable has no decoded reader or writer. It may be unused, or used by an app this scan cannot decode', 'hub variables have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode') + '.</p>';
     normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, function () { return advice('variableWithoutDecodedUsage'); });
   }
   if (hv.directionUnknownUsage.length) {
-    normalBody += '<p class="insLead">' + hv.directionUnknownUsage.length + ' hub variable(s) are referenced by webCoRE with direction intentionally left unknown.</p>';
+    normalBody += '<p class="insLead">' + amPlural(hv.directionUnknownUsage.length, 'hub variable is', 'hub variables are') + ' referenced by webCoRE with direction intentionally left unknown.</p>';
     normalBody += rows(hv.directionUnknownUsage,
       function (id) { return hv.users[id].length + ' webCoRE piston' + (hv.users[id].length === 1 ? '' : 's'); },
       function (id) { return advice('variableDirectionUnknown') + '<p class="sub"><b>Used by:</b> ' + appLinks(hv.users[id]) + '</p>'; });
@@ -16789,7 +16812,7 @@ function buildInsights() {
 
 document.getElementById('insightsBtn').addEventListener('click', function () {
   beginSelectionGeneration();
-  document.getElementById('flowTitle').textContent = 'Automation health';
+  document.getElementById('flowTitle').textContent = 'Insights';
   setFlowSub('', false);
   flowChart.innerHTML = buildInsights();
   // Every other write to flowChart pairs it with this - Insights was the one
@@ -16962,6 +16985,7 @@ function pivotRunCustom() {
   const rowsSel = document.getElementById('pivotRows');
   const colsSel = document.getElementById('pivotCols');
   const kindSel = document.getElementById('pivotKind');
+  document.querySelectorAll('#pivotBody button[data-preset]').forEach(function (b) { b.classList.remove('active'); });
   pivotSyncSelects(rowsSel.value, colsSel.value, kindSel.value);
   const rowGroup = rowsSel.value, colGroup = colsSel.value, kindVal = kindSel.value;
   const kinds = kindVal === '__all__' ? pivotKindOptions(rowGroup, colGroup) : [kindVal];
@@ -16990,6 +17014,7 @@ function pivotOpen() {
   document.querySelectorAll('#pivotBody button[data-preset]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       const p = PIVOT_PRESETS[parseInt(btn.getAttribute('data-preset'), 10)];
+      document.querySelectorAll('#pivotBody button[data-preset]').forEach(function (b) { b.classList.toggle('active', b === btn); });
       pivotSyncSelects(p.rows, p.cols, '__all__');
       pivotRenderResult(pivotRows(p.rows, p.cols, p.kinds, p.opts), p.rowLabel, p.colLabel);
     });
@@ -17004,6 +17029,11 @@ function pivotOpen() {
   // Opens on the first preset so the panel shows something immediately,
   // rather than an empty shell the first click has to fill in.
   document.querySelector('#pivotBody button[data-preset="0"]').click();
+}
+
+// "1 rule", "2 rules": a count with the right noun (and verb, when the phrase carries one).
+function amPlural(count, one, many) {
+  return count + ' ' + (count === 1 ? one : many);
 }
 
 function extEsc(s) {
@@ -17155,14 +17185,14 @@ function extRender(message) {
   // these are not tasks, and listing them is what buried the ones that are.
   const autoParts = [];
   if (groups.internal.length) {
-    autoParts.push(groups.internal.length + ' app type(s) assessed as needing nothing outside the hub');
+    autoParts.push(amPlural(groups.internal.length, 'app type', 'app types') + ' assessed as needing nothing outside the hub');
   }
   if (groups.inherited.length) {
     const instances = groups.inherited.reduce(function (n, t) {
       return n + (((EXT.appTypeInfo || {})[t] || {}).count || 0);
     }, 0);
-    autoParts.push(groups.inherited.length + ' child type(s) covering ' + instances +
-      ' installed app(s) inheriting a parent assessment');
+    autoParts.push(amPlural(groups.inherited.length, 'child type', 'child types') + ' covering ' +
+      amPlural(instances, 'installed app', 'installed apps') + ' inheriting a parent assessment');
   }
   if (autoParts.length) {
     h += '<p class="sub"><b>Classified automatically:</b> ' + extEsc(autoParts.join('; ')) + '. ' +
@@ -17291,7 +17321,7 @@ function extRender(message) {
   let reg = '';
   const rs = rm.state ? String(rm.state) : '';
   if (rm.fetched && !rm.error) {
-    reg = 'Shared registry: ' + extEsc(rm.matched) + ' match(es) from ' + extEsc(rm.entries) +
+    reg = 'Shared registry: ' + extEsc(amPlural(rm.matched, 'match', 'matches')) + ' from ' + extEsc(rm.entries) +
           ' entries, fetched ' + extEsc(rm.fetched) + '. Yours always wins.';
   } else if (rm.error) {
     // Tried and failed. Distinct from never having tried, which is what this
@@ -17499,7 +17529,7 @@ function releaseActivityLoad() {
   releaseActivityLoaded = true;
   releaseActivityBody.innerHTML = '<p class="sub">Loading...</p>';
   const iframe = document.createElement('iframe');
-  iframe.title = 'Hubitat releases over time';
+  iframe.title = 'Hubitat release activity';
   iframe.loading = 'lazy';
   iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
   iframe.referrerPolicy = 'no-referrer';
@@ -17602,7 +17632,7 @@ function iconsRender(message, filter) {
   let h = '<p class="sub">Each device is drawn with an icon guessed from its capabilities - a light looks like a ' +
        'light, an unrecognised one gets a "?". Wrong for a particular device? Pick the right one below and Save. ' +
        'Left as "?"? Add a note so you remember what it actually is - it also appears in the tooltip for that ' +
-       'device on the map. Reload the map page afterwards to see it redrawn.</p>';
+       'device on the map. The map redraws as soon as you save.</p>';
   h += '<input type="search" id="iconsSearch" placeholder="Search devices or rooms..." value="' + extEsc(filter || '') + '">';
   h += '<table><thead><tr><th>Device</th><th>Room</th><th>Detected</th><th>Icon</th><th>Note (if unknown)</th></tr></thead><tbody>';
 
@@ -17703,7 +17733,12 @@ function iconsSave() {
   }).then(function (r) { return r.json(); })
     .then(function (d) {
       ICONS = d;
-      iconsRender('Saved. Reload the page to redraw the map.');
+      (ICONS.devices || []).forEach(function (dv) {
+        const node = ALL_NODES.find(function (x) { return x.id === 'd' + dv.id; });
+        if (node) node.icon = dv.override && dv.override !== 'auto' ? dv.override : dv.detected;
+      });
+      applyFilters();
+      iconsRender('Saved. The map has been redrawn with these icons.');
     })
     .catch(function (e) { msg.textContent = 'Save failed: ' + e; });
 }
@@ -18633,6 +18668,22 @@ function closeSecondaryPanels() {
   fitCurrentView();
 }
 
+// An app with no relationships sits on the whole map's "Not connected to anything" shelf. Keep the whole map (filtering
+// would leave a lone square) and select and zoom to it, so a click from a panel visibly lands on it.
+function showUnconnectedNode(node) {
+  const present = !!nodes.get(node.id);
+  if (!present) {
+    appSelect.setValue('__all__');
+    applyFilters();
+    appSelect.setValue(node.id, node.title);
+  }
+  setTimeout(function () {
+    if (!nodes.get(node.id)) return;
+    network.selectNodes([node.id]);
+    network.focus(node.id, { scale: Math.max(network.getScale(), 1.6), animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+  }, present ? 50 : 1500);
+}
+
 function exitToWholeMap() {
   beginSelectionGeneration();
   externalFocusId = null;
@@ -18710,6 +18761,7 @@ function focusNode(id) {
     // whole map to a lone square the same bug this exemption already fixed
     // for inert nodes.
     if (!node.inert && !node.unreadable) applyFilters();
+    else showUnconnectedNode(node);
     showFlow(node.id);
   } else if (node.group === 'hubVariable') {
     // Own branch, not the device else below - a Hub Variable used to fall
@@ -18974,12 +19026,12 @@ String comparatorHtml() {
   #amc-root .amc-card { border: 1px solid #d7dce2; border-radius: 7px; padding: 14px; background: #fff; }
   #amc-root .amc-card h3 { margin: 0 0 9px; font-size: 16px; }
   #amc-root .amc-file { width: 100%; padding: 8px; border: 1px solid #c8ced6; border-radius: 5px; background: #f8f9fa; }
-  #amc-root .amc-meta { margin-top: 8px; min-height: 38px; color: #58616b; font-size: 13px; line-height: 1.4; }
+  #amc-root .amc-meta { margin-top: 8px; min-height: 38px; color: #4a525b; font-size: 14px; line-height: 1.4; }
   #amc-root .amc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 16px 0; }
   #amc-root button { border: 0; border-radius: 5px; padding: 9px 14px; background: #1976d2; color: #fff; cursor: pointer; font-weight: 600; }
-  #amc-root button:disabled { opacity: .48; cursor: default; }
+  #amc-root button:disabled { opacity: .62; cursor: default; }
   #amc-root button.amc-secondary { background: #58616b; }
-  #amc-root .amc-filter { display: inline-flex; align-items: center; gap: 5px; margin-left: 5px; font-size: 13px; }
+  #amc-root .amc-filter { display: inline-flex; align-items: center; gap: 5px; margin-left: 5px; font-size: 14px; }
   #amc-root .amc-error { display: none; margin: 12px 0; padding: 10px 12px; border-left: 4px solid #c62828; background: #ffebee; color: #8e1717; white-space: pre-wrap; }
   #amc-root .amc-summary { display: none; margin: 14px 0; }
   #amc-root .amc-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 9px; }
