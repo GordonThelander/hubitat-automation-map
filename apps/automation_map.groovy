@@ -15350,7 +15350,7 @@ function migrationRowHtml(name, r) {
 
 function migrationComponentsHtml(r) {
   const c = (r && r.counts) || {};
-  const auto = r && r.automatic ? (r.automatic.available ? 'automatic conversion available' : 'automatic conversion not yet') : '';
+  const auto = r && r.automatic ? (r.automatic.available ? 'automatic conversion possible' : 'automatic conversion not yet') : '';
   const parts = c.components ? extEsc(c.components) + ' components, ' + (c.manualComponents ? extEsc(c.manualComponents) + ' need rework' : 'all direct') : '';
   return '<div class="maComponents">' + [parts, auto].filter(function (x) { return x; }).join('; ') + '</div>';
 }
@@ -15559,7 +15559,7 @@ function mrReasons(r) {
 function mrCell(r) {
   const c = r.counts || {};
   return '<span class="mrCell">' + mrBadge(r.level) + '<span>' + extEsc(r.label) + '<br><span class="sub">' + extEsc(c.components || 0) + ((c.components || 0) === 1 ? ' part, ' : ' parts, ') +
-    extEsc(c.manualComponents || 0) + ' rework' + (r.automatic && r.automatic.available ? ', automatic conversion available' : '') + '</span></span></span>';
+    extEsc(c.manualComponents || 0) + ' rework' + (r.automatic && r.automatic.available ? ', automatic conversion possible' : '') + '</span></span></span>';
 }
 
 function mrRenderPistons() {
@@ -15680,8 +15680,8 @@ function mrExportPistonsCsv() {
     'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion', 'Visual Rule Builder reasons']];
   (MR.results || []).filter(function (r) { return r.body.status === 'complete'; }).forEach(function (r) {
     const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder;
-    rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'available' : 'not yet', reasons(rm),
-      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'available' : 'not yet', reasons(vrb)]);
+    rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'possible' : 'not yet', reasons(rm),
+      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'possible' : 'not yet', reasons(vrb)]);
   });
   mrDownload('webcore-piston-migration-ratings-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
 }
