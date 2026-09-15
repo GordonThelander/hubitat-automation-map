@@ -1469,7 +1469,7 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 and webCoRE pistons (statement order, branching, condition text and task parameters). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Notifier, webCoRE pistons as well as hub and local variables.</span>"
     return s.toString()
 }
 
