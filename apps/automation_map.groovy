@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit c9abbb2dbd9001f597ece4f5d324f8c58ea9a518; developer
+ * builder from the annotated Dev source at commit ad540260e6d89a4bf681aad6f2ded7b40c90a49f; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/c9abbb2dbd9001f597ece4f5d324f8c58ea9a518/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/ad540260e6d89a4bf681aad6f2ded7b40c90a49f/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -1426,7 +1426,7 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Notifier, Visual Rule Builder 2.0 and webCoRE pistons (statement order, branching, condition text and task parameters). Hub Variable use, local variables and direct device reads/actions are also decoded from webCoRE pistons.</span>"
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Notifier, webCoRE pistons as well as hub and local variables.</span>"
     return s.toString()
 }
 
