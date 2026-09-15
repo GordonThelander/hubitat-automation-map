@@ -279,41 +279,42 @@ mis-handle mixed lists.
 Operators appear inline as strings between condition numbers. **The stored form is flat and
 carries no grouping information at all** for the expressions examined. **[strong]**
 
-**Do not infer evaluation order from that flatness.** How Rule Machine evaluates a mixed
-AND/OR chain is an execution question this document does not answer, and it is not safely
-guessable. Two live tests on build 2.5.1.140, both reading the Required Expression result
-the rule page prints:
+**Do not infer evaluation order from that flatness.** Rule Machine's author describes the
+evaluation directly: **[strong]**
+
+> "it is a strictly left to right evaluation, and once something to the left of OR is true,
+> or the left of AND is false, it returns true or false and stops evaluating."
+> (bravenel, Hubitat Community, [13 Oct 2021](https://community.hubitat.com/t/rule-5-1-predicate-and-repeat-while-until-rule/81158/2))
+
+The same rule appears in his original Rule Machine introduction
+([6 Feb 2018](https://community.hubitat.com/t/rule-machine-introduction/307/1)), which adds
+that `NOT` applies only to the term immediately after it and that brackets form a sub-rule
+evaluated on its own.
+
+Read that carefully: "left to right" here does **not** mean folding the terms together left to
+right, `((A AND B) OR C) AND D`. It means walking the chain and **stopping the whole
+expression** at the first false before an AND or the first true before an OR. Two live tests
+reading the Required Expression result the rule page prints agree with that description:
 
 | terms | expression | condition values | result | build |
 |---|---|---|---|---|
 | 3 | `A AND B OR C` | F, F, T | FALSE | 2.5.1.140 |
 | 4 | `A AND B OR C AND D` | T, T, F, F | TRUE | 2.5.1.147 |
 
-**The two tests are from different builds.** An expression evaluator changing across a patch
-release is unlikely but not excluded, so the combined conclusion below is weaker than two
-measurements on one build would be.
+In the three-term test, A is false before an AND, so evaluation stops at FALSE and C is never
+read. In the four-term test, B is true before an OR, so evaluation stops at TRUE and C and D
+are never read. Conventional precedence, `(A AND B) OR C`, would have printed TRUE for the
+first test, so it is ruled out.
 
-The three-term case resolved as `A AND (B OR C)`, the *opposite* of conventional Boolean
-precedence, since `(A AND B) OR C` would have printed TRUE. The four-term case then ruled
-out two more candidates:
+**Correction 2026-09-15.** An earlier revision of this section concluded from these two tests
+that Rule Machine groups from the right. That was wrong framing: it compared the results
+against a fully evaluated left fold, labelled "left to right", and missed the early stop the
+author describes. Right grouping happens to give the same answers for these cases, but it is
+not how Rule Machine describes its own evaluation, so do not describe it that way. Neither
+test used NOT or XOR, and XOR is not covered by the author's description.
 
-    (A∧B) ∨ (C∧D)      conventional      TRUE    survives test 2, fails test 1
-    A ∧ (B ∨ (C∧D))    right grouping    TRUE    survives both
-    A ∧ (B∨C) ∧ D      OR binds first    FALSE   ruled out
-    ((A∧B) ∨ C) ∧ D    left to right     FALSE   ruled out
-
-**Right-associative grouping, rightmost operator applied first, is the only model consistent
-with both results.** It also subsumes the three-term result, which was previously described
-as "OR binds tighter" and is better read as a special case of grouping from the right.
-Conventional precedence fits test 2 alone and is not excluded by it, only by test 1. **[limited]**
-
-Two measurements are still not a specification. Neither test used NOT, neither used more than
-one OR, and no test has yet forced conventional and right grouping apart directly, which needs
-a case such as `F AND F OR T AND T` where conventional gives TRUE and right grouping FALSE.
-
-The practical consequence is worth stating because it bites real rules: **under either
-surviving model, a term to the right of an OR is unreachable whenever the OR's left operand
-is true.** A Private Boolean placed last in `Mode AND Evening OR Morning AND PB` is silently
+The practical consequence is worth stating because it bites real rules: **a term to the right
+of an OR is never read whenever the terms before that OR evaluate true.** A Private Boolean placed last in `Mode AND Evening OR Morning AND PB` is silently
 ignored throughout the evening window. Observed on a live rule, diagnosed as a lamp that never
 turned off.
 
@@ -322,8 +323,9 @@ available for a Private Boolean**. Rule Machine 5.1 uses a different capability 
 "Select capability for Action Condition" than for Required Expression conditions, and Private
 Boolean is absent from the action list. Verified on 2.5.1.140: the action list runs
 `... Power source, Presence, Switch, Temperature, ...` with no `Private Boolean` entry where
-alphabetical order would place it. **[single]** The remaining fix is to reorder the expression
-so the gate sits leftmost, which under right grouping makes it the outermost test.
+alphabetical order would place it. **[single]** The remaining fixes are to group the
+alternatives in brackets, `Mode AND (Evening OR Morning) AND PB`, or to move the gate leftmost so a
+false gate stops the evaluation before any OR is reached.
 
 Not examined at all, and required before anyone writes an evaluator: explicit grouping or
 parentheses, NOT, whether `eval[n]` can reference another expression rather than a bare
