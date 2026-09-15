@@ -12,6 +12,12 @@ Required Expression, free-text interpolation). That section rests on a handful o
 deliberately-constructed fixtures on one hub, not a corpus survey - its evidence markers are
 correspondingly weaker than sections 1-11's, and should be read as such.
 
+**Updated 2026-09-15.** Section 5.2 now follows Rule Machine's author on mixed AND/OR: a
+left-to-right walk that stops early, replacing an earlier right-grouping reading. New
+observations on firmware 2.5.1.183 were added to sections 8 (an own-id "this rule" target),
+10.3 (subscriptions while a Required Expression is false) and 13.8 (deleting a variable a rule
+still uses).
+
 **Design principle, if you take only one thing from this:** do not manufacture meaning from
 undocumented fields. Retain what you do not recognise, flag it, and refuse to guess. Section
 9.1 exists because guessing what one field meant produced 28 confident and entirely
@@ -33,8 +39,8 @@ That split is not just a scoping convenience. It is the real boundary:
 
 Reconstruction is well supported. You can recover a rule's triggers, conditions, ordered
 actions and targets, and check the result against the rule's own page. Evaluation is not:
-section 5.2 shows the stored expression carries no grouping, and the live tests available
-contradict conventional precedence.
+section 5.2 shows the stored expression carries no grouping, and Rule Machine evaluates it
+as a left-to-right walk that stops early, not with conventional precedence.
 
 A tool that displays what a rule *is* stands on solid ground. A tool that decides what a
 rule *would do* is reimplementing Rule Machine from an undocumented format, and will be
@@ -90,7 +96,8 @@ storage. Do not assume something is undocumented because it is undocumented in t
 first looked.
 
 **Not done, and therefore not claimed:** no decompilation and no access to Rule Machine's
-source; no writes to rule configuration; no testing of evaluation semantics; one hub, one
+source; no writes to rule configuration; evaluation semantics only through the two Required
+Expression results in section 5.2 and the author's own description; one hub, one
 platform build, one person's rules.
 
 ### How confident is each finding
@@ -469,6 +476,13 @@ is Rule Machine's way of storing "set the Private Boolean of this rule *and* of 
 Treating the presence of `"*"` as meaning self-only will silently drop genuine cross-rule
 references. **[strong]**
 
+The rule's own numeric id is **not** the same stored form. On 2026-09-15 (firmware 2.5.1.183)
+a throwaway rule was given a Rule Boolean action written with its own id, `privateT.1 =
+["3269"]`. It worked when run, setting the rule's own Private Boolean, but the rule page
+rendered the action as `Rule Boolean False: ''`, with no target name. **[single]** Rule
+Machine's picker evidently offers the rule itself only as `"*"`. A reader should treat an own-id
+target as a self-reference, and a writer should not assume it round-trips through the editor.
+
 Parse each element explicitly rather than stripping non-digits out of the whole value:
 
     for each element:
@@ -698,6 +712,17 @@ has never been switched on. So an action left untouched is a Pause.
 The worked example below demonstrates this live. Rule Machine removes a rule's trigger
 subscriptions while its Required Expression is false, so a rule whose trigger is a motion
 sensor can show no subscription to that sensor at all.
+
+Rule Machine's author states the same: "If Predicate is false, subscriptions to trigger events
+are removed, so the rule is not triggered at all" ([bravenel, 13 Oct 2021](https://community.hubitat.com/t/rule-5-1-predicate-and-repeat-while-until-rule/81158/2)).
+
+**Confirmed again 2026-09-15** on firmware 2.5.1.183 with a throwaway rule: one Switch trigger,
+a Log action, and the Required Expression `Private Boolean is true`. With the Private Boolean
+false and the rule updated, `eventSubscriptions` was empty; with it true and the rule updated,
+the trigger subscription was back. **[strong]** When the Required Expression instead tested the
+same switch, the count stayed at one, because Rule Machine keeps the subscription it needs to
+notice the expression becoming true. So a nonzero count does not prove the triggers are
+subscribed, and a zero count does not prove a trigger is misconfigured.
 
 For Rule Machine specifically this does not matter, because triggers are recorded in
 `tDev<n>` settings and can be read directly. It matters greatly for **other** apps, where
@@ -1055,3 +1080,17 @@ still allowing a genuine variable that happens to share a common word. This is a
 applied by the consuming app, not a fact about the storage format itself, recorded here
 because the trap belongs with the format notes even though the fix is necessarily app-side.
 **[heuristic]**
+
+### 13.8 Deleting a variable a rule still uses
+
+Deleting a Hub Variable does not check the rules that use it, and the rule breaks at once.
+On 2026-09-15 (firmware 2.5.1.183) a throwaway rule held a `getSetVariable` action for a
+Number variable and a Log action containing `%Name%`. The variable was deleted through the
+Hub Variables delete-and-confirm steps, driven by a tool rather than by hand. Immediately
+afterwards the rule label read `*BROKEN*`, `ruleBuilderJson` reported `broken: true`, and the
+page showed `**Broken Action**`. **[single]**
+
+Whether the hub's own delete screen shows an in-use warning first was not observed, because
+the confirmation was submitted programmatically. For a reader of this format the consequence is
+the same: a structured variable reference whose name is missing from the Hub Variable
+inventory marks a rule that is already broken, not one that will recover.

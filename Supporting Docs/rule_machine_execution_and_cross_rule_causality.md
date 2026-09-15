@@ -132,8 +132,8 @@ community-sourced; locally unvalidated: T02]**
 
 ### 2.1 Required Expressions are admission control
 
-**[strong, officially documented; single local observation; controlled T01
-pending]** A false Required Expression can remove normal trigger subscriptions
+**[strong, officially documented and author-confirmed; T01 partly observed
+2026-09-15]** A false Required Expression can remove normal trigger subscriptions
 while retaining only what is needed to notice that the expression may become
 true again. This is materially
 different from allowing every trigger to start the rule and putting an `IF` at
@@ -598,6 +598,16 @@ Status subscriptions, generate the trigger, then turn the switch ON, record
 subscriptions again, and retrigger. Expected from sources: normal trigger
 subscriptions are absent while false and restored when true; only what is needed
 to detect expression recovery remains. Record screenshots and exact build.
+
+**Partial result, 2026-09-15** (C-8, firmware 2.5.1.183, Rule Machine 5.1.8, throwaway rule,
+tested by Claude with Gordon's approval). The Required Expression was `Private Boolean is true`
+rather than a switch, with one Switch trigger and a Log action. After Update Rule with the
+Private Boolean false, `eventSubscriptions` was empty; after Update Rule with it true, the
+trigger subscription was present. With a Required Expression on the same switch the count
+stayed at one. Trigger events were not generated, so whether the rule stays silent while false
+is still unobserved. Rule Machine's author states it directly: "If Predicate is false,
+subscriptions to trigger events are removed, so the rule is not triggered at all"
+([bravenel, 13 Oct 2021](https://community.hubitat.com/t/rule-5-1-predicate-and-repeat-while-until-rule/81158/2)).
 
 ### T02 - IF evaluates state and does not wait
 
