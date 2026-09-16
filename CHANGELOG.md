@@ -32,8 +32,9 @@ hub-wide insights still come from the last full scan.
 - `migrationRatings[]` carries each webCoRE piston's rating for Rule Machine and Visual Rule Builder
   2.0, with its label, up to three reasons, the number of parts needing rework, and whether
   automatic conversion is possible. The full per-part breakdown stays in the Migration Assessment
-  panel. Each piston needs one hub read, so an export takes noticeably longer than before and the
-  button reports progress.
+  panel. Ratings are cached on the hub as that panel computes them and read back in one call, so the
+  export performs no hub reads of its own; each record carries `ratedAt`, a `stale` flag when it
+  predates the last graph rebuild, and `not-rated` for a piston nobody has assessed yet.
 
 The community thread link on the app's settings page now opens the newest post.
 

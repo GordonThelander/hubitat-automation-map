@@ -1092,14 +1092,18 @@ time, so each record reflects the piston as it stands when the file is written.
 - `automaticConversion`: whether the proven converters could do it with no hand work. This is
   a narrower question than the rating: a piston can rate well and still not convert
   automatically.
-- `status`: `complete`, or `error` / `not-present` when the piston's source could not be read
-  as the file was written. Those records carry `null` ratings, and the affected piston ids are
-  also listed in `limitations`.
+- `status`: `complete` for a piston that has been rated, `not-rated` for one nobody has
+  assessed on this hub yet. A `not-rated` record carries `null` ratings; opening the webCoRE
+  Migration Assessment panel rates every piston and fills them in.
+- `ratedAt`: when that rating was taken, ISO 8601.
+- `stale`: `true` when the rating predates the last graph rebuild, so the piston may have
+  changed since. The rating is still reported rather than dropped, because usually it has not.
 
-The full per-part breakdown is deliberately not exported. It lives in the app's Migration
-Assessment panel, and including it would dominate the file. A rating describes effort, never
-whether a piston should be migrated at all.
+The full per-part breakdown is deliberately not exported. It lives in the Migration Assessment
+panel, and including it would dominate the file. A rating describes effort, never whether a
+piston should be migrated at all.
 
-**Cost:** each piston needs one hub read, run three at a time, so an export on a hub with many
-pistons takes noticeably longer than before (about 40 seconds for 25 pistons on the reference
-hub). The export button reports progress while this runs.
+**Where these come from:** ratings are computed by the Migration Assessment panel and cached on
+the hub, and the export reads that cache in one call. It performs no hub reads of its own, so
+export speed is unchanged from earlier schemas. The trade-off is freshness, which is what
+`ratedAt` and `stale` are for.
