@@ -1039,3 +1039,67 @@ carrying the same bounded evidence (the saved attribute name, never a value). `d
 unchanged: `"unknown"` on `deviceRead` and `usesVar` only, because a role-attributed read has the
 same direction convention as any other trigger or constraint edge. A consumer counting piston device
 relationships must therefore read all three kinds, not `deviceRead` alone.
+
+## 29. Schema 14 (v2.3.2) delta: dead constraints and migration ratings
+
+Two additions. Both are new fields; nothing existing changed shape.
+
+### 29.1 `edges[].unusedConstraint`
+
+Only meaningful on a `constraint` edge, `null` on every other relationship kind, the same
+convention `stateful` already follows.
+
+- `true`: the device is selected in a condition that no action and no Required Expression
+  evaluates, so the relationship exists in the rule's configuration but gates nothing. The
+  rule will behave as if the condition were not there.
+- `false`: the condition is evaluated by at least one action, or by the Required Expression.
+
+Scope matters. The claim is about **this app only**. The same device can be a live trigger
+for another rule, so `unusedConstraint: true` is never a statement that the device is unused
+on the hub. The underlying determination is the same one the map draws as the `UNUSED` tag
+beside a device in a focused view, and it comes from the rule's own stored action list,
+`eval` groups and `hasPredicate`, not from inference.
+
+A rule mid-build legitimately holds conditions nothing uses yet, so this is an observation,
+not a fault.
+
+### 29.2 `migrationRatings[]`
+
+webCoRE pistons only, one record per piston, generated at export time rather than at scan
+time, so each record reflects the piston as it stands when the file is written.
+
+```json
+{
+  "id": "a3089",
+  "name": "Evening lights",
+  "status": "complete",
+  "ruleMachine": {
+    "level": 1,
+    "label": "Direct equivalent, simple",
+    "reasons": ["Every part has a direct equivalent"],
+    "partsNeedingRework": 0,
+    "automaticConversion": true
+  },
+  "visualRuleBuilder": { "level": 4, "label": "A lot of rework", "reasons": ["2 of 3 parts need rework"],
+                         "partsNeedingRework": 2, "automaticConversion": false }
+}
+```
+
+- `level`: 1 (direct equivalent) to 5 (rebuilding is likely easier), or `null` when the
+  piston contains parts this app does not recognise yet. `label` is the matching words.
+- `reasons`: the short summary lines behind that rating, at most three.
+- `partsNeedingRework`: how many decoded parts need manual work.
+- `automaticConversion`: whether the proven converters could do it with no hand work. This is
+  a narrower question than the rating: a piston can rate well and still not convert
+  automatically.
+- `status`: `complete`, or `error` / `not-present` when the piston's source could not be read
+  as the file was written. Those records carry `null` ratings, and the affected piston ids are
+  also listed in `limitations`.
+
+The full per-part breakdown is deliberately not exported. It lives in the app's Migration
+Assessment panel, and including it would dominate the file. A rating describes effort, never
+whether a piston should be migrated at all.
+
+**Cost:** each piston needs one hub read, run three at a time, so an export on a hub with many
+pistons takes noticeably longer than before (about 40 seconds for 25 pistons on the reference
+hub). The export button reports progress while this runs.

@@ -4,6 +4,39 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.3.2
+
+In development on the dev channel.
+
+**Open anything on the hub.** Right-click any device or app on the map to reach its page in the
+Hubitat admin UI in a second tab: the device page for a device, the status page or the app page for
+an app or rule. The menu also copies the link, focuses the node, and re-reads that object from the
+hub. Empty canvas and shift with right-click keep the browser's own menu, so saving the image is
+still where it always was. A local variable node offers its owning app. A node with no hub page says
+so rather than doing nothing. A short card explains the gesture the first time a view with clickable
+objects is opened, again after an upgrade, and monthly only while the gesture has never been used;
+"Opening objects on the hub" in the Focus panel shows it any time.
+
+**Rescan this object.** One device or app re-read from the hub without a full scan, applied to the
+map in place, so the current view, zoom and focus are kept. A device has no record of its own, so
+its edges come from the apps that use it and those are what get re-read, up to a bounded number.
+Label, type and the Disabled flag are refreshed for the devices in scope, which a full scan was
+previously the only way to pick up. It refuses while a full scan is running. Capabilities, rooms and
+hub-wide insights still come from the last full scan.
+
+**Export schema 14.** Two additions:
+
+- `edges[].unusedConstraint` marks a constraint edge whose condition nothing evaluates, the same
+  determination the map draws as the UNUSED tag. Scoped to that app, never a claim that the device
+  is unused on the hub.
+- `migrationRatings[]` carries each webCoRE piston's rating for Rule Machine and Visual Rule Builder
+  2.0, with its label, up to three reasons, the number of parts needing rework, and whether
+  automatic conversion is possible. The full per-part breakdown stays in the Migration Assessment
+  panel. Each piston needs one hub read, so an export takes noticeably longer than before and the
+  button reports progress.
+
+The community thread link on the app's settings page now opens the newest post.
+
 ## 2.2.1
 
 In development on the dev channel. Insights gains a set of findings for things that look fine but
