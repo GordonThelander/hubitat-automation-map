@@ -6710,6 +6710,56 @@ Map webcoreMigrationAssessmentMapping() {
     return render(status: result.http as Integer, contentType: 'application/json', data: JsonOutput.toJson(result.body))
 }
 
+// Ratings cost a hub read and a decode each, which made an export of a hub with
+// many pistons slow. The panel already rates every piston, so its results are
+// kept in a compact cache the export can read instead. Only the rating and the
+// reasons are stored, never the per-part breakdown or any piston content.
+@Field static final int MIGRATION_CACHE_MAX = 200
+
+void cacheMigrationRating(String appId, Map rating) {
+    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
+    Closure side = { Object engine ->
+        if (!(engine instanceof Map)) return null
+        Map e = engine as Map
+        Map counts = (e.counts ?: [:]) as Map
+        Map auto = (e.automatic ?: [:]) as Map
+        return [level: e.level, label: e.label,
+                reasons: ((e.summary ?: []) as List).take(3),
+                partsNeedingRework: counts.manualComponents,
+                automaticConversion: auto.containsKey('available') ? (auto.available as Boolean) : null]
+    }
+    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder)]
+    if (cache.size() > MIGRATION_CACHE_MAX) {
+        List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
+        oldest.each { cache.remove(it.key) }
+    }
+    state.migrationRatingCache = cache
+}
+
+// Every cached rating, with the piston list as it stands now. A rating taken
+// before the graph was last rebuilt is reported as stale rather than dropped:
+// the piston may not have changed, and the caller decides what to do with that.
+Map migrationRatingsMapping() {
+    Map cache = (state.migrationRatingCache ?: [:]) as Map
+    Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    List out = []
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        if ("${(info as Map).type ?: ''}".trim() != 'webCoRE Piston') return
+        Map hit = (cache[appId] ?: [:]) as Map
+        Long ratedAt = (hit.ratedAt ?: 0) as Long
+        out << [appId: appId,
+                status: ratedAt ? 'complete' : 'not-rated',
+                ratedAt: ratedAt ?: null,
+                stale: ratedAt ? (ratedAt < graphAt) : null,
+                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder]
+    }
+    return render(status: 200, contentType: 'application/json',
+        data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
+                                 rated: out.count { it.status == 'complete' }, total: out.size()]))
+}
+
 Map webcoreMigrationAssessmentResult(String rawAppId) {
     Map limits = webcoreCoverageLimits()
     clearAbandonedScan()
@@ -6743,6 +6793,7 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
         Map tokenToDeviceId = [:]
         parentIndex.each { k, v -> if ("${v}" ==~ /^[0-9]+$/) tokenToDeviceId["${k}".toString()] = "${v}" as Integer }
         Map rating = webcoreMigrationRating(decoded.document as Map, hubVariableTypes, tokenToDeviceId)
+        cacheMigrationRating(appId, rating)
         return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine, visualRuleBuilder: rating.visualRuleBuilder]]
     } catch (Exception ignored) {
         return [http: 422, body: [status: 'error', error: 'assessment-failed']]
@@ -11311,6 +11362,7 @@ mappings {
     path('/webcore-decode-coverage') { action: [ GET: 'webcoreDecodeCoverageMapping' ] }
     path('/webcore-migration-assessment') { action: [ GET: 'webcoreMigrationAssessmentMapping' ] }
     path('/webcore-migration-matrix') { action: [ GET: 'webcoreMigrationMatrixMapping' ] }
+    path('/webcore-migration-ratings') { action: [ GET: 'migrationRatingsMapping' ] }
 }
 
 // The map page was read-only until this. It now accepts one write: the user's
@@ -17122,6 +17174,7 @@ function amPickURL(localPath, cloudUrl) {
 }
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
+const MIGRATION_RATINGS_URL = amPickURL('${getLocalURL('webcore-migration-ratings')}', '${getCloudURL('webcore-migration-ratings')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
 let EXT = null;
@@ -18044,60 +18097,32 @@ function exportJSON() {
   });
 }
 
-// One hub read per piston, so three at a time with the button reporting
-// progress. A piston that fails or times out is recorded as null with its
-// reason, never silently dropped.
+// One call, no hub reads: the ratings the Migration Assessment panel already
+// computed are cached on the hub, so an export no longer waits on 25 decodes.
+// A piston nobody has rated yet is reported as not-rated rather than guessed at.
 function fetchMigrationRatings(btn, failedFetches) {
-  const pistons = ALL_NODES.filter(function (n) { return n.group === 'app' && n.appType === 'webCoRE Piston'; });
-  if (!pistons.length) return Promise.resolve([]);
-  const out = [];
-  let index = 0;
-  let done = 0;
-  function one() {
-    if (index >= pistons.length) return Promise.resolve();
-    const node = pistons[index++];
-    return fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)),
-                 { cache: 'no-store', credentials: 'omit' })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        out.push(migrationRatingRecord(node, j));
-      })
-      .catch(function () {
-        out.push({ id: node.id, name: node.label || node.id, status: 'error', ruleMachine: null, visualRuleBuilder: null });
-        failedFetches.push('migrationRatings:' + node.id);
-      })
-      .then(function () {
-        done++;
-        btn.textContent = 'Exporting... ' + done + '/' + pistons.length;
-        return one();
+  const nameOfNode = {};
+  ALL_NODES.forEach(function (n) { nameOfNode[n.id] = n.name || n.label || n.id; });
+  return fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      return (j.ratings || []).map(function (r) {
+        const nodeId = 'a' + r.appId;
+        return {
+          id: nodeId,
+          name: nameOfNode[nodeId] || nodeId,
+          status: r.status,
+          ratedAt: r.ratedAt ? new Date(r.ratedAt).toISOString() : null,
+          stale: r.stale,
+          ruleMachine: r.ruleMachine || null,
+          visualRuleBuilder: r.visualRuleBuilder || null
+        };
       });
-  }
-  const lanes = [];
-  for (let i = 0; i < Math.min(3, pistons.length); i++) lanes.push(one());
-  return Promise.all(lanes).then(function () { return out; });
-}
-
-// Rating and the reasons behind it, not the full per-part blocker list: the
-// panel is where someone reads that, and it would dominate the file.
-function migrationRatingRecord(node, j) {
-  function side(r) {
-    if (!r) return null;
-    return {
-      level: (r.level === undefined ? null : r.level),
-      label: r.label || null,
-      reasons: (r.summary || []).slice(0, 3),
-      partsNeedingRework: r.counts ? r.counts.manualComponents : null,
-      automaticConversion: r.automatic ? !!r.automatic.available : null
-    };
-  }
-  const status = (j && j.status) || 'error';
-  return {
-    id: node.id,
-    name: node.label || node.id,
-    status: status,
-    ruleMachine: status === 'complete' ? side(j.ruleMachine) : null,
-    visualRuleBuilder: status === 'complete' ? side(j.visualRuleBuilder) : null
-  };
+    })
+    .catch(function () {
+      failedFetches.push('migrationRatings');
+      return null;
+    });
 }
 
 // A ref is {id, name} everywhere in this export, never a bare name and
@@ -18577,7 +18602,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
       edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
-      migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete, or error/not-present for a piston whose source could not be read when this file was generated - those carry null ratings, and the same piston id also appears in limitations via scan.generation. A rating describes effort, never whether the piston should be migrated at all.',
+      migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others. webcoreHubVariableUseCount and webcoreVariableDecodeIssueCount summarize all webCoRE variable edges and fixed-code decode gaps; schema 10 adds separate read, write and unknown-use counts. localVariableCount (schema 12, v2.2.8) is counted directly from every owner-scoped Local Variable graph node across all supported engines - see the top-level localVariables[] array - not summed from ruleFlows[].localVariables alone, since a webCoRE piston never gets a ruleFlows entry at all. nonResolvedVariableReferenceCount (schema 5, v2.1.4) still totals ruleFlows[].nonResolvedVariableReferences across every decoded rule specifically - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
