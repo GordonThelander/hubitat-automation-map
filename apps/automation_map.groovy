@@ -19418,9 +19418,19 @@ function rescanNode(nodeId, item) {
 // Browser-local, so each person in the household is told once rather than one
 // dismissal silencing it for everyone. Every access is guarded: a private
 // window or blocked site data throws instead of returning null.
-const TIP_VERSION_KEY = 'automationMap.hubTip.version';
-const TIP_SHOWN_KEY = 'automationMap.hubTip.lastShown';
-const TIP_USED_KEY = 'automationMap.hubTip.used';
+// Keyed per installed app, not per hub: localStorage is shared across every
+// instance on this origin, so a Dev or Preprod install would otherwise mark the
+// card seen for the production one, and an upgrade on one channel would hide it
+// on another.
+const TIP_INSTANCE = (function () {
+  const parts = String(location.pathname || '').split('/');
+  const at = parts.indexOf('api');
+  const id = (at !== -1 && parts.length > at + 1) ? parts[at + 1] : '';
+  return (id && String(parseInt(id, 10)) === id) ? id : 'unknown';
+})();
+const TIP_VERSION_KEY = 'automationMap.hubTip.' + TIP_INSTANCE + '.version';
+const TIP_SHOWN_KEY = 'automationMap.hubTip.' + TIP_INSTANCE + '.lastShown';
+const TIP_USED_KEY = 'automationMap.hubTip.' + TIP_INSTANCE + '.used';
 const TIP_REPEAT_MS = 30 * 24 * 60 * 60 * 1000;
 const APP_VERSION_JS = '${APP_VERSION}';
 const hubTipEl = document.getElementById('hubTip');

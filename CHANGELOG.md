@@ -15,7 +15,7 @@ hub. Empty canvas and shift with right-click keep the browser's own menu, so sav
 still where it always was. A local variable node offers its owning app. A node with no hub page says
 so rather than doing nothing. A short card explains the gesture the first time a view with clickable
 objects is opened, again after an upgrade, and monthly only while the gesture has never been used;
-"Opening objects on the hub" in the Focus panel shows it any time.
+"Opening objects on the hub" in the Focus panel shows it any time. What each browser has seen is tracked per installed app, so a Dev or Preprod install cannot mark the card seen for the production one.
 
 **Rescan this object.** One device or app re-read from the hub without a full scan, applied to the
 map in place, so the current view, zoom and focus are kept. A device has no record of its own, so
