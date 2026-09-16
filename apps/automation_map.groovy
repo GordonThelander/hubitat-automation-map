@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit ad540260e6d89a4bf681aad6f2ded7b40c90a49f; developer
+ * builder from the annotated Dev source at commit c7194ee966a8938bbf802d171ba9f15ed23024d8; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/ad540260e6d89a4bf681aad6f2ded7b40c90a49f/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/c7194ee966a8938bbf802d171ba9f15ed23024d8/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.3.1'
+@Field static final String APP_VERSION = '2.3.2'
 
 
 
@@ -740,7 +740,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
   link.setAttribute('rel', 'noopener noreferrer');
 })();
 </script>'''
-                paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524' target='_blank'><b>Automation Map community thread</b></a> for community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
+                paragraph "Need help or found a problem? Visit the <a href='https://community.hubitat.com/t/release-hubitat-automation-map/165524/last' target='_blank'><b>Automation Map community thread</b></a> for community discussion or raise an <a href='https://github.com/GordonThelander/hubitat-automation-map/issues' target='_blank'><b>Issue</b></a> on GitHub."
             }
             section {
                 
@@ -6667,6 +6667,56 @@ Map webcoreMigrationAssessmentMapping() {
     return render(status: result.http as Integer, contentType: 'application/json', data: JsonOutput.toJson(result.body))
 }
 
+
+
+
+
+@Field static final int MIGRATION_CACHE_MAX = 200
+
+void cacheMigrationRating(String appId, Map rating) {
+    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
+    Closure side = { Object engine ->
+        if (!(engine instanceof Map)) return null
+        Map e = engine as Map
+        Map counts = (e.counts ?: [:]) as Map
+        Map auto = (e.automatic ?: [:]) as Map
+        return [level: e.level, label: e.label,
+                reasons: ((e.summary ?: []) as List).take(3),
+                partsNeedingRework: counts.manualComponents,
+                automaticConversion: auto.containsKey('available') ? (auto.available as Boolean) : null]
+    }
+    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder)]
+    if (cache.size() > MIGRATION_CACHE_MAX) {
+        List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
+        oldest.each { cache.remove(it.key) }
+    }
+    state.migrationRatingCache = cache
+}
+
+
+
+
+Map migrationRatingsMapping() {
+    Map cache = (state.migrationRatingCache ?: [:]) as Map
+    Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    List out = []
+    appInfo.each { String appId, info ->
+        if (!(info instanceof Map)) return
+        if ("${(info as Map).type ?: ''}".trim() != 'webCoRE Piston') return
+        Map hit = (cache[appId] ?: [:]) as Map
+        Long ratedAt = (hit.ratedAt ?: 0) as Long
+        out << [appId: appId,
+                status: ratedAt ? 'complete' : 'not-rated',
+                ratedAt: ratedAt ?: null,
+                stale: ratedAt ? (ratedAt < graphAt) : null,
+                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder]
+    }
+    return render(status: 200, contentType: 'application/json',
+        data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
+                                 rated: out.count { it.status == 'complete' }, total: out.size()]))
+}
+
 Map webcoreMigrationAssessmentResult(String rawAppId) {
     Map limits = webcoreCoverageLimits()
     clearAbandonedScan()
@@ -6700,6 +6750,7 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
         Map tokenToDeviceId = [:]
         parentIndex.each { k, v -> if ("${v}" ==~ /^[0-9]+$/) tokenToDeviceId["${k}".toString()] = "${v}" as Integer }
         Map rating = webcoreMigrationRating(decoded.document as Map, hubVariableTypes, tokenToDeviceId)
+        cacheMigrationRating(appId, rating)
         return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine, visualRuleBuilder: rating.visualRuleBuilder]]
     } catch (Exception ignored) {
         return [http: 422, body: [status: 'error', error: 'assessment-failed']]
@@ -9270,7 +9321,7 @@ Map nodeEntry(String id, String fullLabel, String group, String subtitle = null,
     
     
     String shortLabel = clean
-    if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
+    if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}â€¦"
     if (statusSuffix) shortLabel = "${shortLabel} (${statusSuffix})"
     String canonicalName = subtitle ? "${clean} (${subtitle})" : clean
     String drawText = statusSuffix ? "${canonicalName} (${statusSuffix})" : canonicalName
@@ -10890,7 +10941,7 @@ void rebuildStoredGraph() {
     'Averaging Master'                   : 'Uses participating devices already represented on this hub.',
     'Critical Device Monitor'            : 'Uses participating devices already represented on this hub.',
     'Hub Diagnostics'                    : 'Runs on this hub.',
-    'Hubitat® Dashboard'                 : 'Runs on this hub.',
+    'HubitatÂ® Dashboard'                 : 'Runs on this hub.',
     'Kasa Integration'                   : 'Assessed for this deployment as hub-only.',
     'Maker API'                          : 'Assessed for this deployment as hub-only.',
     'Notification Proxy'                 : 'Runs on this hub.',
@@ -11262,11 +11313,13 @@ mappings {
     path('/automation-map.html') { action: [ GET: 'renderMapMapping' ] }
     path('/scan') { action: [ GET: 'scanMapping' ] }
     path('/scan-status') { action: [ GET: 'scanStatusMapping' ] }
+    path('/rescan') { action: [ GET: 'rescanMapping' ] }
     path('/externals') { action: [ GET: 'externalsGetMapping', POST: 'externalsSaveMapping' ] }
     path('/icon-overrides') { action: [ GET: 'iconOverridesGetMapping', POST: 'iconOverridesSaveMapping' ] }
     path('/webcore-decode-coverage') { action: [ GET: 'webcoreDecodeCoverageMapping' ] }
     path('/webcore-migration-assessment') { action: [ GET: 'webcoreMigrationAssessmentMapping' ] }
     path('/webcore-migration-matrix') { action: [ GET: 'webcoreMigrationMatrixMapping' ] }
+    path('/webcore-migration-ratings') { action: [ GET: 'migrationRatingsMapping' ] }
 }
 
 
@@ -11444,6 +11497,166 @@ String iconOverridesJson() {
 
 
 
+
+
+
+@Field static final int RESCAN_MAX_APPS = 12
+@Field static final int RESCAN_TIMEOUT_SEC = 20
+
+
+
+
+Map refreshDeviceFacts(Set<String> deviceIds) {
+    Map out = [checked: deviceIds.size(), changed: [], error: null]
+    if (!deviceIds) return out
+    Map bulk = fetchDeviceListBulk()
+    if (bulk.error) {
+        out.error = "${bulk.error}"
+        return out
+    }
+    Map allLabels = (bulk.labels ?: [:]) as Map
+    Map allTypes = (bulk.types ?: [:]) as Map
+    Set<String> allDisabled = new LinkedHashSet<String>(((bulk.disabledDevices ?: []) as List).collect { "${it}".toString() })
+
+    Map labels = new LinkedHashMap((state.deviceLabels ?: [:]) as Map)
+    Map types = new LinkedHashMap((state.deviceTypes ?: [:]) as Map)
+    Set<String> disabled = new LinkedHashSet<String>(((state.deviceDisabled ?: []) as List).collect { "${it}".toString() })
+    List changed = []
+
+    deviceIds.each { String devId ->
+        if (allLabels.containsKey(devId) && labels[devId] != allLabels[devId]) {
+            labels[devId] = allLabels[devId]
+            changed << devId
+        }
+        if (allTypes.containsKey(devId) && types[devId] != allTypes[devId]) {
+            types[devId] = allTypes[devId]
+            if (!changed.contains(devId)) changed << devId
+        }
+        boolean nowDisabled = allDisabled.contains(devId)
+        boolean wasDisabled = disabled.contains(devId)
+        if (nowDisabled != wasDisabled) {
+            if (nowDisabled) disabled << devId else disabled.remove(devId)
+            if (!changed.contains(devId)) changed << devId
+        }
+    }
+
+    state.deviceLabels = labels
+    state.deviceTypes = types
+    state.deviceDisabled = disabled.toList()
+    out.changed = changed
+    return out
+}
+
+
+
+
+Map rescanSlice(List refreshed) {
+    Map graph = (state.graph ?: [:]) as Map
+    List appNodeIds = refreshed.collect { "a${it}".toString() }
+    List sliceEdges = ((graph.edges ?: []) as List).findAll { edge ->
+        edge instanceof Map && appNodeIds.contains("${(edge as Map).from}".toString())
+    }
+    Set<String> wanted = new LinkedHashSet<String>(appNodeIds)
+    sliceEdges.each { wanted << "${(it as Map).to}".toString() }
+    List sliceNodes = ((graph.nodes ?: []) as List).findAll { node ->
+        node instanceof Map && wanted.contains("${(node as Map).id}".toString())
+    }
+    Map flows = (graph.flows ?: [:]) as Map
+    Map sliceFlows = [:]
+    appNodeIds.each { String id -> if (flows.containsKey(id)) sliceFlows[id] = flows[id] }
+    return [apps: appNodeIds, nodes: sliceNodes, edges: sliceEdges, flows: sliceFlows]
+}
+
+Map rescanMapping() {
+    try {
+        clearAbandonedScan()
+        if (scanEffectivelyActive()) {
+            return render(status: 200, contentType: 'application/json',
+                data: JsonOutput.toJson([ok: false, reason: 'scanRunning']))
+        }
+        String nodeId = "${params?.node ?: ''}".trim()
+        String kindChar = nodeId ? nodeId.substring(0, 1) : ''
+        String idPart = nodeId.length() > 1 ? nodeId.substring(1) : ''
+        boolean wellFormed = (kindChar == 'a' || kindChar == 'd') && idPart.isInteger()
+        if (!wellFormed) {
+            return render(status: 200, contentType: 'application/json',
+                data: JsonOutput.toJson([ok: false, reason: 'badNode']))
+        }
+        String hubId = idPart
+        Map appInfo = new LinkedHashMap((state.appInfo ?: [:]) as Map)
+        List<String> targets = []
+        if (nodeId.startsWith('a')) {
+            if (appInfo.containsKey(hubId)) targets << hubId
+        } else {
+            appInfo.each { String appId, info ->
+                if (!(info instanceof Map)) return
+                if ((((info as Map).roles ?: [:]) as Map).containsKey(hubId)) targets << appId
+            }
+        }
+        if (!targets) {
+            return render(status: 200, contentType: 'application/json',
+                data: JsonOutput.toJson([ok: false, reason: 'noOwner']))
+        }
+        if (targets.size() > RESCAN_MAX_APPS) {
+            return render(status: 200, contentType: 'application/json',
+                data: JsonOutput.toJson([ok: false, reason: 'tooMany', apps: targets.size()]))
+        }
+
+        
+        
+        
+        Set<String> scope = new LinkedHashSet<String>()
+        if (!nodeId.startsWith('a')) scope << hubId
+        targets.each { String appId ->
+            Map info = (appInfo[appId] ?: [:]) as Map
+            ((info.roles ?: [:]) as Map).keySet().each { scope << "${it}".toString() }
+        }
+        Map deviceFacts = refreshDeviceFacts(scope)
+
+        Map labels = (state.deviceLabels ?: [:]) as Map
+        List refreshed = []
+        List failed = []
+        targets.each { String appId ->
+            Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
+                                    RESCAN_TIMEOUT_SEC, [contentType: 'application/json'])
+            if (!fetched.ok || !(fetched.data instanceof Map)) { failed << appId; return }
+            Map prior = (appInfo[appId] ?: [:]) as Map
+            Map info = processAppRelationships(appId, fetched.data as Map, labels)
+            
+            
+            if (!info.namespace && prior.namespace) info.namespace = prior.namespace
+            appInfo[appId] = info
+            refreshed << appId
+        }
+        
+        Set<String> after = new LinkedHashSet<String>()
+        refreshed.each { String appId ->
+            ((((appInfo[appId] ?: [:]) as Map).roles ?: [:]) as Map).keySet().each { after << "${it}".toString() }
+        }
+        after.removeAll(scope)
+        if (after) {
+            Map extra = refreshDeviceFacts(after)
+            deviceFacts = [checked: (deviceFacts.checked as Integer) + (extra.checked as Integer),
+                           changed: (deviceFacts.changed as List) + (extra.changed as List),
+                           error: deviceFacts.error ?: extra.error]
+        }
+
+        Map slice = [:]
+        if (refreshed) {
+            state.appInfo = appInfo
+            rebuildStoredGraph()
+            slice = rescanSlice(refreshed)
+        }
+        return render(status: 200, contentType: 'application/json',
+            data: JsonOutput.toJson([ok: !refreshed.isEmpty(), node: nodeId,
+                                     refreshed: refreshed, failed: failed,
+                                     devices: deviceFacts, slice: slice]))
+    } catch (Exception ex) {
+        log.warn "${app.label}: rescanMapping failed: ${ex.message}"
+        return render(status: 200, contentType: 'application/json',
+            data: JsonOutput.toJson([ok: false, reason: 'error', error: "${ex.class.simpleName}"]))
+    }
+}
 
 Map scanMapping() {
     
@@ -11699,7 +11912,7 @@ String buildMapHtml() {
     
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
-        exportSchemaVersion: 13,
+        exportSchemaVersion: 14,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -11957,6 +12170,31 @@ String buildMapHtml() {
      No runtime positioning: a fixed 50/50 with translate(-50%,-50%) needs no
      measurement, so positionHubWatermark() and its resize/load hooks are gone
      rather than left as no-ops. */
+  /* Open on hub (v2.3.2): the right-click menu over a node, and the card that
+     teaches the gesture. Both are sized against the viewport so a phone or the
+     mobile app's webview cannot clip them. */
+  #nodeMenu { position:fixed; z-index:60; display:none; min-width:210px; max-width:min(92vw,300px);
+              background:rgba(4,20,27,0.98); border:1px solid rgba(255,255,255,0.16); border-radius:6px;
+              box-shadow:0 6px 28px rgba(0,0,0,0.6); padding:6px 0; font-size:13px; }
+  #nodeMenu .nodeMenuTitle { padding:7px 12px 8px 12px; color:#9fb6bf; font-size:12px;
+                             border-bottom:1px solid rgba(255,255,255,0.10);
+                             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #nodeMenu a, #nodeMenu button { display:block; width:100%; text-align:left; background:none; border:0;
+                                  color:#e8f3f6; padding:8px 12px; font:inherit; text-decoration:none;
+                                  cursor:pointer; box-sizing:border-box; }
+  #nodeMenu a:hover, #nodeMenu button:hover, #nodeMenu a:focus, #nodeMenu button:focus {
+              background:rgba(255,255,255,0.10); outline:none; }
+  #nodeMenu .nodeMenuNote { padding:7px 12px; color:#9fb6bf; font-size:12px; }
+  #hubTip { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:70;
+            width:min(92vw,430px); max-height:70vh; overflow:auto; box-sizing:border-box;
+            background:rgba(4,20,27,0.98); border:1px solid rgba(255,255,255,0.16); border-radius:8px;
+            box-shadow:0 8px 32px rgba(0,0,0,0.6); padding:16px 18px 14px 18px; font-size:13px; color:#e8f3f6; }
+  #hubTip h3 { margin:0 0 6px 0; font-size:15px; }
+  #hubTip p { margin:0 0 10px 0; color:#cfe1e7; }
+  #hubTip .hubTipArt { display:block; margin:2px 0 12px 0; }
+  #hubTip .hubTipRow { display:flex; gap:8px; flex-wrap:wrap; }
+  #hubTip .hubTipClose { position:absolute; top:8px; right:10px; background:none; border:0; color:#9fb6bf;
+                         font-size:18px; line-height:1; cursor:pointer; }
   #hubWatermark { position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
                   max-width:38vw; max-height:38vh; opacity:0.50; pointer-events:none;
                   user-select:none; }
@@ -12565,6 +12803,7 @@ String buildMapHtml() {
     <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
     <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
     <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities &#8599;</button>
+    <button id="hubTipBtn" type="button" title="How to open a device or app on the hub">Opening objects on the hub</button>
     <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
   </div>
 </div>
@@ -12575,6 +12814,24 @@ String buildMapHtml() {
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="nodeMenu" role="menu" aria-hidden="true"></div>
+<div id="hubTip" role="dialog" aria-labelledby="hubTipTitle" hidden>
+  <button class="hubTipClose" type="button" id="hubTipClose" title="Close" aria-label="Close">&times;</button>
+  <h3 id="hubTipTitle">Open anything on the hub</h3>
+  <svg class="hubTipArt" width="240" height="84" viewBox="0 0 240 84" role="img" aria-label="Right-click a node on the map to open its hub page">
+    <circle cx="40" cy="42" r="16" fill="#5aa9c7"></circle>
+    <path d="M44 48 l22 18 -8 2 5 10 -5 2 -5 -10 -6 5 z" fill="#e8f3f6"></path>
+    <rect x="92" y="18" width="132" height="52" rx="5" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.25)"></rect>
+    <rect x="102" y="29" width="86" height="6" rx="3" fill="#cfe1e7"></rect>
+    <rect x="102" y="43" width="104" height="6" rx="3" fill="#9fb6bf"></rect>
+    <rect x="102" y="55" width="70" height="6" rx="3" fill="#9fb6bf"></rect>
+  </svg>
+  <p id="hubTipText">Right-click any device or app on the map to open its page on the hub in a second tab. Shift with right-click still gives you the browser's own menu.</p>
+  <div class="hubTipRow">
+    <button class="pillBtn" type="button" id="hubTipDemo">Show me</button>
+    <button class="pillBtn" type="button" id="hubTipGot">Got it</button>
+  </div>
+</div>
 <img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
@@ -13793,6 +14050,7 @@ function applyFilters() {
                                : { animation: false, maxZoomLevel: FOCUS_MAX_ZOOM };
 
   layoutView(placed, wholeMap);
+  if (typeof hubTipOnViewRendered === 'function') hubTipOnViewRendered(wholeMap);
 }
 
 // ---------------------------------------------------------------------------
@@ -15748,7 +16006,7 @@ const APP_TYPE_TAGS = {
   'Rule Machine': 'HUB',
   'Groups and Scenes': 'HUB',
   'Maker API': 'HUB',
-  'Hubitat® Dashboard': 'HUB'
+  'HubitatÂ® Dashboard': 'HUB'
 };
 function appOptionText(n) {
   let title = n.title;
@@ -16872,6 +17130,8 @@ function amPickURL(localPath, cloudUrl) {
   return cloudUrl;
 }
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
+const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
+const MIGRATION_RATINGS_URL = amPickURL('${getLocalURL('webcore-migration-ratings')}', '${getCloudURL('webcore-migration-ratings')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
 let EXT = null;
@@ -17774,9 +18034,10 @@ function exportJSON() {
   const failedFetches = [];
   Promise.all([
     fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('externalSystemDeclarations'); return null; }),
-    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; })
+    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
+    fetchMigrationRatings(btn, failedFetches)
   ]).then(function (results) {
-    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -17791,6 +18052,34 @@ function exportJSON() {
     btn.textContent = original;
     btn.disabled = false;
   });
+}
+
+// One call, no hub reads: the ratings the Migration Assessment panel already
+// computed are cached on the hub, so an export no longer waits on 25 decodes.
+// A piston nobody has rated yet is reported as not-rated rather than guessed at.
+function fetchMigrationRatings(btn, failedFetches) {
+  const nameOfNode = {};
+  ALL_NODES.forEach(function (n) { nameOfNode[n.id] = n.name || n.label || n.id; });
+  return fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      return (j.ratings || []).map(function (r) {
+        const nodeId = 'a' + r.appId;
+        return {
+          id: nodeId,
+          name: nameOfNode[nodeId] || nodeId,
+          status: r.status,
+          ratedAt: r.ratedAt ? new Date(r.ratedAt).toISOString() : null,
+          stale: r.stale,
+          ruleMachine: r.ruleMachine || null,
+          visualRuleBuilder: r.visualRuleBuilder || null
+        };
+      });
+    })
+    .catch(function () {
+      failedFetches.push('migrationRatings');
+      return null;
+    });
 }
 
 // A ref is {id, name} everywhere in this export, never a bare name and
@@ -17810,7 +18099,7 @@ function ref(id, nameOf) { return { id: id, name: nameOf[id] || id }; }
 // as plain data rather than reusing it directly - buildInsights() returns
 // a rendered HTML string for the panel, which is the wrong shape to
 // embed in a JSON file meant to be parsed, not displayed.
-function buildExportPayload(ext, icons, failedFetches) {
+function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   const nodeById = {};
   ALL_NODES.forEach(function (n) { nodeById[n.id] = n; });
   // n.name is the stable identity with no live-status suffix baked in at
@@ -17996,6 +18285,10 @@ function buildExportPayload(ext, icons, failedFetches) {
       // catalogue proved momentary) - !!e.stateful alone would have silently
       // collapsed both into the same false.
       stateful: e.kind === 'action' ? (e.stateful === null ? null : !!e.stateful) : null,
+      // Schema 14: the device is selected in a condition that nothing
+      // evaluates, so this relationship gates nothing. Only meaningful on a
+      // constraint edge, null everywhere else for the same reason as stateful.
+      unusedConstraint: e.kind === 'constraint' ? !!e.unused : null,
       // v2.0.14, schema 4 (parent spec 11.4): usageRole is populated on
       // proven Hub or Local Variable read edges (schema 6, v2.1.6, extends
       // this to Local reads) - a single trusted role (condition/trigger/
@@ -18264,8 +18557,9 @@ function buildExportPayload(ext, icons, failedFetches) {
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
-      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
+      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRBâ€™s "This Rule" (id is this same stepâ€™s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this ruleâ€™s own Local Variable definitions, owner-scoped by this entryâ€™s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
+      migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others. webcoreHubVariableUseCount and webcoreVariableDecodeIssueCount summarize all webCoRE variable edges and fixed-code decode gaps; schema 10 adds separate read, write and unknown-use counts. localVariableCount (schema 12, v2.2.8) is counted directly from every owner-scoped Local Variable graph node across all supported engines - see the top-level localVariables[] array - not summed from ruleFlows[].localVariables alone, since a webCoRE piston never gets a ruleFlows entry at all. nonResolvedVariableReferenceCount (schema 5, v2.1.4) still totals ruleFlows[].nonResolvedVariableReferences across every decoded rule specifically - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
@@ -18326,6 +18620,7 @@ function buildExportPayload(ext, icons, failedFetches) {
         webcoreDecodeIssues: webcoreVariableDecodeIssues
       }
     },
+    migrationRatings: migrationRatings || null,
     externalSystemDeclarations: ext ? (ext.entries || []) : null,
     deviceIconOverrides: icons ? (icons.devices || [])
       .filter(function (d) { return d.override !== 'auto' || d.note; })
@@ -18684,6 +18979,9 @@ function renderBackLink() {
 }
 
 function focusNode(id) {
+  // Every route into an object comes through here: a node click, the Focus
+  // panel, Quick Search and a back/forward restore.
+  if (typeof hubTipOnNodeOpened === 'function') hubTipOnNodeOpened(id);
   const node = ALL_NODES.filter(function (n) { return n.id === id; })[0];
   if (!node) return false;
   beginSelectionGeneration();
@@ -18819,6 +19117,375 @@ network.on('click', function (params) {
 const canvasEl = document.getElementById('network');
 network.on('hoverNode', function () { canvasEl.style.cursor = 'pointer'; });
 network.on('blurNode', function () { canvasEl.style.cursor = 'default'; });
+
+${''}
+// --- Open on hub (v2.3.2) -------------------------------------------------
+// Right-click a node to reach its page in the hub admin UI. The map is served
+// from the hub's own origin, so these are same-origin links and need no token.
+// Empty canvas and shift+right-click keep the browser's own menu, so "Save
+// image as" is still reachable where people actually use it.
+const HUB_ORIGIN = location.origin;
+// Through the cloud relay the hub's LAN paths are not reachable, so the links
+// are shown disabled rather than opening a dead tab.
+const HUB_HOST = String(location.hostname || '').toLowerCase();
+const HUB_LINKS_LOCAL = !(HUB_HOST === 'hubitat.com' || HUB_HOST.lastIndexOf('.hubitat.com') === HUB_HOST.length - 13);
+const HUB_TAB = 'hubitatObject';
+const nodeMenuEl = document.getElementById('nodeMenu');
+
+function hubObjectFor(nodeId) {
+  const raw = String(nodeId == null ? '' : nodeId);
+  const kindChar = raw.charAt(0);
+  let rest = raw.slice(1);
+  if (kindChar !== 'd' && kindChar !== 'a') return null;
+  // A local variable node is "a<appId>:<name>", owned by that app.
+  let owned = false;
+  const colon = rest.indexOf(':');
+  if (colon !== -1) {
+    if (kindChar !== 'a') return null;
+    rest = rest.slice(0, colon);
+    owned = true;
+  }
+  if (!rest.length || String(parseInt(rest, 10)) !== rest) return null;
+  return { kind: kindChar === 'd' ? 'device' : 'app', hubId: rest, ownedByApp: owned };
+}
+
+function hubTargets(obj) {
+  if (obj.kind === 'device') {
+    return [{ label: 'Open device page', href: HUB_ORIGIN + '/device/edit/' + obj.hubId }];
+  }
+  const owner = obj.ownedByApp ? ' (owning app)' : '';
+  return [
+    { label: 'View status page' + owner, href: HUB_ORIGIN + '/installedapp/status/' + obj.hubId },
+    { label: 'Open app page' + owner, href: HUB_ORIGIN + '/installedapp/configure/' + obj.hubId,
+      note: 'Pressing Done there re-initialises the app.' }
+  ];
+}
+
+// No navigator.clipboard here: this page is served over plain HTTP, which is
+// not a secure context, so the async clipboard API does not exist.
+function copyTextFallback(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return true;
+  } catch (e) { return false; }
+}
+
+function hideNodeMenu() {
+  nodeMenuEl.style.display = 'none';
+  nodeMenuEl.setAttribute('aria-hidden', 'true');
+  nodeMenuEl.innerHTML = '';
+}
+
+function showNodeMenu(nodeId, clientX, clientY) {
+  const obj = hubObjectFor(nodeId);
+  const node = nodes.get(nodeId);
+  const name = (node && (node.fullLabel || node.label)) || (obj.kind === 'device' ? 'Device' : 'App');
+  nodeMenuEl.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'nodeMenuTitle';
+  title.textContent = String(name).split(String.fromCharCode(10)).join(' ');
+  nodeMenuEl.appendChild(title);
+
+  const targets = obj ? hubTargets(obj) : [];
+  targets.forEach(function (t) {
+    if (HUB_LINKS_LOCAL) {
+      const a = document.createElement('a');
+      a.href = t.href;
+      a.target = HUB_TAB;
+      a.rel = 'noopener noreferrer';
+      a.setAttribute('role', 'menuitem');
+      a.textContent = t.label;
+      if (t.note) a.title = t.note;
+      a.addEventListener('click', function () { markOpenOnHubUsed(); hideNodeMenu(); });
+      nodeMenuEl.appendChild(a);
+    } else {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.disabled = true;
+      b.style.opacity = '0.55';
+      b.style.cursor = 'default';
+      b.textContent = t.label;
+      nodeMenuEl.appendChild(b);
+    }
+  });
+
+  if (targets.length) {
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.setAttribute('role', 'menuitem');
+    copy.textContent = 'Copy link';
+    copy.addEventListener('click', function () {
+      const ok = copyTextFallback(targets[0].href);
+      copy.textContent = ok ? 'Link copied' : targets[0].href;
+      setTimeout(hideNodeMenu, ok ? 700 : 2500);
+    });
+    nodeMenuEl.appendChild(copy);
+  }
+
+  const focusItem = document.createElement('button');
+  focusItem.type = 'button';
+  focusItem.setAttribute('role', 'menuitem');
+  focusItem.textContent = !obj ? 'Focus this node'
+                        : obj.ownedByApp ? 'Focus this variable'
+                        : obj.kind === 'device' ? 'Focus this device' : 'Focus this app';
+  focusItem.addEventListener('click', function () { hideNodeMenu(); focusNode(nodeId); });
+  nodeMenuEl.appendChild(focusItem);
+
+  if (obj) {
+  const rescanItem = document.createElement('button');
+  rescanItem.type = 'button';
+  rescanItem.setAttribute('role', 'menuitem');
+  rescanItem.textContent = 'Rescan this object';
+  rescanItem.title = obj.kind === 'device'
+    ? 'Re-read the apps that use this device, then reload the map here'
+    : 'Re-read this app from the hub, then reload the map here';
+  rescanItem.addEventListener('click', function () { rescanNode(nodeId, rescanItem); });
+  nodeMenuEl.appendChild(rescanItem);
+  } else {
+    const note = document.createElement('div');
+    note.className = 'nodeMenuNote';
+    note.textContent = 'No hub page for this node.';
+    nodeMenuEl.appendChild(note);
+  }
+
+  if (!HUB_LINKS_LOCAL) {
+    const note = document.createElement('div');
+    note.className = 'nodeMenuNote';
+    note.textContent = 'Hub pages open on your local network only.';
+    nodeMenuEl.appendChild(note);
+  }
+
+  nodeMenuEl.style.display = 'block';
+  nodeMenuEl.setAttribute('aria-hidden', 'false');
+  const rect = nodeMenuEl.getBoundingClientRect();
+  const x = Math.min(clientX, window.innerWidth - rect.width - 8);
+  const y = Math.min(clientY, window.innerHeight - rect.height - 8);
+  nodeMenuEl.style.left = Math.max(8, x) + 'px';
+  nodeMenuEl.style.top = Math.max(8, y) + 'px';
+  const first = nodeMenuEl.querySelector('a, button:not([disabled])');
+  if (first) first.focus();
+}
+
+network.on('oncontext', function (params) {
+  const ev = params.event && params.event.srcEvent ? params.event.srcEvent : params.event;
+  if (ev && ev.shiftKey) return;
+  const nodeId = network.getNodeAt(params.pointer.DOM);
+  if (!nodeId) { hideNodeMenu(); return; }
+  if (ev && ev.preventDefault) ev.preventDefault();
+  showNodeMenu(nodeId, (ev && ev.clientX) || 0, (ev && ev.clientY) || 0);
+});
+
+document.addEventListener('click', function (e) {
+  if (nodeMenuEl.contains(e.target) || hubTipEl.contains(e.target)) return;
+  hideNodeMenu();
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  if (nodeMenuEl.style.display === 'block') { hideNodeMenu(); canvasEl.focus(); }
+});
+network.on('zoom', hideNodeMenu);
+network.on('dragStart', hideNodeMenu);
+
+// Replaces just what the refresh owns: every edge leaving those apps, the nodes
+// on both ends, and their flows. Redrawing from ALL_NODES/ALL_EDGES is what
+// applyFilters already does on every filter change, so the current view, zoom
+// and focus survive untouched.
+function applyRescanSlice(slice) {
+  if (!slice || !slice.apps || !slice.apps.length) return false;
+  const owned = {};
+  slice.apps.forEach(function (id) { owned[id] = true; });
+  for (let i = ALL_EDGES.length - 1; i >= 0; i--) {
+    if (owned[ALL_EDGES[i].from]) ALL_EDGES.splice(i, 1);
+  }
+  (slice.edges || []).forEach(function (e) { ALL_EDGES.push(e); });
+  (slice.nodes || []).forEach(function (n) {
+    let at = -1;
+    for (let i = 0; i < ALL_NODES.length; i++) { if (ALL_NODES[i].id === n.id) { at = i; break; } }
+    if (at >= 0) ALL_NODES[at] = n; else ALL_NODES.push(n);
+  });
+  if (slice.flows && GRAPH.flows) {
+    Object.keys(slice.flows).forEach(function (k) { GRAPH.flows[k] = slice.flows[k]; });
+  }
+  // A focused app also has a flowchart panel open, which is drawn by focusNode
+  // rather than by applyFilters.
+  const focused = currentFocus();
+  if (focused && (owned[focused] || slice.apps.indexOf(focused) !== -1)) focusNode(focused);
+  else applyFilters();
+  return true;
+}
+
+// Re-reads one object and updates the map in place. A reload is the honest
+// version: the graph is baked into the page at render time, so a patch in place
+// would have to reconcile removed edges as well as added ones.
+function rescanNode(nodeId, item) {
+  const obj = hubObjectFor(nodeId);
+  if (obj && obj.ownedByApp) nodeId = 'a' + obj.hubId;
+  const original = item.textContent;
+  item.disabled = true;
+  item.textContent = 'Rescanning...';
+  fetch(RESCAN_URL + '&node=' + encodeURIComponent(nodeId), { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.ok) {
+        if (applyRescanSlice(j.slice)) {
+          item.textContent = 'Updated';
+          setTimeout(hideNodeMenu, 700);
+          return;
+        }
+        // No slice to work with, so fall back to the reload that always works.
+        try { window.sessionStorage.setItem('automationMap.refocus', nodeId); } catch (e) { }
+        window.location.reload();
+        return;
+      }
+      const why = (j && j.reason) || 'failed';
+      item.textContent = why === 'scanRunning' ? 'A full scan is running'
+                       : why === 'tooMany' ? 'Used by too many apps'
+                       : why === 'noOwner' ? 'Nothing to re-read'
+                       : 'Rescan failed';
+      setTimeout(function () { item.textContent = original; item.disabled = false; }, 2500);
+    })
+    .catch(function () {
+      item.textContent = 'Rescan failed';
+      setTimeout(function () { item.textContent = original; item.disabled = false; }, 2500);
+    });
+}
+
+// Comes back to where the user was. sessionStorage rather than the URL: the
+// map's address already carries a token, and this is per tab.
+(function () {
+  let back = null;
+  try {
+    back = window.sessionStorage.getItem('automationMap.refocus');
+    if (back) window.sessionStorage.removeItem('automationMap.refocus');
+  } catch (e) { }
+  if (back && nodes.get(back)) setTimeout(function () { focusNode(back); }, 400);
+})();
+
+// --- The card that teaches the gesture ------------------------------------
+// Browser-local, so each person in the household is told once rather than one
+// dismissal silencing it for everyone. Every access is guarded: a private
+// window or blocked site data throws instead of returning null.
+// Keyed per installed app, not per hub: localStorage is shared across every
+// instance on this origin, so a Dev or Preprod install would otherwise mark the
+// card seen for the production one, and an upgrade on one channel would hide it
+// on another.
+const TIP_INSTANCE = (function () {
+  const parts = String(location.pathname || '').split('/');
+  const at = parts.indexOf('api');
+  const id = (at !== -1 && parts.length > at + 1) ? parts[at + 1] : '';
+  return (id && String(parseInt(id, 10)) === id) ? id : 'unknown';
+})();
+const TIP_VERSION_KEY = 'automationMap.hubTip.' + TIP_INSTANCE + '.version';
+const TIP_SHOWN_KEY = 'automationMap.hubTip.' + TIP_INSTANCE + '.lastShown';
+const TIP_USED_KEY = 'automationMap.hubTip.' + TIP_INSTANCE + '.used';
+const TIP_REPEAT_MS = 30 * 24 * 60 * 60 * 1000;
+const APP_VERSION_JS = '${APP_VERSION}';
+const hubTipEl = document.getElementById('hubTip');
+
+function tipRead(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
+function tipWrite(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { /* storage unavailable */ } }
+function markOpenOnHubUsed() { tipWrite(TIP_USED_KEY, '1'); }
+
+function hubTipShouldShow() {
+  const lastVersion = tipRead(TIP_VERSION_KEY);
+  if (!lastVersion) return true;
+  if (lastVersion !== APP_VERSION_JS) return true;
+  if (tipRead(TIP_USED_KEY) === '1') return false;
+  const last = parseInt(tipRead(TIP_SHOWN_KEY) || '0', 10);
+  return !last || (Date.now() - last) > TIP_REPEAT_MS;
+}
+
+function hubTipHide() { hubTipEl.hidden = true; }
+
+function hubTipShow() {
+  if (!HUB_LINKS_LOCAL) return;
+  hubTipEl.hidden = false;
+}
+
+function hubTipDismiss() {
+  hubTipHide();
+  tipWrite(TIP_VERSION_KEY, APP_VERSION_JS);
+  tipWrite(TIP_SHOWN_KEY, String(Date.now()));
+}
+
+// Opens the real menu on a node that is actually on screen, so the gesture is
+// demonstrated on this hub's own map rather than described.
+function hubTipDemo() {
+  // Only a device or an app has a hub page, so the demonstration has to land
+  // on one of those rather than the first node that happens to be in view.
+  let ids = nodes.getIds().filter(function (id) { return !!hubObjectFor(id); });
+  if (hubTipLastNode && ids.indexOf(hubTipLastNode) !== -1) ids = [hubTipLastNode].concat(ids);
+  if (!ids.length) return;
+  const positions = network.getPositions(ids);
+  let chosen = null;
+  for (let i = 0; i < ids.length; i++) {
+    const dom = network.canvasToDOM(positions[ids[i]]);
+    if (dom.x > 60 && dom.y > 60 && dom.x < window.innerWidth - 320 && dom.y < window.innerHeight - 220) {
+      chosen = { id: ids[i], dom: dom };
+      break;
+    }
+  }
+  if (!chosen) {
+    network.fit();
+    const dom = network.canvasToDOM(positions[ids[0]]);
+    chosen = { id: ids[0], dom: dom };
+  }
+  hubTipHide();
+  const canvasRect = canvasEl.getBoundingClientRect();
+  showNodeMenu(chosen.id, canvasRect.left + chosen.dom.x + 12, canvasRect.top + chosen.dom.y + 12);
+}
+
+document.getElementById('hubTipClose').addEventListener('click', hubTipDismiss);
+document.getElementById('hubTipGot').addEventListener('click', hubTipDismiss);
+// Always available, so the card is never the only way to learn the gesture.
+document.getElementById('hubTipBtn').addEventListener('click', function () {
+  hideNodeMenu();
+  hubTipEl.hidden = false;
+});
+
+document.getElementById('hubTipDemo').addEventListener('click', function (e) { e.stopPropagation(); hubTipDismiss(); hubTipDemo(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !hubTipEl.hidden) hubTipDismiss(); });
+
+// Offered when someone first opens a device or app, not on the whole map:
+// that is the moment the hub page is worth knowing about.
+var hubTipLastNode = null;
+var hubTipReady = false;
+var hubTipOffered = false;
+var hubTipLastViewWholeMap = true;
+
+// Tracks the node for the demonstration only. The card itself is offered by
+// the view trigger below.
+function hubTipOnNodeOpened(nodeId) {
+  if (!hubObjectFor(nodeId)) return;
+  hubTipLastNode = nodeId;
+}
+
+// The first view that actually contains clickable objects, which is any view
+// other than the opening whole map. var flags, because applyFilters calls this
+// during set-up while this section's own consts are still in their dead zone.
+function hubTipOnViewRendered(isWholeMap) {
+  hubTipLastViewWholeMap = isWholeMap;
+  if (!hubTipReady || isWholeMap || hubTipOffered) return;
+  if (!hubTipShouldShow()) return;
+  hubTipOffered = true;
+  setTimeout(hubTipShow, 600);
+}
+// Set last, after the flags above are declared and assigned: a page that opens
+// straight into a focused view has already called the trigger and returned, so
+// re-check with the view it recorded.
+hubTipReady = true;
+hubTipOnViewRendered(hubTipLastViewWholeMap);
+// --- end Open on hub ------------------------------------------------------
 
 document.getElementById('kindFilter').addEventListener('change', applyFilters);
 // Short synthesised confirmation tone, agreed with Gordon 2026-08-19 - no
