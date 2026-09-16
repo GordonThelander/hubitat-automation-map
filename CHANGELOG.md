@@ -4,9 +4,19 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
-## 2.3.2
+## 2.3.3
 
 In development on the dev channel.
+
+The Community information card no longer claims a package's declared identity did not match its
+source. That check is a static parse, and a package naming itself through a constant read as a
+difference with nothing actually wrong, including this one. The card now says the identity could not
+be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
+separately in the Community Utilities crawl.
+
+## 2.3.2
+
+Released 2026-09-16.
 
 **Open anything on the hub.** Right-click any device or app on the map to reach its page in the
 Hubitat admin UI in a second tab: the device page for a device, the status page or the app page for
@@ -37,12 +47,6 @@ hub-wide insights still come from the last full scan.
   predates the last graph rebuild, and `not-rated` for a piston nobody has assessed yet.
 
 The community thread link on the app's settings page now opens the newest post.
-
-The Community information card no longer claims a package's declared identity did not match its
-source. That check is a static parse, and a package naming itself through a constant read as a
-difference with nothing actually wrong, including this one. The card now says the identity could not
-be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
-separately in the Community Utilities crawl.
 
 ## 2.2.1
 
