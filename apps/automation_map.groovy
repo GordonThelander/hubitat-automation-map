@@ -1193,8 +1193,18 @@ if (${scanActive ? 'true' : 'false'}) {
   } else {
     document.addEventListener('DOMContentLoaded', amShowRemoteProgress);
     if (document.readyState !== 'loading') amShowRemoteProgress();
+    // The remote UI cannot poll and does not reliably honour refreshInterval,
+    // so reload every 15s while the scan runs, capped at 3 minutes.
+    try {
+      var amRemoteReloads = parseInt(sessionStorage.getItem('amRemoteReloads'), 10) || 0;
+      if (amRemoteReloads < 12) {
+        sessionStorage.setItem('amRemoteReloads', String(amRemoteReloads + 1));
+        setTimeout(function () { location.reload(); }, 15000);
+      }
+    } catch (ignore) { }
   }
 } else {
+  try { sessionStorage.removeItem('amRemoteReloads'); } catch (ignore) { }
   // Bounded retry for the amStartScan() cloud path's own fixed 4-second
   // reload, which can legitimately land before startScan()'s two HTTP
   // calls finish and scanRunning commits. Without this, that one reload
@@ -4151,10 +4161,8 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
             if (decides) steps << webcoreFlowControl('endif', '')
             break
         case 'switch':
-            // Ordered cases render as one decision chain. The default case is
-            // NOT drawn: a switch's own s is the subscription flag subscribeAll
-            // writes, not a statement list, so where a default body lives is
-            // unproven and is left rather than guessed.
+            // Ordered cases render as one decision chain; case values are not decoded.
+            // The default body is the switch's e list, as the pinned executor reads it.
             boolean opened = false
             ((st.cs instanceof List) ? st.cs as List : []).each { Object raw ->
                 if (!(raw instanceof Map)) return
@@ -4162,6 +4170,12 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
                 steps << webcoreFlowControl(opened ? 'elseif' : 'if', 'case not decoded')
                 opened = true
                 webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
+            }
+            List defaultBody = (st.e instanceof List) ? st.e as List : []
+            if (defaultBody) {
+                steps << (opened ? webcoreFlowControl('else', '') : webcoreFlowControl('if', 'no case matched'))
+                opened = true
+                webcoreFlowStatements(defaultBody, steps, depth + 1)
             }
             if (opened) steps << webcoreFlowControl('endif', '')
             break
@@ -18504,7 +18518,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
-    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case is not decoded, a switch default branch is not drawn, and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case value is not decoded (each case shows as case not decoded, and the default branch as else), and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.

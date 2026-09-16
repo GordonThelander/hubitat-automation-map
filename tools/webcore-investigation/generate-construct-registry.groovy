@@ -216,6 +216,14 @@ List<String> statements = extractStatements(piston, constants, failures)
 List<String> functions = extractDefs(piston, 'func_')
 List<String> vcmds = extractDefs(piston, 'vcmd_')
 List<String> declaredVcmds = extractCatalogue(app, 'private static Map<String,Map> virtualCommands(){', 'a=[', failures)
+// The fuel-stream commands are added by a second literal when graphsOn() is
+// true. The editor offers them whenever graphs are enabled, so they are declared.
+int vcmdStart = app.indexOf('private static Map<String,Map> virtualCommands(){')
+if (vcmdStart >= 0) {
+    extractCatalogue(app.substring(vcmdStart), 'if(graphsOn()){', 'a = a + [', failures).each {
+        if (!declaredVcmds.contains(it)) declaredVcmds << it
+    }
+}
 List<String> declaredFuncs = extractCatalogue(app, '@Field final Map<String,Map> functionsFLD=[', 'functionsFLD=[', failures)
 
 // ----------------------------------------------------- dispatch site freeze
@@ -363,7 +371,7 @@ Map<String, Integer> EXPECTED = [
     'statement.dispatch'      : 12,
     'function.executor'       : 109,
     'vcmd.executor'           : 69,
-    'vcmd.declared'           : 64,
+    'vcmd.declared'           : 67,
     'function.declared'       : 105,
 ]
 Map<String, List<String>> actual = [
