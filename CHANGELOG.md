@@ -38,6 +38,12 @@ hub-wide insights still come from the last full scan.
 
 The community thread link on the app's settings page now opens the newest post.
 
+The Community information card no longer claims a package's declared identity did not match its
+source. That check is a static parse, and a package naming itself through a constant read as a
+difference with nothing actually wrong, including this one. The card now says the identity could not
+be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
+separately in the Community Utilities crawl.
+
 ## 2.2.1
 
 In development on the dev channel. Insights gains a set of findings for things that look fine but

@@ -15422,7 +15422,10 @@ function ccFormatDate(iso) {
 function ccRecordHtml(record, identityMismatch) {
   let html = '<span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[record.authority] || record.authority) + '</span>';
   if (identityMismatch) {
-    html += '<p class="sub ccCaution">Community Utilities flagged this package - its declared identity did not match its own source code at last check. Treat this match with extra care.</p>';
+    // Deliberately weaker than it once read. The check is a static parse of the
+    // source, and a package that names itself through a constant, or builds the
+    // name at runtime, reads as a difference without anything being wrong.
+    html += '<p class="sub ccCaution">Community Utilities could not confirm this package identity against its source at last check: the name declared in the source read differently from the one in the package manifest. That is often a harmless difference in how the source is written, so treat this match as unconfirmed rather than wrong.</p>';
   }
   html += '<p><b>' + extEsc(record.displayName || record.packageName || 'Unnamed') + '</b>' +
     (record.author ? ' &middot; ' + extEsc(record.author) : '') + '</p>';
