@@ -983,8 +983,9 @@ can read nothing out of, or one deeper than that bound, stays opaque.
 to `condition not decoded` (or `3 conditions not decoded`) rather than printing half a sentence; the
 same happens when any device in the condition cannot be named. An unrecognised statement type becomes
 a visible `not decoded` block rather than being dropped, so a chart never silently omits part of a
-piston. A switch case is not decoded, and a switch default branch is not drawn at all, because where
-a default body is stored is unproven.
+piston. A switch case value is not decoded: each case shows as `case not decoded`, and the default
+branch, read from the switch's `e` list as the executor does, shows as `else`. With fall-through
+(`ctp` `e`) the chain is an approximation, since execution can continue into later cases.
 
 **Task parameters.** A task transcribes its saved parameters beside its command name, reading as
 `setVariable(localCounter, @@AMGateA_NumShared)`. Each parameter is an operand printed exactly as

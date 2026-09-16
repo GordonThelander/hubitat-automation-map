@@ -14,6 +14,15 @@ difference with nothing actually wrong, including this one. The card now says th
 be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
 separately in the Community Utilities crawl.
 
+webCoRE flow charts now draw a switch's default branch as `else` after its cases. Case values are
+still shown as not decoded.
+
+Opened through Hubitat remote access, the settings page no longer sits on "Remote scanning" after a
+scan finishes. It reloads every 15 seconds while a scan runs, for at most three minutes.
+
+The webCoRE construct registry now records the three fuel-stream commands as declared. They are
+added by a conditional block the generator previously skipped.
+
 ## 2.3.2
 
 Released 2026-09-16.
