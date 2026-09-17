@@ -8236,6 +8236,33 @@ List extractHubVariableReads(Map data) {
         }
     }
 
+    // A Set Variable action can take its value FROM other variables. numOp.<n>
+    // names the source for a Number/Decimal target: 'variable math' puts the
+    // operand names in xVar3/xVar4 (with the literal '(constant)' standing in for
+    // a number held in valConst2), and 'add number' adds valNumber to the target's
+    // own current value, which is a read of the target. Both were invisible here,
+    // so a computed write showed a WRITE edge and no read. Only the shapes seen on
+    // a live hub are decoded; any other numOp value is left alone.
+    settingValues.keySet().findAll { it.startsWith('numOp.') }.sort().each { String key ->
+        String num = key.substring('numOp.'.length())
+        String mode = "${settingValues[key] ?: ''}".toLowerCase()
+        List<String> operandFields = []
+        if (mode == 'variable math') operandFields = ["xVar3.${num}", "xVar4.${num}"]
+        else if (mode == 'add number') operandFields = ["xVarV.${num}"]
+        else return
+        operandFields.each { String field ->
+            String varName = "${settingValues[field] ?: ''}"
+            // '(constant)' is the picker's own placeholder for "a number, not a
+            // variable", not a variable named that.
+            if (!varName || varName == '(constant)') return
+            String key2 = "${varName}|value-source|${field}"
+            if (foundKeys.add(key2)) {
+                found << [variable: varName, confirmed: true, usageRole: 'value-source',
+                          evidenceKind: 'structured-setting', field: field]
+            }
+        }
+    }
+
     // Trigger-by-variable: a rule that FIRES on a Hub Variable changing, not
     // just referencing one in a condition. Same picker convention as a
     // device trigger (tDev<n>/tCustomAttr<n>) but tCapab<n>=='Variable' and
@@ -8743,6 +8770,19 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
                 String attr = settingValues["tCustomAttr.${num}"]
                 List srcDevices = settingDevices["customDev.${num}"] ?: []
                 if (attr && srcDevices) return "Set Variable ${varName} from ${srcDevices[0]}.${attr}"
+            }
+            if (valSource.equalsIgnoreCase('variable math')) {
+                String left = settingValues["xVar3.${num}"]
+                String right = settingValues["xVar4.${num}"]
+                String op = settingValues["valMathOp.${num}"]
+                // '(constant)' means the operand is the number in valConst2.
+                if (right == '(constant)') right = settingValues["valConst2.${num}"]
+                if (left == '(constant)') left = settingValues["valConst.${num}"]
+                if (left && op && right) return "Set Variable ${varName} = ${left} ${op} ${right}"
+            }
+            if (valSource.equalsIgnoreCase('add number')) {
+                String amount = settingValues["valNumber.${num}"]
+                if (amount) return "Set Variable ${varName} + ${amount}"
             }
             return "Set Variable ${varName}"
         case 'getOnOffSwitch':
@@ -9839,7 +9879,14 @@ void correctFlowVariableLabels(Map flows, Map ruleVariables) {
             String currentLabel = s.label as String
             if (!currentLabel?.startsWith('Set Variable ')) return
             String rest = currentLabel.substring('Set Variable '.length())
-            int fromIdx = rest.indexOf(' from ')
+            // The source clause to carry over. ' from ' is a device attribute;
+            // ' = ' and ' + ' are the computed forms (numOp 'variable math' and
+            // 'add number'), which were dropped when only ' from ' was kept.
+            int fromIdx = -1
+            [' from ', ' = ', ' + '].each { String marker ->
+                int at = rest.indexOf(marker)
+                if (at >= 0 && (fromIdx < 0 || at < fromIdx)) fromIdx = at
+            }
             String suffix = fromIdx >= 0 ? rest.substring(fromIdx) : ''
             String varName = (r.canonicalName ?: r.name) as String
             if (r.status == 'resolved' && r.scope == 'local') {
@@ -12954,6 +13001,7 @@ const LEGEND_GROUP_ROWS = [
 const LEGEND_EDGE_ROWS = [
   { key: 'trigger', html: '<span class="swatch sw-dot" style="background:' + roleColors.trigger + '"></span><span class="line" style="border-color:' + roleColors.trigger + '"></span>Trigger - app listens to this device' },
   { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '"></span>Constraint - condition / required expression' },
+  { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '; border-top-style:dotted"></span>Constraint, dotted - nothing evaluates this condition' },
   { key: 'monitor', html: '<span class="swatch sw-dot" style="background:' + roleColors.monitor + '"></span><span class="line" style="border-color:' + roleColors.monitor + '"></span>Monitor - app reads this device' + "'" + 's state' },
   { key: 'action', html: '<span class="swatch sw-dot" style="background:' + roleColors.action + '"></span><span class="line" style="border-color:' + roleColors.action + '"></span>Action - app can command this device' },
   { key: 'exposed', html: '<span class="swatch sw-dot" style="background:' + roleColors.exposed + '"></span><span class="line" style="border-color:' + roleColors.exposed + '; border-top-style:dotted"></span>Exposed - published to an external system' },
@@ -13262,7 +13310,13 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   // device relationship because it is the rarer and more surprising one.
   const isRuleLink = RULE_LINK_KINDS.indexOf(e.kind) !== -1;
   let dashes = false;
-  if (e.kind === 'owns') dashes = true;
+  // A constraint edge whose condition nothing evaluates (backlog 31). The node
+  // tag cannot say this when the same device also has a live relationship, so
+  // the EDGE carries it: same colour, so it still reads as a constraint, drawn
+  // dotted and thin because nothing gates on it.
+  const deadConstraint = e.kind === 'constraint' && e.unused === true;
+  if (deadConstraint) dashes = [1, 5];
+  else if (e.kind === 'owns') dashes = true;
   else if (e.kind === 'exposed') dashes = [2, 4];
   else if (e.kind === 'cancelTimedActions') dashes = [8, 4];
   else if (e.kind === 'setspb') dashes = [2, 3];
@@ -13275,6 +13329,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'depends') dashes = (e.crit === 'RUNTIME') ? [6, 3] : [2, 5];
   let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
+  if (deadConstraint) width = 1;
   const edge = {
     // stateful stays three-valued (v2.2.8): true, false, or null for a webCoRE
     // action, where the command is proven but its lasting state is not. Every
