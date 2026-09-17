@@ -16,23 +16,6 @@ history, not in this delivery list.
 
 ## Now
 
-### 34. Variable-sourced Set Variable actions are written but their sources are not read
-
-A Set Variable action names its source in `valStringOp.<n>` for a String target and
-`numOp.<n>` for a Number or Decimal target. Both are now read for the device-attribute case
-(2.3.3), so a numeric variable fed from a device attribute finally shows its source.
-
-Not covered: the other `numOp` values seen live on this hub, `variable math` (rule 3079, two
-actions) and `add number` (rule 2100). Those take their value from one or two OTHER variables
-in `xVar3.<n>` / `xVar4.<n>` with the operator in `valMathOp.<n>`, which means the map is
-missing READ edges for every variable a computed write consumes. `add number` is not in the
-value list the community MCP Rule Server documents, so the enum is wider than either source
-knows.
-
-**Next action:** decode the math operands into variable read relationships, with the same
-classification the existing reads use (local versus hub), and confirm the full `numOp` value
-set on a fixture before relying on the list.
-
 ### 33. Remote access: the page stays on "Remote scanning" after the scan finishes
 
 Seen on the 2.3.0 preprod install (2026-09-13) through remoteaccess.aws.hubitat.com: the scan completed
@@ -52,36 +35,6 @@ page left open for more than 60s after completion.
 This works whichever hypothesis is true.
 
 **Next action:** confirm through remote access that the page moves on by itself after a scan.
-
-### 31. A dead constraint on a device that also has a live relationship
-
-**New, 2026-09-18.** The hub publishes its own answer. `appState` (and the compiled state at
-`/app/ruleBuilderJson/<id>`) carries `inUseConds` and `unusedConds`, arrays of condition
-numbers, on 45 of 66 rules here. That is the same question this item answers by inspection.
-
-It is not usable as-is: on Perimeter Closed (1809) `unusedConds` is `["44","55","48","38","51"]`
-while `38` and `44` are both named in that rule's Required Expression (`eval["0"]`) and in
-`predCapabs`, so the lists either mean something narrower than their names or go stale. Work
-out what they track before trusting them; if they prove reliable they replace the detection,
-and if they do not they are still a cross-check that costs one field read.
-
-
-Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression
-names any more, so those devices are drawn as constraints even though nothing evaluates them. The
-map now tags a device `UNUSED` when every relationship visible in the current view is one of these,
-which covers the case that prompted the work (Perimeter Open's orphaned illuminance condition on the
-two Back Garden lights).
-
-What it does not cover: a device holding both a dead constraint and a live relationship. Perimeter
-Closed is the example - its five door contacts are live triggers and also sit in an abandoned contact
-condition, so they keep an unexplained constraint line with no tag. A node tag cannot say this
-without falsely calling the device unused, since the device genuinely is in use.
-
-**Next action:** decide whether to mark the edge rather than the node (dimming or dashing a dead
-constraint line), and whether to add a matching neutral Insights finding alongside
-`disabledDevicesStillUsed`. Detection already exists and is exposed as `unused` on constraint edges;
-this is a presentation decision, not new analysis. Hub-wide there were 20 such edges across 6 rules
-when this was measured (2026-09-09).
 
 ## Next
 
@@ -310,6 +263,25 @@ the case for touching a known-delicate scan lifecycle is efficiency and log hone
 Both lines now log at info in this case, so a normal scan shows no WARN.
 
 ## Hold / closed
+
+- **A dead constraint on a device that also has a live relationship (item 31).** Closed on dev
+  for 2.3.3. A constraint edge whose condition nothing evaluates now draws dotted and thin in
+  the same constraint colour, with its own legend row, so the case a node tag cannot state (a
+  device holding both a dead constraint and a live relationship) is visible on the edge itself.
+  The export already carried it as `unusedConstraint` from 2.3.2.
+
+  The hub's own `inUseConds` / `unusedConds` lists were assessed as a replacement for the
+  detection and rejected: they agree with a reconstruction from `eval` plus action references
+  on only 27 of 66 rules, they list a condition used solely by the Required Expression as
+  unused (rules 1809, 2100), and on rule 3080 the same condition ids appear in BOTH lists.
+  Recorded in the storage-format document as meaning unknown.
+
+- **Variable-sourced Set Variable actions (item 34).** Closed on dev for 2.3.3. A numeric
+  target names its source in `numOp.<n>`, so the device-attribute source is now read from
+  either field, `variable math` emits read references for its operand variables (`xVar3` /
+  `xVar4`, skipping the `(constant)` placeholder) under the new usage role `value-source`, and
+  `add number` records the read of the target's own value. Flow labels print the arithmetic.
+  A plain `variable` source has no fixture on this hub and is still not decoded.
 
 - **webCoRE source and description inconsistencies (item 32).** Closed on dev for 2.3.3. The
   registry generator now reads the `graphsOn()` block of `virtualCommands()`, so `clearFuelStream`,

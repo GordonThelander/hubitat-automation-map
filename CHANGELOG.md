@@ -14,6 +14,14 @@ difference with nothing actually wrong, including this one. The card now says th
 be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
 separately in the Community Utilities crawl.
 
+A condition that nothing evaluates now draws as a dotted line on the map, in the same colour
+as a normal condition, with a legend entry. Previously a device could only be marked when every
+one of its relationships was dead, so a device that was both used and pointlessly named in an
+old condition showed nothing.
+
+Set Variable actions that calculate a value now show the variables they read and print the
+arithmetic, for example "Set Variable Counter = TestNumber + 5".
+
 Rule Machine wait-for-event devices are no longer drawn as rule triggers. Those devices are
 stored under a separate key family that the old check also matched, which affected three rules
 on a 66-rule hub, and they now appear as monitored devices.
