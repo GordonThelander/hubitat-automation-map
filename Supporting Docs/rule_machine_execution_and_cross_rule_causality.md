@@ -47,6 +47,14 @@ as fixed in hub revision 52. Until that exact post-fix source is committed or
 attached, treat the gate as **handoff-confirmed, not independently source-
 verified in this review**.
 
+**Updated 2026-09-18.** Cross-checked against the community Hubitat Local MCP Server's source
+(kingpanther13/Hubitat-local-MCP-server), which writes rules through the wizard rather than
+reading them. New material: paused and stopped also remove trigger subscriptions (2.1),
+conditional triggers are evaluated after the event (2.1), Rule Machine's own HTTP endpoint
+surface (5.1a), Start resets the Private Boolean (5.1b), read-direction cross-rule edges
+(6.1), scenes are plain device edges (6.3) and three control-flow facts (8.9). Items taken
+from that source are marked external and are not locally validated.
+
 ## 1. Evidence and implementation status
 
 The evidence markers match the storage-format reference:
@@ -142,6 +150,21 @@ the top.
 A Required Expression can therefore influence whether a rule is eligible to be
 invoked without itself being a trigger. Any future causality graph must preserve
 that distinction.
+
+**Three causes of a missing subscription, not one.** A paused rule and a stopped rule also
+lose their trigger subscriptions, and `appState` carries independent `paused` and `stopped`
+booleans (both seen on this hub). The community MCP Rule Server treats a false Required
+Expression, paused and stopped identically when deciding whether zero subscriptions means a
+broken trigger. So an empty `eventSubscriptions` supports no inference about the rule's
+definition until all three are excluded. **[strong; cross-checked against the MCP server's
+source 2026-09-18]**
+
+**Conditional triggers sit on the other side of the event.** A trigger row can carry its own
+condition (`isCondTrig<n>` with `condTrig<n>`), and that condition is evaluated after the
+event arrives, not before. A Required Expression decides whether the subscription exists at
+all; a conditional trigger filters an event that already fired. Both suppress a run, at
+different points, and a causality graph that treats them alike loses that distinction.
+**[external: MCP server source and its RM test matrix; not locally validated]**
 
 ### 2.2 Immediate action order is not device completion order
 
@@ -282,6 +305,30 @@ Do not generalise the same-thread detail to Rule Machine Legacy, Button Rule, or
 other engines without separate evidence; Bruce explicitly described different
 dispatch behavior for some cross-engine cases.
 
+### 5.1a Rule Machine's own HTTP endpoints are a fifth invocation channel
+
+A rule with a Local or Cloud End Point trigger exposes Rule Machine's own URL surface, and
+those URLs invoke rules directly: `/runRuleAct=`, `/stopRuleAct=`, `/pauseRule=`,
+`/resumeRule=`, `/setRuleBooleanTrue=`, `/setRuleBooleanFalse=`, plus `/getRuleList` (which
+returns `{id: name}`) and `/setHubVariable=<name>:<value>`. Any other path sets `%value%`.
+
+This matters for causality in two ways. The caller can be anything on the network, so an
+edge into a rule may have no in-hub origin at all; and the same verbs that RMUtils exposes to
+other rules are reachable without a rule existing to hold them. **[external: MCP server test
+matrix; not locally validated]**
+
+The RMUtils verb set behind those URLs is `runRule` (legacy), `runRuleAct`, `stopRuleAct`,
+`pauseRule`, `resumeRule`, `setRuleBooleanTrue` and `setRuleBooleanFalse`. Rule Machine's own
+internal pause button is spelled `pausRule`, without the "e", which is a wire-format detail
+rather than a semantic one. **[external]**
+
+### 5.1b Start resets the Private Boolean
+
+Pressing Start on a stopped rule also sets that rule's Private Boolean to true; the documented
+default is that Private Boolean is true after Start. A causality reader that sees a Private
+Boolean change and looks for a `setspb` action, or for another rule acting on it, will find
+neither. **[external: MCP server test matrix; not locally validated]**
+
 ### 5.2 Rule Functions
 
 **[strong, community-sourced; locally unvalidated: T12]** Rule Functions can
@@ -324,6 +371,13 @@ The proposal names `INVOKES`, `RUNS_ACTIONS_OF`, `PAUSES`, `RESUMES`, `ENABLES`,
 - Private Boolean control exists as `setspb`, although the proposal did not give
   it equal prominence.
 - Separate `INVOKES`, `ENABLES`, and `DISABLES` kinds are **not implemented**.
+
+**Read-direction cross-rule edges exist too.** Rule Machine offers a "Rule paused" trigger
+capability, so one rule can trigger on another rule's paused state, and a rule's Private
+Boolean can be referenced as a condition input. Both are edges between rules that carry no
+write: this document's four write-direction kinds do not cover them, and Automation Map does
+not draw them today. **[external: MCP server RM test matrix, catalogue row with no live
+fixture; not locally validated]**
 
 ### 6.2 Hub Variable nodes and edges
 
@@ -372,6 +426,12 @@ real dependency without claiming the exact causal semantics.
 **[invariant]** Hub Variable edges remain app-to-variable in stored graph shape.
 The client reverses the arrowhead for `read` so the visual direction is
 variable-to-app. Writes and reads between the same pair remain separate.
+
+**Scenes are not a separate action kind.** Rule Machine 5.1 has no activate-scene action: a
+Scene or Room Lighting group is run by turning on its activator device with an ordinary Switch
+action. A scene dependency therefore reaches this document as a plain device edge, and no
+scene-specific causality can be recovered from the rule alone. **[external: MCP server action
+schema]**
 
 ### 6.3 Device relationships are not collapsed into rule causality
 
@@ -547,6 +607,14 @@ Cycle detection, possible oscillation, transitive reachability, impact analysis,
 collapsed views, evidence aggregation, and filters become meaningful only after
 edge semantics are trustworthy. A structural cycle can be detected without
 proving an operational feedback loop; the UI must keep those labels distinct.
+
+### 8.9 Control-flow facts worth holding while reading actions
+
+Three runtime rules from the MCP server's test matrix bear directly on what an action list
+implies. `Repeat Until` always runs its body at least once, so its exit condition is not a
+guard. `Stop Repeating` only works when the Repeat was marked stoppable. `Exit Rule` skips the
+remaining actions but does **not** cancel actions that were already scheduled, so an exit does
+not end the rule's future effects. **[external; not locally validated]**
 
 ## 9. Debugging runtime and causality
 
