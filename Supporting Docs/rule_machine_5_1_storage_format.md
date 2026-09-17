@@ -12,6 +12,13 @@ Required Expression, free-text interpolation). That section rests on a handful o
 deliberately-constructed fixtures on one hub, not a corpus survey - its evidence markers are
 correspondingly weaker than sections 1-11's, and should be read as such.
 
+**Updated 2026-09-18.** Cross-checked against the community Hubitat Local MCP Server's
+source (kingpanther13/Hubitat-local-MCP-server), which drives the same rules through the
+wizard rather than reading them, and re-verified on a C-8 running 2.5.1.183 across 66
+Rule-5.1 rules. That pass corrected two claims (sections 3 and 5.2), added the
+`parens` / `inUseConds` / `unusedConds` keys, the Wait-for-Events key family, the numeric
+Set Variable discriminator, and section 14.
+
 **Updated 2026-09-15.** Section 5.2 now follows Rule Machine's author on mixed AND/OR: a
 left-to-right walk that stops early, replacing an earlier right-grouping reading. New
 observations on firmware 2.5.1.183 were added to sections 8 (an own-id "this rule" target),
@@ -113,6 +120,7 @@ Findings below carry one of these markers:
 | **[single]** | one observation, which is not evidence of a pattern |
 | **[heuristic]** | a technique that works in practice, not a property of the format |
 | **[unknown]** | explicitly not established |
+| **[external]** | asserted by another tool's source, not observed here; the source is named |
 
 Unmarked prose is description or advice rather than a claim about the format.
 
@@ -125,6 +133,8 @@ If you read nothing else, read these:
 - Some actions carry a field called `rule` which is **not a rule reference**. It is a
   condition index, and it is non-null for only three action types (section 9.1). **[invariant]**
 - `indent` does not reliably describe nesting. Do not build a tree from it (section 9.2). **[strong]**
+- Key your action scan on `actSubType.<n>`. `actType.<n>` is missing on block closers such as
+  END-IF and ELSE, so an actType-keyed scan loses them (section 3). **[strong]**
 - `eventSubscriptions` is a snapshot that changes with Required Expression state, so a
   rule's triggers can appear to vanish (section 10.3). **[strong]**
 - `%device%`, `%time%`, `%date%` are Rule Machine's own reserved notification tokens, not
@@ -185,15 +195,29 @@ joined by action number.**
 Neither half is usable on its own. The action object tells you an On/Off switch action
 exists; only the settings tell you which device and whether it is on or off.
 
-Two settings accompanied every action examined: **[strong]**
+Two settings accompany an action: **[strong]**
 
 | Setting | Meaning |
 | --- | --- |
 | `actType.<n>` | the action *family*, e.g. `switchActs`, `dimmerActs`, `condActs`, `delayActs`, `rulesActs` |
 | `actSubType.<n>` | the specific action, matching the `method` in the action object |
 
-`actSubType` duplicates `method`. Prefer whichever you like, but `actSubType` was present in
-every case observed, so it is the safer primary key. **[strong]**
+`actSubType` duplicates `method`. Prefer whichever you like, but `actSubType` is the safer
+primary key, because **`actType` is not always written**. **[strong]**
+
+**Correction, 2026-09-18.** An earlier version of this document said both settings accompanied
+every action examined. A scan of 66 rules on 2.5.1.183 found 209 actions carrying both and 8
+carrying `actSubType` alone: `getEndIf` (three rows), `getElse` (one), and four rows whose
+`actSubType` value is an empty string. Every one of the named cases is a block closer, which
+is what the community MCP Rule Server's source also reports for rows written by Rule Machine's
+own UI. A scan keyed on `actType.<n>` silently drops those rows and, with them, the end of
+every IF block they close. Key the scan on `actSubType.<n>` and treat `actType.<n>` as
+optional enrichment. **[strong]**
+
+The family list is longer than the five named above. The MCP server's source names twelve:
+`condActs`, `delayActs`, `deviceActs`, `dimmerActs`, `lockActs`, `messageActs`, `modeActs`,
+`repeatActs`, `rulesActs`, `sceneActs`, `soundActs`, `switchActs`, with several non-obvious
+placements (Hubitat Safety Monitor sits under `lockActs`). **[external]**
 
 ### 3.1 Action objects come in more than one shape
 
@@ -237,6 +261,11 @@ to `actSubType` costs one line and removes a whole class of failure.
 ---
 
 ## 4. Execution order
+
+**Settings key order means nothing.** `appSettings` is neither display order nor numeric
+order: rule 1809 returns `actType.38`, `actType.23`, `actType.61`, `actType.63` before any
+`actSubType.<n>` key at all. The compiled state's `actionList` is the only display-ordered
+sequence the hub exposes, and it lists action numbers as strings. **[strong]**
 
 `appState.actionList` is the ordered list of action numbers.
 
@@ -283,8 +312,19 @@ condition numbers `5` and `7` with the *string* `"10"`. Coerce everything to str
 handle all shapes, or you will crash on the very common single-condition branch and silently
 mis-handle mixed lists.
 
-Operators appear inline as strings between condition numbers. **The stored form is flat and
-carries no grouping information at all** for the expressions examined. **[strong]**
+Operators appear inline as strings between condition numbers. **Each `eval` entry is flat and
+carries no grouping of its own** for the expressions examined. **[strong]**
+
+**Correction, 2026-09-18.** An earlier version concluded from that flatness that grouping is
+not stored at all, and listed parentheses as not examined. Grouping has its own key.
+`parens` sits beside `eval`, in both `appState` and the compiled state, keyed by the same
+branch numbers: rule 1809 returns `parens = {"0": 0, "11": 0, "12": 0, ...}`. Every rule on
+this hub returns zero for every branch, because none of them groups its conditions, so the
+encoding of a non-zero value is **[unknown]** here. That the hub authors grouping at all is
+confirmed by the MCP server's source, whose wizard writer opens a sub-expression with the
+condition-picker value `b` and closes it with the operator value `end-sub-expression )`,
+nested to any depth. **[external]** Treat a non-zero `parens` entry as a signal to stop
+trusting a flat left-to-right read of that branch.
 
 **Do not infer evaluation order from that flatness.** Rule Machine's author describes the
 evaluation directly: **[strong]**
@@ -292,6 +332,10 @@ evaluation directly: **[strong]**
 > "it is a strictly left to right evaluation, and once something to the left of OR is true,
 > or the left of AND is false, it returns true or false and stops evaluating."
 > (bravenel, Hubitat Community, [13 Oct 2021](https://community.hubitat.com/t/rule-5-1-predicate-and-repeat-while-until-rule/81158/2))
+
+The operator vocabulary is `AND`, `OR` and `XOR`; the MCP server validates exactly that set,
+and `NOT` is not an inline operator but a per-condition `not<n>` flag. **[external]** Nothing
+is claimed here about how `XOR` interacts with the early stop.
 
 The same rule appears in his original Rule Machine introduction
 ([6 Feb 2018](https://community.hubitat.com/t/rule-machine-introduction/307/1)), which adds
@@ -402,6 +446,53 @@ condition in words. They matter if you want the raw values rather than the prose
 
 ---
 
+### 5.4 `inUseConds` and `unusedConds`
+
+`appState` carries two lists beside `eval`, and the compiled state repeats them:
+`inUseConds` and `unusedConds`, both arrays of condition numbers as strings. They look like
+the hub's own answer to "which conditions does anything evaluate", which is the question
+section 9.1 and Automation Map's UNUSED tagging otherwise answer by inspection.
+
+**Do not use them for that without further work.** On rule 1809 `unusedConds` is
+`["44", "55", "48", "38", "51"]`, yet `38` and `44` are both named in that rule's Required
+Expression (`eval["0"] = [38, "AND", "44"]`) and in `predCapabs`. Either the lists mean
+something narrower than their names suggest, or they are stale. Present on 45 of 66 rules.
+**[unknown]**
+
+### 5.5 Comparator and shape keys
+
+The condition and trigger sides use the same asymmetry as `tDev`/`rDev_`: **[strong]**
+
+| Key | Side | Note |
+| --- | --- | --- |
+| `ReltDev<n>` | trigger | comparator for a trigger row |
+| `RelrDev_<n>` | condition | comparator for a condition row |
+| `isDev_<n>` | condition | true reveals a device-relative comparison |
+| `isVar_<n>` | condition | true reveals a variable-to-variable comparison |
+| `AlltDev<n>` | trigger | "all of these" rather than any |
+| `stays<n>`, `SHours<n>`, `SMins<n>`, `SSecs<n>` | trigger | "and stays" duration |
+| `disableT<n>` | trigger | one trigger disabled in place |
+| `isCondTrig<n>`, `condTrig<n>` | trigger | a condition attached to one trigger row |
+
+Comparator values are stored as the glyph, not ASCII: `RelrDev_2` on rule 2990 reads `≠`,
+never `!=`. String comparisons are stored as asterisk-wrapped literals, `*changed*` and
+`*contains*`; there is no "does not contain", which is `not<n>` plus `*contains*`.
+**[strong]** For the device-relative shape the MCP server's source reports that `state_<n>`
+carries the offset rather than a comparison value, so `state_<n>` is not always "the value".
+**[external]**
+
+Time values are polymorphic. `atTime<n>` holds `21:05` for a daily trigger, and a full ISO
+datetime for a one-shot dated trigger. **[external, for the ISO form]** A time range writes
+`starting<n>` / `ending<n>` as a mode word such as `A specific time`, with the value in
+`startingA<n>` / `endingA<n>` (`06:00` on rule 2195). **[strong]** Mode conditions store the
+mode **id** in `modes<n>` (`["2"]`), not the mode name; the MCP server reports the trigger
+side writes `modesX<n>`. **[strong]** / **[external]**
+
+A conditional trigger (`isCondTrig<n>` with `condTrig<n>`) is evaluated **after** the trigger
+event fires, which is the structural opposite of a Required Expression: the expression decides
+whether the subscription exists at all, the conditional trigger filters an event that already
+arrived. **[external]**
+
 ## 6. Separating triggers from conditions
 
 This is the most useful distinction in the whole format and the basis for classifying what
@@ -424,6 +515,18 @@ keys on the setting prefix can.
 `tstate1` against `rCapab_2` and `state_2`. This is not a typo in this document.
 
 ---
+
+### 6.1 Wait for Events uses dash-indexed, rule-scoped keys
+
+A Wait for Events action does not store its event rows per action. They live in rule-scope
+settings whose index is separated by a **dash**: `tCapab-<n>`, `tDev-<n>`, `tstate-<n>`,
+`stays-<n>`, `SHours-<n>`. Rule 1230 carries `tCapab-5 = Certain Time (and optional date)`,
+`tDev-4`, `tstate-4 = closed`. A device in `tDev-4` is a wait target; a device in `tDev4`
+is a trigger. Read the dash. **[strong]**
+
+Because the keys are rule-scoped rather than per-action, **only one Wait for Events action can
+exist per rule**: a second overwrites the first. The MCP server reports the same limit in
+Hubitat's own UI. **[external]**
 
 ## 7. Action parameters by family
 
@@ -622,6 +725,11 @@ including the two actions whose `pvTF` is `false`. **[strong]** The alias remain
 checking, since checking it costs nothing and missing it drops a link silently, but nothing
 on this hub demonstrates that Rule Machine ever writes it.
 
+`pvTF` is not alone. The MCP server's action schema names three more stored booleans that
+read backwards against their own field name: `lockRL.<n>` true means UNLOCK, `shadeRL.<n>`
+true means CLOSE, `disEn.<n>` true means ENABLE. None of the three appears anywhere in this
+hub's 66 rules, so they are recorded here unverified. **[external]**
+
 ### 9.4 Labels carry hub-injected HTML
 
 An app's label is not clean text. Hubitat appends status markup:
@@ -630,6 +738,13 @@ An app's label is not clean text. Hubitat appends status markup:
 
 Strip tags. Note the parenthetical text survives stripping, which is usually what you want,
 since it is real information.
+
+**The decoration is a family.** Beyond `(Paused)`, Rule Machine appends `(Stopped)` and
+`(Required Expression false)` the same way, as a styled span. The span form is what separates
+a runtime decoration from a rule a user genuinely named "Porch (Paused)": the decoration
+arrives as `>(Paused)</span>`, a literal name does not. Comparing the `/hub2/appsList` name
+with the RMUtils label is the robust test, because a literal name carries the suffix in both
+strings. **[strong]**
 
 ### 9.5 Groovy: a GString key never matches a String key
 
@@ -684,6 +799,13 @@ rather than evidence of absence: a discriminator may well exist in a field not e
 In practice this does not matter for reading the link, since the target id resolves either
 way. It matters if you want to label the two differently.
 
+**Update, 2026-09-18.** `isFunction` is present as a rule-level setting on 50 of 66 rules
+here, with an empty value on every one of them, so this hub still contains no positive
+example. The MCP server's guide states its meaning on the write side: setting
+`isFunction: true` "marks the rule as a function that returns a value, so other rules can call
+it as a function". **[external]** That makes it the named candidate rather than an open
+question; what remains unproven here is how a rule that IS a function reads back.
+
 ### 10.2 Pause/Resume discriminator: `pR.<n>`
 
 **Settled 2026-08-14.** Both use `getPauseResumeRules`, discriminated by `pR.<n>`:
@@ -706,6 +828,11 @@ from the other.
 Empty behaves as the default here too, as it does for `pvTF`: it is a present key with an
 empty value rather than a missing key, which is how a Hubitat `bool` input persists when it
 has never been switched on. So an action left untouched is a Pause.
+
+**A note on a disagreement.** The MCP server's own action schema describes `pR.<n>` as
+inverted, in the same words it uses for `pvTF`. Its mapping is identical to the one above
+(`true` is Resume), so the disagreement is in the characterisation, not the data. The mapping
+is what matters: do not "fix" a correct readback to satisfy either description. **[strong]**
 
 ### 10.3 `eventSubscriptions` is a snapshot, not a definition
 
@@ -730,6 +857,13 @@ subscriptions may be the only evidence available, and it means two scans minutes
 legitimately disagree.
 
 ---
+
+**Three causes, not one.** A zero subscription count does not imply a false Required
+Expression. `appState` carries independent `paused` and `stopped` booleans (both present on
+this hub: `stopped` on all 66 rules, `paused` on 31), and Rule Machine removes trigger
+subscriptions for a paused or stopped rule as well. The MCP server's settle check treats all
+three the same way for exactly this reason. **[strong]** / **[external]** A fourth, unrelated
+cause is the app being disabled, which is a separate flag again.
 
 ## 11. Finding rules in the first place
 
@@ -998,6 +1132,22 @@ The value SOURCE is discriminated by `valStringOp.<n>`. Two source types observe
 Set from local file, LowerCase string, Format DateTime, Copy variable, Rule Function) - none
 of these tested, storage shape **[unknown]**.
 
+**The discriminator depends on the target type.** The `valStringOp.<n>` field above is the
+String-target discriminator. A Number or Decimal target instead carries **`numOp.<n>`**, whose
+observed values are `number`, `variable`, `device attribute` and `variable math`, with the
+value in `valNumber.<n>` and the math operands in `xVar3.<n>` / `xVar4.<n>` / `valConst.<n>` /
+`valMathOp.<n>`. Both key families are present on this hub (`numOp.1 = number`,
+`valNumber.1 = 405` on rule 3078; `valStringOp.3 = Set string` on rule 2992). A decoder that
+looks only for `valStringOp` reads a numeric Set Variable action as having no source.
+**[strong]**
+
+**`xVarV.<n>` does not tell you the namespace.** Rule-local variables and Hub Variables share
+one Set Variable action and one picker, so a name in `xVarV.<n>` may be either. Treating every
+`xVarV` as a Hub Variable write manufactures false hub-variable edges; cross-check the name
+against the rule's own `allLocalVars` first. The same picker also offers two selectable header
+rows, `" --LOCAL VARIABLES--"` and `" --HUB VARIABLES--"`, each with a leading space, which are
+not variable names. **[external]**
+
 ### 13.2 Reading a variable in a condition
 
 Same slot a device condition uses, typed `Variable` instead of a capability name:
@@ -1081,6 +1231,10 @@ applied by the consuming app, not a fact about the storage format itself, record
 because the trap belongs with the format notes even though the fix is necessarily app-side.
 **[heuristic]**
 
+**The reserved list is longer.** The MCP server's test matrix names `%value%`, `%text%` and
+`%now%` alongside `%device%`, `%time%` and `%date%`, so a variable with any of those names
+collides the same way. **[external]**
+
 ### 13.8 Deleting a variable a rule still uses
 
 Deleting a Hub Variable does not check the rules that use it, and the rule breaks at once.
@@ -1094,3 +1248,69 @@ Whether the hub's own delete screen shows an in-use warning first was not observ
 the confirmation was submitted programmatically. For a reader of this format the consequence is
 the same: a structured variable reference whose name is missing from the Hub Variable
 inventory marks a rule that is already broken, not one that will recover.
+
+## 14. Facts held by the community MCP Rule Server, not yet observed here
+
+The Hubitat Local MCP Server (kingpanther13/Hubitat-local-MCP-server) drives Rule Machine
+through its wizard rather than reading it, so its source records write-side behaviour this
+read-only work cannot reach. The items below are **[external]**: taken from that source and
+its live-verified comments, not observed on this hub. They are recorded so a reader knows
+where to look, not as findings of this document.
+
+**Storage and editing state**
+
+- Each `appSettings` record carries a `multiple` marshal flag. A write that omits the
+  `<name>.multiple=true` sidecar flips it false, after which every page render throws
+  `Command 'size' is not supported by device '<label>'`, `eventSubscriptions` stays at zero,
+  and the rule is inert until the whole three-field group is re-posted.
+- Rule Machine never renumbers after a delete. Indices keep their gaps, the next add takes
+  `max + 1`, and an emptied row persists as a present key with a blank value. This hub shows
+  the same pattern (four `actSubType.<n>` rows with an empty value).
+- A rule can hold stuck wizard state in `state.editAct` and `state.editCond`. While `editAct`
+  is set, Rule Machine silently ignores delete clicks, and it does not clear on its own.
+- A disabled app renders only "App is disabled" with no wizard at all, so `disabled` is not
+  cosmetic for anything that follows config pages.
+- Rule Machine leaks `predCapabs` from the Required Expression builder into the next action
+  written, which then renders under `IF(**Broken Condition**)`.
+
+**Rule-level settings on the main page**
+
+`origLabel` (the rule name), `comments` (rule notes), `useST` (enables the Required Expression
+page, the settings-side counterpart to `appState.hasPredicate`), `logging` (a JSON array, not
+a comma-separated string), `dValues` (display current values) and `isFunction`. All except
+`isFunction` were also seen on this hub.
+
+**Breakage reporting**
+
+The rendered page carries three distinct markers, `**Broken Trigger**`, `**Broken Action**`
+and `**Broken Condition**`, alongside the `*BROKEN*` label suffix. The compiled `broken`
+boolean lags the rendered label: deleting a trigger device sets the label immediately while
+`broken` stays false until the rule re-validates. Cross-check the two rather than trusting
+either alone.
+
+**Value sources that no device scan will find**
+
+`trackSwitch.<n>` and `useLastDev.<n>` make an action read the triggering event instead of a
+stored device, and `optSwitch.<n>` ("command only switches that are on?") changes what an
+on/off action does once a device is chosen. All three are present on this hub in quantity
+(249 `optSwitch`, 190 `trackSwitch`, 44 `useLastDev` rows), but their effect on decoding is
+recorded from the MCP source.
+
+**Scenes**
+
+Rule Machine 5.1 has no activate-scene action. A scene or Room Lighting group is activated by
+turning on its activator device through an ordinary Switch action, so a scene dependency is
+stored as a plain device reference and reads as one.
+
+**Endpoints**
+
+- `GET /app/ruleBuilderJson/<id>` returns the compiled state for any installed app: `broken`,
+  `paused`, `hasPredicate`, `predCapabs`, `eval`, `parens`, `actionList` and the rendered
+  condition text. Like `statusJson`, it answers 200 with `{}` for an id that does not exist.
+  Confirmed on this hub.
+- Deletion has two endpoints with different semantics: `/installedapp/delete/<id>` returns
+  `{success, message}` and refuses when the app has children, while
+  `/installedapp/forcedelete/<id>/quiet` redirects and always succeeds.
+- Rule-local variables are deleted through a two-step button flow on `/installedapp/btn`:
+  `name=<varName>` with `stateAttribute=deleteGV`, then `name=delConfirm` with
+  `stateAttribute=deleteConfirm`.

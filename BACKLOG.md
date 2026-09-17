@@ -38,6 +38,17 @@ This works whichever hypothesis is true.
 
 ### 31. A dead constraint on a device that also has a live relationship
 
+**New, 2026-09-18.** The hub publishes its own answer. `appState` (and the compiled state at
+`/app/ruleBuilderJson/<id>`) carries `inUseConds` and `unusedConds`, arrays of condition
+numbers, on 45 of 66 rules here. That is the same question this item answers by inspection.
+
+It is not usable as-is: on Perimeter Closed (1809) `unusedConds` is `["44","55","48","38","51"]`
+while `38` and `44` are both named in that rule's Required Expression (`eval["0"]`) and in
+`predCapabs`, so the lists either mean something narrower than their names or go stale. Work
+out what they track before trusting them; if they prove reliable they replace the detection,
+and if they do not they are still a cross-check that costs one field read.
+
+
 Rule Machine keeps a condition's `rDev_<n>` setting forever, including conditions no expression
 names any more, so those devices are drawn as constraints even though nothing evaluates them. The
 map now tags a device `UNUSED` when every relationship visible in the current view is one of these,
