@@ -14,6 +14,14 @@ difference with nothing actually wrong, including this one. The card now says th
 be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
 separately in the Community Utilities crawl.
 
+Rule Machine wait-for-event devices are no longer drawn as rule triggers. Those devices are
+stored under a separate key family that the old check also matched, which affected three rules
+on a 66-rule hub, and they now appear as monitored devices.
+
+A Set Variable action that writes a number from a device attribute now shows that source.
+Numeric variables use a different field for it than text variables, and only the text one was
+read.
+
 webCoRE flow charts now draw a switch's default branch as `else` after its cases. Case values are
 still shown as not decoded.
 

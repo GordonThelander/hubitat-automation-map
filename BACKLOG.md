@@ -16,6 +16,23 @@ history, not in this delivery list.
 
 ## Now
 
+### 34. Variable-sourced Set Variable actions are written but their sources are not read
+
+A Set Variable action names its source in `valStringOp.<n>` for a String target and
+`numOp.<n>` for a Number or Decimal target. Both are now read for the device-attribute case
+(2.3.3), so a numeric variable fed from a device attribute finally shows its source.
+
+Not covered: the other `numOp` values seen live on this hub, `variable math` (rule 3079, two
+actions) and `add number` (rule 2100). Those take their value from one or two OTHER variables
+in `xVar3.<n>` / `xVar4.<n>` with the operator in `valMathOp.<n>`, which means the map is
+missing READ edges for every variable a computed write consumes. `add number` is not in the
+value list the community MCP Rule Server documents, so the enum is wider than either source
+knows.
+
+**Next action:** decode the math operands into variable read relationships, with the same
+classification the existing reads use (local versus hub), and confirm the full `numOp` value
+set on a fixture before relying on the list.
+
 ### 33. Remote access: the page stays on "Remote scanning" after the scan finishes
 
 Seen on the 2.3.0 preprod install (2026-09-13) through remoteaccess.aws.hubitat.com: the scan completed

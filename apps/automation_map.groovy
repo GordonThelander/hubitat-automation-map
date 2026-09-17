@@ -8139,11 +8139,14 @@ List extractHubVariableWrites(Map data) {
         // classifyVariableReference(). Purely additive; every existing reader of
         // .variable/.sourceDevice/etc. is unaffected.
         Map write = [variable: varName, actionNum: "${num}", field: "xVarV.${num}"]
-        // Only the device-attribute source has been observed. A fixed value or
-        // another variable as the source is unconfirmed, so this is left
-        // absent rather than guessed - the variable node and WRITE edge are
-        // still created either way, only the source detail is conditional.
-        if (settingValues["valStringOp.${num}"] == 'Device attribute') {
+        // The source discriminator depends on the TARGET type: valStringOp.<n>
+        // for a String target, numOp.<n> for Number/Decimal (live: numOp values
+        // 'number', 'variable math' and 'add number' on this hub). Both name the
+        // device-attribute source the same way, so read either. A variable or
+        // math source is left absent rather than guessed - the variable node and
+        // WRITE edge are still created either way.
+        String varSource = (settingValues["valStringOp.${num}"] ?: settingValues["numOp.${num}"] ?: '') as String
+        if (varSource.equalsIgnoreCase('Device attribute')) {
             String attr = settingValues["tCustomAttr.${num}"]
             List srcDevices = settingDevices["customDev.${num}"] ?: []
             List srcDeviceIds = settingDeviceIds["customDev.${num}"] ?: []
@@ -8330,8 +8333,10 @@ List buildRuleFlow(Map data) {
 
     List steps = []
 
-    // Triggers: any condition that has a tDev setting behind it.
-    settingDevices.keySet().findAll { it.startsWith('tDev') }.sort().each { String n ->
+    // Triggers: any condition that has a tDev setting behind it. tDev-<n> is
+    // excluded deliberately - see roleForSetting: those are Wait for Events
+    // targets, and they rendered as a "Trigger -4" step with no capability text.
+    settingDevices.keySet().findAll { it.startsWith('tDev') && !it.startsWith('tDev-') }.sort().each { String n ->
         String num = n.replaceAll('^tDev_?', '')
         steps << [kind: 'trigger', label: (capabs[num] ?: "Trigger ${num}"), devices: settingDevices[n]]
     }
@@ -8730,11 +8735,11 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
             // local_hub_variable_gate_c_integration_plan.md for the design.
             String varName = (settingValues["xVarV.${num}"] ?: '').replaceAll(/\.$/, '')
             if (!varName) return 'Set Variable [unresolved]'
-            // valStringOp.<n> discriminates what the value is being set FROM.
-            // Only the device-attribute source has been observed so far - a
-            // fixed value or another variable as the source is unconfirmed
-            // and falls through to the bare form below rather than guessing.
-            if (settingValues["valStringOp.${num}"] == 'Device attribute') {
+            // The source discriminator is valStringOp.<n> for a String target and
+            // numOp.<n> for Number/Decimal. Anything other than a device attribute
+            // falls through to the bare form rather than guessing.
+            String valSource = (settingValues["valStringOp.${num}"] ?: settingValues["numOp.${num}"] ?: '') as String
+            if (valSource.equalsIgnoreCase('Device attribute')) {
                 String attr = settingValues["tCustomAttr.${num}"]
                 List srcDevices = settingDevices["customDev.${num}"] ?: []
                 if (attr && srcDevices) return "Set Variable ${varName} from ${srcDevices[0]}.${attr}"
@@ -9186,6 +9191,11 @@ List unusedConstraintDeviceIds(Map data) {
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
     // Rule Machine's private naming: tDev<n> = trigger device, rDev_<n> =
     // condition device (both plain IF conditions and the required expression).
+    // The DASH form tDev-<n> is a different family: Wait for Events stores its
+    // event rows rule-scoped as tCapab-<n>/tDev-<n>/tstate-<n>, so a prefix test
+    // drew 9 wait targets across 3 rules as triggers. A waited-for device is
+    // watched, not driven, which is what 'monitor' already means here.
+    if (settingName.startsWith('tDev-')) return 'monitor'
     if (settingName.startsWith('tDev')) return 'trigger'
     if (settingName.startsWith('rDev')) return 'constraint'
     // The wildcard picker means the app took devices of ANY type, which is what
