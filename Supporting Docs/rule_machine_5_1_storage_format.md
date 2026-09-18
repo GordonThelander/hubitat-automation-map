@@ -1141,6 +1141,20 @@ value in `valNumber.<n>` and the math operands in `xVar3.<n>` / `xVar4.<n>` / `v
 looks only for `valStringOp` reads a numeric Set Variable action as having no source.
 **[strong]**
 
+How each `numOp` value names its source, from fixtures on this hub: **[single]** each
+
+| `numOp.<n>` | Source fields | Fixture |
+| --- | --- | --- |
+| `number` | `valNumber.<n>` | rule 3078 |
+| `variable` | `xVar3.<n>` holds the variable copied | rule 3356 |
+| `variable math` | `xVar3.<n>` and `xVar4.<n>` are the operands, `valMathOp.<n>` the operator; the literal `(constant)` in either slot means the number in `valConst.<n>` / `valConst2.<n>` | rule 3079 |
+| `add number` | `valNumber.<n>` is added to the target's current value, so the target is also read | rule 2100 |
+
+`add number` is not in the value list the community MCP Rule Server documents, so treat the
+enum as open. The String-target equivalent of a variable copy could not be created through that
+server (it writes `numOp` for a String target, which the hub rejects), so its stored form is
+**[unknown]**.
+
 **`xVarV.<n>` does not tell you the namespace.** Rule-local variables and Hub Variables share
 one Set Variable action and one picker, so a name in `xVarV.<n>` may be either. Treating every
 `xVarV` as a Hub Variable write manufactures false hub-variable edges; cross-check the name
