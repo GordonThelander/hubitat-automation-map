@@ -8244,9 +8244,12 @@ List extractHubVariableReads(Map data) {
     // uses xVar3 alone. All three were invisible here,
     // so a computed write showed a WRITE edge and no read. Only the shapes seen on
     // a live hub are decoded; any other numOp value is left alone.
-    settingValues.keySet().findAll { it.startsWith('numOp.') }.sort().each { String key ->
-        String num = key.substring('numOp.'.length())
+    // A String target names the same copy in valStringOp.<n> = 'Copy variable'
+    // (captured from the RM UI: xVar3.<n> holds the source), so read both pickers.
+    settingValues.keySet().findAll { it.startsWith('numOp.') || it.startsWith('valStringOp.') }.sort().each { String key ->
+        String num = key.substring(key.indexOf('.') + 1)
         String mode = "${settingValues[key] ?: ''}".toLowerCase()
+        if (mode == 'copy variable') mode = 'variable'
         List<String> operandFields = []
         if (mode == 'variable math') operandFields = ["xVar3.${num}", "xVar4.${num}"]
         // A plain copy stores its source in the same xVar3 slot (fixture rule
@@ -8784,7 +8787,7 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
                 if (left == '(constant)') left = settingValues["valConst.${num}"]
                 if (left && op && right) return "Set Variable ${varName} = ${left} ${op} ${right}"
             }
-            if (valSource.equalsIgnoreCase('variable')) {
+            if (valSource.equalsIgnoreCase('variable') || valSource.equalsIgnoreCase('Copy variable')) {
                 String copied = settingValues["xVar3.${num}"]
                 if (copied) return "Set Variable ${varName} = ${copied}"
             }
