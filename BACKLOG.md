@@ -281,7 +281,8 @@ Both lines now log at info in this case, so a normal scan shows no WARN.
   either field, `variable math` emits read references for its operand variables (`xVar3` /
   `xVar4`, skipping the `(constant)` placeholder) under the new usage role `value-source`, and
   `add number` records the read of the target's own value. Flow labels print the arithmetic.
-  A plain `variable` source has no fixture on this hub and is still not decoded.
+  A plain `variable` copy was then created as fixture rule 3356 (`numOp.1 = variable`, source in
+  `xVar3.1`) and is decoded the same way. The String-target copy's stored form is still unknown.
 
 - **webCoRE source and description inconsistencies (item 32).** Closed on dev for 2.3.3. The
   registry generator now reads the `graphsOn()` block of `virtualCommands()`, so `clearFuelStream`,

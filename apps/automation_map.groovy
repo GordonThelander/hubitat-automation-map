@@ -8240,7 +8240,8 @@ List extractHubVariableReads(Map data) {
     // names the source for a Number/Decimal target: 'variable math' puts the
     // operand names in xVar3/xVar4 (with the literal '(constant)' standing in for
     // a number held in valConst2), and 'add number' adds valNumber to the target's
-    // own current value, which is a read of the target. Both were invisible here,
+    // own current value, which is a read of the target. A plain 'variable' copy
+    // uses xVar3 alone. All three were invisible here,
     // so a computed write showed a WRITE edge and no read. Only the shapes seen on
     // a live hub are decoded; any other numOp value is left alone.
     settingValues.keySet().findAll { it.startsWith('numOp.') }.sort().each { String key ->
@@ -8248,6 +8249,9 @@ List extractHubVariableReads(Map data) {
         String mode = "${settingValues[key] ?: ''}".toLowerCase()
         List<String> operandFields = []
         if (mode == 'variable math') operandFields = ["xVar3.${num}", "xVar4.${num}"]
+        // A plain copy stores its source in the same xVar3 slot (fixture rule
+        // 3356: numOp.1 = 'variable', xVar3.1 = 'AMGateA_NumShared').
+        else if (mode == 'variable') operandFields = ["xVar3.${num}"]
         else if (mode == 'add number') operandFields = ["xVarV.${num}"]
         else return
         operandFields.each { String field ->
@@ -8779,6 +8783,10 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
                 if (right == '(constant)') right = settingValues["valConst2.${num}"]
                 if (left == '(constant)') left = settingValues["valConst.${num}"]
                 if (left && op && right) return "Set Variable ${varName} = ${left} ${op} ${right}"
+            }
+            if (valSource.equalsIgnoreCase('variable')) {
+                String copied = settingValues["xVar3.${num}"]
+                if (copied) return "Set Variable ${varName} = ${copied}"
             }
             if (valSource.equalsIgnoreCase('add number')) {
                 String amount = settingValues["valNumber.${num}"]

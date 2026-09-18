@@ -20,7 +20,8 @@ one of its relationships was dead, so a device that was both used and pointlessl
 old condition showed nothing.
 
 Set Variable actions that calculate a value now show the variables they read and print the
-arithmetic, for example "Set Variable Counter = TestNumber + 5".
+arithmetic, for example "Set Variable Counter = TestNumber + 5". A plain copy from one
+variable to another reads the same way.
 
 Rule Machine wait-for-event devices are no longer drawn as rule triggers. Those devices are
 stored under a separate key family that the old check also matched, which affected three rules
