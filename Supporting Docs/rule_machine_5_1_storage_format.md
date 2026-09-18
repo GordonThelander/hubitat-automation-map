@@ -1151,8 +1151,16 @@ How each `numOp` value names its source, from fixtures on this hub: **[single]**
 | `add number` | `valNumber.<n>` is added to the target's current value, so the target is also read | rule 2100 |
 
 `add number` is not in the value list the community MCP Rule Server documents, so treat the
-enum as open. The String-target equivalent of a variable copy could not be created through that
-server (it writes `numOp` for a String target, which the hub rejects), so its stored form is
+enum as open.
+
+A **String** target has no `numOp` at all. Its source picker is `valStringOp.<n>`, whose options
+on 2.5.1.183 are `Set string`, `Remove string`, `Replace string`, `Token`, `Device attribute`,
+`URL Encode`, `URL Decode`, `Set from HTTP GET response`, `Set from HTTP GET response data.text`,
+`Set from HTTP POST response`, `Set from local file`, `LowerCase string`, `Format DateTime`,
+`Copy variable` and `Rule Function`. A copy stores `valStringOp.<n> = Copy variable` with the
+source in the same `xVar3.<n>` slot the numeric copy uses; built by hand in the Rule Machine UI
+(rule 3375: `valStringOp.1 = Copy variable`, `xVar3.1 = AMGateA_Shared`, rendered
+"Set GT1 to AMGateA_Shared"). **[single]** The Boolean and DateTime copy pickers are
 **[unknown]**.
 
 **`xVarV.<n>` does not tell you the namespace.** Rule-local variables and Hub Variables share
