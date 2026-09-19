@@ -38,6 +38,24 @@ This works whichever hypothesis is true.
 
 ## Next
 
+### 35. HAI as a third engine: map decoding and piston migration target
+
+Hubitat Automation Intelligence (HAI) is Gordon's Rule Machine replacement. It will publish its rules
+already in the map's graph shape from a read-only `/automation-map` endpoint on the HAI Engine app
+(contract `hai.am/1`: nodes, edges and flows using this app's node ids and edge kinds), together with a
+`capabilities` list of what HAI supports and at what status. The HAI project builds and maintains both
+with its parity work.
+
+Two pieces here, both small adapters, not decoders:
+- **Map:** find the HAI Engine during a scan, read the endpoint, and merge its nodes, edges and flows as
+  another engine. HAI rule apps appear with `engine: HAI`.
+- **Piston migration assessment:** add HAI as a third target beside RM 5.1 and VRB 2.0, rating each
+  webCoRE construct against the published `capabilities` list rather than a hand-kept table. The rating
+  panel, the equivalence tab and the export's cached ratings all gain the HAI column.
+
+**Next action:** wait for the HAI session's first feed on the hub, then add both adapters against its
+golden fixtures and verify live.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston
