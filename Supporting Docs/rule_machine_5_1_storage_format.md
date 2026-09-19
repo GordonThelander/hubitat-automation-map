@@ -1146,7 +1146,7 @@ How each `numOp` value names its source, from fixtures on this hub: **[single]**
 | `numOp.<n>` | Source fields | Fixture |
 | --- | --- | --- |
 | `number` | `valNumber.<n>` | rule 3078 |
-| `variable` | `xVar3.<n>` holds the variable copied | rule 3356 |
+| `variable` | `xVar3.<n>` holds the variable copied; `valOffset.<n>` (number, UI default `0`) is added to it. A row without `valOffset` throws `Ambiguous method overloading for method java.lang.Long#plus` when it runs and leaves the target unchanged | rule 3397 (UI-built, fw 2.5.1.183) |
 | `variable math` | `xVar3.<n>` and `xVar4.<n>` are the operands, `valMathOp.<n>` the operator; the literal `(constant)` in either slot means the number in `valConst.<n>` / `valConst2.<n>` | rule 3079 |
 | `add number` | `valNumber.<n>` is added to the target's current value, so the target is also read | rule 2100 |
 
