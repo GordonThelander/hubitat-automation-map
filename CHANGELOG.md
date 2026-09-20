@@ -4,9 +4,22 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
-## 2.3.3
+## 2.4.0
 
 In development on the dev channel.
+
+Rules from Hubitat Automation Intelligence now appear on the map, marked experimental. That app
+publishes its own rules in this app's graph shape, so the map reads them from it at each scan
+rather than decoding them: what each rule triggers on, what it commands and with which commands,
+and what it treats as a condition. Paste the feed address from that app into the new setting on
+this app's settings page and its rules join the map alongside everything else. Previously those
+rules could only be drawn from their device permissions, which read as "published to an external
+system" and said nothing about what the rule does; those placeholder lines are now replaced.
+Selecting one of these rules explains that its steps live in that app and points to its own page,
+rather than drawing a flowchart. The main page reports how many of these rules and relationships
+came from the feed, and says so plainly when the feed could not be read. Nothing is sent: the
+address is read from your own hub.
+
 
 The Community information card no longer claims a package's declared identity did not match its
 source. That check is a static parse, and a package naming itself through a constant read as a
