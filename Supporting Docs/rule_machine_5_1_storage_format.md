@@ -542,6 +542,7 @@ A non-exhaustive list of ones confirmed on a live hub:
 | `getDelay` | `delaySecond.<n>`, `delayMin.<n>`, `delayAct.<n>` |
 | `getWaitRule` | condition via the action's `rule` field, `delay` on the action for timeout |
 | `getIfThen`, `getElseIf` | condition via the action's `rule` field |
+| `getDefinedAction` | `devices.<n>` device list, `myCapab.<n>` capability, `cCmd.<n>` command, `meter.<n>`, `meterMillis.<n>` |
 
 Most actions also carry `delayAct.<n>`, which is `none` unless the individual action has its
 own delay.
@@ -549,6 +550,25 @@ own delay.
 The reliable general approach is: for action `n`, collect every setting whose name ends in
 `.<n>`. That finds the parameters without needing a table for every action type, which
 matters because the list above is certainly incomplete.
+
+### 7.1 Metering a multi-device action
+
+An action that targets several devices can space its commands rather than sending them
+together. Two settings carry it:
+
+| Setting | Value |
+| --- | --- |
+| `meter.<n>` | `"true"` or `"false"`, stored as a string |
+| `meterMillis.<n>` | milliseconds between each device, stored as a string |
+
+The UI labels these "Meter?" and "Meter milliseconds", and the rendered action text gains a
+`meter <N> ms` suffix. With metering on, RM dispatches the command to device *k* at
+`(k - 1) x meterMillis`. It changes only when each command is sent, not how long a device
+takes to return, so it caps how many devices are in flight at once only when the spacing
+exceeds a single device's response time.
+
+An unmetered action still carries `meter.<n> = "false"` with an empty `meterMillis.<n>`, so
+the presence of either key says nothing on its own. Read the value. **[strong]**
 
 ---
 
