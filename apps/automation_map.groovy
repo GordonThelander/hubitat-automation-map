@@ -9936,10 +9936,13 @@ Map rmCoverageReport() {
     // report asked for now should answer for the engine as it is now.
     Map feed = fetchHaiFeed()
     if ("${feed.state}" != 'OK') {
-        if (feed.state == 'FAILED') return [ok: false, reason: "${feed.error}"]
-        // No engine on this hub. The comparison still renders, from the stored
-        // copy, and says so. Only the half that measures this hub is withheld.
+        // Either there is no engine on this hub, or there is one and it did not
+        // answer: it redeploys often, and a redeploy takes its feed away for a
+        // minute. Both cases render the comparison from the stored copy and say
+        // which it is. Only the half that measures this hub is withheld, because
+        // that half genuinely cannot be computed without a live read.
         return [ok: true, fromSnapshot: true, hubStats: false,
+                feedError: feed.state == 'FAILED' ? "${feed.error}" : null,
                 engine: [name: HAI_SNAPSHOT.engine, version: HAI_SNAPSHOT.version],
                 capturedOn: HAI_SNAPSHOT.capturedOn,
                 categories: HAI_SNAPSHOT.categories,
@@ -16577,6 +16580,10 @@ function rmcRender() {
   // mentioned at all. Rule Machine 5.1 sets the list; HAI-1 answers it.
   html += '<h4>1. Rule Machine 5.1 against ' + extEsc(eng.name || 'HAI-1') + '</h4>';
   if (b.fromSnapshot) {
+    if (b.feedError) {
+      html += '<p class="sub">This hub has that engine, but it did not answer just now (' +
+        extEsc(String(b.feedError)) + '), so the figures below are the stored copy. It is worth re-opening this in a minute.</p>';
+    }
     html += '<p class="sub">These are figures ' + extEsc(eng.name || 'HAI-1') + ' published on ' +
       extEsc(String(b.capturedOn || 'an earlier date')) + ', stored in this app and shown as a dated copy. ' +
       'They were not read from this hub and will not have moved since. Install that engine and set its feed address to read the current figures.</p>';
