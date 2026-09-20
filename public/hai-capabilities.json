@@ -1,0 +1,2316 @@
+{
+ "contract": "hai.capabilities/1",
+ "engine": "HAI-1",
+ "capabilitiesHash": "616d176e39a1c0a8a6c13a89f0d67a9022c350b5187e4e8dc17076b2913c1b71",
+ "generatedAt": "2026-09-21T07:23:42+08:00",
+ "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means someone watched it work on a hub on that date, \"simulated\" means nobody has. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
+ "statusMeanings": {
+  "Runs": "Built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run on a hub.",
+  "Format": "Can be written, will not act. A rule can use it and HAI checks and simulates it, but the runtime deliberately refuses to carry it out yet; the note says why.",
+  "Partial": "Some of it works. The note says what is missing.",
+  "Missing": "Not built. HAI has no equivalent; the note says why."
+ },
+ "evidenceMeanings": {
+  "hub": "Seen working on a hub on the date given.",
+  "simulated": "Built and simulated, but nobody has watched it run. It may still be wrong on a hub."
+ },
+ "counts": {
+  "total": 156,
+  "byEvidence": {
+   "simulated": 94,
+   "hub": 57,
+   "none": 5
+  }
+ },
+ "capabilities": [
+  {
+   "id": "control.trigger-events-or-between-them",
+   "area": "control",
+   "feature": "Trigger events, OR between them",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: Trigger events, OR between them",
+   "hai": []
+  },
+  {
+   "id": "control.required-expression",
+   "area": "control",
+   "feature": "Required expression",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: Required expression",
+   "hai": []
+  },
+  {
+   "id": "control.cancel-pending-actions-when-required-expression",
+   "area": "control",
+   "feature": "Cancel pending actions when required expression becomes false",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: Cancel pending actions when required expression becomes false",
+   "hai": []
+  },
+  {
+   "id": "control.evaluate-required-expression-on-system-startup",
+   "area": "control",
+   "feature": "Evaluate required expression on system startup",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: Evaluate required expression on system startup",
+   "hai": []
+  },
+  {
+   "id": "control.conditional-trigger",
+   "area": "control",
+   "feature": "Conditional trigger",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: Conditional trigger",
+   "hai": []
+  },
+  {
+   "id": "control.and-stays-sticky-trigger",
+   "area": "control",
+   "feature": "\"And stays\" (sticky) trigger",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: \"And stays\" (sticky) trigger",
+   "hai": [
+    "trigger:duration"
+   ]
+  },
+  {
+   "id": "control.rule-with-no-triggers-run-from-elsewhere",
+   "area": "control",
+   "feature": "Rule with no triggers, run from elsewhere",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "2. Rule structure and gating: Rule with no triggers, run from elsewhere",
+   "hai": [
+    "trigger:ruleInvocation"
+   ]
+  },
+  {
+   "id": "trigger.acceleration-battery-carbon-dioxide-carbon-monox",
+   "area": "trigger",
+   "feature": "Acceleration, Battery, Carbon dioxide, Carbon monoxide, Contact, Dimmer level, Door, Energy meter, Fan speed, Garage door, Gas detector, Humidity, Illuminance, Motion, Music player, Power meter, Power source, Presence (present / not present), Shock, Smoke, Sound, Switch, Tamper, Temperature, Thermostat setpoints, fan mode, mode and state, Valve, Water, Window shade",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-19"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Acceleration, Battery, Carbon dioxide, Carbon monoxide, Contact, Dimmer level, Door, Energy meter, Fan speed, Garage door, Gas detector, Humidity, Illuminance, Motion, Music player, Power meter, Power source, Presence (present / not present), Shock, Smoke, Sound, Switch, Tamper, Temperature, Thermostat setpoints, fan mode, mode and state, Valve, Water, Window shade",
+   "hai": [
+    "trigger:deviceAttribute",
+    "trigger:threshold"
+   ]
+  },
+  {
+   "id": "trigger.custom-attribute",
+   "area": "trigger",
+   "feature": "Custom attribute",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Custom attribute",
+   "hai": [
+    "trigger:deviceAttribute"
+   ]
+  },
+  {
+   "id": "trigger.presence-arrives-leaves",
+   "area": "trigger",
+   "feature": "Presence \"arrives / leaves\"",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Presence \"arrives / leaves\"",
+   "hai": [
+    "trigger:deviceAttribute"
+   ]
+  },
+  {
+   "id": "trigger.button-pushed-held-double-tapped-released",
+   "area": "trigger",
+   "feature": "Button pushed / held / double tapped / released",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Button pushed / held / double tapped / released",
+   "hai": [
+    "trigger:button"
+   ]
+  },
+  {
+   "id": "trigger.certain-time-including-sunrise-and-sunset-with-o",
+   "area": "trigger",
+   "feature": "Certain Time, including sunrise and sunset with offset",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Certain Time, including sunrise and sunset with offset",
+   "hai": [
+    "trigger:schedule"
+   ]
+  },
+  {
+   "id": "trigger.certain-time-with-a-date",
+   "area": "trigger",
+   "feature": "Certain Time with a date",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Certain Time with a date",
+   "hai": [
+    "trigger:schedule"
+   ]
+  },
+  {
+   "id": "trigger.time-of-day-as-trigger",
+   "area": "trigger",
+   "feature": "Time of day (as trigger)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Time of day (as trigger)",
+   "hai": [
+    "trigger:schedule"
+   ]
+  },
+  {
+   "id": "trigger.days-of-week-days-or-days-plus-time",
+   "area": "trigger",
+   "feature": "Days of Week (days, or days plus time)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Days of Week (days, or days plus time)",
+   "hai": [
+    "trigger:schedule",
+    "trigger:periodic"
+   ]
+  },
+  {
+   "id": "trigger.periodic-schedule-minutes-hourly-daily-weekly-mo",
+   "area": "trigger",
+   "feature": "Periodic schedule (minutes, hourly, daily, weekly, monthly, yearly)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-19"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Periodic schedule (minutes, hourly, daily, weekly, monthly, yearly)",
+   "hai": [
+    "trigger:periodic"
+   ]
+  },
+  {
+   "id": "trigger.on-a-day-date-or-variable",
+   "area": "trigger",
+   "feature": "On a day (date or variable)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: On a day (date or variable)",
+   "hai": [
+    "trigger:schedule"
+   ]
+  },
+  {
+   "id": "trigger.mode",
+   "area": "trigger",
+   "feature": "Mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Mode",
+   "hai": [
+    "trigger:mode"
+   ]
+  },
+  {
+   "id": "trigger.location-event-sunrise-sunset-sunrisetime-sunset",
+   "area": "trigger",
+   "feature": "Location event: sunrise, sunset, sunriseTime, sunsetTime",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Location event: sunrise, sunset, sunriseTime, sunsetTime",
+   "hai": [
+    "trigger:locationEvent",
+    "trigger:schedule"
+   ]
+  },
+  {
+   "id": "trigger.location-event-systemstart-severeload-zigbeeoff",
+   "area": "trigger",
+   "feature": "Location event: systemStart, severeLoad, zigbeeOff/On, zwaveCrashed",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Location event: systemStart, severeLoad, zigbeeOff/On, zwaveCrashed",
+   "hai": [
+    "trigger:locationEvent"
+   ]
+  },
+  {
+   "id": "trigger.hsm-status-armed-away-home-night-delayed-arming",
+   "area": "trigger",
+   "feature": "HSM status (armed away/home/night, delayed arming, disarmed, all disarmed)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: HSM status (armed away/home/night, delayed arming, disarmed, all disarmed)",
+   "hai": [
+    "trigger:hsmStatus"
+   ]
+  },
+  {
+   "id": "trigger.hsm-alert-intrusion-smoke-water-rule-arming-canc",
+   "area": "trigger",
+   "feature": "HSM alert (intrusion, smoke, water, rule, arming, cancel, and variants)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: HSM alert (intrusion, smoke, water, rule, arming, cancel, and variants)",
+   "hai": [
+    "trigger:hsmAlert"
+   ]
+  },
+  {
+   "id": "trigger.security-keypads-armed-disarmed-changed",
+   "area": "trigger",
+   "feature": "Security keypads (armed / disarmed / changed)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Security keypads (armed / disarmed / changed)",
+   "hai": [
+    "trigger:deviceAttribute",
+    "condition:deviceAttribute"
+   ]
+  },
+  {
+   "id": "trigger.keypad-codes-lock-codes-by-code-name",
+   "area": "trigger",
+   "feature": "Keypad codes, Lock codes (by code name)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Keypad codes, Lock codes (by code name)",
+   "hai": [
+    "trigger:deviceAttribute",
+    "condition:deviceAttribute"
+   ]
+  },
+  {
+   "id": "trigger.digital-switch-physical-switch-physical-dimmer-l",
+   "area": "trigger",
+   "feature": "Digital switch / Physical switch / Physical dimmer level (event type)",
+   "status": "Partial",
+   "evidence": null,
+   "note": "simulated and tested locally.",
+   "rm51": "3. Triggers: Digital switch / Physical switch / Physical dimmer level (event type)",
+   "hai": [
+    "trigger:deviceAttribute"
+   ]
+  },
+  {
+   "id": "trigger.last-event-device",
+   "area": "trigger",
+   "feature": "Last Event Device",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Last Event Device",
+   "hai": []
+  },
+  {
+   "id": "trigger.time-since-event-attribute-or-any-minimum-time",
+   "area": "trigger",
+   "feature": "Time since event (attribute or any, minimum time)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Time since event (attribute or any, minimum time)",
+   "hai": [
+    "condition:timeSince"
+   ]
+  },
+  {
+   "id": "trigger.variable-hub-or-local-variable-value",
+   "area": "trigger",
+   "feature": "Variable (hub or local variable value)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Variable (hub or local variable value)",
+   "hai": [
+    "trigger:hubVariable"
+   ]
+  },
+  {
+   "id": "trigger.private-boolean",
+   "area": "trigger",
+   "feature": "Private Boolean",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Private Boolean",
+   "hai": [
+    "trigger:hubVariable"
+   ]
+  },
+  {
+   "id": "trigger.rule-paused",
+   "area": "trigger",
+   "feature": "Rule paused",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Rule paused",
+   "hai": [
+    "trigger:rulePaused",
+    "condition:rulePaused"
+   ]
+  },
+  {
+   "id": "trigger.local-end-point-cloud-end-point-http-get-or-post",
+   "area": "trigger",
+   "feature": "Local End Point / Cloud End Point (HTTP GET or POST runs the rule)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Local End Point / Cloud End Point (HTTP GET or POST runs the rule)",
+   "hai": [
+    "trigger:endpoint"
+   ]
+  },
+  {
+   "id": "trigger.music-player-playing-paused-stopped",
+   "area": "trigger",
+   "feature": "Music player playing / paused / stopped",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Music player playing / paused / stopped",
+   "hai": [
+    "trigger:deviceAttribute"
+   ]
+  },
+  {
+   "id": "trigger.and-stays-on-a-trigger",
+   "area": "trigger",
+   "feature": "\"And stays?\" on a trigger",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: \"And stays?\" on a trigger",
+   "hai": [
+    "trigger:duration"
+   ]
+  },
+  {
+   "id": "trigger.conditional-trigger-only-if",
+   "area": "trigger",
+   "feature": "Conditional trigger (\"ONLY IF\")",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "3. Triggers: Conditional trigger (\"ONLY IF\")",
+   "hai": []
+  },
+  {
+   "id": "trigger.multiple-stays-triggers-on-the-same-attribute-wi",
+   "area": "trigger",
+   "feature": "Multiple \"stays\" triggers on the same attribute with different values",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "3. Triggers: Multiple \"stays\" triggers on the same attribute with different values",
+   "hai": [
+    "trigger:duration"
+   ]
+  },
+  {
+   "id": "condition.any-device-capability-in-a-state-switch-motion-c",
+   "area": "condition",
+   "feature": "Any device capability in a state (switch, motion, contact, presence, illuminance, temperature and all the others)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Any device capability in a state (switch, motion, contact, presence, illuminance, temperature and all the others)",
+   "hai": [
+    "condition:deviceAttribute"
+   ]
+  },
+  {
+   "id": "condition.custom-attribute",
+   "area": "condition",
+   "feature": "Custom attribute",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Custom attribute",
+   "hai": [
+    "condition:deviceAttribute"
+   ]
+  },
+  {
+   "id": "condition.between-two-times-fixed-sunrise-sunset-offsets-v",
+   "area": "condition",
+   "feature": "Between two times (fixed, sunrise, sunset, offsets, variables)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Between two times (fixed, sunrise, sunset, offsets, variables)",
+   "hai": [
+    "condition:timeWindow"
+   ]
+  },
+  {
+   "id": "condition.time-of-day",
+   "area": "condition",
+   "feature": "Time of day",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Time of day",
+   "hai": [
+    "condition:timeWindow"
+   ]
+  },
+  {
+   "id": "condition.between-two-dates",
+   "area": "condition",
+   "feature": "Between two dates",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Between two dates",
+   "hai": [
+    "condition:dateRange"
+   ]
+  },
+  {
+   "id": "condition.on-a-day",
+   "area": "condition",
+   "feature": "On a day",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: On a day",
+   "hai": [
+    "condition:dateRange"
+   ]
+  },
+  {
+   "id": "condition.days-of-week-as-condition",
+   "area": "condition",
+   "feature": "Days of week (as condition)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Days of week (as condition)",
+   "hai": [
+    "condition:dayOfWeek"
+   ]
+  },
+  {
+   "id": "condition.mode",
+   "area": "condition",
+   "feature": "Mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Mode",
+   "hai": [
+    "condition:mode"
+   ]
+  },
+  {
+   "id": "condition.variable-hub-or-local",
+   "area": "condition",
+   "feature": "Variable (hub or local)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Variable (hub or local)",
+   "hai": [
+    "condition:variable"
+   ]
+  },
+  {
+   "id": "condition.private-boolean",
+   "area": "condition",
+   "feature": "Private Boolean",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Private Boolean",
+   "hai": [
+    "condition:variable"
+   ]
+  },
+  {
+   "id": "condition.hsm-status",
+   "area": "condition",
+   "feature": "HSM status",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: HSM status",
+   "hai": [
+    "condition:hsmStatus"
+   ]
+  },
+  {
+   "id": "condition.and-or-not",
+   "area": "condition",
+   "feature": "AND, OR, NOT",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: AND, OR, NOT",
+   "hai": [
+    "condition:all",
+    "condition:any",
+    "condition:not"
+   ]
+  },
+  {
+   "id": "condition.xor",
+   "area": "condition",
+   "feature": "XOR",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: XOR",
+   "hai": [
+    "condition:xor"
+   ]
+  },
+  {
+   "id": "condition.parentheses-sub-expressions",
+   "area": "condition",
+   "feature": "Parentheses (sub-expressions)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Parentheses (sub-expressions)",
+   "hai": []
+  },
+  {
+   "id": "condition.display-current-values-t-f-shown-per-condition",
+   "area": "condition",
+   "feature": "\"Display current values\" (T/F shown per condition)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: \"Display current values\" (T/F shown per condition)",
+   "hai": []
+  },
+  {
+   "id": "condition.separate-condition-banks-for-required-expression",
+   "area": "condition",
+   "feature": "Separate condition banks for required expression and actions",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "4. Conditions and operators: Separate condition banks for required expression and actions",
+   "hai": [
+    "action:if",
+    "action:wait"
+   ]
+  },
+  {
+   "id": "control.conditional-if-expression-then-else-if-else-end",
+   "area": "control",
+   "feature": "Conditional: IF (expression) THEN, ELSE-IF, ELSE, END-IF",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Conditional: IF (expression) THEN, ELSE-IF, ELSE, END-IF",
+   "hai": [
+    "action:if"
+   ]
+  },
+  {
+   "id": "control.conditional-simple-conditional-action-one-action",
+   "area": "control",
+   "feature": "Conditional: Simple conditional action (one action with a condition)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Conditional: Simple conditional action (one action with a condition)",
+   "hai": [
+    "action:if"
+   ]
+  },
+  {
+   "id": "action.switches-turn-switches-on-off",
+   "area": "action",
+   "feature": "Switches: Turn switches on/off",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Switches: Turn switches on/off",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.switches-toggle-switches",
+   "area": "action",
+   "feature": "Switches: Toggle switches",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Switches: Toggle switches",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.switches-flash-switches",
+   "area": "action",
+   "feature": "Switches: Flash switches",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Switches: Flash switches",
+   "hai": [
+    "action:flashSwitches",
+    "action:stopGradual",
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.switches-set-switches-per-mode-choose-switches-p",
+   "area": "action",
+   "feature": "Switches: Set switches per mode, choose switches per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Switches: Set switches per mode, choose switches per mode",
+   "hai": [
+    "action:byMode"
+   ]
+  },
+  {
+   "id": "action.switches-push-button-push-button-per-mode-choose",
+   "area": "action",
+   "feature": "Switches: Push button, push button per mode, choose button per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Switches: Push button, push button per mode, choose button per mode",
+   "hai": [
+    "action:command",
+    "action:if"
+   ]
+  },
+  {
+   "id": "action.dimmers-set-dimmer-level-fade-time-variable-leve",
+   "area": "action",
+   "feature": "Dimmers: Set dimmer (level, fade time, variable level)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Set dimmer (level, fade time, variable level)",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha",
+   "area": "action",
+   "feature": "Dimmers: Toggle dimmer, adjust dimmer (relative change)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Toggle dimmer, adjust dimmer (relative change)",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.dimmers-set-dimmer-per-mode",
+   "area": "action",
+   "feature": "Dimmers: Set dimmer per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Set dimmer per mode",
+   "hai": [
+    "action:byMode",
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.dimmers-fade-dimmer-over-time-stop-fade-start-ra",
+   "area": "action",
+   "feature": "Dimmers: Fade dimmer over time, stop fade, start raising/lowering, stop changing",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Fade dimmer over time, stop fade, start raising/lowering, stop changing",
+   "hai": [
+    "action:fade",
+    "action:command",
+    "action:stopGradual"
+   ]
+  },
+  {
+   "id": "action.dimmers-set-color-toggle-color-set-color-per-mod",
+   "area": "action",
+   "feature": "Dimmers: Set color, toggle color, set color per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Set color, toggle color, set color per mode",
+   "hai": [
+    "action:command",
+    "action:byMode"
+   ]
+  },
+  {
+   "id": "action.dimmers-set-color-temperature-toggle-per-mode",
+   "area": "action",
+   "feature": "Dimmers: Set color temperature, toggle, per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Set color temperature, toggle, per mode",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.dimmers-change-color-temperature-over-time-stop",
+   "area": "action",
+   "feature": "Dimmers: Change color temperature over time, stop changing",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Change color temperature over time, stop changing",
+   "hai": [
+    "action:fade",
+    "action:command",
+    "action:stopGradual"
+   ]
+  },
+  {
+   "id": "action.dimmers-track-event-dimmer-track-event-switch",
+   "area": "action",
+   "feature": "Dimmers: Track event dimmer / track event switch",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Dimmers: Track event dimmer / track event switch",
+   "hai": [
+    "action:track"
+   ]
+  },
+  {
+   "id": "action.shades-and-fans-open-close-shades-set-position-s",
+   "area": "action",
+   "feature": "Shades and fans: Open/close shades, set position, stop",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Shades and fans: Open/close shades, set position, stop",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.shades-and-fans-set-fan-speed-cycle-fans",
+   "area": "action",
+   "feature": "Shades and fans: Set fan speed, cycle fans",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Shades and fans: Set fan speed, cycle fans",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.scenes-activate-scenes-activate-scenes-per-mode",
+   "area": "action",
+   "feature": "Scenes: Activate scenes, activate scenes per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Scenes: Activate scenes, activate scenes per mode",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari",
+   "area": "action",
+   "feature": "HSM, doors, locks, valves: Arm / disarm HSM (all 9 variants)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: HSM, doors, locks, valves: Arm / disarm HSM (all 9 variants)",
+   "hai": [
+    "action:hsm"
+   ]
+  },
+  {
+   "id": "action.hsm-doors-locks-valves-open-close-garage-door",
+   "area": "action",
+   "feature": "HSM, doors, locks, valves: Open/close garage door",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: HSM, doors, locks, valves: Open/close garage door",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.hsm-doors-locks-valves-lock-unlock-locks",
+   "area": "action",
+   "feature": "HSM, doors, locks, valves: Lock/unlock locks",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: HSM, doors, locks, valves: Lock/unlock locks",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.hsm-doors-locks-valves-open-close-valves",
+   "area": "action",
+   "feature": "HSM, doors, locks, valves: Open/close valves",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: HSM, doors, locks, valves: Open/close valves",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.thermostats-set-thermostats-thermostat-scheduler",
+   "area": "action",
+   "feature": "Thermostats: Set thermostats, Thermostat Scheduler, Thermostat Controller sensors",
+   "status": "Partial",
+   "evidence": null,
+   "note": "setting thermostats runs simulated; no virtual test device has it, so not yet seen on a device). Thermostat Controller presents its own virtual thermostat device, which takes these commands like any thermostat. no app API reaches it, so HAI sets the thermostat directly instead (checked 2026-09-19). A device that declares only the setpoint capabilities, not Thermostat, is not offered these.",
+   "rm51": "5. Actions: Thermostats: Set thermostats, Thermostat Scheduler, Thermostat Controller sensors",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.messages-send-speak-a-message-with-variables",
+   "area": "action",
+   "feature": "Messages: Send/Speak a message (with %variables%)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Messages: Send/Speak a message (with %variables%)",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.messages-log-a-message",
+   "area": "action",
+   "feature": "Messages: Log a message",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Messages: Log a message",
+   "hai": [
+    "action:log"
+   ]
+  },
+  {
+   "id": "action.music-and-sounds-control-music-player",
+   "area": "action",
+   "feature": "Music and sounds: Control music player",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Music and sounds: Control music player",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.messages-send-http-get-send-http-post",
+   "area": "action",
+   "feature": "Messages: Send HTTP GET, Send HTTP POST",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Messages: Send HTTP GET, Send HTTP POST",
+   "hai": [
+    "action:http"
+   ]
+  },
+  {
+   "id": "action.messages-ping-ip-address",
+   "area": "action",
+   "feature": "Messages: Ping IP address",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Messages: Ping IP address",
+   "hai": [
+    "action:ping"
+   ]
+  },
+  {
+   "id": "action.music-and-sounds-set-volume-mute-unmute",
+   "area": "action",
+   "feature": "Music and sounds: Set volume, mute/unmute",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Music and sounds: Set volume, mute/unmute",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.music-and-sounds-sound-tone-sound-chime",
+   "area": "action",
+   "feature": "Music and sounds: Sound tone, sound chime",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Music and sounds: Sound tone, sound chime",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.music-and-sounds-control-siren",
+   "area": "action",
+   "feature": "Music and sounds: Control siren",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Music and sounds: Control siren",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.variables-mode-files-custom-set-variable-all-ope",
+   "area": "action",
+   "feature": "Variables, mode, files, custom: Set Variable (all operations, section 6)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Variables, mode, files, custom: Set Variable (all operations, section 6)",
+   "hai": [
+    "action:setVariable",
+    "action:file",
+    "action:http"
+   ]
+  },
+  {
+   "id": "action.variables-mode-files-custom-set-mode",
+   "area": "action",
+   "feature": "Variables, mode, files, custom: Set Mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Variables, mode, files, custom: Set Mode",
+   "hai": [
+    "action:setMode"
+   ]
+  },
+  {
+   "id": "action.variables-mode-files-custom-run-custom-action-an",
+   "area": "action",
+   "feature": "Variables, mode, files, custom: Run Custom Action (any device command with parameters)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Variables, mode, files, custom: Run Custom Action (any device command with parameters)",
+   "hai": [
+    "action:customCommand"
+   ]
+  },
+  {
+   "id": "action.variables-mode-files-custom-write-append-delete",
+   "area": "action",
+   "feature": "Variables, mode, files, custom: Write, append, delete local file",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Variables, mode, files, custom: Write, append, delete local file",
+   "hai": [
+    "action:file"
+   ]
+  },
+  {
+   "id": "action.rules-set-private-booleans-this-rule-or-others",
+   "area": "action",
+   "feature": "Rules: Set Private Booleans (this rule or others)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Rules: Set Private Booleans (this rule or others)",
+   "hai": [
+    "action:setRuleBoolean"
+   ]
+  },
+  {
+   "id": "action.rules-run-rule-actions",
+   "area": "action",
+   "feature": "Rules: Run Rule Actions",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Rules: Run Rule Actions",
+   "hai": [
+    "action:runRule",
+    "action:controlRule"
+   ]
+  },
+  {
+   "id": "action.rules-cancel-rule-timers",
+   "area": "action",
+   "feature": "Rules: Cancel Rule Timers",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Rules: Cancel Rule Timers",
+   "hai": [
+    "action:controlRule"
+   ]
+  },
+  {
+   "id": "action.rules-pause-resume-rules",
+   "area": "action",
+   "feature": "Rules: Pause/Resume Rules",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Rules: Pause/Resume Rules",
+   "hai": [
+    "action:controlRule",
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.rules-activate-room-lights-for-mode-period-turn",
+   "area": "action",
+   "feature": "Rules: Activate Room Lights for mode/period, turn off Room Lights",
+   "status": "Partial",
+   "evidence": null,
+   "note": "activating and turning off work through the activator, which HAI already commands. Checked 2026-09-19.",
+   "rm51": "5. Actions: Rules: Activate Room Lights for mode/period, turn off Room Lights",
+   "hai": [
+    "action:command",
+    "action:setVariable"
+   ]
+  },
+  {
+   "id": "action.devices-capture-devices-restore-devices",
+   "area": "action",
+   "feature": "Devices: Capture devices, restore devices",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Devices: Capture devices, restore devices",
+   "hai": [
+    "action:capture",
+    "action:restore"
+   ]
+  },
+  {
+   "id": "action.devices-refresh-devices",
+   "area": "action",
+   "feature": "Devices: Refresh devices",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Devices: Refresh devices",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.devices-poll-devices",
+   "area": "action",
+   "feature": "Devices: Poll devices",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Devices: Poll devices",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "action.devices-disable-enable-devices",
+   "area": "action",
+   "feature": "Devices: Disable/Enable devices",
+   "status": "Missing",
+   "evidence": null,
+   "note": null,
+   "rm51": "5. Actions: Devices: Disable/Enable devices",
+   "hai": []
+  },
+  {
+   "id": "action.devices-start-stop-z-wave-polling",
+   "area": "action",
+   "feature": "Devices: Start/Stop Z-Wave polling",
+   "status": "Missing",
+   "evidence": null,
+   "note": null,
+   "rm51": "5. Actions: Devices: Start/Stop Z-Wave polling",
+   "hai": [
+    "action:repeat",
+    "action:command"
+   ]
+  },
+  {
+   "id": "control.repeat-repeat-actions-every-n-n-times-stoppable",
+   "area": "control",
+   "feature": "Repeat: Repeat actions (every N, n times, stoppable)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Repeat: Repeat actions (every N, n times, stoppable)",
+   "hai": [
+    "action:repeat"
+   ]
+  },
+  {
+   "id": "control.repeat-repeat-while-expression-repeat-until-expr",
+   "area": "control",
+   "feature": "Repeat: Repeat while expression, repeat until expression, END-REP",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Repeat: Repeat while expression, repeat until expression, END-REP",
+   "hai": [
+    "action:repeat"
+   ]
+  },
+  {
+   "id": "control.repeat-stop-repeating-actions",
+   "area": "control",
+   "feature": "Repeat: Stop repeating actions",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Repeat: Stop repeating actions",
+   "hai": [
+    "action:stopRepeat"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-delay-actions-blocking-with-canc",
+   "area": "control",
+   "feature": "Delay, wait, exit: Delay actions (blocking), with cancelable option",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Delay actions (blocking), with cancelable option",
+   "hai": [
+    "action:wait"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-delay-on-an-individual-action-sc",
+   "area": "control",
+   "feature": "Delay, wait, exit: Delay on an individual action (scheduled, execution continues)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Delay on an individual action (scheduled, execution continues)",
+   "hai": [
+    "action:later"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-delay-actions-per-mode",
+   "area": "control",
+   "feature": "Delay, wait, exit: Delay actions per mode",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Delay actions per mode",
+   "hai": [
+    "action:later"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-delay-from-a-variable",
+   "area": "control",
+   "feature": "Delay, wait, exit: Delay from a variable",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Delay from a variable",
+   "hai": [
+    "action:wait"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-cancel-delayed-actions",
+   "area": "control",
+   "feature": "Delay, wait, exit: Cancel delayed actions",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Cancel delayed actions",
+   "hai": [
+    "action:cancelDelays",
+    "action:later"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-wait-for-events-one-or-many-any",
+   "area": "control",
+   "feature": "Delay, wait, exit: Wait for events (one or many, any or all, timeout, and stays, elapsed time)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Wait for events (one or many, any or all, timeout, and stays, elapsed time)",
+   "hai": [
+    "action:wait"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-wait-for-expression-timeout-dura",
+   "area": "control",
+   "feature": "Delay, wait, exit: Wait for expression (timeout, duration)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Wait for expression (timeout, duration)",
+   "hai": [
+    "action:wait"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-exit-rule",
+   "area": "control",
+   "feature": "Delay, wait, exit: Exit rule",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Exit rule",
+   "hai": [
+    "action:exit"
+   ]
+  },
+  {
+   "id": "control.delay-wait-exit-comment",
+   "area": "control",
+   "feature": "Delay, wait, exit: Comment",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "5. Actions: Delay, wait, exit: Comment",
+   "hai": [
+    "action:comment"
+   ]
+  },
+  {
+   "id": "action.every-action-disable-an-individual-action",
+   "area": "action",
+   "feature": "Every action: Disable an individual action",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "5. Actions: Every action: Disable an individual action",
+   "hai": []
+  },
+  {
+   "id": "variable.hub-variables-number-decimal-string-boolean-date",
+   "area": "variable",
+   "feature": "Hub variables: Number, Decimal, String, Boolean, DateTime",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Hub variables: Number, Decimal, String, Boolean, DateTime",
+   "hai": []
+  },
+  {
+   "id": "variable.read-a-hub-variable-in-a-condition",
+   "area": "variable",
+   "feature": "Read a hub variable in a condition",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "6. Variables: Read a hub variable in a condition",
+   "hai": [
+    "condition:variable"
+   ]
+  },
+  {
+   "id": "variable.trigger-on-a-hub-variable-change",
+   "area": "variable",
+   "feature": "Trigger on a hub variable change",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "6. Variables: Trigger on a hub variable change",
+   "hai": [
+    "trigger:hubVariable"
+   ]
+  },
+  {
+   "id": "variable.write-a-hub-variable",
+   "area": "variable",
+   "feature": "Write a hub variable",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "6. Variables: Write a hub variable",
+   "hai": [
+    "action:setVariable"
+   ]
+  },
+  {
+   "id": "variable.register-variables-as-in-use-addinuseglobalvar-s",
+   "area": "variable",
+   "feature": "Register variables as in use (addInUseGlobalVar) so the Hub Variables page shows the app and warns before deletion",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Register variables as in use (addInUseGlobalVar) so the Hub Variables page shows the app and warns before deletion",
+   "hai": []
+  },
+  {
+   "id": "variable.follow-a-renamed-hub-variable-renamevariable",
+   "area": "variable",
+   "feature": "Follow a renamed hub variable (renameVariable)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Follow a renamed hub variable (renameVariable)",
+   "hai": []
+  },
+  {
+   "id": "variable.variable-connectors-a-device-standing-in-for-a-v",
+   "area": "variable",
+   "feature": "Variable connectors (a device standing in for a variable)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Variable connectors (a device standing in for a variable)",
+   "hai": []
+  },
+  {
+   "id": "variable.local-rule-variables-all-five-types",
+   "area": "variable",
+   "feature": "Local (rule) variables, all five types",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Local (rule) variables, all five types",
+   "hai": []
+  },
+  {
+   "id": "variable.set-variable-literal-value",
+   "area": "variable",
+   "feature": "Set variable: literal value",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Set variable: literal value",
+   "hai": [
+    "action:setVariable"
+   ]
+  },
+  {
+   "id": "variable.set-variable-copy-from-another-variable",
+   "area": "variable",
+   "feature": "Set variable: copy from another variable",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Set variable: copy from another variable",
+   "hai": []
+  },
+  {
+   "id": "variable.set-variable-from-a-device-attribute",
+   "area": "variable",
+   "feature": "Set variable: from a device attribute",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "6. Variables: Set variable: from a device attribute",
+   "hai": []
+  },
+  {
+   "id": "variable.set-variable-variable-math-and-others",
+   "area": "variable",
+   "feature": "Set variable: variable math (+, -, *, /, and others)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "6. Variables: Set variable: variable math (+, -, *, /, and others)",
+   "hai": []
+  },
+  {
+   "id": "variable.set-variable-add-a-number",
+   "area": "variable",
+   "feature": "Set variable: add a number",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Set variable: add a number",
+   "hai": []
+  },
+  {
+   "id": "variable.set-variable-string-operations-remove-replace-to",
+   "area": "variable",
+   "feature": "Set variable: string operations (remove, replace, token, URL encode/decode, lower case, format DateTime, from HTTP response, from file)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Set variable: string operations (remove, replace, token, URL encode/decode, lower case, format DateTime, from HTTP response, from file)",
+   "hai": [
+    "action:http"
+   ]
+  },
+  {
+   "id": "variable.variable-substitution-in-text",
+   "area": "variable",
+   "feature": "%variable% substitution in text",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
+   "rm51": "6. Variables: %variable% substitution in text",
+   "hai": []
+  },
+  {
+   "id": "variable.built-in-device-value-text-date-time-now",
+   "area": "variable",
+   "feature": "Built-in %device%, %value%, %text%, %date%, %time%, %now%",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Built-in %device%, %value%, %text%, %date%, %time%, %now%",
+   "hai": []
+  },
+  {
+   "id": "variable.private-boolean-built-in-set-from-other-rules-us",
+   "area": "variable",
+   "feature": "Private Boolean (built in, set from other rules, usable in required expressions)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "6. Variables: Private Boolean (built in, set from other rules, usable in required expressions)",
+   "hai": []
+  },
+  {
+   "id": "option.pause-resume",
+   "area": "option",
+   "feature": "Pause / Resume",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Pause / Resume",
+   "hai": []
+  },
+  {
+   "id": "option.stop-start",
+   "area": "option",
+   "feature": "Stop / Start",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Stop / Start",
+   "hai": []
+  },
+  {
+   "id": "option.run-actions-button-run-now-no-trigger",
+   "area": "option",
+   "feature": "Run Actions button (run now, no trigger)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Run Actions button (run now, no trigger)",
+   "hai": []
+  },
+  {
+   "id": "option.update-rule-done",
+   "area": "option",
+   "feature": "Update Rule / Done",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Update Rule / Done",
+   "hai": []
+  },
+  {
+   "id": "option.logging-events-triggers-actions",
+   "area": "option",
+   "feature": "Logging: events, triggers, actions",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Logging: events, triggers, actions",
+   "hai": []
+  },
+  {
+   "id": "option.display-current-values",
+   "area": "option",
+   "feature": "Display current values",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Display current values",
+   "hai": []
+  },
+  {
+   "id": "option.ignore-trigger-events-while-running",
+   "area": "option",
+   "feature": "Ignore trigger events while running",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Ignore trigger events while running",
+   "hai": []
+  },
+  {
+   "id": "option.copy-cut-and-paste-actions-within-and-between-ru",
+   "area": "option",
+   "feature": "Copy, cut and paste actions, within and between rules",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Copy, cut and paste actions, within and between rules",
+   "hai": []
+  },
+  {
+   "id": "option.disable-an-action",
+   "area": "option",
+   "feature": "Disable an action",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Disable an action",
+   "hai": []
+  },
+  {
+   "id": "option.rule-functions-a-rule-returning-a-value",
+   "area": "option",
+   "feature": "Rule Functions (a rule returning a value)",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Rule Functions (a rule returning a value)",
+   "hai": [
+    "action:runRule",
+    "action:wait",
+    "action:return"
+   ]
+  },
+  {
+   "id": "option.rmutils-list-rules-set-private-boolean-run-actio",
+   "area": "option",
+   "feature": "RMUtils: list rules, set Private Boolean, run actions, stop actions, pause, resume (from other apps)",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: RMUtils: list rules, set Private Boolean, run actions, stop actions, pause, resume (from other apps)",
+   "hai": []
+  },
+  {
+   "id": "option.http-endpoint-run-stop-pause-resume-set-private",
+   "area": "option",
+   "feature": "HTTP endpoint: run, stop, pause, resume, set Private Boolean, get rule list",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: HTTP endpoint: run, stop, pause, resume, set Private Boolean, get rule list",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "option.http-endpoint-set-a-hub-variable",
+   "area": "option",
+   "feature": "HTTP endpoint: set a hub variable",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: HTTP endpoint: set a hub variable",
+   "hai": []
+  },
+  {
+   "id": "option.http-endpoint-pass-a-value-into-value",
+   "area": "option",
+   "feature": "HTTP endpoint: pass a value into %value%",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: HTTP endpoint: pass a value into %value%",
+   "hai": [
+    "trigger:endpoint"
+   ]
+  },
+  {
+   "id": "option.button-controller-5-shares-these-actions",
+   "area": "option",
+   "feature": "Button Controller 5 shares these actions",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "7. Rule control, options and the Rule Machine API: Button Controller 5 shares these actions",
+   "hai": [
+    "trigger:button",
+    "condition:triggeredBy"
+   ]
+  },
+  {
+   "id": "beyond.typed-variables",
+   "area": "variable",
+   "feature": "Typed variables: string, number, boolean, date, time and datetime, converted only without loss",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "partial",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "action:setVariable",
+    "condition:variable"
+   ]
+  },
+  {
+   "id": "beyond.wait-kinds",
+   "area": "control",
+   "feature": "Several wait kinds: a delay, for an event, or until a condition holds, each with a timeout and what to do then",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "partial",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "action:wait"
+   ]
+  },
+  {
+   "id": "beyond.restart-safe-waits",
+   "area": "control",
+   "feature": "Waits that survive a hub restart, with a declared policy for what happens afterwards",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "action:wait"
+   ]
+  },
+  {
+   "id": "beyond.logic-trees",
+   "area": "condition",
+   "feature": "Logic trees: a real AND, OR, NOT and XOR tree with no left-to-right early stop",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "workaround",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "condition:all",
+    "condition:any",
+    "condition:not",
+    "condition:xor"
+   ]
+  },
+  {
+   "id": "beyond.freshness",
+   "area": "condition",
+   "feature": "Freshness: a condition can require a reading no older than a set time",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "condition:deviceAttribute"
+   ]
+  },
+  {
+   "id": "beyond.unknown-states",
+   "area": "option",
+   "feature": "Unknown states: by default a rule does nothing when a condition cannot be checked",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.rerun-policy",
+   "area": "option",
+   "feature": "Re-run policy per rule: restart, ignore, queue with a limit, or parallel with a limit",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "partial",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.failure-handling",
+   "area": "option",
+   "feature": "Failure handling: carry on, stop, or run separate failure steps",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.simulation",
+   "area": "option",
+   "feature": "Simulation: a rule is simulated before it runs, and the result shown with it",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.read-back",
+   "area": "option",
+   "feature": "A plain-English read-back generated from the rule itself",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.why-not",
+   "area": "option",
+   "feature": "Run timeline, and why a rule did or did not run",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.version-history",
+   "area": "option",
+   "feature": "Version history with a diff and restore",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.approvals",
+   "area": "action",
+   "feature": "Approvals for locks, doors and sirens, by commissioned purpose",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "action:command"
+   ]
+  },
+  {
+   "id": "beyond.ai-drafting",
+   "area": "option",
+   "feature": "AI drafting and MCP tools on the same checked format",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "none",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.started-by",
+   "area": "condition",
+   "feature": "A condition on which trigger started the run, instead of copying the steps per trigger",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "rmVerdict": "workaround",
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "condition:triggeredBy"
+   ]
+  }
+ ]
+}
