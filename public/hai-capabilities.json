@@ -2,7 +2,7 @@
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
  "capabilitiesHash": "616d176e39a1c0a8a6c13a89f0d67a9022c350b5187e4e8dc17076b2913c1b71",
- "generatedAt": "2026-09-21T07:23:42+08:00",
+ "generatedAt": "2026-09-21T07:27:21+08:00",
  "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means someone watched it work on a hub on that date, \"simulated\" means nobody has. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
   "Runs": "Built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run on a hub.",
