@@ -8078,7 +8078,7 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
     hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
     hai.statusesNote = haiCaps.isEmpty()
-        ? ("${haiFeed.state == 'OFF' ? 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do' : 'That engine did not answer when these ratings were taken, so this column has not been checked against what it can currently do. Press Reassess to try again'}").toString()
+        ? ("${haiFeed.state == 'OFF' ? 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do' : 'In beta'}").toString()
         : 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
     // Automatic conversion is a separate question, answered by the proven converters.
     Map rmAuto = webcoreMigrationAssessment(originalPiston, hubVariableTypes, tokenToDeviceId.keySet().collect { "${it}".toString() } as Set).ruleMachine as Map
