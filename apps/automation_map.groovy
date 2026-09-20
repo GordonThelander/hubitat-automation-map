@@ -6839,7 +6839,11 @@ void cacheMigrationRating(String appId, Map rating) {
 // from what the scan stored rather than fetching, because this is only used to
 // decide whether a cached rating is stale.
 String haiFeedVersionForCache() {
-    return "${((state.haiFeed ?: [:]) as Map).haiVersion ?: ''}"
+    Map feed = (state.haiFeed ?: [:]) as Map
+    // The engine's version string stays the same across builds while the
+    // capability list changes under it, so a rating taken against an older list
+    // never read as stale. The hash of the list moves whenever the list does.
+    return "${feed.capabilitiesHash ?: feed.haiVersion ?: ''}"
 }
 
 Map migrationRatingsMapping() {
@@ -8074,7 +8078,7 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
     hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
     hai.statusesNote = haiCaps.isEmpty()
-        ? ("${haiFeed.state == 'OFF' ? 'No Automation Intelligence feed is set, so this column is Rule Machine parity as that engine claims it, unchecked' : 'That engine published no capability list, so this column could not be held to its current statuses'}").toString()
+        ? ("${haiFeed.state == 'OFF' ? 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do' : 'That engine did not answer when these ratings were taken, so this column has not been checked against what it can currently do. Press Reassess to try again'}").toString()
         : 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
     // Automatic conversion is a separate question, answered by the proven converters.
     Map rmAuto = webcoreMigrationAssessment(originalPiston, hubVariableTypes, tokenToDeviceId.keySet().collect { "${it}".toString() } as Set).ruleMachine as Map
