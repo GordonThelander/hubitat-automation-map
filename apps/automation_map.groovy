@@ -186,6 +186,24 @@ boolean showSanta() {
 // Hubitat Automation Intelligence publishes its rules in this app's own graph
 // shape, so they join the map through a merge rather than a fourth decoder.
 // Its rules carry no flow: the panel links to the rule's own page instead.
+// A stored copy of what the Automation Intelligence engine published, so the
+// comparison renders on a hub that does not have it installed. Counts only: no
+// capability is named here, so this carries no roadmap. Captured from a live
+// feed, dated, and shown as a dated copy rather than as this hub's own reading.
+// Refresh it from a hub that has the engine: GET the app's /rm-coverage and
+// copy the category counts.
+@Field static final Map HAI_SNAPSHOT = [
+    engine: 'HAI-1',
+    version: 'HAI-1/m5b-0.2.0-dev',
+    capturedOn: '2026-09-21',
+    categories: [[name: 'Rule structure and gating', dimensions: 7, runs: 7, hubProven: 1, format: 0, partial: 0, missing: 0, engineOnly: false],
+                 [name: 'Triggers', dimensions: 28, runs: 27, hubProven: 13, format: 0, partial: 1, missing: 0, engineOnly: false],
+                 [name: 'Conditions and operators', dimensions: 16, runs: 16, hubProven: 4, format: 0, partial: 0, missing: 0, engineOnly: false],
+                 [name: 'Actions', dimensions: 58, runs: 54, hubProven: 31, format: 0, partial: 2, missing: 2, engineOnly: false],
+                 [name: 'Variables', dimensions: 17, runs: 17, hubProven: 6, format: 0, partial: 0, missing: 0, engineOnly: false],
+                 [name: 'Rule control, options and the Rule Machine API', dimensions: 15, runs: 15, hubProven: 2, format: 0, partial: 0, missing: 0, engineOnly: false],
+                 [name: 'HAI only features', dimensions: 15, runs: 15, hubProven: 0, format: 0, partial: 0, missing: 0, engineOnly: true]]]
+
 @Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
 // What this app publishes for others to read. Same discipline it asks of
 // that engine: a field added is additive, a field removed or changed in
@@ -9918,7 +9936,14 @@ Map rmCoverageReport() {
     // report asked for now should answer for the engine as it is now.
     Map feed = fetchHaiFeed()
     if ("${feed.state}" != 'OK') {
-        return [ok: false, reason: "${feed.state == 'FAILED' ? feed.error : 'no Automation Intelligence feed is configured'}"]
+        if (feed.state == 'FAILED') return [ok: false, reason: "${feed.error}"]
+        // No engine on this hub. The comparison still renders, from the stored
+        // copy, and says so. Only the half that measures this hub is withheld.
+        return [ok: true, fromSnapshot: true, hubStats: false,
+                engine: [name: HAI_SNAPSHOT.engine, version: HAI_SNAPSHOT.version],
+                capturedOn: HAI_SNAPSHOT.capturedOn,
+                categories: HAI_SNAPSHOT.categories,
+                summary: [:], rules: [], constructs: []]
     }
     Map capsById = [:]
     ((feed.capabilities ?: []) as List).each { Object raw ->
@@ -10106,6 +10131,18 @@ Map edgesMapping() {
         statefulMeaning: [true: 'this app leaves the device in a state it chose',
                           false: 'this app does not leave a lasting state',
                           'null': 'this app could not tell, so treat it as might-be-stateful, never as false'],
+        // stateful has carried its own definition since this contract shipped and
+        // kind never did, so every consumer has had to be told what six values
+        // mean. That asymmetry is the defect, not the names. deviceRead is named
+        // for a conclusion the data cannot support and is described here by what
+        // was actually measured; the name itself waits for a contract version.
+        kindMeaning: [action: 'this app sends this device a command',
+                      trigger: 'an event from this device starts this app',
+                      constraint: 'this app reads this device in a condition or a required expression',
+                      monitor: "this app reads this device's state without commanding it",
+                      exposed: 'this app publishes this device to something outside the hub, such as Maker API or Google Home. Not an automation relationship: exclude it before walking chains, or every published device appears connected to every other',
+                      deviceRead: 'a webCoRE piston references this device somewhere its role could not be attributed, such as an expression or a task parameter. Unattributed, not read: treat it as might-command, never as a read'],
+        unusedMeaning: 'set on a constraint edge that nothing evaluates: a dead condition, which cannot carry a chain',
         apps: appsById.values().toList(),
         devices: devicesById.values().toList(),
         deviceEdges: deviceEdges,
@@ -16527,6 +16564,10 @@ function rmcRender() {
   const eng = b.engine || {};
   const cats = b.categories || [];
   const rmCats = cats.filter(function (c) { return !c.engineOnly; });
+  // This report ships with the app, so it states Rule Machine parity and nothing
+  // about where the other engine is going. Its beyond-RM features are counted on
+  // one row and never named: the count is a fact about scope, the list would be
+  // a roadmap. The feed still carries them; this report does not draw them.
   const extraCats = cats.filter(function (c) { return c.engineOnly; });
   const gapRules = (b.rules || []).filter(function (r) { return !r.covered; });
   const gapConstructs = (b.constructs || []).filter(function (c) { return c.verdict !== 'runs'; });
@@ -16535,6 +16576,11 @@ function rmcRender() {
   // Part one: the two engines against each other, before this hub is
   // mentioned at all. Rule Machine 5.1 sets the list; HAI-1 answers it.
   html += '<h4>1. Rule Machine 5.1 against ' + extEsc(eng.name || 'HAI-1') + '</h4>';
+  if (b.fromSnapshot) {
+    html += '<p class="sub">These are figures ' + extEsc(eng.name || 'HAI-1') + ' published on ' +
+      extEsc(String(b.capturedOn || 'an earlier date')) + ', stored in this app and shown as a dated copy. ' +
+      'They were not read from this hub and will not have moved since. Install that engine and set its feed address to read the current figures.</p>';
+  }
   const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0 };
   html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th><th>Works in ' + extEsc(eng.name || 'HAI-1') + '</th>' +
     '<th>of those, seen on a hub</th><th>Writes but does not run</th><th>Partly</th><th>Not built</th></tr></thead><tbody>';
@@ -16545,18 +16591,20 @@ function rmcRender() {
       '</td><td>' + extEsc(String(c.format)) + '</td><td>' +
       extEsc(String(c.partial)) + '</td><td>' + extEsc(String(c.missing)) + '</td></tr>';
   });
+  let extraRuns = 0, extraHub = 0;
+  extraCats.forEach(function (c) { extraRuns += (c.runs || 0); extraHub += (c.hubProven || 0); });
+  if (extraRuns) {
+    html += '<tr><td>New capabilities <span style="opacity:0.7">(nothing in Rule Machine to measure against)</span></td>' +
+      '<td>0</td><td>' + extEsc(String(extraRuns)) + '</td><td>' + extEsc(String(extraHub)) +
+      '</td><td>0</td><td>0</td><td>0</td></tr>';
+  }
   html += '<tr><td><b>Every area</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td><td><b>' +
-    extEsc(String(tot.runs)) + '</b></td><td><b>' + extEsc(String(tot.hubProven)) + '</b></td><td><b>' +
+    extEsc(String(tot.runs + extraRuns)) + '</b></td><td><b>' + extEsc(String(tot.hubProven + extraHub)) + '</b></td><td><b>' +
     extEsc(String(tot.format)) + '</b></td><td><b>' +
     extEsc(String(tot.partial)) + '</b></td><td><b>' + extEsc(String(tot.missing)) + '</b></td></tr>';
   // The other direction, on the same table: where Rule Machine has nothing and
   // the engine has something. Counted as 0 against RM-5 so it cannot be read
   // as parity, and kept below the total for the same reason.
-  extraCats.forEach(function (c) {
-    html += '<tr><td>' + extEsc(c.name) + ' <span style="opacity:0.7">(beyond Rule Machine)</span></td><td>0</td><td>' +
-      extEsc(String(c.runs)) + '</td><td>' + extEsc(String(c.hubProven || 0)) + '</td><td>' + extEsc(String(c.format)) +
-      '</td><td>' + extEsc(String(c.partial)) + '</td><td>' + extEsc(String(c.missing)) + '</td></tr>';
-  });
   html += '</tbody></table>';
   const shortfall = tot.dimensions - tot.runs;
   const engName = eng.name || 'HAI-1';
@@ -16564,7 +16612,8 @@ function rmcRender() {
     ' Rule Machine 5.1 capabilities have been seen working on a hub in ' + extEsc(engName) + '.</b> ' +
     extEsc(String(tot.runs)) + ' are built and pass that engine own checks' +
     (shortfall ? ', leaving ' + extEsc(String(shortfall)) + ' short of that' : ', which is all of them') +
-    ', and ' + extEsc(String(tot.runs - tot.hubProven)) + ' of those have never been watched running.</p>';
+    ', and ' + extEsc(String(tot.runs - tot.hubProven)) + ' of those have never been watched running.' +
+    (extraRuns ? ' The other ' + extEsc(String(extraRuns)) + ' have nothing in Rule Machine to measure against.' : '') + '</p>';
   // The engine publishes what each status means, so this report quotes it
   // rather than keeping a second copy that can drift out of step.
   const meanings = eng.statusMeanings || {};
@@ -16578,31 +16627,17 @@ function rmcRender() {
     meaningRows.forEach(function (r) { html += '<b>' + extEsc(r[0]) + '</b>: ' + extEsc(r[1]) + ' '; });
     html += 'Those are the words ' + extEsc(engName) + ' publishes about itself. This app repeats them; it does not test them, and the engine that sets them also writes the code they describe.</p>';
   }
-  if (extraCats.length) {
-    let extra = 0;
-    extraCats.forEach(function (c) { extra += (c.dimensions || 0); });
-    // Not every extra feature locks a rule in: several are authoring aids that
-    // cost nothing on the way back. That engine now publishes a verdict per
-    // feature, so the report counts them rather than assuming the worst.
-    const lock = [];
-    extraCats.forEach(function (c) { (c.lockIn || []).forEach(function (l) { lock.push(l); }); });
-    const noneBack = lock.filter(function (l) { return l.verdict === 'none'; });
-    html += '<p class="sub">The last row is the other direction: ' + extEsc(String(extra)) + ' things ' + extEsc(engName) +
-      ' does that Rule Machine cannot, so Rule Machine scores 0 against them. They sit outside the parity total on purpose, because a superset does not prove parity.</p>';
-    if (lock.length) {
-      html += '<p class="sub">Going back the other way, ' + extEsc(engName) + ' rates ' + extEsc(String(noneBack.length)) +
-        ' of those ' + extEsc(String(lock.length)) + ' as having no Rule Machine equivalent. Read them one at a time rather than as a score: ' +
-        'several are authoring or diagnostic aids that a rule does not depend on.</p>' +
-        '<table class="mrTable"><thead><tr><th>' + extEsc(engName) + ' only feature</th><th>Back to Rule Machine</th><th>What it costs</th></tr></thead><tbody>';
-      lock.forEach(function (l) {
-        html += '<tr><td>' + extEsc(l.feature) + '</td><td>' + extEsc(l.verdict === 'none' ? 'No equivalent' : (l.verdict === 'workaround' ? 'Workaround' : 'Partly')) +
-          '</td><td>' + extEsc(l.note) + '</td></tr>';
-      });
-      html += '</tbody></table>';
-    }
-  }
 
   // Part two: this hub's own rules, measured against the same list.
+  // Section two measures this hub against section one, so it needs the engine
+  // present. Without it the heading still appears and says what is missing,
+  // rather than the section vanishing with no explanation.
+  if (b.hubStats === false) {
+    html += '<h4>2. Your Rule Machine rules against that</h4>' +
+      '<p class="sub">Per hub statistics requires the installation of HAI.</p>';
+    box.innerHTML = html;
+    return;
+  }
   html += '<h4>2. Your ' + extEsc(String(s.rules)) + ' Rule Machine rules against that</h4>';
   html += '<p class="sub">' + extEsc(String(s.covered)) + ' of ' + extEsc(String(s.rules)) +
     ' rules use only what works in ' + extEsc(engName) + '. They draw on ' + extEsc(String(s.constructs)) +
