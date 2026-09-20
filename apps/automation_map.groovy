@@ -192,6 +192,12 @@ boolean showSanta() {
 // feed, dated, and shown as a dated copy rather than as this hub's own reading.
 // Refresh it from a hub that has the engine: GET the app's /rm-coverage and
 // copy the category counts.
+// Where that engine publishes its own capability list for anyone to read, with
+// no engine installed and no token. Read only when this hub has no feed of its
+// own: a hub that has the engine reads the engine, not a file about it.
+@Field static final String HAI_PUBLIC_CAPABILITIES_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/public/hai-capabilities.json'
+@Field static final String HAI_PUBLIC_CONTRACT = 'hai.capabilities/1'
+
 @Field static final Map HAI_SNAPSHOT = [
     engine: 'HAI-1',
     version: 'HAI-1/m5b-0.2.0-dev',
@@ -9942,6 +9948,11 @@ Map rmCoverageReport() {
         // minute. Both cases render the comparison from the stored copy and say
         // which it is. Only the half that measures this hub is withheld, because
         // that half genuinely cannot be computed without a live read.
+        // What it publishes openly is current; the copy stored here is not. Try
+        // the published list first and keep the stored copy for a hub with no
+        // way out to the internet, or a file that has moved.
+        Map published = fetchHaiPublicCapabilities()
+        if (published) return published
         return [ok: true, fromSnapshot: true, hubStats: false,
                 feedError: feed.state == 'FAILED' ? "${feed.error}" : null,
                 engine: [name: HAI_SNAPSHOT.engine, version: HAI_SNAPSHOT.version],
@@ -9999,58 +10010,7 @@ Map rmCoverageReport() {
         Map use = raw as Map
         if (use.capabilityId) usedCapIds << "${use.capabilityId}".toString()
     }
-    Map categories = [:]
-    capsById.each { String capId, Object raw ->
-        Map cap = raw as Map
-        String rm51 = "${cap.rm51 ?: ''}"
-        int sep = rm51.indexOf(':')
-        String section = (sep > 0 ? rm51.substring(0, sep) : rm51) ?: 'Other'
-        // Drop the section number: it orders the list, it is not a name.
-        // Written without a pattern - the validator rejects backslashes here.
-        String name = section
-        int dot = name.indexOf('. ')
-        if (dot > 0 && name.substring(0, dot).isInteger()) name = name.substring(dot + 2)
-        // Section 8 is that engine's own extras, not a Rule Machine feature,
-        // so it is kept out of the parity count and reported on its own.
-        Map row = (categories[section] ?: [section: section, name: name, order: section,
-                                           engineOnly: rm51.startsWith('8'),
-                                           dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0,
-                                           hubProven: 0, simulated: 0, usedHere: 0, usedHubProven: 0, lockIn: []]) as Map
-        row.dimensions = ((row.dimensions ?: 0) as Integer) + 1
-        String status = "${cap.status ?: ''}"
-        // What the claim rests on, as that engine publishes it: seen on a hub,
-        // or built and simulated with nobody watching. Counted apart from the
-        // status, because "it works" and "someone saw it work" are different
-        // sentences and the difference is most of this report's value.
-        String evidence = "${((cap.evidence ?: [:]) as Map).level ?: ''}"
-        if (status == 'Runs') {
-            row.runs = ((row.runs ?: 0) as Integer) + 1
-            if (evidence == 'hub') row.hubProven = ((row.hubProven ?: 0) as Integer) + 1
-            else row.simulated = ((row.simulated ?: 0) as Integer) + 1
-        }
-        else if (status == 'Format') row.format = ((row.format ?: 0) as Integer) + 1
-        else if (status == 'Missing') row.missing = ((row.missing ?: 0) as Integer) + 1
-        else row.partial = ((row.partial ?: 0) as Integer) + 1
-        // What it costs to take a rule built on this back to Rule Machine, as
-        // that engine now publishes it. Only its own extra features carry one.
-        if (row.engineOnly) {
-            String verdict = "${cap.rmVerdict ?: ''}"
-            if (verdict) {
-                List notes = (row.lockIn ?: []) as List
-                notes << [feature: "${cap.feature}", verdict: verdict, note: "${cap.rmNote ?: ''}"]
-                row.lockIn = notes
-            }
-        }
-        if (usedCapIds.contains(capId)) {
-            row.usedHere = ((row.usedHere ?: 0) as Integer) + 1
-            // Reached by a rule on this hub AND not fully working: the
-            // intersection that decides whether this hub can move, rather
-            // than either number on its own.
-            if (status != 'Runs') row.usedGaps = ((row.usedGaps ?: 0) as Integer) + 1
-            else if (evidence == 'hub') row.usedHubProven = ((row.usedHubProven ?: 0) as Integer) + 1
-        }
-        categories[section] = row
-    }
+    Map categories = haiCategoryRows(capsById, usedCapIds)
     // Only answerable on a hub that can reach the engine, which is the only
     // place it is worth answering: it tells whoever maintains this app that the
     // copy shipped for hubs without the engine has fallen behind. A reader on a
@@ -10175,6 +10135,95 @@ String engineOfNode(Map n) {
     if (type.startsWith('Visual Rule')) return 'VRB'
     if (type == 'Notifier') return 'Notifier'
     return type ?: 'other'
+}
+
+// The list that engine publishes for readers without it installed. Shaped into
+// the same rows the live path produces, through the same grouping, so there is
+// no second copy of that logic. Any failure returns null and the caller falls
+// back to the counts stored in this app.
+Map fetchHaiPublicCapabilities() {
+    Map body = null
+    try {
+        httpGet([uri: HAI_PUBLIC_CAPABILITIES_URL, contentType: 'application/json',
+                 timeout: HAI_FEED_TIMEOUT_SEC]) { resp -> body = resp?.data as Map }
+    } catch (ignored) {
+        return null
+    }
+    if (!body) return null
+    if ("${body.contract ?: ''}" != HAI_PUBLIC_CONTRACT) return null
+    Map capsById = [:]
+    ((body.capabilities ?: []) as List).each { Object raw ->
+        Map cap = raw as Map
+        String capId = "${cap?.id ?: ''}"
+        if (capId) capsById[capId] = cap
+    }
+    if (capsById.isEmpty()) return null
+    Map categories = haiCategoryRows(capsById, [] as Set)
+    return [ok: true, fromPublished: true, hubStats: false,
+            engine: [name: "${body.engine ?: 'HAI-1'}",
+                     capabilities: capsById.size(),
+                     statusMeanings: (body.statusMeanings ?: [:]) as Map,
+                     evidenceMeanings: (body.evidenceMeanings ?: [:]) as Map],
+            publishedAt: "${body.generatedAt ?: ''}",
+            whatThisIs: "${body.whatThisIs ?: ''}",
+            categories: categories.values().toList().sort { Map c -> "${c.order}" },
+            summary: [:], rules: [], constructs: []]
+}
+
+Map haiCategoryRows(Map capsById, Set usedCapIds) {
+    Map categories = [:]
+    capsById.each { String capId, Object raw ->
+        Map cap = raw as Map
+        String rm51 = "${cap.rm51 ?: ''}"
+        int sep = rm51.indexOf(':')
+        String section = (sep > 0 ? rm51.substring(0, sep) : rm51) ?: 'Other'
+        // Drop the section number: it orders the list, it is not a name.
+        // Written without a pattern - the validator rejects backslashes here.
+        String name = section
+        int dot = name.indexOf('. ')
+        if (dot > 0 && name.substring(0, dot).isInteger()) name = name.substring(dot + 2)
+        // Section 8 is that engine's own extras, not a Rule Machine feature,
+        // so it is kept out of the parity count and reported on its own.
+        Map row = (categories[section] ?: [section: section, name: name, order: section,
+                                           engineOnly: rm51.startsWith('8'),
+                                           dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0,
+                                           hubProven: 0, simulated: 0, usedHere: 0, usedHubProven: 0, lockIn: []]) as Map
+        row.dimensions = ((row.dimensions ?: 0) as Integer) + 1
+        String status = "${cap.status ?: ''}"
+        // What the claim rests on, as that engine publishes it: seen on a hub,
+        // or built and simulated with nobody watching. Counted apart from the
+        // status, because "it works" and "someone saw it work" are different
+        // sentences and the difference is most of this report's value.
+        String evidence = "${((cap.evidence ?: [:]) as Map).level ?: ''}"
+        if (status == 'Runs') {
+            row.runs = ((row.runs ?: 0) as Integer) + 1
+            if (evidence == 'hub') row.hubProven = ((row.hubProven ?: 0) as Integer) + 1
+            else row.simulated = ((row.simulated ?: 0) as Integer) + 1
+        }
+        else if (status == 'Format') row.format = ((row.format ?: 0) as Integer) + 1
+        else if (status == 'Missing') row.missing = ((row.missing ?: 0) as Integer) + 1
+        else row.partial = ((row.partial ?: 0) as Integer) + 1
+        // What it costs to take a rule built on this back to Rule Machine, as
+        // that engine now publishes it. Only its own extra features carry one.
+        if (row.engineOnly) {
+            String verdict = "${cap.rmVerdict ?: ''}"
+            if (verdict) {
+                List notes = (row.lockIn ?: []) as List
+                notes << [feature: "${cap.feature}", verdict: verdict, note: "${cap.rmNote ?: ''}"]
+                row.lockIn = notes
+            }
+        }
+        if (usedCapIds.contains(capId)) {
+            row.usedHere = ((row.usedHere ?: 0) as Integer) + 1
+            // Reached by a rule on this hub AND not fully working: the
+            // intersection that decides whether this hub can move, rather
+            // than either number on its own.
+            if (status != 'Runs') row.usedGaps = ((row.usedGaps ?: 0) as Integer) + 1
+            else if (evidence == 'hub') row.usedHubProven = ((row.usedHubProven ?: 0) as Integer) + 1
+        }
+        categories[section] = row
+    }
+    return categories
 }
 
 Map rmCoverageMapping() {
@@ -10720,6 +10769,10 @@ Map fetchHaiFeed() {
             flows: (feed.flows ?: [:]) as Map,
             engine: "${feed.engine ?: ''}",
             haiVersion: "${feed.haiVersion ?: ''}",
+            // A hash of the capability list the engine is actually serving. The
+            // version string does not move between builds; this does, so it is
+            // the thing to compare a stored copy against.
+            capabilitiesHash: "${feed.capabilitiesHash ?: ''}",
             statusMeanings: (feed.statusMeanings ?: [:]) as Map,
             evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map,
             generatedAt: "${feed.generatedAt ?: ''}",
@@ -16592,6 +16645,11 @@ function rmcRender() {
   if (b.snapshotStale === true) {
     html += '<p class="sub">Maintenance note: the figures stored in this app for hubs without that engine were taken on ' +
       extEsc(String(b.snapshotCapturedOn || '')) + ' and no longer match what it publishes. The table below is the live reading and is unaffected.</p>';
+  }
+  if (b.fromPublished) {
+    html += '<p class="sub">This hub does not have that engine, so these figures were read from the list it publishes openly' +
+      (b.publishedAt ? ', generated ' + extEsc(String(b.publishedAt)) : '') + '. ' +
+      extEsc(String(b.whatThisIs || '')) + '</p>';
   }
   if (b.fromSnapshot) {
     if (b.feedError) {
