@@ -196,6 +196,7 @@ boolean showSanta() {
     engine: 'HAI-1',
     version: 'HAI-1/m5b-0.2.0-dev',
     capturedOn: '2026-09-21',
+    capabilitiesHash: 'a84136ba119a23cbe19ac6f6c78c75194854ff1c7fce156d3930ca6ef01e60d9',
     categories: [[name: 'Rule structure and gating', dimensions: 7, runs: 7, hubProven: 1, format: 0, partial: 0, missing: 0, engineOnly: false],
                  [name: 'Triggers', dimensions: 28, runs: 27, hubProven: 13, format: 0, partial: 1, missing: 0, engineOnly: false],
                  [name: 'Conditions and operators', dimensions: 16, runs: 16, hubProven: 4, format: 0, partial: 0, missing: 0, engineOnly: false],
@@ -10050,8 +10051,17 @@ Map rmCoverageReport() {
         }
         categories[section] = row
     }
+    // Only answerable on a hub that can reach the engine, which is the only
+    // place it is worth answering: it tells whoever maintains this app that the
+    // copy shipped for hubs without the engine has fallen behind. A reader on a
+    // hub without the engine has no live hash to compare against and is told the
+    // capture date instead.
+    String liveHash = "${feed.capabilitiesHash ?: ''}"
+    Boolean snapshotStale = liveHash && HAI_SNAPSHOT.capabilitiesHash ? (liveHash != HAI_SNAPSHOT.capabilitiesHash) : null
     return [ok: true,
             generatedAt: now(),
+            snapshotStale: snapshotStale,
+            snapshotCapturedOn: HAI_SNAPSHOT.capturedOn,
             // The engine names itself in the feed; this app does not decide
             // what it is called, and never parses the version for the name.
             engine: [name: "${feed.engine ?: 'HAI-1'}", version: feed.haiVersion,
@@ -16579,6 +16589,10 @@ function rmcRender() {
   // Part one: the two engines against each other, before this hub is
   // mentioned at all. Rule Machine 5.1 sets the list; HAI-1 answers it.
   html += '<h4>1. Rule Machine 5.1 against ' + extEsc(eng.name || 'HAI-1') + '</h4>';
+  if (b.snapshotStale === true) {
+    html += '<p class="sub">Maintenance note: the figures stored in this app for hubs without that engine were taken on ' +
+      extEsc(String(b.snapshotCapturedOn || '')) + ' and no longer match what it publishes. The table below is the live reading and is unaffected.</p>';
+  }
   if (b.fromSnapshot) {
     if (b.feedError) {
       html += '<p class="sub">This hub has that engine, but it did not answer just now (' +
