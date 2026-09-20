@@ -6785,10 +6785,21 @@ void cacheMigrationRating(String appId, Map rating) {
         return [level: e.level, label: e.label,
                 reasons: ((e.summary ?: []) as List).take(3),
                 partsNeedingRework: counts.manualComponents,
+                // Enough for the panel's own row: it used to re-rate every
+                // piston on every open purely to redraw numbers it already had.
+                components: counts.components,
+                blockers: ((e.blockers ?: []) as List).take(12),
+                engineName: e.engineName,
+                statusesNote: e.statusesNote,
+                automatic: auto ?: null,
                 automaticConversion: auto.containsKey('available') ? (auto.available as Boolean) : null]
     }
+    // The other engine's statuses move week to week, so a rating is only good
+    // for the version it was taken against. Stored with the rating rather than
+    // inferred later, so a stale one can be spotted without re-rating it.
     cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
-                    hai: side(rating.hai)]
+                    hai: side(rating.hai),
+                    engineVersion: ((rating.hai ?: [:]) as Map).version]
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -6799,9 +6810,19 @@ void cacheMigrationRating(String appId, Map rating) {
 // Every cached rating, with the piston list as it stands now. A rating taken
 // before the graph was last rebuilt is reported as stale rather than dropped:
 // the piston may not have changed, and the caller decides what to do with that.
+// The version of the other engine's capability list the scan last saw. Read
+// from what the scan stored rather than fetching, because this is only used to
+// decide whether a cached rating is stale.
+String haiFeedVersionForCache() {
+    return "${((state.haiFeed ?: [:]) as Map).haiVersion ?: ''}"
+}
+
 Map migrationRatingsMapping() {
     Map cache = (state.migrationRatingCache ?: [:]) as Map
     Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
+    // One read of the feed, not one per piston: this is only used to decide
+    // whether the cached ratings still describe the engine as it is now.
+    String engineVersion = haiFeedVersionForCache()
     Map appInfo = (state.appInfo ?: [:]) as Map
     List out = []
     appInfo.each { String appId, info ->
@@ -6809,10 +6830,15 @@ Map migrationRatingsMapping() {
         if ("${(info as Map).type ?: ''}".trim() != 'webCoRE Piston') return
         Map hit = (cache[appId] ?: [:]) as Map
         Long ratedAt = (hit.ratedAt ?: 0) as Long
+        // Stale means the graph was rebuilt after this rating, or the other
+        // engine has published a different version since. Either way the rating
+        // may no longer describe what it claims to.
+        boolean engineMoved = ratedAt && engineVersion && hit.engineVersion && "${hit.engineVersion}" != engineVersion
         out << [appId: appId,
                 status: ratedAt ? 'complete' : 'not-rated',
                 ratedAt: ratedAt ?: null,
-                stale: ratedAt ? (ratedAt < graphAt) : null,
+                stale: ratedAt ? ((ratedAt < graphAt) || engineMoved) : null,
+                staleReason: ratedAt ? (engineMoved ? 'engine-version' : ((ratedAt < graphAt) ? 'graph-rebuilt' : null)) : null,
                 ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder, hai: hit.hai]
     }
     return render(status: 200, contentType: 'application/json',
@@ -8082,8 +8108,8 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     // pass. A warning costs no effort points: it is something to watch after the
     // rule is rebuilt, not work to do before it.
     'mod.changesInIf'          : ['warning', 'HAI-1 fires on a transition by default where Rule Machine does not always; check this one after rebuilding'],
-    'trig.device.stays'        : ['warning', 'supported, but a re-trigger restarts the rule by default and cancels a pending wait, where a Rule Machine delay survives one'],
-    'vact.wait'                : ['warning', 'supported, but a re-trigger cancels this wait unless the rule is set to ignore or queue; a Rule Machine delay survives unless marked cancelable'],
+    'trig.device.stays'        : ['warning', 'supported, but set the rule to run in parallel: at its default a re-trigger cancels the run, where Rule Machine starts a second one (proven on this hub 2026-09-20)'],
+    'vact.wait'                : ['warning', 'supported, but set the rule to run in parallel: at its default a re-trigger cancels this wait, where Rule Machine runs the actions again (proven on this hub 2026-09-20)'],
     'setting.restriction'      : ['warning', 'supported, but HAI-1 keeps listening where Rule Machine drops its subscriptions, which other apps can see'],
     // Where HAI-1 asks a person first. The action is supported; commissioning it
     // is a step a migration has to plan for, so it is said rather than scored.
@@ -13325,6 +13351,17 @@ String buildMapHtml() {
   #migrationReportBody .mrRow summary::-webkit-details-marker { display:none; }
   #migrationReportBody .mrRow[open] summary { border-bottom:1px solid rgba(255,255,255,0.12); }
   #migrationReportBody .mrName { overflow-wrap:anywhere; font-weight:600; }
+  #migrationReportBody .mrNameText { cursor:pointer; }
+  #migrationReportBody .mrCaret { display:inline-block; width:0; height:0; margin-right:7px; vertical-align:middle;
+                                  border-top:5px solid transparent; border-bottom:5px solid transparent;
+                                  border-left:6px solid rgba(255,255,255,0.55); transition:transform 0.12s ease; }
+  #migrationReportBody .mrRow[open] .mrCaret { border-left:5px solid transparent; border-right:5px solid transparent;
+                                               border-top:6px solid rgba(255,255,255,0.75); border-bottom:0; }
+  #migrationReportBody .mrRow summary:hover .mrCaret { border-left-color:#e8f2f6; }
+  #migrationReportBody .mrRow[open] summary:hover .mrCaret { border-top-color:#e8f2f6; }
+  #migrationReportBody .mrReasons .mrRest { display:none; }
+  #migrationReportBody .mrReasons.mrReasonsAll .mrRest { display:grid; }
+  #migrationReportBody .mrMore { margin-top:6px; }
   #migrationReportBody .mrName a { color:inherit; text-decoration:underline; text-decoration-color:rgba(255,255,255,0.35); }
   #migrationReportBody .mrCell { display:flex; gap:8px; align-items:center; font-size:0.9em; }
   #migrationReportBody .mrBadge { display:inline-grid; place-items:center; flex:none; width:24px; height:24px; border-radius:50%; font-weight:700; color:#111; }
@@ -16762,14 +16799,68 @@ function mrPistons() {
 
 function mrOpen() {
   bringToFront(migrationReportPanel);
-  if (!MR.results && !MR.running) mrRun(); else mrRender();
-}
-
-function mrRun() {
-  const pistons = mrPistons();
-  const seq = ++MR.runSeq;
+  if (MR.results || MR.running) { mrRender(); return; }
+  // Every rating already taken is on the hub. Show those first, then rate only
+  // what is missing or stale: rating a piston costs a hub read and a decode,
+  // and re-rating twenty-five unchanged pistons to redraw the same numbers is
+  // the waste this panel used to do on every open.
   MR.running = true;
   MR.results = [];
+  mrRender();
+  fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { mrRun(mrCachedResults(d)); })
+    .catch(function () { mrRun([]); });
+}
+
+// Turns the stored ratings into the same shape a fresh assessment returns, so
+// a cached row and a freshly rated one render through one path.
+function mrCachedResults(payload) {
+  const byId = {};
+  ((payload || {}).ratings || []).forEach(function (r) {
+    // A rating stored before this panel began reading the cache holds only a
+    // level and a label, which would draw a row with no parts and an empty
+    // detail. Those are rated again rather than rendered wrong.
+    const full = r.ruleMachine && r.ruleMachine.components !== undefined && r.ruleMachine.components !== null;
+    if (r.status === 'complete' && !r.stale && full) byId[String(r.appId)] = r;
+  });
+  const out = [];
+  mrPistons().forEach(function (node) {
+    const hit = byId[coverageHubAppId(node.id)];
+    if (!hit) return;
+    out.push({ node: node, cached: true, body: {
+      status: 'complete',
+      ruleMachine: mrCachedSide(hit.ruleMachine),
+      visualRuleBuilder: mrCachedSide(hit.visualRuleBuilder),
+      hai: mrCachedSide(hit.hai)
+    } });
+  });
+  return out;
+}
+
+function mrCachedSide(side) {
+  if (!side) return { level: null, label: 'Not assessed', counts: {}, blockers: [], summary: [] };
+  return {
+    level: side.level,
+    label: side.label,
+    counts: { components: side.components, manualComponents: side.partsNeedingRework },
+    blockers: side.blockers || [],
+    summary: side.reasons || [],
+    engineName: side.engineName,
+    statusesNote: side.statusesNote,
+    automatic: side.automatic || (side.automaticConversion === null || side.automaticConversion === undefined
+      ? null : { available: side.automaticConversion })
+  };
+}
+
+// known: results already in hand, from the cache. Only the rest are rated.
+function mrRun(known) {
+  const have = {};
+  (known || []).forEach(function (r) { have[r.node.id] = true; });
+  const pistons = mrPistons().filter(function (n) { return !have[n.id]; });
+  const seq = ++MR.runSeq;
+  MR.running = true;
+  MR.results = (known || []).slice();
   mrRender();
   let i = 0;
   const next = function () {
@@ -16825,7 +16916,17 @@ function mrReasons(r) {
       extEsc(b.note) + ' <span class="sub">' + extEsc(b.location) + '</span></li>';
   });
   const list = fix.map(function (s) { return '<li><span class="mrTag mr_no">Source</span>' + extEsc(s) + '</li>'; }).concat(items);
-  return list.length ? '<ul>' + list.join('') + '</ul>' : '<p class="sub">Every part has a direct equivalent.</p>';
+  if (!list.length) return '<p class="sub">Every part has a direct equivalent.</p>';
+  // One engine with a long list used to set the height of the whole row, so
+  // the other two read as short by comparison rather than by content.
+  const cap = 4;
+  const rest = list.length - cap;
+  const shown = rest > 0 ? list.slice(0, cap) : list;
+  const hidden = rest > 0 ? list.slice(cap) : [];
+  return '<div class="mrReasons"><ul>' + shown.join('') + '</ul>' +
+    (hidden.length ? '<ul class="mrRest">' + hidden.join('') + '</ul>' +
+      '<button type="button" class="rowbtn mrMore">Show all ' + extEsc(String(list.length)) + '</button>' : '') +
+    '</div>';
 }
 
 function mrCell(r) {
@@ -16848,7 +16949,7 @@ function mrRenderPistons() {
       (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers) +
         JSON.stringify((r.body.hai || {}).blockers || [])).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
@@ -16858,7 +16959,7 @@ function mrRenderPistons() {
     mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
     mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
   h += '<div class="mrList">' + rows.map(function (r) {
-    return '<details class="mrRow"><summary><span class="mrName"><a href="#" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</a></span>' +
+    return '<details class="mrRow"><summary><span class="mrName"><span class="mrCaret" aria-hidden="true"></span><span class="mrNameText" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</span></span>' +
       mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + mrCell(r.body.hai || {}) + '</summary>' +
       '<div class="mrDetail"><div><h5>Rule Machine 5.1</h5>' + mrReasons(r.body.ruleMachine) + '</div><div><h5>Visual Rule Builder 2.0</h5>' + mrReasons(r.body.visualRuleBuilder) +
       '</div><div><h5>' + extEsc(((r.body.hai || {}).engineName) || 'HAI-1') + '</h5>' + mrReasons(r.body.hai || {}) + '</div></div></details>';
@@ -16888,7 +16989,7 @@ function mrRenderMatrix() {
 function mrRender() {
   if (!migrationReportBody || getComputedStyle(migrationReportPanel).display === 'none') return;
   const keep = {};
-  ['mrLevelRm', 'mrLevelVrb', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) keep[id] = el.value; });
+  ['mrLevelRm', 'mrLevelVrb', 'mrLevelHai', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) keep[id] = el.value; });
   const focused = document.activeElement ? document.activeElement.id : '';
   const open = {};
   document.querySelectorAll('#migrationReportBody details.mrRow[open] a[data-node]').forEach(function (a) { open[a.getAttribute('data-node')] = true; });
@@ -16902,19 +17003,25 @@ function mrRender() {
     el.focus();
     if (el.setSelectionRange && el.type === 'search') el.setSelectionRange(el.value.length, el.value.length);
   }
-  document.querySelectorAll('#migrationReportBody details.mrRow a[data-node]').forEach(function (a) {
+  document.querySelectorAll('#migrationReportBody details.mrRow [data-node]').forEach(function (a) {
     if (open[a.getAttribute('data-node')]) a.closest('details').open = true;
-    a.addEventListener('click', function (ev) {
+    // The name is a label, not a way out of the report: clicking it opens the
+    // row, the same as clicking anywhere else on it. Leaving for the map is the
+    // right-click menu, which is deliberate rather than a pixel away from read.
+  });
+  document.querySelectorAll('#migrationReportBody .mrMore').forEach(function (btn) {
+    btn.addEventListener('click', function (ev) {
       ev.preventDefault();
-      migrationReportPanel.style.display = 'none';
-      syncLegendVisibility();
-      focusNode(a.getAttribute('data-node'));
+      ev.stopPropagation();
+      const box = btn.closest('.mrReasons');
+      if (box) box.classList.add('mrReasonsAll');
+      btn.remove();
     });
   });
   document.querySelectorAll('#migrationReportBody .mrTabs button').forEach(function (b) {
     b.addEventListener('click', function () { MR.tab = b.getAttribute('data-tab'); mrRender(); });
   });
-  ['mrLevelRm', 'mrLevelVrb', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) el.addEventListener('input', mrRender); });
+  ['mrLevelRm', 'mrLevelVrb', 'mrLevelHai', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) el.addEventListener('input', mrRender); });
   document.querySelectorAll('#migrationReportBody [data-level-select]').forEach(function (seg) {
     seg.addEventListener('click', function () {
       const sel = document.getElementById(seg.getAttribute('data-level-select'));
@@ -16923,7 +17030,7 @@ function mrRender() {
     });
   });
   const rerun = document.getElementById('mrRerun');
-  if (rerun) rerun.addEventListener('click', mrRun);
+  if (rerun) rerun.addEventListener('click', function () { mrRun([]); });
   const exportPistons = document.getElementById('mrExportPistons');
   if (exportPistons) exportPistons.addEventListener('click', mrExportPistonsCsv);
   const exportMatrix = document.getElementById('mrExportMatrix');
