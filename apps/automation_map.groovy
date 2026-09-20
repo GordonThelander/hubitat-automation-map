@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.3.2'
+@Field static final String APP_VERSION = '2.4.0'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -183,6 +183,15 @@ boolean showSanta() {
 // so a future engine addition needs one edit rather than finding every
 // place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
 @Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0'
+// Hubitat Automation Intelligence publishes its rules in this app's own graph
+// shape, so they join the map through a merge rather than a fourth decoder.
+// Its rules carry no flow: the panel links to the rule's own page instead.
+@Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
+// What this app publishes for others to read. Same discipline it asks of
+// that engine: a field added is additive, a field removed or changed in
+// meaning is a new number, and consumers ignore what they do not know.
+@Field static final String EDGES_CONTRACT = 'am.edges/1'
+@Field static final int HAI_FEED_TIMEOUT_SEC = 10
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 // Origin only (scheme+host), for the browser to compare against its own
 // window.location.hostname at fetch time. Kept as its own pattern rather than
@@ -833,6 +842,15 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                     paragraph "Diagnostic logging is currently <b>on</b> and will turn itself off within an hour. Turn it off here sooner if you are done before then."
                 }
             }
+            section {
+                // Its rules are child apps of another app, so the hub's own
+                // app scan cannot see what each one touches. Its feed can.
+                paragraph "If you run Hubitat Automation Intelligence, paste the address of its Automation Map feed here and its rules appear on the map alongside your other automations. The address is read from your own hub at each scan, and nothing is sent anywhere."
+                input name: 'haiFeedUrl', type: 'text',
+                    title: 'Automation Intelligence feed address',
+                    required: false, submitOnChange: true
+                if ("${settings.haiFeedUrl ?: ''}".trim()) paragraph haiFeedStatusText()
+            }
         }
 
         if (!ready) {
@@ -1479,8 +1497,19 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Notifier, webCoRE pistons as well as hub and local variables.</span>"
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Experimental HAI Rule Engine, webCoRE pistons, Notifier as well as hub and local variables.</span>"
+    s << haiCoverageSummary(graph)
     return s.toString()
+}
+
+// The engine list above already names HAI, so a working feed needs no line of
+// its own. A feed that was set and could not be read does: those rules are
+// silently absent from the map otherwise.
+String haiCoverageSummary(Map graph) {
+    Map feed = (state.haiFeed ?: [:]) as Map
+    String status = "${feed.state ?: ''}"
+    if (status != 'FAILED') return ''
+    return "<br><span style='color:#c0392b'>HAI rules are missing from this map: ${feed.error}.</span>"
 }
 
 // ===================================================================================================================
@@ -2929,6 +2958,21 @@ void finishScan(data = null) {
         // from a previous scan.
         state.hubVariableInventory = fetchHubVariableInventory()
 
+        // One small request to another app on this same hub, published here
+        // for the same reason as the inventory above: buildGraph() reads a
+        // definite answer from this generation, never a stale one.
+        // Without the capability list: it is long, the graph never reads it,
+        // and the coverage report fetches its own copy when it is asked for.
+        Map fetchedFeed = new LinkedHashMap(fetchHaiFeed())
+        fetchedFeed.remove('capabilities')
+        state.haiFeed = fetchedFeed
+        Map haiFeed = (state.haiFeed ?: [:]) as Map
+        if (haiFeed.state == 'FAILED') {
+            log.warn "${app.label}: the Automation Intelligence feed could not be read, continuing without it: ${haiFeed.error}"
+        } else if (haiFeed.state == 'OK' && diagOn()) {
+            log.info "${app.label}: Automation Intelligence feed gave ${((haiFeed.nodes ?: []) as List).size()} node(s) and ${((haiFeed.edges ?: []) as List).size()} edge(s)"
+        }
+
         // Registry outcome resolved HERE, after the claim, from the
         // generation-keyed REGISTRY_RESULTS store fetchRegistry() writes to -
         // not from a state.registryMeta snapshot taken before this claim,
@@ -3980,6 +4024,7 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 // so a rule with only Local definitions and no Hub-shaped
                 // reference at all still gets its definitions published.
                 out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
+                out.rmConstructs = extractRuleConstructs(data)
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 // Decoded once (v2.2.8), not per classifier - chunk
@@ -6742,7 +6787,8 @@ void cacheMigrationRating(String appId, Map rating) {
                 partsNeedingRework: counts.manualComponents,
                 automaticConversion: auto.containsKey('available') ? (auto.available as Boolean) : null]
     }
-    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder)]
+    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
+                    hai: side(rating.hai)]
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -6767,7 +6813,7 @@ Map migrationRatingsMapping() {
                 status: ratedAt ? 'complete' : 'not-rated',
                 ratedAt: ratedAt ?: null,
                 stale: ratedAt ? (ratedAt < graphAt) : null,
-                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder]
+                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder, hai: hit.hai]
     }
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
@@ -6808,7 +6854,8 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
         parentIndex.each { k, v -> if ("${v}" ==~ /^[0-9]+$/) tokenToDeviceId["${k}".toString()] = "${v}" as Integer }
         Map rating = webcoreMigrationRating(decoded.document as Map, hubVariableTypes, tokenToDeviceId)
         cacheMigrationRating(appId, rating)
-        return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine, visualRuleBuilder: rating.visualRuleBuilder]]
+        return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine,
+                                   visualRuleBuilder: rating.visualRuleBuilder, hai: rating.hai]]
     } catch (Exception ignored) {
         return [http: 422, body: [status: 'error', error: 'assessment-failed']]
     } finally {
@@ -7770,15 +7817,46 @@ List webcoreVrbDeviceVerdict(String row, Map ctx) {
     }
 }
 
+// One construct's verdict for HAI-1: this app's own reading first, then the
+// live capability status, then Rule Machine's answer carried across. capsById
+// is the engine's published capability list, or empty when it could not be read
+// - in which case only the derived and hand-read answers stand, and the report
+// says the statuses were unavailable rather than assuming they are fine.
+List webcoreHaiVerdict(String row, String rmVerdict, String rmNote, Map capsById) {
+    List own = WEBCORE_HAI_VERDICT[row] as List
+    if (own) return [own[0] as String, own[1] as String]
+    String capId = WEBCORE_HAI_CAPABILITY[row] as String
+    if (capId && rmVerdict == 'yes') {
+        Map cap = (capsById ?: [:])[capId] as Map
+        String status = "${cap?.status ?: ''}"
+        if (status && status != 'Runs') {
+            String feature = "${cap?.feature ?: capId}"
+            String because = "${cap?.note ?: ''}".trim()
+            return ['partial', ("HAI-1 lists ${feature} as ${status.toLowerCase()}" +
+                (because ? ": ${because}" : '')).toString()]
+        }
+    }
+    return [rmVerdict, rmNote]
+}
+
 // Rates one engine from the classified components.
-Map webcoreRateEngine(List components, String engine, List sourceProblems) {
-    int ruleIndex = engine == 'rm' ? 1 : 3
+Map webcoreRateEngine(List components, String engine, List sourceProblems, Map haiCaps = [:]) {
+    // HAI-1 reads the Rule Machine column and then answers for itself, so it
+    // takes that index rather than a column of its own in the table.
+    boolean hai = (engine == 'hai')
+    int ruleIndex = (engine == 'vrb') ? 3 : 1
     List items = []
     Integer firstUnit = null
     boolean decisionTaken = false
     boolean seenDecision = false
-    Closure verdictOf = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex] as String }
-    Closure noteOf = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex + 1] as String }
+    Closure rawVerdict = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex] as String }
+    Closure rawNote = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex + 1] as String }
+    Closure verdictOf = { String row ->
+        hai ? (webcoreHaiVerdict(row, rawVerdict(row), rawNote(row), haiCaps)[0] as String) : rawVerdict(row)
+    }
+    Closure noteOf = { String row ->
+        hai ? (webcoreHaiVerdict(row, rawVerdict(row), rawNote(row), haiCaps)[1] as String) : rawNote(row)
+    }
     int counted = 0
     // Any action that is not a listed command with fixed values makes an extra run matter.
     boolean repeatUnsafe = components.any { Map c ->
@@ -7828,7 +7906,9 @@ Map webcoreRateEngine(List components, String engine, List sourceProblems) {
             List er = extraRun(row, verdict, note)
             verdict = er[0] as String; note = er[1] as String
         } else {
-            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) { verdict = 'partial'; note = 'rebuild as Between two times' }
+            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) {
+                verdict = 'partial'; note = hai ? 'rebuild as a between-two-times condition' : 'rebuild as Between two times'
+            }
             if (row in ['stmt.on']) { if (seenDecision) { effectiveRow = 'stmt.on.extra'; verdict = verdictOf(effectiveRow); note = noteOf(effectiveRow) }; seenDecision = true }
         }
         if (effectiveRow == 'setting.localVariable') return
@@ -7932,13 +8012,95 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     List components = webcoreRatingComponents(piston, hubVariableTypes)
     Map rm = webcoreRateEngine(components, 'rm', problems)
     Map vrb = webcoreRateEngine(components, 'vrb', problems)
+    // Read now, not from the scan: a rating shown today should answer for that
+    // engine as it is today, and its statuses change week to week.
+    Map haiFeed = fetchHaiFeed()
+    Map haiCaps = [:]
+    ((haiFeed.capabilities ?: []) as List).each { Object raw ->
+        if (raw instanceof Map && (raw as Map).id) haiCaps["${(raw as Map).id}"] = raw as Map
+    }
+    Map hai = webcoreRateEngine(components, 'hai', problems, haiCaps)
+    hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
+    hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
+    hai.statusesNote = haiCaps.isEmpty()
+        ? ("${haiFeed.state == 'OFF' ? 'No Automation Intelligence feed is set, so this column is Rule Machine parity as that engine claims it, unchecked' : 'That engine published no capability list, so this column could not be held to its current statuses'}").toString()
+        : 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
     // Automatic conversion is a separate question, answered by the proven converters.
     Map rmAuto = webcoreMigrationAssessment(originalPiston, hubVariableTypes, tokenToDeviceId.keySet().collect { "${it}".toString() } as Set).ruleMachine as Map
     Map vrbAuto = webcoreVrbAssessment(originalPiston, hubVariableTypes, tokenToDeviceId)
     rm.automatic = [available: (rmAuto.counts as Map).blockers == 0 && !problems, parts: (rmAuto.counts as Map).blockers]
     vrb.automatic = [available: (vrbAuto.level as int) <= 2, parts: (vrbAuto.counts as Map).manualComponents]
-    return [ruleMachine: rm, visualRuleBuilder: vrb, components: components.size()]
+    // No converter exists for that engine, so the question is not open: it is
+    // answered no, with the reason, rather than shown as a count of nothing.
+    hai.automatic = [available: false, parts: null, reason: 'no converter exists for this engine yet']
+    return [ruleMachine: rm, visualRuleBuilder: vrb, hai: hai, components: components.size()]
 }
+// HAI-1's answer to a webCoRE construct, where it is not simply Rule Machine's.
+//
+// Most rows need nothing here: HAI-1 states Rule Machine parity, so its verdict
+// is DERIVED from the Rule Machine column of WEBCORE_EQUIVALENCE and moves with
+// it. Two things override that derivation.
+//
+// First, a live status. WEBCORE_HAI_CAPABILITY ties a construct to the
+// capability HAI-1 publishes for it, and a capability that is not running holds
+// the construct down to partial however well Rule Machine does it. Those rows
+// correct themselves as that engine changes; nothing here has to be re-judged.
+//
+// Second, this app's own reading, in WEBCORE_HAI_VERDICT, for constructs where
+// HAI-1 and Rule Machine genuinely differ - the rows where a webCoRE habit that
+// Rule Machine cannot hold has a home in HAI-1, and the rows where HAI-1 asks a
+// person before it will act. Every one of those is this app's judgement of
+// another engine's published description, never a measurement, and the report
+// says so.
+@Field static final Map WEBCORE_HAI_CAPABILITY = [
+    'act.openClose'   : 'action.hsm-doors-locks-valves-open-close-garage-door',
+    'vact.mode'       : 'action.variables-mode-files-custom-set-mode',
+    'act.thermostat'  : 'action.thermostats-set-thermostats-thermostat-scheduler',
+    'mod.interaction' : 'trigger.digital-switch-physical-switch-physical-dimmer-l',
+    'act.refresh'     : 'action.devices-refresh-devices',
+    'vact.state'      : 'action.devices-capture-devices-restore-devices',
+    'vact.cancelTasks': 'action.rules-cancel-rule-timers',
+    'vact.pauseRule'  : 'action.rules-pause-resume-rules',
+    'vact.runRule'    : 'action.rules-run-rule-actions',
+    'vact.hsm'        : 'action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari',
+    'act.lock'        : 'action.hsm-doors-locks-valves-lock-unlock-locks',
+    'vact.setVariable': 'action.variables-mode-files-custom-set-variable-all-ope'
+]
+
+@Field static final Map WEBCORE_HAI_VERDICT = [
+    // Where HAI-1 holds a webCoRE habit that Rule Machine cannot.
+    'cond.device.changedWithin': ['yes', 'a condition can require a reading no older than a set time'],
+    'cond.group'               : ['yes', 'conditions are a tree, so a group stays a group'],
+    'cond.followedBy'          : ['partial', 'rebuild as a wait for the second event with a timeout'],
+    'setting.async'            : ['yes', 'set the rule to run in parallel, with a limit'],
+    'setting.taskPolicy'       : ['yes', 'set the rule to restart, ignore, queue or run in parallel'],
+    'setting.pistonOption'     : ['partial', 'check it against the rule settings; HAI-1 has more of them than Rule Machine'],
+    'stmt.triggersAnd'         : ['partial', 'rebuild as one trigger with the rest as conditions, as in Rule Machine'],
+    // The four places HAI-1 says it behaves as Rule Machine does but has not
+    // shown it (its own list, 2026-09-20). The action is there; whether it acts
+    // the same is unproven, so the piston carries a warning rather than a clean
+    // pass. A warning costs no effort points: it is something to watch after the
+    // rule is rebuilt, not work to do before it.
+    'mod.changesInIf'          : ['warning', 'HAI-1 fires on a transition by default where Rule Machine does not always; check this one after rebuilding'],
+    'trig.device.stays'        : ['warning', 'supported, but a re-trigger restarts the rule by default and cancels a pending wait, where a Rule Machine delay survives one'],
+    'vact.wait'                : ['warning', 'supported, but a re-trigger cancels this wait unless the rule is set to ignore or queue; a Rule Machine delay survives unless marked cancelable'],
+    'setting.restriction'      : ['warning', 'supported, but HAI-1 keeps listening where Rule Machine drops its subscriptions, which other apps can see'],
+    // Where HAI-1 asks a person first. The action is supported; commissioning it
+    // is a step a migration has to plan for, so it is said rather than scored.
+    'act.lock'                 : ['warning', 'supported, but a lock needs a one-time approval before HAI-1 will send it'],
+    'act.alarm'                : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
+    'act.alarmPart'            : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
+    // Where neither engine has it, said in HAI-1's own terms.
+    'cond.expression'          : ['no', 'HAI-1 has no expression language; rebuild the test from conditions'],
+    'stmt.each'                : ['no', 'HAI-1 has no loop over a device list'],
+    'vact.parseJson'           : ['no', 'HAI-1 does not parse a JSON reply'],
+    'vact.wol'                 : ['no', 'HAI-1 has no wake on LAN'],
+    'vact.integration'         : ['no', 'HAI-1 has no equivalent for these webCoRE integrations'],
+    'vact.toggleRandom'        : ['no', 'HAI-1 has no random device choice'],
+    'trig.device.parity'       : ['no', 'HAI-1 cannot test even or odd'],
+    'cond.device.parity'       : ['no', 'HAI-1 cannot test even or odd']
+]
+
 // What automatic conversion has been proven on a hub, by equivalence row: [Rule Machine, Visual Rule Builder].
 @Field static final Map WEBCORE_AUTOMATIC_NOTES = [
     'stmt.if': ['IF with one condition or one trigger', 'one decision'],
@@ -9577,6 +9739,372 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 // metadata only - Gate A 2.1 confirmed this inventory holds declaration values,
 // not current runtime values (those live in separate lv_<name> state entries
 // this app does not read), and Automation Map never needs or exports values.
+// Which capability of the other engine answers each Rule Machine construct.
+// Written here rather than guessed from wording: the feed states a capability's
+// own name, not Rule Machine's internal tokens, and a join on prose would be
+// wrong quietly. A construct absent from this table is reported as unmapped,
+// never as covered. Retire this once the feed publishes the tokens itself.
+@Field static final Map RM_CONSTRUCT_TO_HAI = [
+    // Actions, keyed by Rule Machine's own actSubType value.
+    'action:getOnOffSwitch'       : 'action.switches-turn-switches-on-off',
+    'action:getToggleSwitch'      : 'action.switches-toggle-switches',
+    'action:getFlashSwitch'       : 'action.switches-flash-switches',
+    'action:getPerModeSwitch'     : 'action.switches-set-switches-per-mode-choose-switches-p',
+    'action:getPushButton'        : 'action.switches-push-button-push-button-per-mode-choose',
+    'action:getSetDimmers'        : 'action.dimmers-set-dimmer-level-fade-time-variable-leve',
+    'action:getAdjustDimmer'      : 'action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha',
+    'action:getFadeDimmer'        : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getSetColor'          : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
+    'action:getSetColorTemp'      : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getTrackEvent'        : 'action.dimmers-track-event-dimmer-track-event-switch',
+    'action:getShadePosition'     : 'action.shades-and-fans-open-close-shades-set-position-s',
+    'action:getFanSpeed'          : 'action.shades-and-fans-set-fan-speed-cycle-fans',
+    'action:getActivateScenes'    : 'action.scenes-activate-scenes-activate-scenes-per-mode',
+    'action:getArmHSM'            : 'action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari',
+    'action:getOCGarage'          : 'action.hsm-doors-locks-valves-open-close-garage-door',
+    'action:getLockUnlock'        : 'action.hsm-doors-locks-valves-lock-unlock-locks',
+    'action:getOCValve'           : 'action.hsm-doors-locks-valves-open-close-valves',
+    'action:getThermostat'        : 'action.thermostats-set-thermostats-thermostat-scheduler',
+    'action:getMsg'               : 'action.messages-send-speak-a-message-with-variables',
+    'action:getLogMsg'            : 'action.messages-log-a-message',
+    'action:getHTTPPost'          : 'action.messages-send-http-get-send-http-post',
+    'action:getPingIP'            : 'action.messages-ping-ip-address',
+    'action:getMusicPlayer'       : 'action.music-and-sounds-control-music-player',
+    'action:getSetVolume'         : 'action.music-and-sounds-set-volume-mute-unmute',
+    'action:getMuteUnmute'        : 'action.music-and-sounds-set-volume-mute-unmute',
+    'action:getChime'             : 'action.music-and-sounds-sound-tone-sound-chime',
+    'action:getSiren'             : 'action.music-and-sounds-control-siren',
+    'action:getSetVariable'       : 'action.variables-mode-files-custom-set-variable-all-ope',
+    'action:getSetMode'           : 'action.variables-mode-files-custom-set-mode',
+    'action:getDefinedAction'     : 'action.variables-mode-files-custom-run-custom-action-an',
+    'action:getWriteLocalFile'    : 'action.variables-mode-files-custom-write-append-delete',
+    'action:getAppendLocalFile'   : 'action.variables-mode-files-custom-write-append-delete',
+    'action:getDeleteLocalFile'   : 'action.variables-mode-files-custom-write-append-delete',
+    'action:getSetPrivateBoolean' : 'action.rules-set-private-booleans-this-rule-or-others',
+    'action:getRuleActions'       : 'action.rules-run-rule-actions',
+    'action:getStopActions'       : 'action.rules-cancel-rule-timers',
+    'action:getPauseResumeRules'  : 'action.rules-pause-resume-rules',
+    'action:getRoomLights'        : 'action.rules-activate-room-lights-for-mode-period-turn',
+    'action:getCapture'           : 'action.devices-capture-devices-restore-devices',
+    'action:getRestore'           : 'action.devices-capture-devices-restore-devices',
+    'action:getRefreshSwitch'     : 'action.devices-refresh-devices',
+    'action:getPollSwitch'        : 'action.devices-poll-devices',
+    'action:getDisableDevice'     : 'action.devices-disable-enable-devices',
+    'action:getZwavePolling'      : 'action.devices-start-stop-z-wave-polling',
+    // Control flow shares the action key family in Rule Machine's storage.
+    'action:getIfThen'            : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getElseIf'            : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getElse'              : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getEndIf'             : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getSimpleConditional' : 'control.conditional-simple-conditional-action-one-action',
+    'action:getRepeat'            : 'control.repeat-repeat-actions-every-n-n-times-stoppable',
+    'action:getRepeatWhile'       : 'control.repeat-repeat-while-expression-repeat-until-expr',
+    'action:getStopRepeat'        : 'control.repeat-stop-repeating-actions',
+    'action:getDelay'             : 'control.delay-wait-exit-delay-actions-blocking-with-canc',
+    'action:getCancelDelayed'     : 'control.delay-wait-exit-cancel-delayed-actions',
+    'action:getWaitEvents'        : 'control.delay-wait-exit-wait-for-events-one-or-many-any',
+    'action:getWaitRule'          : 'control.delay-wait-exit-wait-for-expression-timeout-dura',
+    'action:getExitRule'          : 'control.delay-wait-exit-exit-rule',
+    'action:getComment'           : 'control.delay-wait-exit-comment',
+    // Triggers, keyed by Rule Machine's own tCapab value.
+    'trigger:Custom Attribute'    : 'trigger.custom-attribute',
+    'trigger:Presence'            : 'trigger.presence-arrives-leaves',
+    'trigger:Button'              : 'trigger.button-pushed-held-double-tapped-released',
+    'trigger:Certain Time'        : 'trigger.certain-time-including-sunrise-and-sunset-with-o',
+    'trigger:Certain Time (and optional date)': 'trigger.certain-time-including-sunrise-and-sunset-with-o',
+    'trigger:Time of Day'         : 'trigger.time-of-day-as-trigger',
+    'trigger:Days of Week'        : 'trigger.days-of-week-days-or-days-plus-time',
+    'trigger:Periodic Schedule'   : 'trigger.periodic-schedule-minutes-hourly-daily-weekly-mo',
+    'trigger:Mode'                : 'trigger.mode',
+    'trigger:Location Event'      : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
+    'trigger:HSM Status'          : 'trigger.hsm-status-armed-away-home-night-delayed-arming',
+    'trigger:HSM Alert'           : 'trigger.hsm-alert-intrusion-smoke-water-rule-arming-canc',
+    'trigger:Variable'            : 'trigger.variable-hub-or-local-variable-value',
+    'trigger:Private Boolean'     : 'trigger.private-boolean',
+    'trigger:Rule Paused'         : 'trigger.rule-paused',
+    'trigger:Music Player'        : 'trigger.music-player-playing-paused-stopped',
+    'trigger:Lock Code'           : 'trigger.keypad-codes-lock-codes-by-code-name',
+    'trigger:Keypad'              : 'trigger.security-keypads-armed-disarmed-changed',
+    // Rule Machine's structural choices.
+    'structure:conditionalTrigger': 'control.conditional-trigger',
+    'structure:requiredExpression': 'control.required-expression',
+    'structure:actionDelay'       : 'control.delay-wait-exit-delay-on-an-individual-action-sc'
+]
+
+// A plain device capability, in a trigger or a condition, is one row on each
+// side: every sensor and switch type shares it. Listed apart from the table
+// above so a new device type needs no edit at all.
+@Field static final String HAI_DEVICE_TRIGGER_ID = 'trigger.acceleration-battery-carbon-dioxide-carbon-monox'
+@Field static final String HAI_DEVICE_CONDITION_ID = 'condition.any-device-capability-in-a-state-switch-motion-c'
+
+// The Rule Machine constructs one rule actually uses, read from its own stored
+// settings: action subtypes, trigger capabilities, condition capabilities, and
+// a few structural choices. Tokens only - no device, value or message is read.
+// This is what the coverage report measures another engine against, so it is
+// deliberately taken from the rule rather than from any feature list.
+List extractRuleConstructs(Map data) {
+    Set<String> out = new LinkedHashSet<String>()
+    boolean anyDelay = false
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        String name = "${s.name ?: ''}"
+        Object value = s.value
+        String v = (value instanceof String || value instanceof Number || value instanceof Boolean) ? "${value}".trim() : ''
+        if (!name || !v) return
+        if (name.startsWith('actSubType.')) out << "action:${v}".toString()
+        else if (name.startsWith('tCapab')) out << "trigger:${v}".toString()
+        // A comparison operator ("<", "!=") is part of the condition it sits
+        // in, not a construct of its own, and Rule Machine stores both under
+        // this family. Word-like values only: those are the condition types.
+        else if ((name.startsWith('rCapab_') || name.startsWith('RelrDev_')) && Character.isLetter(v.charAt(0))) {
+            out << "condition:${v}".toString()
+        }
+        else if (name.startsWith('delayAct.') && v != 'none') anyDelay = true
+        else if (name.startsWith('isCondTrig') && v == 'true') out << 'structure:conditionalTrigger'.toString()
+        else if (name.startsWith('reqExp') && v == 'true') out << 'structure:requiredExpression'.toString()
+    }
+    if (anyDelay) out << 'structure:actionDelay'.toString()
+    return out.sort()
+}
+
+// Which capability answers one construct, and how sure that is. A device
+// capability resolves by family rather than by name, so an unseen device type
+// never reads as a gap it is not.
+String haiCapabilityIdFor(String token) {
+    String mapped = RM_CONSTRUCT_TO_HAI[token] as String
+    if (mapped) return mapped
+    if (token.startsWith('trigger:')) return HAI_DEVICE_TRIGGER_ID
+    if (token.startsWith('condition:')) return HAI_DEVICE_CONDITION_ID
+    return null
+}
+
+// Rule Machine 5.1 coverage: what this hub's own rules use, measured against
+// the other engine's published capabilities. Source of truth is the rules, not
+// either engine's feature list, so a construct nobody uses cannot inflate the
+// result and a construct in daily use cannot be overlooked.
+// Verdicts per construct: runs, partial (Partial/Format), missing, unknown
+// (the engine does not list it) and unmapped (this app cannot say which
+// capability answers it - reported, never counted as covered).
+Map rmCoverageReport() {
+    // Read fresh rather than from the scan's stored result: the capability list
+    // is the long part of the feed and is deliberately not kept in state, and a
+    // report asked for now should answer for the engine as it is now.
+    Map feed = fetchHaiFeed()
+    if ("${feed.state}" != 'OK') {
+        return [ok: false, reason: "${feed.state == 'FAILED' ? feed.error : 'no Automation Intelligence feed is configured'}"]
+    }
+    Map capsById = [:]
+    ((feed.capabilities ?: []) as List).each { Object raw ->
+        if (raw instanceof Map && (raw as Map).id) capsById["${(raw as Map).id}"] = raw as Map
+    }
+    // No capability list means there is nothing to compare against. Say that,
+    // rather than answering with a comparison of zero against zero, which
+    // reads as full parity and marks every construct unrecognised.
+    if (capsById.isEmpty()) {
+        return [ok: false, reason: feed.capabilitiesError
+            ? "${feed.engine ?: 'The rule engine'} published no capability list: ${feed.capabilitiesError}"
+            : "${feed.engine ?: 'The rule engine'} published no capability list, so there is nothing to compare Rule Machine against."]
+    }
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    List rules = []
+    Map constructUse = [:]
+    appInfo.each { String appId, Object info ->
+        if (!(info instanceof Map)) return
+        Map appMap = info as Map
+        if (!"${appMap.type}".startsWith('Rule-')) return
+        List tokens = (appMap.rmConstructs ?: []) as List
+        List gaps = []
+        tokens.each { Object rawToken ->
+            String token = "${rawToken}"
+            String capId = haiCapabilityIdFor(token)
+            Map cap = capId ? (capsById[capId] as Map) : null
+            String status = "${cap?.status ?: ''}"
+            String verdict = !capId ? 'unmapped' :
+                (cap == null ? 'unknown' :
+                (status == 'Runs' ? 'runs' :
+                (status == 'Missing' ? 'missing' : 'partial')))
+            Map use = (constructUse[token] ?: [token: token, capabilityId: capId, feature: cap?.feature,
+                                               status: status ?: null, verdict: verdict, rules: 0]) as Map
+            use.rules = ((use.rules ?: 0) as Integer) + 1
+            constructUse[token] = use
+            if (verdict != 'runs') gaps << [token: token, verdict: verdict, capabilityId: capId, feature: cap?.feature]
+        }
+        rules << [id: "a${appId}", name: appMap.label, constructs: tokens.size(),
+                  covered: gaps.isEmpty(), gaps: gaps]
+    }
+    int covered = rules.count { (it as Map).covered == true } as Integer
+    List gapRules = rules.findAll { (it as Map).covered != true }
+    // Every capability the engine publishes, grouped by the Rule Machine
+    // section it answers to. This counts the engine's whole surface, not only
+    // what this hub happens to use, so the two questions stay separate: what
+    // the engine covers, and what your own rules need.
+    Set<String> usedCapIds = new LinkedHashSet<String>()
+    constructUse.values().each { Object raw ->
+        Map use = raw as Map
+        if (use.capabilityId) usedCapIds << "${use.capabilityId}".toString()
+    }
+    Map categories = [:]
+    capsById.each { String capId, Object raw ->
+        Map cap = raw as Map
+        String rm51 = "${cap.rm51 ?: ''}"
+        int sep = rm51.indexOf(':')
+        String section = (sep > 0 ? rm51.substring(0, sep) : rm51) ?: 'Other'
+        // Drop the section number: it orders the list, it is not a name.
+        // Written without a pattern - the validator rejects backslashes here.
+        String name = section
+        int dot = name.indexOf('. ')
+        if (dot > 0 && name.substring(0, dot).isInteger()) name = name.substring(dot + 2)
+        // Section 8 is that engine's own extras, not a Rule Machine feature,
+        // so it is kept out of the parity count and reported on its own.
+        Map row = (categories[section] ?: [section: section, name: name, order: section,
+                                           engineOnly: rm51.startsWith('8'),
+                                           dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0,
+                                           hubProven: 0, simulated: 0, usedHere: 0, usedHubProven: 0, lockIn: []]) as Map
+        row.dimensions = ((row.dimensions ?: 0) as Integer) + 1
+        String status = "${cap.status ?: ''}"
+        // What the claim rests on, as that engine publishes it: seen on a hub,
+        // or built and simulated with nobody watching. Counted apart from the
+        // status, because "it works" and "someone saw it work" are different
+        // sentences and the difference is most of this report's value.
+        String evidence = "${((cap.evidence ?: [:]) as Map).level ?: ''}"
+        if (status == 'Runs') {
+            row.runs = ((row.runs ?: 0) as Integer) + 1
+            if (evidence == 'hub') row.hubProven = ((row.hubProven ?: 0) as Integer) + 1
+            else row.simulated = ((row.simulated ?: 0) as Integer) + 1
+        }
+        else if (status == 'Format') row.format = ((row.format ?: 0) as Integer) + 1
+        else if (status == 'Missing') row.missing = ((row.missing ?: 0) as Integer) + 1
+        else row.partial = ((row.partial ?: 0) as Integer) + 1
+        // What it costs to take a rule built on this back to Rule Machine, as
+        // that engine now publishes it. Only its own extra features carry one.
+        if (row.engineOnly) {
+            String verdict = "${cap.rmVerdict ?: ''}"
+            if (verdict) {
+                List notes = (row.lockIn ?: []) as List
+                notes << [feature: "${cap.feature}", verdict: verdict, note: "${cap.rmNote ?: ''}"]
+                row.lockIn = notes
+            }
+        }
+        if (usedCapIds.contains(capId)) {
+            row.usedHere = ((row.usedHere ?: 0) as Integer) + 1
+            // Reached by a rule on this hub AND not fully working: the
+            // intersection that decides whether this hub can move, rather
+            // than either number on its own.
+            if (status != 'Runs') row.usedGaps = ((row.usedGaps ?: 0) as Integer) + 1
+            else if (evidence == 'hub') row.usedHubProven = ((row.usedHubProven ?: 0) as Integer) + 1
+        }
+        categories[section] = row
+    }
+    return [ok: true,
+            generatedAt: now(),
+            // The engine names itself in the feed; this app does not decide
+            // what it is called, and never parses the version for the name.
+            engine: [name: "${feed.engine ?: 'HAI-1'}", version: feed.haiVersion,
+                     capabilities: capsById.size(), feedFetched: feed.fetched,
+                     statusMeanings: (feed.statusMeanings ?: [:]) as Map,
+                     evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map],
+            summary: [rules: rules.size(), covered: covered, withGaps: gapRules.size(),
+                      usedDimensions: usedCapIds.size(),
+                      constructs: constructUse.size(),
+                      unmapped: constructUse.values().count { (it as Map).verdict == 'unmapped' }],
+            categories: categories.values().toList().sort { Map c -> "${c.order}" },
+            rules: rules.sort { Map r -> [(r.covered == true) ? 1 : 0, "${r.name}"] },
+            constructs: constructUse.values().toList().sort { Map c -> [-(c.rules as Integer), "${c.token}"] }]
+}
+
+// The hub's app-to-device relationships, for another app to reason over. It
+// publishes what this app found, never a verdict: whether two apps driving one
+// device is a conflict depends on what the caller is checking, and that
+// judgement belongs to the caller, not here.
+//
+// The engine of each app is named so a cross-engine question can be asked. The
+// stateful flag is the one field to read carefully, and it is deliberately
+// three-valued: true means this app leaves the device in a state it chose,
+// false means it does not, and null means this app could not tell - a webCoRE
+// piston proves a command was sent without proving it sticks. A caller that
+// reads null as false will miss real clashes.
+Map edgesMapping() {
+    Map graph = (state.graph ?: [:]) as Map
+    List nodes = (graph.nodes ?: []) as List
+    Map appsById = [:]
+    Map devicesById = [:]
+    nodes.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map n = raw as Map
+        String id = "${n.id ?: ''}"
+        if (!id) return
+        if (n.group == 'app') {
+            appsById[id] = [id: id, name: n.name, engine: engineOfNode(n), appType: n.appType,
+                            paused: n.paused == true, disabled: n.disabled == true]
+        } else if (n.group == 'device') {
+            devicesById[id] = [id: id, name: n.name, disabled: n.disabled == true]
+        }
+    }
+    // Only what one app does to or reads from one device: the kinds another
+    // engine can act on. Variable and rule-to-rule edges are published too,
+    // because a clash is not always at a device.
+    Set deviceKinds = ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'deviceRead'] as Set
+    Set ruleKinds = ['runs', 'pauseResume', 'cancelTimedActions', 'setspb'] as Set
+    Set varKinds = ['read', 'write', 'usesVar'] as Set
+    List deviceEdges = []
+    List ruleEdges = []
+    List variableEdges = []
+    ((graph.edges ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map e = raw as Map
+        String from = "${e.from ?: ''}"
+        String to = "${e.to ?: ''}"
+        String kind = "${e.kind ?: ''}"
+        if (!from || !to || !kind) return
+        if (deviceKinds.contains(kind) && devicesById.containsKey(to)) {
+            Map out = [app: from, device: to, kind: kind]
+            // Three-valued on purpose; see the note above.
+            out.stateful = (kind == 'action') ? (e.containsKey('stateful') ? e.stateful : null) : false
+            if (e.commands) out.commands = e.commands
+            if (e.attribute) out.attribute = "${e.attribute}"
+            if (e.unused == true) out.unused = true
+            deviceEdges << out
+        } else if (ruleKinds.contains(kind)) {
+            ruleEdges << [from: from, to: to, kind: kind]
+        } else if (varKinds.contains(kind) && to.startsWith('v')) {
+            variableEdges << [app: from, variable: to.substring(1), kind: kind,
+                              usageRole: e.usageRole ? "${e.usageRole}" : null]
+        }
+    }
+    Long committedAt = (state.graphCommittedAtLocal ?: 0) as Long
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+        contract: EDGES_CONTRACT,
+        generatedAt: committedAt ?: null,
+        scanRunning: scanEffectivelyActive(),
+        statefulMeaning: [true: 'this app leaves the device in a state it chose',
+                          false: 'this app does not leave a lasting state',
+                          'null': 'this app could not tell, so treat it as might-be-stateful, never as false'],
+        apps: appsById.values().toList(),
+        devices: devicesById.values().toList(),
+        deviceEdges: deviceEdges,
+        ruleEdges: ruleEdges,
+        variableEdges: variableEdges]))
+}
+
+// Which engine an app belongs to, for a caller asking a cross-engine question.
+// Read from what the scan already knows, so a new engine needs one line here
+// rather than a second classifier.
+String engineOfNode(Map n) {
+    if ("${n.engine ?: ''}") return "${n.engine}"
+    String type = "${n.appType ?: ''}"
+    if (type.startsWith('Rule-')) return 'RM'
+    if (type == 'webCoRE Piston') return 'webCoRE'
+    if (type == 'webCoRE') return 'webCoRE'
+    if (type.startsWith('Visual Rule')) return 'VRB'
+    if (type == 'Notifier') return 'Notifier'
+    return type ?: 'other'
+}
+
+Map rmCoverageMapping() {
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(rmCoverageReport()))
+}
+
 List extractLocalVariableDefinitions(Map data, String ownerAppId) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -10053,6 +10581,176 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
         }
     }
     return flow ?: []
+}
+
+// The address people copy out of the other app names this hub by its LAN
+// address on port 80, which an app on this hub cannot call - that port is the
+// browser's way in, not the app platform's. Same hub, so the path is kept and
+// the host swapped for the loopback every other internal read already uses.
+String haiFeedLoopbackUrl(String raw) {
+    String url = "${raw ?: ''}".trim()
+    if (!url) return ''
+    java.util.regex.Matcher origin = ORIGIN_PATTERN.matcher(url)
+    if (!origin.find()) return url
+    String hostPort = origin.group(1).replaceFirst('^https?://', '')
+    String host = hostPort.contains(':') ? hostPort.substring(0, hostPort.indexOf(':')) : hostPort
+    String hubIp = "${location?.hub?.localIP ?: ''}"
+    if (host != hubIp && host != '127.0.0.1' && host != 'localhost') return url
+    java.util.regex.Matcher path = URL_PATTERN.matcher(url)
+    return path.find() ? "${LOOPBACK_BASE}${path.group(1)}" : url
+}
+
+// What the settings page says about the feed, from the last scan's attempt.
+String haiFeedStatusText() {
+    Map feed = (state.haiFeed ?: [:]) as Map
+    String status = "${feed.state ?: ''}"
+    if (status == 'OK') {
+        int ruleCount = ((feed.nodes ?: []) as List).count { it instanceof Map && "${(it as Map).group}" == 'app' } as Integer
+        String caps = feed.capabilitiesError ?
+            " Its feature list could not be read (${feed.capabilitiesError}), which only affects the webCoRE migration assessment." : ''
+        return "Last scan read ${ruleCount} rule${ruleCount == 1 ? '' : 's'} from the feed.${caps}"
+    }
+    if (status == 'FAILED') return "<span style='color:#c0392b'>The last scan could not read the feed: ${feed.error}.</span> Everything else on the map is unaffected."
+    return 'The feed is read at the next scan.'
+}
+
+// Reads the Automation Map feed Hubitat Automation Intelligence serves for its
+// own rules. One small local request per scan, only when an address is set.
+// A feed on a contract this version does not know is refused rather than
+// merged half-understood: the shape is what the merge below relies on.
+Map fetchHaiFeed() {
+    String url = haiFeedLoopbackUrl("${settings.haiFeedUrl ?: ''}".trim())
+    if (!url) return [state: 'OFF', nodes: [], edges: []]
+    Map fetched = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+    if (!fetched.ok || !(fetched.data instanceof Map)) {
+        return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                error: "${fetched.timedOut ? 'the feed did not answer in time' : (fetched.error ?: 'the feed gave no readable answer - an answer that is not JSON usually means the access token is wrong')}"]
+    }
+    Map feed = fetched.data as Map
+    // The engine answers its own failures as JSON now. A reply that is not JSON
+    // at all never reached its code, which on this hub means the token.
+    if (feed.error) {
+        return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                error: "${feed.message ?: feed.error}"]
+    }
+    String contract = "${feed.contract ?: ''}".trim()
+    if (contract != HAI_FEED_CONTRACT) {
+        return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                error: "the feed is on contract ${contract ?: '(none given)'}, this version reads ${HAI_FEED_CONTRACT}"]
+    }
+    return [state: 'OK', fetched: now(),
+            nodes: (feed.nodes ?: []) as List,
+            edges: (feed.edges ?: []) as List,
+            flows: (feed.flows ?: [:]) as Map,
+            engine: "${feed.engine ?: ''}",
+            haiVersion: "${feed.haiVersion ?: ''}",
+            statusMeanings: (feed.statusMeanings ?: [:]) as Map,
+            evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map,
+            generatedAt: "${feed.generatedAt ?: ''}",
+            // The capability list is for the webCoRE migration assessment, not
+            // for the graph, so only its size is kept here - state holds the
+            // whole hub's map already and this list is long.
+            capabilities: (feed.capabilities ?: []) as List,
+            capabilityCount: ((feed.capabilities ?: []) as List).size(),
+            capabilitiesError: feed.capabilitiesError ? "${feed.capabilitiesError}" : null]
+}
+
+// Merges the HAI feed's rules into the graph this scan just built. The feed
+// already speaks this graph's node ids and edge kinds, so nothing is decoded
+// here. A node the hub scan found itself always wins: the scan reads the hub
+// directly, the feed is another app's account of it.
+void mergeHaiFeed(Map feed, Map<String, Map> nodes, List<Map> edges, Map flows, Set<String> seen,
+                  Map labels, Set disabledDevices) {
+    if ("${feed?.state}" != 'OK') return
+    Set<String> feedRuleIds = new LinkedHashSet<String>()
+    ((feed.nodes ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map n = raw as Map
+        String id = "${n.id ?: ''}".trim()
+        if (!id) return
+        String group = "${n.group ?: ''}"
+        if (group == 'app') feedRuleIds << id
+        if (nodes[id]) {
+            // The hub scan found this rule as an ordinary child app. Keep its
+            // node, and mark which engine it belongs to so its rules can be
+            // tagged and pointed at their own page.
+            if (group == 'app') {
+                nodes[id].engine = 'HAI'
+                if (n.url) nodes[id].engineUrl = "${n.url}"
+            }
+            return
+        }
+        if (group == 'app') {
+            boolean disabled = (n.disabled == true)
+            // Whatever word the feed uses: anything this app does not know is
+            // shown as its own word rather than silently drawn as running.
+            String status = "${n.status ?: ''}"
+            // Disabled outranks the feed's own status word, matching the rule
+            // the hub-scanned app nodes above follow.
+            String statusWord = disabled ? 'Disabled' :
+                (status == 'paused' ? 'Paused' : (status == 'stopped' ? 'Stopped' :
+                (status && status != 'active' ? "${status.capitalize()}" : null)))
+            nodes[id] = nodeEntry(id, "${n.label ?: id}", 'app', 'HAI rule', null, statusWord, false)
+            nodes[id].appType = 'HAI Rule'
+            nodes[id].engine = 'HAI'
+            if (n.url) nodes[id].engineUrl = "${n.url}"
+            if (disabled) nodes[id].disabled = true
+            if (status == 'paused') nodes[id].paused = true
+        } else if (group == 'device' && id.length() > 1) {
+            // Only reached for a device the device phase did not see, which
+            // means the two disagree about the hub. Draw it plainly rather
+            // than dropping the rule's relationship to it.
+            String devId = id.substring(1)
+            boolean devDisabled = disabledDevices.contains(devId)
+            nodes[id] = nodeEntry(id, (labels[devId] ?: "${n.label ?: id}") as String, 'device',
+                                  null, null, devDisabled ? 'Disabled' : null)
+            if (devDisabled) nodes[id].disabled = true
+        }
+    }
+    // A rule of this engine holds its devices in a wildcard picker, which the
+    // generic classifier can only read as "published to an external system".
+    // The feed says exactly what each one is, so those placeholder edges give
+    // way to it rather than sitting alongside and contradicting it.
+    if (feedRuleIds) {
+        // Rebuilt rather than removed in place: removeAll with a closure is a
+        // Groovy extension, and on the hub it left every edge untouched.
+        // toString(), not a GString: a GString never equals a String inside a
+        // Set, so the same comparison written the obvious way matched nothing.
+        List<Map> kept = edges.findAll { Map edge ->
+            !("${edge?.kind}" == 'exposed' && feedRuleIds.contains(edge?.from?.toString()))
+        }
+        edges.clear()
+        edges.addAll(kept)
+    }
+    ((feed.edges ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map e = raw as Map
+        String from = "${e.from ?: ''}".trim()
+        String to = "${e.to ?: ''}".trim()
+        String kind = "${e.kind ?: ''}".trim()
+        if (!from || !to || !kind) return
+        // An edge to something this graph does not hold would draw a line to
+        // nowhere, so it is skipped instead.
+        if (!nodes[from] || !nodes[to]) return
+        String key = "${from}|${to}|${kind}"
+        if (seen.contains(key)) return
+        seen << key
+        Map edge = [from: from, to: to, kind: kind]
+        if (e.stateful != null) edge.stateful = (e.stateful == true)
+        if (e.commands) edge.commands = e.commands
+        if (e.usageRole) edge.usageRole = "${e.usageRole}"
+        if (e.unused == true) edge.unused = true
+        edges << edge
+    }
+    // Step lists, in the same shape every decoded engine produces, so the same
+    // flowchart draws them. Keyed by rule node id; only for rules this graph
+    // actually holds, and never over a flow the hub scan decoded itself.
+    ((feed.flows ?: [:]) as Map).each { Object rawId, Object rawSteps ->
+        String id = "${rawId ?: ''}".trim()
+        if (!id || !nodes[id] || flows.containsKey(id)) return
+        if (!(rawSteps instanceof List) || !((rawSteps as List))) return
+        flows[id] = (rawSteps as List).findAll { it instanceof Map }
+    }
 }
 
 Map buildGraph() {
@@ -10968,6 +11666,10 @@ Map buildGraph() {
         }
     }
 
+    // Last, so every node and edge the hub scan found is already in place and
+    // wins any collision with the feed's account of the same thing.
+    mergeHaiFeed((state.haiFeed ?: [:]) as Map, nodes, edges, flows, seen, labels, disabledDevices)
+
     // Both flows and ruleVariables are fully populated by every app at this
     // point - safe to run the label join now, once, rather than per-app
     // mid-loop where a later app's classification could not yet be trusted.
@@ -11445,6 +12147,8 @@ mappings {
     path('/webcore-migration-assessment') { action: [ GET: 'webcoreMigrationAssessmentMapping' ] }
     path('/webcore-migration-matrix') { action: [ GET: 'webcoreMigrationMatrixMapping' ] }
     path('/webcore-migration-ratings') { action: [ GET: 'migrationRatingsMapping' ] }
+    path('/rm-coverage') { action: [ GET: 'rmCoverageMapping' ] }
+    path('/edges') { action: [ GET: 'edgesMapping' ] }
 }
 
 // The map page was read-only until this. It now accepts one write: the user's
@@ -12606,36 +13310,42 @@ String buildMapHtml() {
   #migrationReportBody .mrTabs { display:flex; gap:6px; border-bottom:1px solid rgba(255,255,255,0.14); margin-bottom:10px; }
   #migrationReportBody .mrTabs button { background:none; border:0; border-bottom:3px solid transparent; border-radius:0; padding:8px 12px; color:inherit; opacity:0.7; }
   #migrationReportBody .mrTabs button[aria-selected="true"] { opacity:1; border-bottom-color:#c2185b; }
-  #migrationReportBody .mrHead { display:grid; grid-template-columns:minmax(0,1fr) 340px 340px; gap:12px; align-items:end; margin:10px 0; padding:0 13px; }
+  #migrationReportBody .mrHead { display:grid; grid-template-columns:minmax(0,1fr) repeat(3, minmax(220px, 300px)); gap:12px; align-items:stretch; margin:10px 0; padding:0 13px; }
   #migrationReportBody .mrHead .mrFilters { margin:0; align-self:end; }
-  #migrationReportBody .mrEngineTop { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  #migrationReportBody .mrEngineTop { display:flex; justify-content:space-between; align-items:start; gap:8px; min-height:3.1em; }
   #migrationReportBody .mrBar span[data-level] { cursor:pointer; }
-  #migrationReportBody .mrEngine { display:grid; gap:6px; padding:10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
+  #migrationReportBody .mrEngine { display:grid; gap:6px; align-content:start; padding:10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
   #migrationReportBody .mrBar { display:flex; height:22px; border-radius:5px; overflow:hidden; background:rgba(255,255,255,0.06); }
   #migrationReportBody .mrBar span { display:grid; place-items:center; color:#111; font-size:12px; font-weight:700; min-width:0; }
   #migrationReportBody .mrBar .mrEmpty { color:inherit; font-weight:400; padding:0 8px; }
   #migrationReportBody .mrFilters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0; }
   #migrationReportBody .mrList { display:grid; gap:6px; }
   #migrationReportBody .mrRow { border:1px solid rgba(255,255,255,0.12); border-radius:6px; }
-  #migrationReportBody .mrRow summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) 340px 340px; gap:12px; align-items:center; padding:8px 12px; }
+  #migrationReportBody .mrRow summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) repeat(3, minmax(220px, 300px)); gap:12px; align-items:center; padding:8px 12px; }
   #migrationReportBody .mrRow summary::-webkit-details-marker { display:none; }
   #migrationReportBody .mrRow[open] summary { border-bottom:1px solid rgba(255,255,255,0.12); }
   #migrationReportBody .mrName { overflow-wrap:anywhere; font-weight:600; }
   #migrationReportBody .mrName a { color:inherit; text-decoration:underline; text-decoration-color:rgba(255,255,255,0.35); }
   #migrationReportBody .mrCell { display:flex; gap:8px; align-items:center; font-size:0.9em; }
   #migrationReportBody .mrBadge { display:inline-grid; place-items:center; flex:none; width:24px; height:24px; border-radius:50%; font-weight:700; color:#111; }
-  #migrationReportBody .mrDetail { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:8px 12px 12px; }
+  #migrationReportBody .mrDetail { display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; padding:8px 12px 12px; }
   #migrationReportBody .mrDetail h5 { margin:4px 0 6px; }
   #migrationReportBody .mrDetail ul { margin:0; padding-left:18px; display:grid; gap:4px; }
   #migrationReportBody .mrTag { font-size:0.72em; text-transform:uppercase; letter-spacing:0.05em; padding:1px 5px; border-radius:4px; background:rgba(255,255,255,0.08); margin-right:5px; }
   #migrationReportBody .mr_no { color:#ff8a80; } #migrationReportBody .mr_partial { color:#e8d15a; } #migrationReportBody .mr_warning { color:#f06292; } #migrationReportBody .mr_yes { color:#8fd694; }
   #migrationReportBody .mrProgress { color:#f06292; }
+  #rmCoverageBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
+  #rmCoverageBody .mrTable th, #rmCoverageBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
+  #rmCoverageBody h4 { margin:14px 0 6px 0; }
   #migrationReportBody .mrTableWrap { overflow-x:auto; }
   #migrationReportBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
   #migrationReportBody .mrTable th, #migrationReportBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
   #migrationReportBody .mrV { font-weight:700; white-space:nowrap; }
   #migrationReportBody .mrCmds { max-width:260px; overflow-wrap:anywhere; }
-  @media (max-width: 900px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary, #migrationReportBody .mrDetail { grid-template-columns:1fr; } }
+  /* Three engines need the width; below it they stack rather than squeeze. */
+  @media (max-width: 1500px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary { grid-template-columns:minmax(0,1fr) repeat(3, minmax(170px, 230px)); }
+    #migrationReportBody .mrCell { font-size:0.82em; } }
+  @media (max-width: 1100px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary, #migrationReportBody .mrDetail { grid-template-columns:1fr; } }
   #communityCard.ccClickable { cursor:pointer; }
   #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
@@ -12926,6 +13636,7 @@ String buildMapHtml() {
     <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
     <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
+    <button id="rmCoverageBtn" type="button" title="Check every Rule Machine rule on this hub against what the HAI rule engine can do">HAI RM5 Coverage</button>
     <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
     <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities &#8599;</button>
     <button id="hubTipBtn" type="button" title="How to open a device or app on the hub">Opening objects on the hub</button>
@@ -12937,6 +13648,7 @@ String buildMapHtml() {
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
+<div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
@@ -14886,7 +15598,7 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel, rmCoveragePanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
@@ -15131,7 +15843,9 @@ function showFlow(appId) {
       ? webcorePistonDeviceCoverageMessage(node)
       : (node && node.appType === 'webCoRE' && node.webcoreDeviceRelationshipsSuppressed
         ? 'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.'
-        : 'This app has no decoded rule flow to show.'), isWebcoreNotice);
+        : (node && node.engine === 'HAI'
+          ? 'Hubitat Automation Intelligence published no steps for this rule. Its devices, variables and rule links are on the map as usual, and its own page has the rule itself.'
+          : 'This app has no decoded rule flow to show.')), isWebcoreNotice);
     setFlowWebcoreIndent(node);
     flowChart.innerHTML = '';
     // Gate C (v2.1.4): a rule can have variable evidence even when its step
@@ -15150,7 +15864,11 @@ function showFlow(appId) {
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
   // backslash-escaped quote is consumed by Groovy and ends the JS string early -
   // a syntax error that kills the entire page.
-  setFlowSub('Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
+  // A rule from another engine is not decoded here: that engine publishes its
+  // own steps, so the sentence must not claim this app read them off the hub.
+  setFlowSub(node && node.engine === 'HAI'
+    ? 'Steps as Hubitat Automation Intelligence publishes them for this rule. A reading aid: the rule page itself remains the authority.'
+    : 'Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   mermaid.render(id, mermaidFor(steps)).then(function (res) {
@@ -15713,6 +16431,178 @@ function requestDecodeCoverage() {
 // that need manual work. Silent when the assessment cannot run. Labels avoid apostrophes because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
 const MIGRATION_URL = amPickURL('${getLocalURL('webcore-migration-assessment')}', '${getCloudURL('webcore-migration-assessment')}');
+const RM_COVERAGE_URL = amPickURL('${getLocalURL('rm-coverage')}', '${getCloudURL('rm-coverage')}');
+const rmCoveragePanel = document.getElementById('rmCoverage');
+const RMC = { body: null, loading: false };
+
+// Reads from the rules on this hub, not from either engine's feature list, so
+// the answer is about the automations that actually exist here.
+function rmcOpen() {
+  bringToFront(rmCoveragePanel);
+  if (RMC.body || RMC.loading) { rmcRender(); return; }
+  RMC.loading = true;
+  rmcRender();
+  fetch(RM_COVERAGE_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
+    .then(function (body) { RMC.loading = false; RMC.body = body || {}; rmcRender(); })
+    .catch(function () { RMC.loading = false; RMC.body = { ok: false, reason: 'the report could not be read from the hub' }; rmcRender(); });
+}
+
+const RMC_VERDICT_TEXT = {
+  runs: 'Works',
+  partial: 'Not the same yet',
+  missing: 'Not built',
+  unknown: 'Not listed',
+  unmapped: 'Not matched'
+};
+
+
+function rmcConstructText(token) {
+  const colon = token.indexOf(':');
+  const kind = colon === -1 ? '' : token.slice(0, colon);
+  const value = colon === -1 ? token : token.slice(colon + 1);
+  if (kind === 'action') return 'Action: ' + value.replace(/^get/, '');
+  if (kind === 'trigger') return 'Trigger: ' + value;
+  if (kind === 'condition') return 'Condition: ' + value;
+  if (kind === 'structure') {
+    // Split camelCase by hand: a replacement reference would be read as Groovy
+    // interpolation in this template, which the build refuses outright.
+    let words = '';
+    for (let i = 0; i < value.length; i++) {
+      const ch = value.charAt(i);
+      words += (ch >= 'A' && ch <= 'Z') ? (' ' + ch.toLowerCase()) : ch;
+    }
+    return 'Rule structure: ' + words;
+  }
+  return token;
+}
+
+function rmcRender() {
+  const box = document.getElementById('rmCoverageBody');
+  if (!box) return;
+  if (RMC.loading) { box.innerHTML = '<p class="sub">Checking every rule...</p>'; return; }
+  const b = RMC.body || {};
+  if (!b.ok) {
+    box.innerHTML = '<p class="sub">' + extEsc(b.reason || 'No answer from the hub.') + '</p>';
+    return;
+  }
+  const s = b.summary || {};
+  const eng = b.engine || {};
+  const cats = b.categories || [];
+  const rmCats = cats.filter(function (c) { return !c.engineOnly; });
+  const extraCats = cats.filter(function (c) { return c.engineOnly; });
+  const gapRules = (b.rules || []).filter(function (r) { return !r.covered; });
+  const gapConstructs = (b.constructs || []).filter(function (c) { return c.verdict !== 'runs'; });
+  let html = '';
+
+  // Part one: the two engines against each other, before this hub is
+  // mentioned at all. Rule Machine 5.1 sets the list; HAI-1 answers it.
+  html += '<h4>1. Rule Machine 5.1 against ' + extEsc(eng.name || 'HAI-1') + '</h4>';
+  const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0 };
+  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th><th>Works in ' + extEsc(eng.name || 'HAI-1') + '</th>' +
+    '<th>of those, seen on a hub</th><th>Writes but does not run</th><th>Partly</th><th>Not built</th></tr></thead><tbody>';
+  rmCats.forEach(function (c) {
+    ['dimensions', 'runs', 'format', 'partial', 'missing', 'hubProven'].forEach(function (k) { tot[k] += (c[k] || 0); });
+    html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.dimensions)) +
+      '</td><td>' + extEsc(String(c.runs)) + '</td><td>' + extEsc(String(c.hubProven || 0)) +
+      '</td><td>' + extEsc(String(c.format)) + '</td><td>' +
+      extEsc(String(c.partial)) + '</td><td>' + extEsc(String(c.missing)) + '</td></tr>';
+  });
+  html += '<tr><td><b>Every area</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td><td><b>' +
+    extEsc(String(tot.runs)) + '</b></td><td><b>' + extEsc(String(tot.hubProven)) + '</b></td><td><b>' +
+    extEsc(String(tot.format)) + '</b></td><td><b>' +
+    extEsc(String(tot.partial)) + '</b></td><td><b>' + extEsc(String(tot.missing)) + '</b></td></tr>';
+  // The other direction, on the same table: where Rule Machine has nothing and
+  // the engine has something. Counted as 0 against RM-5 so it cannot be read
+  // as parity, and kept below the total for the same reason.
+  extraCats.forEach(function (c) {
+    html += '<tr><td>' + extEsc(c.name) + ' <span style="opacity:0.7">(beyond Rule Machine)</span></td><td>0</td><td>' +
+      extEsc(String(c.runs)) + '</td><td>' + extEsc(String(c.hubProven || 0)) + '</td><td>' + extEsc(String(c.format)) +
+      '</td><td>' + extEsc(String(c.partial)) + '</td><td>' + extEsc(String(c.missing)) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  const shortfall = tot.dimensions - tot.runs;
+  const engName = eng.name || 'HAI-1';
+  html += '<p class="sub"><b>' + extEsc(String(tot.hubProven)) + ' of ' + extEsc(String(tot.dimensions)) +
+    ' Rule Machine 5.1 capabilities have been seen working on a hub in ' + extEsc(engName) + '.</b> ' +
+    extEsc(String(tot.runs)) + ' are built and pass that engine own checks' +
+    (shortfall ? ', leaving ' + extEsc(String(shortfall)) + ' short of that' : ', which is all of them') +
+    ', and ' + extEsc(String(tot.runs - tot.hubProven)) + ' of those have never been watched running.</p>';
+  // The engine publishes what each status means, so this report quotes it
+  // rather than keeping a second copy that can drift out of step.
+  const meanings = eng.statusMeanings || {};
+  const ev = eng.evidenceMeanings || {};
+  const meaningRows = [['Works', meanings.Runs], ['Seen on a hub', ev.hub], ['Built and simulated only', ev.simulated],
+                       ['Writes but does not run', meanings.Format],
+                       ['Partly', meanings.Partial], ['Not built', meanings.Missing]]
+    .filter(function (r) { return !!r[1]; });
+  if (meaningRows.length) {
+    html += '<p class="sub">';
+    meaningRows.forEach(function (r) { html += '<b>' + extEsc(r[0]) + '</b>: ' + extEsc(r[1]) + ' '; });
+    html += 'Those are the words ' + extEsc(engName) + ' publishes about itself. This app repeats them; it does not test them, and the engine that sets them also writes the code they describe.</p>';
+  }
+  if (extraCats.length) {
+    let extra = 0;
+    extraCats.forEach(function (c) { extra += (c.dimensions || 0); });
+    // Not every extra feature locks a rule in: several are authoring aids that
+    // cost nothing on the way back. That engine now publishes a verdict per
+    // feature, so the report counts them rather than assuming the worst.
+    const lock = [];
+    extraCats.forEach(function (c) { (c.lockIn || []).forEach(function (l) { lock.push(l); }); });
+    const noneBack = lock.filter(function (l) { return l.verdict === 'none'; });
+    html += '<p class="sub">The last row is the other direction: ' + extEsc(String(extra)) + ' things ' + extEsc(engName) +
+      ' does that Rule Machine cannot, so Rule Machine scores 0 against them. They sit outside the parity total on purpose, because a superset does not prove parity.</p>';
+    if (lock.length) {
+      html += '<p class="sub">Going back the other way, ' + extEsc(engName) + ' rates ' + extEsc(String(noneBack.length)) +
+        ' of those ' + extEsc(String(lock.length)) + ' as having no Rule Machine equivalent. Read them one at a time rather than as a score: ' +
+        'several are authoring or diagnostic aids that a rule does not depend on.</p>' +
+        '<table class="mrTable"><thead><tr><th>' + extEsc(engName) + ' only feature</th><th>Back to Rule Machine</th><th>What it costs</th></tr></thead><tbody>';
+      lock.forEach(function (l) {
+        html += '<tr><td>' + extEsc(l.feature) + '</td><td>' + extEsc(l.verdict === 'none' ? 'No equivalent' : (l.verdict === 'workaround' ? 'Workaround' : 'Partly')) +
+          '</td><td>' + extEsc(l.note) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+  }
+
+  // Part two: this hub's own rules, measured against the same list.
+  html += '<h4>2. Your ' + extEsc(String(s.rules)) + ' Rule Machine rules against that</h4>';
+  html += '<p class="sub">' + extEsc(String(s.covered)) + ' of ' + extEsc(String(s.rules)) +
+    ' rules use only what works in ' + extEsc(engName) + '. They draw on ' + extEsc(String(s.constructs)) +
+    ' distinct Rule Machine constructs, which reach ' + extEsc(String(s.usedDimensions === undefined ? '' : s.usedDimensions)) +
+    ' of the ' + extEsc(String(tot.dimensions)) + ' capabilities above' +
+    (s.unmapped ? '. ' + extEsc(String(s.unmapped)) + ' construct(s) could not be matched to a capability and are listed as such' : '') + '.</p>';
+  if (rmCats.length) {
+    html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>Reached by your rules</th><th>Of those, seen on a hub</th><th>Of those, not fully working</th></tr></thead><tbody>';
+    rmCats.forEach(function (c) {
+      html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.usedHere || 0)) +
+        ' of ' + extEsc(String(c.dimensions)) + '</td><td>' + extEsc(String(c.usedHubProven || 0)) +
+        '</td><td>' + extEsc(String(c.usedGaps || 0)) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  if (!gapConstructs.length) {
+    html += '<p class="sub">Nothing your rules do is out of reach of ' + extEsc(engName) + '.</p>';
+  } else {
+    html += '<table class="mrTable"><thead><tr><th>Rule Machine construct in use</th><th>Rules</th><th>Status in HAI-1</th><th>Matching capability</th></tr></thead><tbody>';
+    gapConstructs.forEach(function (c) {
+      html += '<tr><td>' + extEsc(rmcConstructText(c.token)) + '</td><td>' + extEsc(String(c.rules)) + '</td><td>' +
+        extEsc(RMC_VERDICT_TEXT[c.verdict] || c.verdict) + '</td><td>' + extEsc(c.feature || '-') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  if (gapRules.length) {
+    html += '<h4>Rules that would not move as they are</h4><table class="mrTable"><thead><tr><th>Rule</th><th>What is in the way</th></tr></thead><tbody>';
+    gapRules.forEach(function (r) {
+      const items = (r.gaps || []).map(function (g) { return rmcConstructText(g.token); });
+      html += '<tr><td>' + extEsc(r.name || r.id) + '</td><td>' + extEsc(items.join(', ')) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  html += '<p class="sub">Read from ' + extEsc(String(eng.capabilities || 0)) + ' capabilities published by ' +
+    extEsc(eng.version || 'HAI-1') + ', and from each rule as Rule Machine itself stores it.</p>';
+  box.innerHTML = html;
+}
 let migrationRequestSeq = 0;
 
 function migrationRowHtml(name, r) {
@@ -15860,7 +16750,7 @@ const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix'
 const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
 const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0 };
-const MR_ENGINES = [['ruleMachine', 'Rule Machine 5.1'], ['visualRuleBuilder', 'Visual Rule Builder 2.0']];
+const MR_ENGINES = [['ruleMachine', 'RM 5.1'], ['visualRuleBuilder', 'VRB 2.0'], ['hai', 'HAI-1']];
 const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'No equivalent', warning: 'Warning', unassessed: 'Not assessed' };
 
 function mrName(node) { return String(node.title || node.name || node.label || node.id); }
@@ -15915,9 +16805,17 @@ function mrEngineHead(done, e, levelId) {
   const unrated = done.filter(function (r) { return r.body[e[0]].level === null || r.body[e[0]].level === undefined; }).length;
   let bar = '';
   counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
+  // An engine with no converter is not a zero; it is a question that does not
+  // apply yet, and it says which engine it is reading to decide the rest.
+  const first = done.length ? done[0].body[e[0]] : null;
+  const noConverter = first && first.automatic && first.automatic.reason;
+  const foot = noConverter
+    ? extEsc(first.automatic.reason) + (unrated ? ', ' + unrated + ' not assessed' : '')
+    : auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '');
+  const provenance = (first && first.statusesNote) ? '<div class="sub">' + extEsc(first.statusesNote) + '</div>' : '';
   return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option value="null">Not assessed</option></select></label></div>' +
     '<div class="mrBar">' + (bar || '<span class="mrEmpty">No results yet</span>') + '</div>' +
-    '<div class="sub">' + auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '') + '</div></div>';
+    '<div class="sub">' + foot + '</div>' + provenance + '</div>';
 }
 
 function mrReasons(r) {
@@ -15942,23 +16840,28 @@ function mrRenderPistons() {
   const failed = (MR.results || []).filter(function (r) { return r.body.status !== 'complete'; });
   const levelRm = (document.getElementById('mrLevelRm') || {}).value || '';
   const levelVrb = (document.getElementById('mrLevelVrb') || {}).value || '';
+  const levelHai = (document.getElementById('mrLevelHai') || {}).value || '';
   const text = ((document.getElementById('mrText') || {}).value || '').trim().toLowerCase();
   const rows = done.filter(function (r) {
     return (!levelRm || String(r.body.ruleMachine.level) === levelRm) && (!levelVrb || String(r.body.visualRuleBuilder.level) === levelVrb) &&
-      (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers)).toLowerCase().indexOf(text) !== -1);
+      (!levelHai || String((r.body.hai || {}).level) === levelHai) &&
+      (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers) +
+        JSON.stringify((r.body.hai || {}).blockers || [])).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for both engines from one equivalence table. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
     '<button type="button" class="rowbtn" id="mrExportPistons"' + (done.length ? '' : ' disabled') + '>Export ratings CSV</button>' +
     '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Reassess</button>' +
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
-    mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') + '</div>';
+    mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
+    mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
   h += '<div class="mrList">' + rows.map(function (r) {
     return '<details class="mrRow"><summary><span class="mrName"><a href="#" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</a></span>' +
-      mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + '</summary>' +
-      '<div class="mrDetail"><div><h5>Rule Machine 5.1</h5>' + mrReasons(r.body.ruleMachine) + '</div><div><h5>Visual Rule Builder 2.0</h5>' + mrReasons(r.body.visualRuleBuilder) + '</div></div></details>';
+      mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + mrCell(r.body.hai || {}) + '</summary>' +
+      '<div class="mrDetail"><div><h5>Rule Machine 5.1</h5>' + mrReasons(r.body.ruleMachine) + '</div><div><h5>Visual Rule Builder 2.0</h5>' + mrReasons(r.body.visualRuleBuilder) +
+      '</div><div><h5>' + extEsc(((r.body.hai || {}).engineName) || 'HAI-1') + '</h5>' + mrReasons(r.body.hai || {}) + '</div></div></details>';
   }).join('') + '</div>';
   if (failed.length) {
     h += '<p class="sub">Not assessed: ' + failed.map(function (r) { return extEsc(mrName(r.node)) + (r.body.status === 'busy' ? ' (a scan is running)' : ''); }).join(', ') + '</p>';
@@ -16051,11 +16954,15 @@ function mrExportPistonsCsv() {
       .concat((r.blockers || []).map(function (b) { return b.part + ' (' + b.location + '): ' + b.note + (b.verdict === 'warning' ? ' [warning]' : ''); })).join(' | ');
   };
   const rows = [['Piston id', 'Piston', 'Rule Machine level', 'Rule Machine rating', 'Rule Machine components', 'Rule Machine rework', 'Rule Machine automatic conversion potential', 'Rule Machine reasons',
-    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion potential', 'Visual Rule Builder reasons']];
+    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion potential', 'Visual Rule Builder reasons',
+    'HAI-1 level', 'HAI-1 rating', 'HAI-1 components', 'HAI-1 rework', 'HAI-1 automatic conversion potential', 'HAI-1 reasons']];
   (MR.results || []).filter(function (r) { return r.body.status === 'complete'; }).forEach(function (r) {
-    const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder;
+    const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder, hai = r.body.hai || {};
+    const haiCounts = hai.counts || {};
     rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'potential' : 'not yet', reasons(rm),
-      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'potential' : 'not yet', reasons(vrb)]);
+      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'potential' : 'not yet', reasons(vrb),
+      hai.level, hai.label, haiCounts.components, haiCounts.manualComponents,
+      (hai.automatic && hai.automatic.reason) ? hai.automatic.reason : ((hai.automatic && hai.automatic.available) ? 'potential' : 'not yet'), reasons(hai)]);
   });
   mrDownload('webcore-piston-migration-ratings-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
 }
@@ -16152,7 +17059,16 @@ function appOptionText(n) {
     // Only when the label is exactly the type name, as in Tapo Integration (Tapo Integration).
     if (head === n.appType) title = head;
   }
-  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + title;
+  // Automation Intelligence names its own type per channel (HAI Rule, HAI
+  // Rule (Dev)), so the tag is decided by the engine marker the feed sets and
+  // by the type prefix its engine and runtime apps share, not by a fixed
+  // list that a channel rename would silently drop back to CUS.
+  const isHai = n.engine === 'HAI' || (n.appType && n.appType.indexOf('HAI ') === 0);
+  const tag = isHai ? 'HAI' : (APP_TYPE_TAGS[n.appType] || 'CUS');
+  // That engine labels its own rules "[HAI] name", so prefixing again reads
+  // "[HAI] [HAI] name". One tag is enough whoever wrote it.
+  if (title.indexOf('[' + tag + '] ') === 0) return title;
+  return '[' + tag + '] ' + title;
 }
 
 // Same purely-decorative prefix for devices, reusing n.icon - the existing
@@ -18208,7 +19124,8 @@ function fetchMigrationRatings(btn, failedFetches) {
           ratedAt: r.ratedAt ? new Date(r.ratedAt).toISOString() : null,
           stale: r.stale,
           ruleMachine: r.ruleMachine || null,
-          visualRuleBuilder: r.visualRuleBuilder || null
+          visualRuleBuilder: r.visualRuleBuilder || null,
+          hai: r.hai || null
         };
       });
     })
@@ -18805,6 +19722,11 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   syncLegendVisibility();
 });
 document.getElementById('migrationReportBtn').addEventListener('click', mrOpen);
+document.getElementById('rmCoverageBtn').addEventListener('click', rmcOpen);
+document.getElementById('rmCoverageClose').addEventListener('click', function () {
+  rmCoveragePanel.style.display = 'none';
+  syncLegendVisibility();
+});
 document.getElementById('migrationReportClose').addEventListener('click', function () {
   migrationReportPanel.style.display = 'none';
   syncLegendVisibility();
@@ -19290,11 +20212,22 @@ function hubTargets(obj) {
     return [{ label: 'Open device page', href: HUB_ORIGIN + '/device/edit/' + obj.hubId }];
   }
   const owner = obj.ownedByApp ? ' (owning app)' : '';
-  return [
+  const items = [
     { label: 'View status page' + owner, href: HUB_ORIGIN + '/installedapp/status/' + obj.hubId },
     { label: 'Open app page' + owner, href: HUB_ORIGIN + '/installedapp/configure/' + obj.hubId,
       note: 'Pressing Done there re-initialises the app.' }
   ];
+  // A rule from another engine names its own page in the feed, which forwards
+  // into that engine's editor at this rule. Listed first: it is where someone
+  // who right-clicked a rule actually wants to go.
+  // ALL_NODES, not the drawing layer's copy: vis keeps only the fields it
+  // draws with, so an extra field like this one is absent there.
+  const engineNode = ALL_NODES.filter(function (n) { return n.id === 'a' + obj.hubId; })[0];
+  if (engineNode && engineNode.engine === 'HAI' && engineNode.engineUrl) {
+    items.unshift({ label: 'Open in HAI rule editor',
+                    href: HUB_ORIGIN + engineNode.engineUrl });
+  }
+  return items;
 }
 
 // No navigator.clipboard here: this page is served over plain HTTP, which is
