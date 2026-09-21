@@ -6846,6 +6846,15 @@ String haiFeedVersionForCache() {
     return "${feed.capabilitiesHash ?: feed.haiVersion ?: ''}"
 }
 
+// What the engine column rests on, in one sentence. Never cached with a rating:
+// it describes the engine as it is now, not as it was when a piston was rated,
+// so a stored copy of it goes stale silently while the rating around it is fine.
+String haiStatusesNote(boolean noCapabilities, String feedState) {
+    if (!noCapabilities) return 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
+    if (feedState == 'OFF') return 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
+    return 'In beta'
+}
+
 Map migrationRatingsMapping() {
     Map cache = (state.migrationRatingCache ?: [:]) as Map
     Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
@@ -6853,6 +6862,8 @@ Map migrationRatingsMapping() {
     // whether the cached ratings still describe the engine as it is now.
     String engineVersion = haiFeedVersionForCache()
     Map appInfo = (state.appInfo ?: [:]) as Map
+    Map liveFeed = (state.haiFeed ?: [:]) as Map
+    String liveNote = haiStatusesNote(((liveFeed.capabilities ?: []) as List).isEmpty(), "${liveFeed.state ?: ''}")
     List out = []
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
@@ -6868,7 +6879,8 @@ Map migrationRatingsMapping() {
                 ratedAt: ratedAt ?: null,
                 stale: ratedAt ? ((ratedAt < graphAt) || engineMoved) : null,
                 staleReason: ratedAt ? (engineMoved ? 'engine-version' : ((ratedAt < graphAt) ? 'graph-rebuilt' : null)) : null,
-                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder, hai: hit.hai]
+                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder,
+                hai: hit.hai ? ((hit.hai as Map) + [statusesNote: liveNote]) : hit.hai]
     }
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
@@ -8077,9 +8089,7 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     Map hai = webcoreRateEngine(components, 'hai', problems, haiCaps)
     hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
     hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
-    hai.statusesNote = haiCaps.isEmpty()
-        ? ("${haiFeed.state == 'OFF' ? 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do' : 'In beta'}").toString()
-        : 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
+    hai.statusesNote = haiStatusesNote(haiCaps.isEmpty(), "${haiFeed.state ?: ''}")
     // Automatic conversion is a separate question, answered by the proven converters.
     Map rmAuto = webcoreMigrationAssessment(originalPiston, hubVariableTypes, tokenToDeviceId.keySet().collect { "${it}".toString() } as Set).ruleMachine as Map
     Map vrbAuto = webcoreVrbAssessment(originalPiston, hubVariableTypes, tokenToDeviceId)
