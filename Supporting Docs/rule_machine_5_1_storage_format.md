@@ -551,6 +551,18 @@ The reliable general approach is: for action `n`, collect every setting whose na
 `.<n>`. That finds the parameters without needing a table for every action type, which
 matters because the list above is certainly incomplete.
 
+### 7.4 A delay can take its length from a variable, and the unit is not stored
+
+A Delay action normally carries `delayHour.<n>` / `delayMinute.<n>` / `delaySecond.<n>`. It can
+instead take its length from a variable, in which case `xVar.<n>` names the variable and **no
+time field is present at all**.
+
+The settings do not record the unit. Nothing stored says whether the variable holds seconds or
+minutes, so a reader cannot recover the intended duration from the rule alone. Anything
+converting this has to carry the operand and stop, rather than assume a unit: guessing wrong
+produces a rule that waits sixty times too long or too short while reading as correct
+everywhere. **[strong]**
+
 ### 7.2 A message action carries two device pickers, not one
 
 `getMsg` holds two unrelated target lists on the same action, and a rule commonly populates
