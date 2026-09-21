@@ -1,8 +1,8 @@
 {
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
- "capabilitiesHash": "780a645e181012bebf364d114bab03295f0f559831c0fe846ef9978f436dd859",
- "generatedAt": "2026-09-21T07:43:20+08:00",
+ "capabilitiesHash": "acb4660b21754c591cbff2973e98487adc4c79aa4e96171d5d954ca432181cd3",
+ "generatedAt": "2026-09-21T10:03:44+08:00",
  "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means someone watched it work on a hub on that date, \"simulated\" means nobody has. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
   "Runs": "Built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run on a hub.",
@@ -18,8 +18,8 @@
   "total": 156,
   "byEvidence": {
    "simulated": 94,
-   "hub": 57,
-   "none": 5
+   "hub": 58,
+   "none": 4
   }
  },
  "capabilities": [
@@ -382,9 +382,12 @@
    "id": "trigger.digital-switch-physical-switch-physical-dimmer-l",
    "area": "trigger",
    "feature": "Digital switch / Physical switch / Physical dimmer level (event type)",
-   "status": "Partial",
-   "evidence": null,
-   "note": "simulated and tested locally.",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-21"
+   },
+   "note": null,
    "rm51": "3. Triggers: Digital switch / Physical switch / Physical dimmer level (event type)",
    "hai": [
     "trigger:deviceAttribute"
