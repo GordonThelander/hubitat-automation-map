@@ -538,7 +538,7 @@ A non-exhaustive list of ones confirmed on a live hub:
 | `getOnOffSwitch` | `onOffSwitch.<n>` device, `onOff.<n>` true/false |
 | `getSetColorTemp` | `ct.<n>` device, `ctL.<n>` kelvin, `ctLevel.<n>` level |
 | `getSetVolume` | `volume.<n>` device, `volumeVal.<n>` level |
-| `getMsg` | `msg.<n>` text, plus a device picker for the target |
+| `getMsg` | `msg.<n>` text, plus **two** independent device pickers - see 7.2 |
 | `getDelay` | `delaySecond.<n>`, `delayMin.<n>`, `delayAct.<n>` |
 | `getWaitRule` | condition via the action's `rule` field, `delay` on the action for timeout |
 | `getIfThen`, `getElseIf` | condition via the action's `rule` field |
@@ -550,6 +550,30 @@ own delay.
 The reliable general approach is: for action `n`, collect every setting whose name ends in
 `.<n>`. That finds the parameters without needing a table for every action type, which
 matters because the list above is certainly incomplete.
+
+### 7.2 A message action carries two device pickers, not one
+
+`getMsg` holds two unrelated target lists on the same action, and a rule commonly populates
+both:
+
+| Setting | Target |
+| --- | --- |
+| `note.<n>` | notification devices |
+| `speakDevice.<n>` | speech devices |
+| `speakVolume.<n>` | volume for the speech devices, may be blank |
+
+Reading only `note.<n>` loses every spoken announcement while the action still decodes as a
+message, so the failure is silent. Found across a 62-rule corpus where nine messages decoded
+to no target at all; a four-rule sample showed none of them. **[strong]**
+
+`ranMsg.<n>` sits beside these and selects a random message variant rather than a target.
+
+### 7.3 A colour field can hold a hex string
+
+`colorH.<n>` normally carries a hue as a percentage. A colour picked as a custom value in the
+wizard rather than chosen from the list is stored in the same field as a hex string, for
+example `#FF00F7`. Anything reading the field as a number has to detect that case rather than
+coerce it. **[strong]**
 
 ### 7.1 Metering a multi-device action
 
