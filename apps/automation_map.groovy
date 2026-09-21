@@ -6852,7 +6852,7 @@ String haiFeedVersionForCache() {
 String haiStatusesNote(boolean noCapabilities, String feedState) {
     if (!noCapabilities) return 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
     if (feedState == 'OFF') return 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
-    return 'In beta'
+    return 'Not determined yet'
 }
 
 Map migrationRatingsMapping() {
@@ -16675,13 +16675,20 @@ function rmcRender() {
       'They were not read from this hub and will not have moved since. Install that engine and set its feed address to read the current figures.</p>';
   }
   const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0 };
-  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th><th>Works in ' + extEsc(eng.name || 'HAI-1') + '</th>' +
-    '<th>of those, seen on a hub</th><th>Writes but does not run</th><th>Partly</th><th>Not built</th></tr></thead><tbody>';
   rmCats.forEach(function (c) {
     ['dimensions', 'runs', 'format', 'partial', 'missing', 'hubProven'].forEach(function (k) { tot[k] += (c[k] || 0); });
+  });
+  // A column of zeros teaches nothing. It appears on a hub where something is
+  // actually in that state and stays away otherwise.
+  const showFormat = tot.format > 0;
+  const fmtCell = function (n) { return showFormat ? '<td>' + extEsc(String(n)) + '</td>' : ''; };
+  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th><th>Works in ' + extEsc(eng.name || 'HAI-1') + '</th>' +
+    '<th>of those, seen on a hub</th>' + (showFormat ? '<th>Writes but does not run</th>' : '') +
+    '<th>Partly</th><th>Not built</th></tr></thead><tbody>';
+  rmCats.forEach(function (c) {
     html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.dimensions)) +
       '</td><td>' + extEsc(String(c.runs)) + '</td><td>' + extEsc(String(c.hubProven || 0)) +
-      '</td><td>' + extEsc(String(c.format)) + '</td><td>' +
+      '</td>' + fmtCell(c.format) + '<td>' +
       extEsc(String(c.partial)) + '</td><td>' + extEsc(String(c.missing)) + '</td></tr>';
   });
   let extraRuns = 0, extraHub = 0;
@@ -16689,11 +16696,11 @@ function rmcRender() {
   if (extraRuns) {
     html += '<tr><td>New capabilities <span style="opacity:0.7">(nothing in Rule Machine to measure against)</span></td>' +
       '<td>0</td><td>' + extEsc(String(extraRuns)) + '</td><td>' + extEsc(String(extraHub)) +
-      '</td><td>0</td><td>0</td><td>0</td></tr>';
+      '</td>' + fmtCell(0) + '<td>0</td><td>0</td></tr>';
   }
   html += '<tr><td><b>Every area</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td><td><b>' +
-    extEsc(String(tot.runs + extraRuns)) + '</b></td><td><b>' + extEsc(String(tot.hubProven + extraHub)) + '</b></td><td><b>' +
-    extEsc(String(tot.format)) + '</b></td><td><b>' +
+    extEsc(String(tot.runs + extraRuns)) + '</b></td><td><b>' + extEsc(String(tot.hubProven + extraHub)) + '</b></td>' +
+    (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '<td><b>' +
     extEsc(String(tot.partial)) + '</b></td><td><b>' + extEsc(String(tot.missing)) + '</b></td></tr>';
   // The other direction, on the same table: where Rule Machine has nothing and
   // the engine has something. Counted as 0 against RM-5 so it cannot be read
@@ -16712,7 +16719,7 @@ function rmcRender() {
   const meanings = eng.statusMeanings || {};
   const ev = eng.evidenceMeanings || {};
   const meaningRows = [['Works', meanings.Runs], ['Seen on a hub', ev.hub], ['Built and simulated only', ev.simulated],
-                       ['Writes but does not run', meanings.Format],
+                       (showFormat ? ['Writes but does not run', meanings.Format] : ['', null]),
                        ['Partly', meanings.Partial], ['Not built', meanings.Missing]]
     .filter(function (r) { return !!r[1]; });
   if (meaningRows.length) {
