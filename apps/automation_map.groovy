@@ -186,30 +186,12 @@ boolean showSanta() {
 // Hubitat Automation Intelligence publishes its rules in this app's own graph
 // shape, so they join the map through a merge rather than a fourth decoder.
 // Its rules carry no flow: the panel links to the rule's own page instead.
-// A stored copy of what the Automation Intelligence engine published, so the
-// comparison renders on a hub that does not have it installed. Counts only: no
-// capability is named here, so this carries no roadmap. Captured from a live
-// feed, dated, and shown as a dated copy rather than as this hub's own reading.
-// Refresh it from a hub that has the engine: GET the app's /rm-coverage and
-// copy the category counts.
 // Where that engine publishes its own capability list for anyone to read, with
 // no engine installed and no token. Read only when this hub has no feed of its
 // own: a hub that has the engine reads the engine, not a file about it.
 @Field static final String HAI_PUBLIC_CAPABILITIES_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/public/hai-capabilities.json'
 @Field static final String HAI_PUBLIC_CONTRACT = 'hai.capabilities/1'
 
-@Field static final Map HAI_SNAPSHOT = [
-    engine: 'HAI-1',
-    version: 'HAI-1/m5b-0.2.0-dev',
-    capturedOn: '2026-09-21',
-    capabilitiesHash: 'a84136ba119a23cbe19ac6f6c78c75194854ff1c7fce156d3930ca6ef01e60d9',
-    categories: [[name: 'Rule structure and gating', dimensions: 7, runs: 7, hubProven: 1, format: 0, partial: 0, missing: 0, engineOnly: false],
-                 [name: 'Triggers', dimensions: 28, runs: 27, hubProven: 13, format: 0, partial: 1, missing: 0, engineOnly: false],
-                 [name: 'Conditions and operators', dimensions: 16, runs: 16, hubProven: 4, format: 0, partial: 0, missing: 0, engineOnly: false],
-                 [name: 'Actions', dimensions: 58, runs: 54, hubProven: 31, format: 0, partial: 2, missing: 2, engineOnly: false],
-                 [name: 'Variables', dimensions: 17, runs: 17, hubProven: 6, format: 0, partial: 0, missing: 0, engineOnly: false],
-                 [name: 'Rule control, options and the Rule Machine API', dimensions: 15, runs: 15, hubProven: 2, format: 0, partial: 0, missing: 0, engineOnly: false],
-                 [name: 'HAI only features', dimensions: 15, runs: 15, hubProven: 0, format: 0, partial: 0, missing: 0, engineOnly: true]]]
 
 @Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
 // What this app publishes for others to read. Same discipline it asks of
@@ -9957,22 +9939,12 @@ Map rmCoverageReport() {
     // report asked for now should answer for the engine as it is now.
     Map feed = fetchHaiFeed()
     if ("${feed.state}" != 'OK') {
-        // Either there is no engine on this hub, or there is one and it did not
-        // answer: it redeploys often, and a redeploy takes its feed away for a
-        // minute. Both cases render the comparison from the stored copy and say
-        // which it is. Only the half that measures this hub is withheld, because
-        // that half genuinely cannot be computed without a live read.
-        // What it publishes openly is current; the copy stored here is not. Try
-        // the published list first and keep the stored copy for a hub with no
-        // way out to the internet, or a file that has moved.
+        // No engine here, or one that did not answer. Read the list it publishes
+        // openly, which its own publish step keeps current; if that cannot be
+        // read either, say so rather than show figures nobody is maintaining.
         Map published = fetchHaiPublicCapabilities()
         if (published) return published
-        return [ok: true, fromSnapshot: true, hubStats: false,
-                feedError: feed.state == 'FAILED' ? "${feed.error}" : null,
-                engine: [name: HAI_SNAPSHOT.engine, version: HAI_SNAPSHOT.version],
-                capturedOn: HAI_SNAPSHOT.capturedOn,
-                categories: HAI_SNAPSHOT.categories,
-                summary: [:], rules: [], constructs: []]
+        return [ok: false, reason: 'HAI capability figures are not available right now. Try again shortly.']
     }
     Map capsById = [:]
     ((feed.capabilities ?: []) as List).each { Object raw ->
@@ -10025,17 +9997,8 @@ Map rmCoverageReport() {
         if (use.capabilityId) usedCapIds << "${use.capabilityId}".toString()
     }
     Map categories = haiCategoryRows(capsById, usedCapIds)
-    // Only answerable on a hub that can reach the engine, which is the only
-    // place it is worth answering: it tells whoever maintains this app that the
-    // copy shipped for hubs without the engine has fallen behind. A reader on a
-    // hub without the engine has no live hash to compare against and is told the
-    // capture date instead.
-    String liveHash = "${feed.capabilitiesHash ?: ''}"
-    Boolean snapshotStale = liveHash && HAI_SNAPSHOT.capabilitiesHash ? (liveHash != HAI_SNAPSHOT.capabilitiesHash) : null
     return [ok: true,
             generatedAt: now(),
-            snapshotStale: snapshotStale,
-            snapshotCapturedOn: HAI_SNAPSHOT.capturedOn,
             // The engine names itself in the feed; this app does not decide
             // what it is called, and never parses the version for the name.
             engine: [name: "${feed.engine ?: 'HAI-1'}", version: feed.haiVersion,
@@ -16656,23 +16619,10 @@ function rmcRender() {
   // Part one: the two engines against each other, before this hub is
   // mentioned at all. Rule Machine 5.1 sets the list; HAI-1 answers it.
   html += '<h4>1. Rule Machine 5.1 against ' + extEsc(eng.name || 'HAI-1') + '</h4>';
-  if (b.snapshotStale === true) {
-    html += '<p class="sub">Maintenance note: the figures stored in this app for hubs without that engine were taken on ' +
-      extEsc(String(b.snapshotCapturedOn || '')) + ' and no longer match what it publishes. The table below is the live reading and is unaffected.</p>';
-  }
   if (b.fromPublished) {
     html += '<p class="sub">This hub does not have that engine, so these figures were read from the list it publishes openly' +
       (b.publishedAt ? ', generated ' + extEsc(String(b.publishedAt)) : '') + '. ' +
       extEsc(String(b.whatThisIs || '')) + '</p>';
-  }
-  if (b.fromSnapshot) {
-    if (b.feedError) {
-      html += '<p class="sub">This hub has that engine, but it did not answer just now (' +
-        extEsc(String(b.feedError)) + '), so the figures below are the stored copy. It is worth re-opening this in a minute.</p>';
-    }
-    html += '<p class="sub">These are figures ' + extEsc(eng.name || 'HAI-1') + ' published on ' +
-      extEsc(String(b.capturedOn || 'an earlier date')) + ', stored in this app and shown as a dated copy. ' +
-      'They were not read from this hub and will not have moved since. Install that engine and set its feed address to read the current figures.</p>';
   }
   const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0 };
   rmCats.forEach(function (c) {
