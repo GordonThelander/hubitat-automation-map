@@ -715,11 +715,24 @@ On each trigger, log, Wait for elapsed time 30 seconds, then log completion.
 Trigger at T+0 and T+20; inspect scheduled jobs around both. Expected: the first
 Wait is replaced and completion occurs about 30 seconds after the second trigger.
 
+Still unmeasured **in Rule Machine**. The Automation Intelligence engine ran this
+sequence on its own runtime on 2026-09-23 and matched the documented Rule Machine
+behaviour: a second trigger cancelled the outstanding wait 8 ms later and
+completion followed the second trigger. That tests that engine against Hubitat's
+documentation, not Rule Machine against itself, so this row stays open. Closing it
+needs the sequence built as a Rule Machine rule on the hub. **[external]**
+
 ### T08 - Retrigger does not automatically cancel Delay
 
 On each trigger, log, Delay 30 seconds, then log continuation. Trigger at T+0
 and T+20, inspect jobs, and count completions. Expected: two continuations can
 remain, completing around T+30 and T+50.
+
+Still unmeasured **in Rule Machine**, same caveat as T07. The other engine ran it
+on 2026-09-23: two triggers five seconds apart left both continuations scheduled,
+each firing 25 s after its own trigger, which matches the documented Rule Machine
+behaviour that a retrigger does not cancel a pending delay. Rule Machine itself has
+not been made to do it here. **[external]**
 
 ### T09 - Controlled re-entry through nested logic
 
@@ -832,8 +845,8 @@ asserting a read edge.
 | Individually delayed action permits later actions | T04 | Pending demonstration |
 | Wait for Event needs a future event | T05 | Pending validation |
 | Wait for Condition may pass immediately | T06 | Pending validation |
-| Retrigger cancels outstanding Wait | T07 | Pending validation |
-| Retrigger does not automatically cancel Delay | T08 | Pending validation |
+| Retrigger cancels outstanding Wait | T07 | Pending validation in RM; matched by the other engine 2026-09-23 |
+| Retrigger does not automatically cancel Delay | T08 | Pending validation in RM; matched by the other engine 2026-09-23 |
 | Nested logic under re-entry is platform-sensitive | T09 | Pending observation |
 | Run Rule Actions is sequential until target exit/yield | T10A-T10B | Pending demonstration |
 | Required Expression/direct-run interaction | T11 | Pending validation |
