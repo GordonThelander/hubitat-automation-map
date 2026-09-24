@@ -152,6 +152,93 @@ date as its freshness signal.
 "Last scan read N rules from the feed" line, so the condition is visible without opening the
 graph. Small, and the only part of this incident the app can actually fix.
 
+### 38. Location Event triggers are all mapped to the sunrise/sunset capability
+
+`RM_CONSTRUCT_CAPABILITY` maps `trigger:Location Event` to
+`trigger.location-event-sunrise-sunset-sunrisetime-sunset` and nothing else. The mapping is keyed
+on the trigger's capability name alone, so it never reads `tstate<n>`, which is where the actual
+event name lives (6.4 of the storage document). A trigger on `lowMemory` or `severeLoad` is
+therefore reported as covered by the sun-events capability, which does not include either.
+
+Two rules on this hub use Location Event triggers; rule 2100 `_Overload` triggers on `lowMemory`
+and `severeLoad`. The engine's parity list carries a second location-event row for the system
+events (`systemStart`, `severeLoad`, `zigbeeOff/On`, `zwaveCrashed`) and has no row for
+`lowMemory` at all, so the correct outcomes are: sun events to the first row, system events to the
+second, and `lowMemory` reported **unmapped** until the engine adds it.
+
+This makes `/rm-coverage` overstate. The 2026-09-24 run reported 62 of 62 rules covered with 0
+unmapped and 37 of 37 used dimensions hub-proven; at least one of those rules is covered only by
+a mis-attribution. The figures were sent to the HAI session, which closed a roadmap step on them,
+and have been corrected there.
+
+The same weakness applies anywhere a capability's identity depends on a value rather than the
+construct name. Location Event is the case found; the mapping should be audited for others.
+
+**Done 2026-09-24 (Dev revision 298).** `extractRuleConstructs` now carries the event name in the
+token (`trigger:Location Event:<event>`), `RM_LOCATION_EVENT_TO_HAI` maps the four sun events and
+the five system events to their two capabilities, and `haiCapabilityIdFor` answers that prefix
+**before** the generic `trigger:` fallback, so an unrecognised hub event cannot quietly become an
+ordinary device trigger. Focused cases pass for sunrise, severeLoad, lowMemory, an unknown name,
+an empty name, a mapped device trigger and an unmapped one, plus extraction cases for rule 2100's
+two bare-index triggers and a sun event beside an untouched Motion trigger.
+
+Re-run after a fresh scan: `lowMemory` now reports **unmapped** and rule 2100 `_Overload` is no
+longer counted as covered; `severeLoad` and `systemStart` map to the system-events capability.
+
+### 39. Condition text truncation: not a defect here (closed)
+
+**Closed 2026-09-24, unfixed because there is nothing to fix.** Raised on the belief that the flow
+view inherits a truncation the HAI session measured in Rule Machine's own rendering, where a
+condition using `<` displays as "... is" with no operator or threshold.
+
+What the hub actually stores, read from `/installedapp/statusJson` for four affected conditions:
+
+    Illuminance of _ Average External Illuminance(<span style='color:black'>9755</span>) is < 200
+
+The stored string is **complete**. The loss HAI measured happens in the browser rendering RM's
+config page, where `< 200` is parsed as a tag opener. It is a display fault in RM's page, not a
+fault in the data, and this app never reads that page.
+
+Our own cleaning is safe by construction: `stripTags` matches `<[^>]*>`, which requires a closing
+`>`, so a trailing `< 200` is left alone. Verified by running `cleanCondition` against the four
+real stored strings plus a `<=` and a `>=` case; all six render their comparator and threshold.
+
+**The repair that was authorised would have corrupted working text**, appending "< 200" to a
+string already ending in "is < 200". The instruction to inspect one affected raw condition before
+editing is what caught it.
+
+Worth keeping: **a value read from RM's rendered page is not the same as the value RM stored**, and
+the page is the lossy one. Anything comparing engines by reading RM's UI should read rule state
+instead, which is intact.
+
+### 40. Twelve dimmer action subtypes are missing from the capability mapping
+
+Surfaced by the re-run for item 38, on rules that did not exist at the previous scan. `getSetDimmer`
+("Set dimmer", the most ordinary dimmer action there is) reports **unmapped** on three rules.
+
+`RM_CONSTRUCT_TO_HAI` carries `action:getSetDimmers`, plural, which matches nothing Rule Machine
+emits. Checked against RM's own `dimmerActs` subtype list, read from the action wizard's schema on
+the hub, twelve of its sixteen subtypes have no entry at all:
+
+    getSetDimmer  getToggleDimmer  getDimmersPerMode  getFadeDimmer  getStopFade
+    getRLDimmer   getStopDimmer    getToggleColor     getColorPerMode
+    getToggleColorTemp  getColorTempPerMode  getFadeCT  getStopCTFade
+
+An unmapped `action:` token has no fallback, so each reports as a gap and drags its rule out of
+"covered". Invisible until now because Gordon's own rules use none of the twelve; his dimmer usage
+is `getSetColorTemp`, `getSetColor` and `getAdjustDimmer`, all mapped. Any other hub with a plain
+"Set dimmer" action sees a false gap.
+
+The engine publishes capabilities that answer most of them (`action.dimmers-set-dimmer-level-fade-time-variable-leve`,
+`action.dimmers-set-dimmer-per-mode`, `action.dimmers-fade-dimmer-over-time-stop-fade-start-ra`,
+`action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha`, and the colour equivalents), so this is
+a mapping gap rather than a coverage gap.
+
+**Next action:** deliberately not fixed in the same block as 38, since assigning twelve constructs
+to capabilities is design work with its own error surface, not a typo repair. Awaiting Codex's
+ruling on whether to take it, and whether the same key-by-key check should be run across the other
+action families rather than the dimmer one alone.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston

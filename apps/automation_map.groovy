@@ -9863,7 +9863,9 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'trigger:Days of Week'        : 'trigger.days-of-week-days-or-days-plus-time',
     'trigger:Periodic Schedule'   : 'trigger.periodic-schedule-minutes-hourly-daily-weekly-mo',
     'trigger:Mode'                : 'trigger.mode',
-    'trigger:Location Event'      : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
+    // 'trigger:Location Event' is deliberately absent: which capability answers it
+    // depends on the event name in tstate<n>, not on the trigger type. See
+    // RM_LOCATION_EVENT_TO_HAI and haiCapabilityIdFor.
     'trigger:HSM Status'          : 'trigger.hsm-status-armed-away-home-night-delayed-arming',
     'trigger:HSM Alert'           : 'trigger.hsm-alert-intrusion-smoke-water-rule-arming-canc',
     'trigger:Variable'            : 'trigger.variable-hub-or-local-variable-value',
@@ -9884,6 +9886,27 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 @Field static final String HAI_DEVICE_TRIGGER_ID = 'trigger.acceleration-battery-carbon-dioxide-carbon-monox'
 @Field static final String HAI_DEVICE_CONDITION_ID = 'condition.any-device-capability-in-a-state-switch-motion-c'
 
+// A Location Event trigger names the event it waits for in tstate<n>, and the
+// engine answers the sun events and the system events with two different
+// capabilities. Keyed lower-case; an event in neither list is unmapped, which
+// is the honest answer for lowMemory - Rule Machine offers it and the engine
+// lists it nowhere.
+@Field static final Map RM_LOCATION_EVENT_TO_HAI = [
+    'sunrise'     : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
+    'sunset'      : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
+    'sunrisetime' : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
+    'sunsettime'  : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
+    'systemstart' : 'trigger.location-event-systemstart-severeload-zigbeeoff',
+    'severeload'  : 'trigger.location-event-systemstart-severeload-zigbeeoff',
+    'zigbeeoff'   : 'trigger.location-event-systemstart-severeload-zigbeeoff',
+    'zigbeeon'    : 'trigger.location-event-systemstart-severeload-zigbeeoff',
+    'zwavecrashed': 'trigger.location-event-systemstart-severeload-zigbeeoff'
+]
+
+// The token a Location Event construct carries, so the event name travels with
+// the trigger rather than being lost at extraction.
+@Field static final String RM_LOCATION_EVENT_PREFIX = 'trigger:Location Event:'
+
 // The Rule Machine constructs one rule actually uses, read from its own stored
 // settings: action subtypes, trigger capabilities, condition capabilities, and
 // a few structural choices. Tokens only - no device, value or message is read.
@@ -9892,6 +9915,14 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 List extractRuleConstructs(Map data) {
     Set<String> out = new LinkedHashSet<String>()
     boolean anyDelay = false
+    // A Location Event trigger needs the event name that sits in a sibling
+    // setting, so the settings are indexed by name before the walk. The index
+    // suffix is taken whole ("12", and "-5" on the rule-scoped wait keys) so
+    // both forms find their own tstate.
+    Map settingsByName = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (raw instanceof Map) settingsByName["${(raw as Map).name ?: ''}"] = (raw as Map).value
+    }
     (data.appSettings ?: []).each { Object raw ->
         if (!(raw instanceof Map)) return
         Map s = raw as Map
@@ -9900,7 +9931,17 @@ List extractRuleConstructs(Map data) {
         String v = (value instanceof String || value instanceof Number || value instanceof Boolean) ? "${value}".trim() : ''
         if (!name || !v) return
         if (name.startsWith('actSubType.')) out << "action:${v}".toString()
-        else if (name.startsWith('tCapab')) out << "trigger:${v}".toString()
+        else if (name.startsWith('tCapab')) {
+            // Which capability answers a hub event depends on the event, not on
+            // the trigger type, so the event name travels with the token.
+            if (v == 'Location Event') {
+                String idx = name.substring('tCapab'.length())
+                String event = "${settingsByName["tstate${idx}"] ?: ''}".trim()
+                out << "${RM_LOCATION_EVENT_PREFIX}${event}".toString()
+            } else {
+                out << "trigger:${v}".toString()
+            }
+        }
         // A comparison operator ("<", "!=") is part of the condition it sits
         // in, not a construct of its own, and Rule Machine stores both under
         // this family. Word-like values only: those are the condition types.
@@ -9921,6 +9962,12 @@ List extractRuleConstructs(Map data) {
 String haiCapabilityIdFor(String token) {
     String mapped = RM_CONSTRUCT_TO_HAI[token] as String
     if (mapped) return mapped
+    // Before the generic trigger fallback, or an unrecognised hub event would
+    // quietly be reported as an ordinary device trigger and counted as covered.
+    if (token.startsWith(RM_LOCATION_EVENT_PREFIX)) {
+        String event = token.substring(RM_LOCATION_EVENT_PREFIX.length()).trim().toLowerCase()
+        return event ? (RM_LOCATION_EVENT_TO_HAI[event] as String) : null
+    }
     if (token.startsWith('trigger:')) return HAI_DEVICE_TRIGGER_ID
     if (token.startsWith('condition:')) return HAI_DEVICE_CONDITION_ID
     return null

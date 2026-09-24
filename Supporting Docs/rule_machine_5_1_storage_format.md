@@ -542,8 +542,24 @@ Rule 2100 carries `tCapab12 / tstate12 = lowMemory` and `tCapab47 / tstate47 = s
 
 The event's payload reaches the actions through the usual tokens. `severeLoad` was observed
 with `%value% = 2.52` and `%text% = "Severe hub CPU load detected"`, so it carries a numeric
-load figure. `lowMemory`'s payload has not been observed and its units are unknown.
-**[strong]** for the trigger shape, **[weak]** for the payload.
+load figure.
+
+`lowMemory` was measured on 2026-09-24 from seven days of location-event history, five occurrences:
+
+| Field | Value |
+| --- | --- |
+| `name` | `lowMemory` |
+| `value` | free memory in **KB**, as a string: `63352`, `59888`, `37808`, `52300`, `62720` |
+| `unit` | `null` - the KB are not carried, a consumer has to know them |
+| `descriptionText` | `Hub memory is low` |
+| `type` | `SYSTEM` |
+| `isStateChange` | `true` |
+
+The scale is corroborated by the hub reporting `freeMemoryKB` of 169252 while healthy. The event
+repeats while memory stays low rather than firing once per episode: three occurrences on
+2026-09-20 at 17:10, 17:20 and 17:25. With `isStateChange` true each one is delivered, so a rule
+triggered on it runs every time, which is what rule 2100 relies on when it counts occurrences.
+**[strong]**
 
 ## 7. Action parameters by family
 
@@ -951,6 +967,26 @@ problem. They are not; `putAt` coerces them. The real hazard is `contains`, `in`
 the failure this document warns about elsewhere.
 
 ---
+
+### RM's rendered page is lossy where its stored string is not
+
+A condition comparing with `<` is stored complete:
+
+    Illuminance of _ Average External Illuminance(<span style='color:black'>9755</span>) is < 200
+
+but Rule Machine's own config page displays it as "... is", with the operator and the threshold
+gone. RM writes the `<` unescaped, so a browser parses `< 200` as a tag opener and swallows it.
+Measured over 62 rules by the other engine's session: `<` never renders (5 conditions), `<=` never
+renders (4), `>=` always renders, `>` renders 5 of 6 with one case unexplained. A bare `>` is not a
+tag opener, which is the mechanism confirming itself.
+
+Two consequences. Read rule **state**, not the rendered page: `capabstrue` / `capabsfalse` hold the
+intact string. And a tag-stripper of the form `<[^>]*>` is safe here precisely because it requires a
+closing `>`, so it leaves a trailing `< 200` alone; a greedy or open-ended one would not.
+
+More generally, this is the same lesson as 7.3 from the other direction. What RM renders is neither
+the whole command nor, here, the whole condition. The stored data is the better source in both
+cases. **[strong]**
 
 ### The white colour names are not colour temperatures
 
