@@ -204,13 +204,17 @@ Consequence for any engine claiming RM parity: defaulting to fire-on-transition 
 behavioural difference on every device trigger, and it cannot be tested with a stock virtual
 device, because that device cannot produce the case that exposes it. **[strong]**
 
-### 2.4 A condition Rule Machine cannot read is false, and the rule carries on
+### 2.4 Two unreadable conditions took the ELSE branch and carried on
 
-Measured 2026-09-24. Rule Machine has no third truth value. A condition it cannot evaluate is
-treated as false: the THEN branch is skipped, **the ELSE branch runs**, and execution continues
-to the actions after the END-IF. The rule is not aborted and nothing is raised.
+Measured 2026-09-24, on two specific faults. In both, the THEN branch was skipped, **the ELSE
+branch ran**, and execution continued to the actions after the END-IF. The rule was not aborted
+and nothing was raised.
 
-Two ways a condition becomes unreadable were tested, because they do not look the same.
+Both tested conditions were a single numeric comparison with `>`, not negated, not part of a
+compound expression. What Rule Machine does with an unreadable input under `NOT`, under other
+comparators, or inside an AND/OR expression is **not** established here. Nor is it established
+that Rule Machine has no third truth value in general: what is established is that these two
+faults behaved as false.
 
 **The device is gone.** A rule was authored against a live virtual temperature sensor reading 72,
 with `IF (temperature > 50) THEN log ELSE log END-IF`, then the device was deleted underneath the
@@ -236,11 +240,12 @@ There is **no Broken Condition marker**. A null attribute renders exactly like a
 So of the two failures, only the missing device is visible in the log; the unset attribute is
 indistinguishable from the sensor genuinely reading below the threshold.
 
-The safety consequence is worth stating plainly, because it is the reverse of what an author
-would assume. A rule shaped `IF (sensor says it is safe) THEN act ELSE fall back` behaves as
-intended when the sensor disappears. A rule shaped `IF (sensor says it is unsafe) THEN hold off
-ELSE act` will **act** when the sensor disappears, and in the null-attribute case it will do so
-with a log line that looks entirely normal.
+The consequence for a reader is that a rule whose input has gone missing still runs its ELSE
+branch, and in the null-attribute case does so with a log line that looks entirely normal. Whether
+that is safe or dangerous depends on what the author meant by the condition, which is not
+something the branch shape reveals: `THEN` is not "the safe path" and `ELSE` is not "the fallback"
+in any general sense. The fact to carry is the execution difference, not a claim about which
+direction it fails in.
 
 Both cases were produced with throwaway devices and throwaway rules, and cover only these two
 kinds of unreadability. A device that is present but not responding, or one whose driver was
