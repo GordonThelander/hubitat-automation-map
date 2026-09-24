@@ -9798,11 +9798,31 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'action:getFlashSwitch'       : 'action.switches-flash-switches',
     'action:getPerModeSwitch'     : 'action.switches-set-switches-per-mode-choose-switches-p',
     'action:getPushButton'        : 'action.switches-push-button-push-button-per-mode-choose',
+    // Every subtype Rule Machine's "Set Dimmers and Bulbs" wizard offers, read
+    // from the actSubType enum on the hub rather than guessed: sixteen of them,
+    // answered by eight capabilities. The engine's own rm51 text names the
+    // Rule Machine feature each capability covers, which is what pairs them.
+    // Only four were listed before, so a rule using plain "Set dimmer" reported
+    // unmapped. Missed because no rule on the hub it was built against used one.
+    'action:getSetDimmer'         : 'action.dimmers-set-dimmer-level-fade-time-variable-leve',
+    // Retained as an alias, not a correction: RM 5.1.8 emits the singular, and
+    // nothing here should break if an older rule carries the plural.
     'action:getSetDimmers'        : 'action.dimmers-set-dimmer-level-fade-time-variable-leve',
+    'action:getDimmersPerMode'    : 'action.dimmers-set-dimmer-per-mode',
+    'action:getToggleDimmer'      : 'action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha',
     'action:getAdjustDimmer'      : 'action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha',
     'action:getFadeDimmer'        : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getStopFade'          : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getRLDimmer'          : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getStopDimmer'        : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
     'action:getSetColor'          : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
+    'action:getToggleColor'       : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
+    'action:getColorPerMode'      : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
     'action:getSetColorTemp'      : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getToggleColorTemp'   : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getColorTempPerMode'  : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getFadeCT'            : 'action.dimmers-change-color-temperature-over-time-stop',
+    'action:getStopCTFade'        : 'action.dimmers-change-color-temperature-over-time-stop',
     'action:getTrackEvent'        : 'action.dimmers-track-event-dimmer-track-event-switch',
     'action:getShadePosition'     : 'action.shades-and-fans-open-close-shades-set-position-s',
     'action:getFanSpeed'          : 'action.shades-and-fans-set-fan-speed-cycle-fans',

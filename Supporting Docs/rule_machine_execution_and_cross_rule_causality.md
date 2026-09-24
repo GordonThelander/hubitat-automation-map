@@ -204,6 +204,49 @@ Consequence for any engine claiming RM parity: defaulting to fire-on-transition 
 behavioural difference on every device trigger, and it cannot be tested with a stock virtual
 device, because that device cannot produce the case that exposes it. **[strong]**
 
+### 2.4 A condition Rule Machine cannot read is false, and the rule carries on
+
+Measured 2026-09-24. Rule Machine has no third truth value. A condition it cannot evaluate is
+treated as false: the THEN branch is skipped, **the ELSE branch runs**, and execution continues
+to the actions after the END-IF. The rule is not aborted and nothing is raised.
+
+Two ways a condition becomes unreadable were tested, because they do not look the same.
+
+**The device is gone.** A rule was authored against a live virtual temperature sensor reading 72,
+with `IF (temperature > 50) THEN log ELSE log END-IF`, then the device was deleted underneath the
+live rule. RM's own log:
+
+    IF (**Broken Condition**) THEN (skipping)
+    Action: Log: 'ROW6-THEN'  (skipped)
+    ELSE (do actions)
+    Action: Log: 'ROW6-ELSE'
+    END-IF
+    Action: Log: 'ROW6-AFTER'
+
+The control run, before deletion, took THEN and skipped ELSE, so the only thing that changed was
+the device's existence.
+
+**The attribute has never had a value.** A driver declaring an attribute and never sending an
+event for it, with `IF (reading > 50)` as a Custom Attribute condition. Same outcome, ELSE taken,
+execution continues, with one important difference:
+
+    IF (_PAIR null attr probe reading > 50.0) THEN (skipping)
+
+There is **no Broken Condition marker**. A null attribute renders exactly like an ordinary false.
+So of the two failures, only the missing device is visible in the log; the unset attribute is
+indistinguishable from the sensor genuinely reading below the threshold.
+
+The safety consequence is worth stating plainly, because it is the reverse of what an author
+would assume. A rule shaped `IF (sensor says it is safe) THEN act ELSE fall back` behaves as
+intended when the sensor disappears. A rule shaped `IF (sensor says it is unsafe) THEN hold off
+ELSE act` will **act** when the sensor disappears, and in the null-attribute case it will do so
+with a log line that looks entirely normal.
+
+Both cases were produced with throwaway devices and throwaway rules, and cover only these two
+kinds of unreadability. A device that is present but not responding, or one whose driver was
+swapped for a type lacking the attribute, have not been measured. **[strong]** for the two cases
+tested, and nothing is claimed beyond them.
+
 ## 3. Delay and Wait
 
 ### 3.1 Plain Delay

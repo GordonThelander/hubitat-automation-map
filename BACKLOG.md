@@ -234,10 +234,17 @@ The engine publishes capabilities that answer most of them (`action.dimmers-set-
 `action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha`, and the colour equivalents), so this is
 a mapping gap rather than a coverage gap.
 
-**Next action:** deliberately not fixed in the same block as 38, since assigning twelve constructs
-to capabilities is design work with its own error surface, not a typo repair. Awaiting Codex's
-ruling on whether to take it, and whether the same key-by-key check should be run across the other
-action families rather than the dimmer one alone.
+**Done 2026-09-24 (Dev revision 299).** All sixteen `dimmerActs` subtypes now map to the eight
+capabilities that answer them, paired from the engine's own `rm51` descriptions of which Rule
+Machine feature each covers. Verified two ways: no RM subtype left unmapped, and every capability
+id referenced exists in the published list. `getSetDimmers` is kept as a deliberate alias rather
+than deleted, so a rule carrying the plural still resolves.
+
+**Known risk, accepted rather than open.** The same class of error - a key no RM version emits, or
+a family listed only in part - can exist in any other action family, and would show only on a hub
+that uses the construct. Quantifying it means reading each family's wizard schema off the hub,
+which Codex has ruled out as a speculative audit. Recorded here so the risk is visible rather than
+forgotten; not an outstanding request.
 
 ### 24. Variable usage Automation Map cannot decode
 
