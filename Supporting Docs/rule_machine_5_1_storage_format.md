@@ -470,6 +470,8 @@ The condition and trigger sides use the same asymmetry as `tDev`/`rDev_`: **[str
 | `isDev_<n>` | condition | true reveals a device-relative comparison |
 | `isVar_<n>` | condition | true reveals a variable-to-variable comparison |
 | `AlltDev<n>` | trigger | "all of these" rather than any |
+| `AllrDev_<n>` | condition | the same qualifier, underscore form: `"true"` is all, empty is any |
+| `AlltDev-<n>` | Wait for Events row | the same qualifier again, dash-indexed with the rest of that family |
 | `stays<n>`, `SHours<n>`, `SMins<n>`, `SSecs<n>` | trigger | "and stays" duration |
 | `disableT<n>` | trigger | one trigger disabled in place |
 | `isCondTrig<n>`, `condTrig<n>` | trigger | a condition attached to one trigger row |
@@ -523,6 +525,14 @@ settings whose index is separated by a **dash**: `tCapab-<n>`, `tDev-<n>`, `tsta
 `stays-<n>`, `SHours-<n>`. Rule 1230 carries `tCapab-5 = Certain Time (and optional date)`,
 `tDev-4`, `tstate-4 = closed`. A device in `tDev-4` is a wait target; a device in `tDev4`
 is a trigger. Read the dash. **[strong]**
+
+A Wait for Events carries its own all-or-any qualifier per row in `AlltDev-<n>`, and **its rows are
+OR'd together**. Rule 1230 holds `tCapab-4 = Contact` with five doors, `tstate-4 = closed` and
+`AlltDev-4 = "true"` alongside `tCapab-5 = Certain Time (and optional date)` with `atTime-5 =
+02:00`, and renders as "... all contact is closed / OR When time is 02:00". So "all" is within a
+row and "or" is between rows. A multi-device threshold puts the qualifier where the operator would
+go, rendering "Back Garden Left, Back Garden Right(1, 1) all >= 500" rather than "is >= 500".
+Found by the other engine's session and confirmed here against 1230's live settings. **[strong]**
 
 Because the keys are rule-scoped rather than per-action, **only one Wait for Events action can
 exist per rule**: a second overwrites the first. The MCP server reports the same limit in
