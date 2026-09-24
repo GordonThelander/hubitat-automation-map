@@ -737,6 +737,47 @@ the presence of either key says nothing on its own. Read the value. **[strong]**
 
 ---
 
+### 7.6 Run Custom Action: parameters, and a value Rule Machine drops without saying so
+
+`actType.<n> = modeActs` with `actSubType.<n> = getDefinedAction`. The command is in
+`cCmd.<n>`, the target in `devices.<n>`, and each parameter is a pair:
+
+| Setting | Holds |
+| --- | --- |
+| `cpType<i>.<n>` | `string`, `number` or `decimal` - those three only |
+| `cpVal<i>.<n>` | the value, **always stored as a string** |
+
+**Read the pairs in ascending `i` and map them in order onto the command's parameters.** Do not
+treat `i` as the position. Measured here, three parameters occupied slots 2, 3 and 4, and a second
+action in the same rule used 2 and 3 again, so `i` is per-action rather than a running counter;
+but real rules on this hub carry a `playTrack` URL in `cpVal6` and in `cpVal1`, so no fixed offset
+holds. Order is the only reliable property.
+
+`cpVal` is a string even when the type is numeric, and RM coerces at dispatch using `cpType`:
+`number` arrives as **Integer**, `decimal` as **BigDecimal**, `string` as String. An engine that
+passes the stored value through unconverted sends a String where RM sends an Integer.
+
+Only three parameter types exist. A driver command declaring a BOOL or ENUM parameter cannot have
+that parameter supplied from a Run Custom Action at all; it arrives null.
+
+**A `number` above 2147483647 is silently dropped, and every later parameter shifts left.**
+Measured on a driver that reports what it receives:
+
+| Authored | RM renders | Device receives |
+| --- | --- | --- |
+| `probe('maxint', 2147483647, 9)` | all three | `txt=maxint` `num=2147483647` (Integer) `dec=9` |
+| `probe('overmax', 2147483648, 9)` | all three | `txt=overmax` `num=9` (BigDecimal) `dec=null` |
+| `probe('big', 9999999999, 2)` | all three | `txt=big` `num=2` (BigDecimal) `dec=null` |
+
+The boundary is exactly `Integer.MAX_VALUE`. One over and the parameter is not passed as null, it
+is removed from the argument list, so the next value lands in the wrong position. The rule's own
+rendered text still shows the value that was dropped.
+
+This is the sharpest case of the rule stated in 7.3 and section 9: **RM's rendering describes what
+the author typed, not what the device receives.** Here the rendering is correct and the behaviour
+is wrong, so no comparison of rendered text between two engines can detect it. Only running both
+and reading what each device actually received will. **[strong]**
+
 ## 8. Acting on other rules
 
 Actions that target another rule all share `actType.<n> = rulesActs` and follow one shape:
