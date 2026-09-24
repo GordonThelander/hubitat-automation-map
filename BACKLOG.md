@@ -312,6 +312,43 @@ consequence that the flow text does not mention.
 colour mode with its values for `getSetColor`. Deferred 2026-09-25 while resources go to the other
 project's milestone.
 
+### 43. Read the engine's rules from a published state file rather than its endpoint
+
+Agreed with the engine's project 2026-09-25, not yet built on either side. The scan currently
+fetches nodes, edges and flows from a live endpoint on the other app. That endpoint now assembles
+each rule's document from a separate child app, so a feed build costs one cross-app call per rule.
+
+The replacement: the engine writes `hai-am-state.json` to the hub's File Manager whenever its
+content would change, and this app reads `/local/hai-am-state.json` during a scan. No app execution
+in our read path, and no dependency on that app being responsive while we scan.
+
+**The agreed shape, which this app must hold up its end of:**
+
+| | |
+| --- | --- |
+| freshness | a single **content hash** covering documents, states and the paused set. Compare it with the one last read; unchanged means skip the parse |
+| capabilities | **not in the file.** The scan strips them anyway, and two call sites read them live on purpose because a rating shown today must answer for the engine as it is today |
+| completeness | whole set every write, roughly 80 KB. No incremental diff path |
+| device names | ours. `mergeHaiFeed` keeps our own node where the scan already found it and only tags the engine, so a device rename cannot stale the file |
+| pause lag | immediate on the submission path, otherwise one watchdog tick, about 60 seconds worst case |
+
+**One signal deliberately, not three.** A `revision` and a `statusEpoch` were offered alongside the
+hash and declined: two companion values describing the same content as the hash can drift from it,
+which is the failure documented in 5.6.1 and 7.7 kind 4, and this app has no path that could use
+"only the status changed" because the graph is rebuilt whole every scan. If that changes, ask again;
+adding a field later costs nothing, because the published contract already requires consumers to
+ignore unknown fields.
+
+**Why it is worth doing at all**, stated accurately rather than as a latency win: the scan reads the
+feed once per scan and automatic daily scanning is off on this hub, so this is a few reads a day,
+not a few an hour. The real argument is hub memory. This hub emitted `lowMemory` five times in seven
+days, down to 37,808 KB free at worst, and the change removes about 62 KB of permanent state from an
+app that holds it whether or not anyone is looking.
+
+**Next action:** wait for the file to appear on the hub, then read it in the scan path with the
+endpoint as the fallback, and treat a missing file as "older build" rather than an error - the same
+rule as item 41.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston
