@@ -792,7 +792,7 @@ and reading what each device actually received will. **[strong]**
 
 Rule Machine's action page builds itself as you fill it in. A field does not exist in the page
 schema until whatever it depends on has a value, which means **reading a schema snapshot and
-concluding "this action has no such setting" is unsound**. Three distinct kinds of conditional
+concluding "this action has no such setting" is unsound**. Four distinct kinds of conditional
 visibility were measured on 2026-09-25, and they fail in different ways.
 
 **1. A field revealed by an earlier field in the same action.**
@@ -832,6 +832,43 @@ The consequence is worth stating plainly: **Rule Machine's authoring vocabulary 
 function of what that hub owns.** No enumeration taken from one hub can be complete, and a tool
 that builds its expectations by enumerating one hub inherits that hub's device list as a silent
 assumption.
+
+**4. A field that stops applying keeps its last value, and the rendering ignores it.** The three
+kinds above are about a key that does not exist yet. This one is the opposite and more dangerous: a
+key that exists, holds a plausible value, and is dead.
+
+A time bound stores its *type* in `starting<n>` / `ending<n>` and its value in one of several
+companion keys, only one of which applies:
+
+| Bound type | The key that applies |
+| --- | --- |
+| `A specific time` | `startingA<n>` / `endingA<n>` |
+| `Sunrise` | `startSunriseOffset<n>` / `endSunriseOffset<n>` |
+| `Sunset` | `startSunsetOffset<n>` / `endSunsetOffset<n>` |
+
+Change the bound type and the previously-applicable key **retains its old value**. Measured on two
+rules:
+
+    1775  starting5 = 'A specific time'   startingA5 = '06:00'        applies
+          ending5   = 'Sunrise'           endingA5   = '22:00'        STALE
+                                          endSunriseOffset5 = '10'    applies
+          renders: "Time between 06:00 and Sunrise+10 minutes"
+
+    2290  starting9 = 'Sunset'            startSunsetOffset9  = ''    applies, empty
+          ending9   = 'Sunrise'           endSunriseOffset9   = ''    applies, empty
+                                          startSunriseOffset9 = '15'  STALE
+                                          endSunsetOffset9    = '-15' STALE
+          renders: "Time between Sunset(18:15) and Sunrise(06:04)", no offset
+
+2290 is the clearer case: **both applicable offset keys are empty and both inapplicable ones hold
+values**, which is why the rendering shows no offset at all. A reader that takes `endingA5` without
+first reading `ending5` gets 22:00 where Rule Machine means sunrise, and one that takes
+`endSunsetOffset9` gets a 15-minute shift Rule Machine does not apply.
+
+So the rule for this format is: **`starting<n>` / `ending<n>` select which companion key is live, and
+every other companion is noise.** Never read a value key without reading its type key first. Found
+by the other engine's session; confirmed here on both rules against live settings and RM's own
+rendering. **[strong]**
 
 #### 7.7.1 The action subtypes the picker offers
 
