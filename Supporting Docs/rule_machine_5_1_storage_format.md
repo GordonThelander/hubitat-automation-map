@@ -865,10 +865,25 @@ values**, which is why the rendering shows no offset at all. A reader that takes
 first reading `ending5` gets 22:00 where Rule Machine means sunrise, and one that takes
 `endSunsetOffset9` gets a 15-minute shift Rule Machine does not apply.
 
+A stale offset also outlives a switch to a **clock** bound, so this is not confined to sun bounds
+swapping bodies:
+
+    2279  starting3 = 'A specific time'   startingA3 = '21:30'        applies
+          ending3   = 'A specific time'   endingA3   = '06:00'        applies
+                                          endSunriseOffset3 = '6'     STALE
+          renders: "Time between 21:30 and 06:00", no offset
+
 So the rule for this format is: **`starting<n>` / `ending<n>` select which companion key is live, and
-every other companion is noise.** Never read a value key without reading its type key first. Found
-by the other engine's session; confirmed here on both rules against live settings and RM's own
-rendering. **[strong]**
+every other companion is noise.** Never read a value key without reading its type key first.
+
+The structure and the first two instances came from the other engine's session; 2279 was found by
+mechanising the check and is confirmed here from its stored settings and its own rendering.
+**[strong]**
+
+Not every pair of populated companions is a stale one. On the `Custom RGB color` path both
+`colorH` and `colorHex` carry values and **both are live**: the first is the input, the second the
+hue RM derived from it (7.3). The test is whether the second value is derivable from the first, not
+whether two keys are populated at once.
 
 #### 7.7.1 The action subtypes the picker offers
 
