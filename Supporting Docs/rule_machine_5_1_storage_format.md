@@ -522,10 +522,25 @@ there like any other condition type: 2076 holds `rCapab_57`, `rCapab_60` and `rC
 `rCapab_` key was tested against both rules and does not hold.
 
 **`rCapab_<n>` can be an empty string.** 1809 carries `rCapab_45 = ""` and `rCapab_3 = ""`. A
-"defined conditions" set built by filtering `rCapab_` entries on truthiness silently drops those,
-which is enough to make a rule look as though it references more conditions than it defines. Test
-for the key's presence, not its truthiness - the same distinction as `AllrDev_<n>`, where empty
-means **any** rather than unset. **[strong]**
+"defined conditions" set built by filtering `rCapab_` entries on truthiness silently drops those.
+Test for the key's presence, not its truthiness - the same distinction as `AllrDev_<n>`, where
+empty means **any** rather than unset. **[strong]**
+
+**`rCapab_<n>` is what makes index `n` a condition, and other keys outlive it.** A companion key can
+sit at an index that holds no condition at all:
+
+    2100   days45 = ["Sunday"]        rCapab_45 absent
+    2699   atSunsetOffset1 = '-15'    rCapab_1  absent
+
+Both are pickers left behind by a deleted condition. So the question for any indexed key is not
+whether it holds a value but whether `rCapab_<n>` exists for that index. Counting day pickers or
+offsets as evidence of a condition inflates the defined set.
+
+**`eval` can name indices that no longer exist.** On 2076 the expressions reference 1, 2, 5, 22 and
+66, and **none of those has an `rCapab_` key**: they are conditions that were deleted, still named
+by the orphaned expressions of 5.6. A live expression naming a missing condition would mean the
+rule evaluates something Rule Machine cannot show; checked across 62 rules by the other engine's
+session, no live expression does. Orphaned ones do it routinely and harmlessly. **[strong]**
 ## 6. Separating triggers from conditions
 
 This is the most useful distinction in the whole format and the basis for classifying what
@@ -704,7 +719,8 @@ three computed values. Authoring `#03000D` stores:
     colorLevel "5"         level, derived
 
 RGB(3,0,13) converts to hue 70 on the 0-100 scale, saturation 100, and value 13/255 = 5.1 per
-cent. Every stored number matches the arithmetic. The action then sends
+cent. Every stored number matches the arithmetic, and RM **floors** rather than rounds: `#03000D`
+is 70.5 stored as 70, and `#FF00F7` is 83.9 stored as 83. The action then sends
 `setColor([hue:70, saturation:100, level:5])`, so the derived level **is** part of the command.
 
 A stale `colorLevel` cannot survive on this path: an action authored with a level of 77 under a
