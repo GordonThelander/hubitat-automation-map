@@ -240,11 +240,26 @@ Machine feature each covers. Verified two ways: no RM subtype left unmapped, and
 id referenced exists in the published list. `getSetDimmers` is kept as a deliberate alias rather
 than deleted, so a rule carrying the plural still resolves.
 
-**Known risk, accepted rather than open.** The same class of error - a key no RM version emits, or
-a family listed only in part - can exist in any other action family, and would show only on a hub
-that uses the construct. Quantifying it means reading each family's wizard schema off the hub,
-which Codex has ruled out as a speculative audit. Recorded here so the risk is visible rather than
-forgotten; not an outstanding request.
+**Quantified 2026-09-25**, at Gordon's direction, by sweeping the `actSubType` picker for all
+twelve `actType` families on the hub. **73 subtypes offered. 54 mapped, 19 with no entry:**
+
+    getCondAct  getWhile  getModeSwitch  getChooseSwitch  getPushButtonPerMode  getChooseButton
+    getRLShade  getStopShade  getAdjustFan  getSetHSM  getLULock  getOCValve*  getSetThermostat
+    getSetMusicPlayer  getTone  getHTTPGet  getDisable  getStartStopZPoll  getDelayPerMode
+    getCancelDelay
+
+Several are everyday actions: Lock/Unlock, Set Thermostat, HSM, Open/Close shades, Music Player,
+Simple Conditional Action, Repeat While, HTTP Get. Each reports unmapped and drags its rule out of
+"covered" on any hub that uses it. None is used by Gordon's rules, which is why the report has
+looked clean.
+
+Seventeen further table keys are absent from every picker. **Do not delete them on that basis.**
+At least `getElse`, `getElseIf` and `getEndIf` are genuinely stored by real rules; RM creates those
+from dedicated buttons rather than the subtype menu, so the picker sweep under-reports the format
+(7.7.1). The rest need checking individually before any removal.
+
+**Next action:** map the 19, then verify the 17 one at a time against stored rules rather than
+against the picker.
 
 ### 41. Consume the engine's identity contract: capabilityIdsHash, formerIds, retired
 
