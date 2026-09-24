@@ -495,6 +495,37 @@ event fires, which is the structural opposite of a Required Expression: the expr
 whether the subscription exists at all, the conditional trigger filters an event that already
 arrived. **[external]**
 
+### 5.6 `eval` holds every expression ever built, not the live ones
+
+`state.eval` maps an expression id to the condition indices and operators that expression uses. It
+is the authority for **what an expression references**, and it is not an authority for **which
+expressions the rule runs**. RM keeps an entry for every expression built in the editor, whether it
+ended up attached to anything or not.
+
+Rule 2076 carries nine entries and two live ones. `eval["7"] = ["71"]` is orphaned, and reading
+`eval` as the live set makes condition 71's 06:00-21:00 window look referenced when the rule
+renders no IF at all.
+
+**The live set is `eval["0"]`, the Required Expression, plus each action's own expression id** taken
+from `state.actions` (an IF or Wait for Expression carries its id as the action's `rule` field). Any
+other entry is editor residue, in the same family as 7.7 kind 4: it exists, it is well-formed, and
+nothing runs it.
+
+Found by the other engine's session while mechanising a check; the orphaned entry announced itself
+as an arithmetic impossibility rather than as a wrong answer. **[strong]**
+
+#### 5.6.1 Two cautions on counting conditions
+
+**A time condition does carry `rCapab_<n>`.** Both `Between two times` and `Time of day` appear
+there like any other condition type: 2076 holds `rCapab_57`, `rCapab_60` and `rCapab_71` all as
+`Between two times`, and 1809 holds `rCapab_55` the same way. A claim that time conditions have no
+`rCapab_` key was tested against both rules and does not hold.
+
+**`rCapab_<n>` can be an empty string.** 1809 carries `rCapab_45 = ""` and `rCapab_3 = ""`. A
+"defined conditions" set built by filtering `rCapab_` entries on truthiness silently drops those,
+which is enough to make a rule look as though it references more conditions than it defines. Test
+for the key's presence, not its truthiness - the same distinction as `AllrDev_<n>`, where empty
+means **any** rather than unset. **[strong]**
 ## 6. Separating triggers from conditions
 
 This is the most useful distinction in the whole format and the basis for classifying what
