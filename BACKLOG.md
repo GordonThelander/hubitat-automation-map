@@ -77,37 +77,33 @@ The standing rules for the exchange:
   to the execution document, a delivery consequence here.
 
 **Owed to HAI:**
-- The list of the ~30 RM capabilities Gordon's 62 rules actually reach, so its hub-proven set can
-  be prioritised over its simulator-only set. Offered 2026-09-20, asked for 2026-09-23, still
-  outstanding.
+- The list of RM capabilities this hub's rules actually reach, so the engine can prioritise what is
+  in real use. Offered 2026-09-20, asked for 2026-09-23.
 - Row 6 of its `rm-semantics.md`: what RM does with a condition it cannot read. Authoring-time
   validation blocks the obvious test, so the device has to be removed after authoring.
 - The `lowMemory` location event payload, when one next fires.
 
-**Delivered 2026-09-24:** the capability list Gordon's rules reach, taken from `/rm-coverage`
-rather than a hand scan. 37 dimensions across 62 rules, 63 constructs, 0 unmapped, and all 37
-already hub-proven, which closed that piece of HAI's roadmap at zero effort. The figure must
-travel as two sentences, never one: for this hub the 62 rules reach 37 dimensions and all 37 are
-hub-proven, so real usage is completely covered; for any other hub the 91 simulator-only
-dimensions remain unproven and this rule set gives no evidence about them.
+**Delivered 2026-09-24:** the list of capabilities this hub's rules actually reach, taken from
+`/rm-coverage` rather than a hand scan. Whenever that figure travels it needs two sentences, never
+one: what this hub's own rules exercise is covered, and a rule set from one house is no evidence
+at all about the capabilities it never touches.
 
 **Owed to us:**
 - Its 22 decode defects with evidence, to check against storage sections 5, 9 and 10.
 - Its three RM-editor verdicts on mixed AND/OR grouping, which should also close T07/T08 in the
   execution document.
 
-**Received 2026-09-24:** the per-rule disposition for all 62, generated rather than hand-kept, at
-`hubitat-automation-intelligence\Bucket\Evidence\m9-sim\per-rule-disposition.txt`. 51 faithful
-within tested scope, 1 explicit difference, 10 blocked, of which 7 are rules with no trigger that
-nothing runs and are inert in Rule Machine too. That is the source for a migration-readiness
-column here (item 35), with its own caveat carried alongside: "faithful within tested scope" is a
-reading plus a validator pass, not a behavioural pass.
+**Received 2026-09-24:** a generated per-rule disposition for this hub's rules, which is the
+natural source for a migration-readiness column here (item 35) rather than anything hand-kept. It
+carries its own caveat and that caveat must travel with it: a reading plus a validator pass is not
+a behavioural pass.
 
 Two accuracy items raised with HAI and accepted by it: the feed names its location-event
 capability for sunrise and sunset while rule 2100 uses the same capability for `lowMemory` and
 `severeLoad`, so the name is narrower than the thing; and `Run Custom Action`, at 22 rules the
 third most used capability here, is an arbitrary device command with parameters, so its fidelity
-is not one behaviour but as many as there are commands behind it. Both are HAI's to fix.
+is not one behaviour but as many as there are commands behind it. Both belong to the engine
+rather than to this app.
 
 The standing rule both sides have adopted, after a day in which nearly every error caught in
 either direction was a true observation stated more widely than its evidence: **state the scope
@@ -117,20 +113,19 @@ than care.
 
 **Settled 2026-09-24, and it bounds HAI's method rather than a single rule.** What RM *renders*
 is the author's input, not the command it issues: the colour modes derive values, store them and
-send them without ever displaying them. HAI's comparison method reads both engines' renderings
-side by side, which found it 22 real defects, so this is the one seam in it: wherever a construct
-carries derived values the rendering under-reads both engines equally and the pair agrees without
-either side having examined the part that could differ. HAI has put the limitation in its
-equivalence tool's own docstring rather than leave the tool overclaiming.
+send them without ever displaying them. Any method that compares two engines by reading what each
+renders inherits that seam: wherever a construct carries derived values the rendering under-reads
+both sides equally, and the pair agrees without either having examined the part that could
+differ.
 
 **Next action:** take the 22 defects against the storage document section by section.
 
 ### 37. The HAI capability list can go stale without anyone noticing
 
-Found 2026-09-24 while generating the capability list owed to HAI: `/rm-coverage` returned
-`ok:false` because the HAI Runtime on the hub (rev 129) had been built against an older
-capabilities hash than the file it was given. The Runtime was stale, not the file, so
-re-uploading would have changed nothing. HAI redeployed as rev 131 and the report now answers.
+Found 2026-09-24 while generating the capability list: `/rm-coverage` returned `ok:false` because
+the engine's runtime on the hub had been built against an older capabilities hash than the file it
+was given. The runtime was the stale side, not the file, so re-uploading would have changed
+nothing. It was rebuilt and the report now answers.
 
 **What the app did right, checked rather than assumed.** The panel renders `reason` verbatim on
 `ok:false`, so anyone who opened it saw the hub's own explanation in words. An earlier note here
@@ -141,7 +136,7 @@ silently empty and never read as false parity.
 the app's main page says the feed's capability list is unreadable, even though that page already
 reports how many rules the last scan read from the feed.
 
-An independent hash check here was considered and rejected: HAI's Runtime already compares the
+An independent hash check here was considered and rejected: the engine's runtime already compares the
 hash it was built with against the file, and already reports the mismatch through
 `capabilitiesError`, which this app surfaces. Re-implementing that comparison would duplicate a
 working check rather than cover a gap. The published-list fallback (no engine on the hub) cannot
@@ -167,9 +162,8 @@ events (`systemStart`, `severeLoad`, `zigbeeOff/On`, `zwaveCrashed`) and has no 
 second, and `lowMemory` reported **unmapped** until the engine adds it.
 
 This makes `/rm-coverage` overstate. The 2026-09-24 run reported 62 of 62 rules covered with 0
-unmapped and 37 of 37 used dimensions hub-proven; at least one of those rules is covered only by
-a mis-attribution. The figures were sent to the HAI session, which closed a roadmap step on them,
-and have been corrected there.
+unmapped; at least one of those rules was covered only by a mis-attribution. The figures had
+already been passed to the engine's project and were corrected there.
 
 The same weakness applies anywhere a capability's identity depends on a value rather than the
 construct name. Location Event is the case found; the mapping should be audited for others.
@@ -282,9 +276,8 @@ What it now guarantees, and what this app should use when the engine's build is 
   what is explicitly not promised. Node and edge ids are hub-local and must not be pinned. The
   feed may gain fields, so unknown fields must be ignored rather than treated as errors.
 
-**Not yet deployed.** Their engine is under a deployment hold, so the field is absent on this hub
-today. Treat its absence as "older build", never as an error, which is also what their contract
-says to do.
+**Not present on this hub yet.** Treat the field's absence as "older build", never as an error,
+which is also what the published contract says to do.
 
 **Next action:** when `capabilityIdsHash` appears on the hub, record it alongside the feed version
 already cached, resolve a mapped id through `formerIds` / `retired` before reporting a construct
