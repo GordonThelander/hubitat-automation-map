@@ -56,6 +56,102 @@ Two pieces here, both small adapters, not decoders:
 **Next action:** wait for the HAI session's first feed on the hub, then add both adapters against its
 golden fixtures and verify live.
 
+### 36. The HAI exchange: what we owe, what we are owed, and what we verify
+
+This project and HAI are now each other's suppliers. We consume its `hai.am/1` feed and its
+capability list; it consumes our RM storage and execution documents, the `am.edges/1` contract,
+and measurements we take on the hub. Neither side should take the other's claims on trust, and
+both sides' documents are wrong often enough to matter: on 2026-09-24 a claim of ours marked
+[strong] was wrong and HAI's challenge was right, and on the same day HAI offered to withdraw a
+correct challenge in our favour, which was refused.
+
+The standing rules for the exchange:
+
+- **Measure rather than defer.** Where the two sides disagree, run it on the hub. A concession
+  from either side is not evidence and does not close a question.
+- **Correct our own documents in public.** When a measurement goes against us, rewrite the
+  section and mark that it changed, so a reader who saw the old version can see why.
+- **Say which kind of claim it is.** Measured, read from live settings, or documentation. Never
+  let a documentation claim travel as a measurement.
+- **Record a finding where it belongs.** Storage keys to the storage document, runtime behaviour
+  to the execution document, a delivery consequence here.
+
+**Owed to HAI:**
+- The list of the ~30 RM capabilities Gordon's 62 rules actually reach, so its hub-proven set can
+  be prioritised over its simulator-only set. Offered 2026-09-20, asked for 2026-09-23, still
+  outstanding.
+- Row 6 of its `rm-semantics.md`: what RM does with a condition it cannot read. Authoring-time
+  validation blocks the obvious test, so the device has to be removed after authoring.
+- The `lowMemory` location event payload, when one next fires.
+
+**Delivered 2026-09-24:** the capability list Gordon's rules reach, taken from `/rm-coverage`
+rather than a hand scan. 37 dimensions across 62 rules, 63 constructs, 0 unmapped, and all 37
+already hub-proven, which closed that piece of HAI's roadmap at zero effort. The figure must
+travel as two sentences, never one: for this hub the 62 rules reach 37 dimensions and all 37 are
+hub-proven, so real usage is completely covered; for any other hub the 91 simulator-only
+dimensions remain unproven and this rule set gives no evidence about them.
+
+**Owed to us:**
+- Its 22 decode defects with evidence, to check against storage sections 5, 9 and 10.
+- Its three RM-editor verdicts on mixed AND/OR grouping, which should also close T07/T08 in the
+  execution document.
+
+**Received 2026-09-24:** the per-rule disposition for all 62, generated rather than hand-kept, at
+`hubitat-automation-intelligence\Bucket\Evidence\m9-sim\per-rule-disposition.txt`. 51 faithful
+within tested scope, 1 explicit difference, 10 blocked, of which 7 are rules with no trigger that
+nothing runs and are inert in Rule Machine too. That is the source for a migration-readiness
+column here (item 35), with its own caveat carried alongside: "faithful within tested scope" is a
+reading plus a validator pass, not a behavioural pass.
+
+Two accuracy items raised with HAI and accepted by it: the feed names its location-event
+capability for sunrise and sunset while rule 2100 uses the same capability for `lowMemory` and
+`severeLoad`, so the name is narrower than the thing; and `Run Custom Action`, at 22 rules the
+third most used capability here, is an arbitrary device command with parameters, so its fidelity
+is not one behaviour but as many as there are commands behind it. Both are HAI's to fix.
+
+The standing rule both sides have adopted, after a day in which nearly every error caught in
+either direction was a true observation stated more widely than its evidence: **state the scope
+of the evidence with the claim**. A finding that held on one code path, or on one hub, says so.
+That failure mode does not feel like guessing at the time, which is why it needs naming rather
+than care.
+
+**Settled 2026-09-24, and it bounds HAI's method rather than a single rule.** What RM *renders*
+is the author's input, not the command it issues: the colour modes derive values, store them and
+send them without ever displaying them. HAI's comparison method reads both engines' renderings
+side by side, which found it 22 real defects, so this is the one seam in it: wherever a construct
+carries derived values the rendering under-reads both engines equally and the pair agrees without
+either side having examined the part that could differ. HAI has put the limitation in its
+equivalence tool's own docstring rather than leave the tool overclaiming.
+
+**Next action:** take the 22 defects against the storage document section by section.
+
+### 37. The HAI capability list can go stale without anyone noticing
+
+Found 2026-09-24 while generating the capability list owed to HAI: `/rm-coverage` returned
+`ok:false` because the HAI Runtime on the hub (rev 129) had been built against an older
+capabilities hash than the file it was given. The Runtime was stale, not the file, so
+re-uploading would have changed nothing. HAI redeployed as rev 131 and the report now answers.
+
+**What the app did right, checked rather than assumed.** The panel renders `reason` verbatim on
+`ok:false`, so anyone who opened it saw the hub's own explanation in words. An earlier note here
+said it "rendered nothing useful"; that was wrong and is corrected. The report was never
+silently empty and never read as false parity.
+
+**What the app does not do.** The condition is only discovered by opening the panel. Nothing on
+the app's main page says the feed's capability list is unreadable, even though that page already
+reports how many rules the last scan read from the feed.
+
+An independent hash check here was considered and rejected: HAI's Runtime already compares the
+hash it was built with against the file, and already reports the mismatch through
+`capabilitiesError`, which this app surfaces. Re-implementing that comparison would duplicate a
+working check rather than cover a gap. The published-list fallback (no engine on the hub) cannot
+compare hashes at all, having no runtime to compare against, and already shows its `generatedAt`
+date as its freshness signal.
+
+**Next action:** add the feed's capability-list state to the main page beside the existing
+"Last scan read N rules from the feed" line, so the condition is visible without opening the
+graph. Small, and the only part of this incident the app can actually fix.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston

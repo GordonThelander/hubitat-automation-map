@@ -176,6 +176,34 @@ completed the previous command. When later logic depends on a real device
 transition, use the resulting state/event as evidence rather than assuming
 command completion.
 
+### 2.3 A trigger fires on every report, not on a change of state
+
+Measured 2026-09-24. RM's own rendering of a device trigger reads "motion **reports** active",
+and the wording is literal: RM subscribes to the attribute and acts on every event delivered to
+it, including events whose value equals the value the device already held.
+
+Method. A purpose-built driver emitted `motion active` three times with `isStateChange: true`,
+while the device was already `active`, so no transition occurred at any point. The rule's log:
+
+    Event: _PAIR repeat probe motion active      13:55:15.143
+    Triggered: _PAIR repeat probe motion active  13:55:15.144
+    Action: ...                                  13:55:15.170
+    Event / Triggered / Action                   13:55:15.251 / .253 / .279
+    Event / Triggered / Action                   13:55:15.520 / .522 / .546
+
+Three reports, three separate evaluations, three action runs. There is no transition filter and
+no de-duplication in RM.
+
+**The driver decides whether a repeat exists at all.** This is the other half, and it is easy to
+miss. The same test with Hubitat's stock Virtual Motion Sensor produced *one* event from three
+`active` commands: an ordinary `sendEvent` of an unchanged value is suppressed by the platform,
+so RM never saw reports two and three. Repeat reports reach RM only when the driver forces them
+with `isStateChange: true`, which real sensors routinely do and stock virtual drivers do not.
+
+Consequence for any engine claiming RM parity: defaulting to fire-on-transition is a silent
+behavioural difference on every device trigger, and it cannot be tested with a stock virtual
+device, because that device cannot produce the case that exposes it. **[strong]**
+
 ## 3. Delay and Wait
 
 ### 3.1 Plain Delay
