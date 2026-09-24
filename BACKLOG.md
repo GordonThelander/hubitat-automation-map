@@ -246,6 +246,36 @@ that uses the construct. Quantifying it means reading each family's wizard schem
 which Codex has ruled out as a speculative audit. Recorded here so the risk is visible rather than
 forgotten; not an outstanding request.
 
+### 41. Consume the engine's identity contract: capabilityIdsHash, formerIds, retired
+
+This app pins about seventy capability ids by string in `RM_CONSTRUCT_TO_HAI` and
+`RM_LOCATION_EVENT_TO_HAI`. That is a dependency on another project's identifiers, taken without a
+promise behind it, and it was raised as such on 2026-09-24. The engine has since published one.
+
+What it now guarantees, and what this app should use when the engine's build is deployed:
+
+- **`capabilityIdsHash`**, a new field in the `hai.am/1` feed beside `capabilitiesHash`. The
+  existing hash moves when any content moves, including a description or an evidence date, so it
+  cannot tell identity from wording. The new one moves **only** when the set of ids changes. That
+  is the signal worth watching; `capabilitiesHash` is not.
+- **`formerIds`** on a capability that replaced another, so a rename is followed with one lookup
+  and no coordination.
+- **`retired`**, mapping a withdrawn id to its replacement or to null. A published id that simply
+  vanishes is a test failure on their side rather than a silent change here.
+- **`docs/developer/api.md`**, "What a consumer may rely on": what is contract, what is content,
+  what is explicitly not promised. Node and edge ids are hub-local and must not be pinned. The
+  feed may gain fields, so unknown fields must be ignored rather than treated as errors.
+
+**Not yet deployed.** Their engine is under a deployment hold, so the field is absent on this hub
+today. Treat its absence as "older build", never as an error, which is also what their contract
+says to do.
+
+**Next action:** when `capabilityIdsHash` appears on the hub, record it alongside the feed version
+already cached, resolve a mapped id through `formerIds` / `retired` before reporting a construct
+unmapped, and say plainly in the coverage panel when a pinned id has been retired rather than
+silently reporting the construct as uncovered. Until then this is a watch item, not work in
+progress.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston
