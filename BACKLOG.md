@@ -259,7 +259,8 @@ from dedicated buttons rather than the subtype menu, so the picker sweep under-r
 (7.7.1). The rest need checking individually before any removal.
 
 **Next action:** map the 19, then verify the 17 one at a time against stored rules rather than
-against the picker.
+against the picker. **Deferred 2026-09-25** while resources go to the other project's milestone;
+no effect on this hub, whose rules use none of the nineteen.
 
 ### 41. Consume the engine's identity contract: capabilityIdsHash, formerIds, retired
 
@@ -290,6 +291,33 @@ already cached, resolve a mapped id through `formerIds` / `retired` before repor
 unmapped, and say plainly in the coverage panel when a pinned id has been retired rather than
 silently reporting the construct as uncovered. Until then this is a watch item, not work in
 progress.
+
+### 42. Flow text says nothing about custom actions, colours or metering
+
+`actionStep` renders `getDefinedAction` as the literal string `Run defined actions` and
+`getSetColor` as `Set colour`. Neither carries the command, the device list, the parameters or the
+metering, so the flow view is materially thinner than Rule Machine's own rendering of the same
+action.
+
+Rule 2112 is the case that makes it concrete. RM renders:
+
+    initialize() on <eight speakers> meter 30000 ms
+
+and the map renders `Run defined actions`. The staggering is the whole point of that rule, and a
+reader of the map cannot see it.
+
+Everything needed to render these properly was measured on 2026-09-24/25 and is in the storage
+document: `cCmd.<n>` and `devices.<n>` for the command and targets (7.6), the `cpType<i>`/`cpVal<i>`
+pairs read in ascending `i` with coercion by type (7.6), `meter.<n>` / `meterMillis.<n>` for the
+spacing (7.1), and `color.<n>` with its mode-dependent companions for colour (7.3, 7.5).
+
+Not a correctness defect: the app does not claim anything false, it just says less than it knows.
+Grouped here with the `ctFade.<n>` gap, which is the same shape - a stored value with a rendered
+consequence that the flow text does not mention.
+
+**Next action:** render command, devices, parameters and metering for `getDefinedAction`, and the
+colour mode with its values for `getSetColor`. Deferred 2026-09-25 while resources go to the other
+project's milestone.
 
 ### 24. Variable usage Automation Map cannot decode
 
