@@ -117,8 +117,14 @@ limitation, not a design choice to reproduce.
    events and the expression never re-evaluates. A silent failure mode. **[external]**
 8. **"Ignore trigger events while running" shipped in 2.3.9 only** and Hubitat's own docs
    say it has unexpected outcomes and will not be changed. **[external]**
-9. **Interrupted edits leave orphaned action rows** in settings that hold an index forever.
-   Observed on app 2112: three such rows. **[strong]**
+9. **Interrupted edits leave orphaned action rows** in settings: keys written for an action that
+   was never completed, which do not run and are not part of the rule. **The index is not held
+   permanently.** An independent reproducer on 2026-09-25 (one log action, an incomplete wizard
+   drive leaving an orphan at index 2, then a second add) had the next action **reuse index 2**,
+   commit cleanly, and health then report no orphan rows, with the earlier device-list key still
+   sitting underneath. An earlier claim here that such a row holds its index forever was wrong.
+   Note also that the tool's own health text asserts "new actions are allocated above it", which
+   that reproducer contradicts. **[strong]**
 10. **Metering exists only on multi-device actions.** Pacing is a general need, not a
     per-action one. See section 4.
 
