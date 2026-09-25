@@ -345,9 +345,29 @@ not a few an hour. The real argument is hub memory. This hub emitted `lowMemory`
 days, down to 37,808 KB free at worst, and the change removes about 62 KB of permanent state from an
 app that holds it whether or not anyone is looking.
 
-**Next action:** wait for the file to appear on the hub, then read it in the scan path with the
-endpoint as the fallback, and treat a missing file as "older build" rather than an error - the same
-rule as item 41.
+**Verified from this side 2026-09-25**, rather than taking the producer's word: 42,564 bytes,
+`contract: hai.am/1` which is the string `fetchHaiFeed` already gates on, `contentHash` and
+`generatedAt` present, 67 nodes, 106 edges, 41 flows, and **no capability keys of any kind**. App
+nodes carry `id`, `ruleId`, `label`, `group`, `engine`, `status`, `disabled`, `url`, which covers
+every field `mergeHaiFeed` reads. One rule shows as paused and 26 as stopped-and-disabled, matching
+the hub.
+
+**Two integration details found by that check:**
+
+`state: 'OK'` is set by our own wrapper rather than carried in the payload, so a file read passed
+through the same normaliser works unchanged. Nothing to do.
+
+**The cache key needs moving.** The file carries no `capabilitiesHash`, correctly, since it carries
+no capabilities. But `haiFeedVersionForCache()` keys on `capabilitiesHash` and falls back to
+`haiVersion`, which by our own note "does not move between builds". Sourcing the scan feed from the
+file would empty that field and quietly demote the migration-ratings cache to a key that barely
+changes, so a rating could survive a capability change that should have invalidated it. The fix is
+to take the cache key from the live capabilities fetch the rating path already performs, not from
+the scan-stored feed. **Do this in the same change, not after.**
+
+**Next action:** read the file in the scan path with the endpoint as the fallback, move the ratings
+cache key off the scan-stored feed at the same time, and treat a missing file as "older build"
+rather than an error - the same rule as item 41.
 
 ### 24. Variable usage Automation Map cannot decode
 
