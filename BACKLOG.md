@@ -387,10 +387,16 @@ file rather than the hub, and no field the producer writes can help for the same
 
 This is the stale capability list of 2026-09-24 in a form that cannot be fixed from the producer
 side. The fix is here and it is nearly free: **the scan already enumerates every installed app on
-the hub, so use the file only when that same scan also found the engine app present.** Producer
+the hub, so use the file only when that same scan also found the app that writes it.** Producer
 absent, file ignored, fall through to the endpoint or to nothing, which is the behaviour a missing
 file already gets. That covers rollback, uninstall, disable, and an old restore in one check, none
 of which a field inside the file could ever have reported.
+
+**Gate on the writer, not on "an engine app exists."** Under the independent-rule design the estate
+becomes one thin shared app plus many top-level rule apps. A check for any app of that family would
+pass on the strength of the rule apps alone, while the one app that actually writes the file had
+been removed - the gate would hold open in exactly the case it exists to close. Identify the writer
+specifically.
 
 A `producerRevision` field was offered and declined: it only means anything when compared against a
 live endpoint, which is the very call the file exists to avoid, and it is a second value describing
