@@ -365,9 +365,21 @@ changes, so a rating could survive a capability change that should have invalida
 to take the cache key from the live capabilities fetch the rating path already performs, not from
 the scan-stored feed. **Do this in the same change, not after.**
 
-**Next action:** read the file in the scan path with the endpoint as the fallback, move the ratings
-cache key off the scan-stored feed at the same time, and treat a missing file as "older build"
-rather than an error - the same rule as item 41.
+**Do not start this until the engine's own situation resolves.** As of 2026-09-25 its ownership
+change is deployed but inert: zero registry entries carry the derived index, so the parent still
+holds every document *and* makes a child call wherever one is wanted. Its app is being throttled by
+the hub, and a roll-back of all three of its apps is on the table. The sequencing that follows:
+
+- **If it rolls back**, the slow endpoint path goes with it and this item stops being urgent.
+- **If it fixes forward with a real backfill**, the endpoint's cost profile changes when the
+  backfill lands, so the file read is worth doing *after* that rather than before.
+
+Either way this is not work to start now, and it is not blocked on anyone: it is waiting for the
+answer that decides which of the two it is.
+
+**Next action when that settles:** read the file in the scan path with the endpoint as the
+fallback, move the ratings cache key off the scan-stored feed in the same change, and treat a
+missing file as "older build" rather than an error - the same rule as item 41.
 
 ### 24. Variable usage Automation Map cannot decode
 
