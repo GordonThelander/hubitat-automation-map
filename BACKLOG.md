@@ -460,6 +460,50 @@ primary action and the scan a secondary one. Worth checking the whole page at ph
 there rather than fixing the one control - the same warning text that pushed the button down will
 push other things down on a narrower screen.
 
+### 45. The engine feed's status word is discarded for every rule the scan already found
+
+**Confirmed live on 2026-09-26, and the code fix is written but not yet on the hub.**
+
+`mergeHaiFeed` treats a hub-scanned node as authoritative and returned as soon as it had tagged the
+node with its engine, before the branch that reads the feed's `status`. That early return is right
+for the label and the relationships, which the hub reads directly. It was wrong for `status`,
+because the scan derives paused from an `appState` entry named `paused`, which is Rule Machine's own
+convention, while that engine publishes the same fact only in its feed.
+
+Every rule of that engine is an ordinary child app, so the scan always found it and the feed's
+status was therefore never consulted for any of them.
+
+**Verified, not inferred.** The engine's rule apps expose exactly three `appState` rows, `editorLink`,
+`rt` and `rtFence`. There is no `paused` row on any of them, so the scan's derivation returned
+nothing every time. One of the three rules on the hub was genuinely paused while the map drew it as
+running. The only reason a reader saw the truth at all is that the engine writes a literal
+`(Paused)` into its own app label, with no surrounding span, so the label cleaner leaves the word in
+the title. That is an accident of labelling, not the flag working.
+
+**The fix, applied in source.** Set `disabled`, `paused` and `inactive` from the feed inside the
+existing-node branch, before the early return. Flags only. The label, draw text and title are left
+exactly as the scan built them, because the engine already puts the status word in its own label and
+appending a second suffix reproduces the visible duplicate that review 374 removed for Rule Machine.
+`stopped` sets `inactive` alone, matching what `inactive` already means everywhere else, "not
+running".
+
+**Trap to avoid if anyone is tempted to read the engine's state directly instead.** Its `state.rt`
+carries a top-level `pausedRules` key. That is not the rule's own status. It is the set of Rule
+Machine rule ids that rule is watching, for a rule-paused trigger. Reading it because the name
+matches gives you someone else's pause flag, and on a rule watching nothing it reads empty and looks
+like a confident "not paused". The rule's own flag lives at `rt.world.rules[rt.ruleId].paused`, and
+even that is a cross-check only. The feed's `status` field is the value the engine intends us to
+consume, and reaching into its internal blob would break the first time it reshapes it, silently.
+
+**Verified on the Dev hub, 2026-09-26.** App code version 300, scan at 07:25 in 51 seconds, "Last
+scan read 3 rules from the feed". Read out of the rendered graph: `a3453` carries `paused: true` and
+`inactive: true`, and the two active rules carry neither key. Before the deploy `a3453` carried
+neither. The drawn text reads `[HAI] GT HAI Rule 1 (Paused) (HAI Rule (Dev))`, with the word once,
+confirming that taking the flag without the status word was the right split.
+
+Two unrelated confirmations fell out of the same scan: apps went 189 to 151 and nodes 495 to 457,
+both exactly 38 fewer, matching the engine's removal of its 38 test fixtures.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston

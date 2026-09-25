@@ -10850,6 +10850,16 @@ void mergeHaiFeed(Map feed, Map<String, Map> nodes, List<Map> edges, Map flows, 
             if (group == 'app') {
                 nodes[id].engine = 'HAI'
                 if (n.url) nodes[id].engineUrl = "${n.url}"
+                // Flags only, never the label. This engine's rules are
+                // ordinary child apps, so the scan always finds them and
+                // reaches here, and the scan derives paused from an appState
+                // entry named "paused" that these apps do not have. Without
+                // this the feed's status was unreachable for every one of
+                // them and a paused rule drew as running.
+                String feedStatus = "${n.status ?: ''}"
+                if (n.disabled == true) { nodes[id].disabled = true; nodes[id].inactive = true }
+                if (feedStatus == 'paused') { nodes[id].paused = true; nodes[id].inactive = true }
+                if (feedStatus == 'stopped') nodes[id].inactive = true
             }
             return
         }
