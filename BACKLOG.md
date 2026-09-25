@@ -392,6 +392,19 @@ absent, file ignored, fall through to the endpoint or to nothing, which is the b
 file already gets. That covers rollback, uninstall, disable, and an old restore in one check, none
 of which a field inside the file could ever have reported.
 
+**A blind spot the content hash does not cover, found 2026-09-25 by reading the file.** A file that
+was not rewritten because nothing changed, and a file that was not rewritten because **the write
+failed**, are byte-identical and both look current. The producer's log carries
+`hai-am-state.json not written: not canonicalisable: null` twice on the morning of 2026-09-25, as
+warnings only - the file simply stayed as it was and nothing outside the log could tell. Had that
+happened after a content change rather than before one, this app would have read stale data with
+every check agreeing it was fresh.
+
+The fix is the producer's and has been asked for: record a failed write somewhere observable, in
+its own state or summary. It cannot go in the file, because a broken writer cannot update the file
+to say it is broken. **Do not start reading the file until that exists**, or this app is building on
+a freshness signal with a known hole in it.
+
 **Gate on the writer, not on "an engine app exists."** Those are different questions, and only one
 of them is the one worth asking: an estate can contain many apps of that family while the single
 app that writes this file has been removed, and a family check would then hold the gate open in
