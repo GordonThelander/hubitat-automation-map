@@ -400,10 +400,20 @@ warnings only - the file simply stayed as it was and nothing outside the log cou
 happened after a content change rather than before one, this app would have read stale data with
 every check agreeing it was fresh.
 
-The fix is the producer's and has been asked for: record a failed write somewhere observable, in
-its own state or summary. It cannot go in the file, because a broken writer cannot update the file
-to say it is broken. **Do not start reading the file until that exists**, or this app is building on
-a freshness signal with a known hole in it.
+The producer already had the field and we did not know its name: **`runtimeAmStateError` in the
+engine runtime app's state**, set when a write fails and cleared when one succeeds. Absent means the
+last write succeeded. It is deliberately not in the file, because a broken writer cannot update the
+file to say it is broken.
+
+**It is not authoritative yet.** The line that records it was written as
+`"${e.class?.simpleName}: ${e.message}"`, and the Hubitat sandbox refuses `getClass()`, which
+`.class` compiles to - so the statement whose only purpose was to make a failed write observable
+would itself throw inside the catch block, taking the record and the log line with it. Fixed in the
+producer's source as `e.toString()`, but the unsafe line is still live on Dev until their next
+deploy lands. **Until then, absence of `runtimeAmStateError` proves nothing.**
+
+**Do not start reading the file until that deploy has landed**, or this app is building on a
+freshness signal whose failure indicator can itself fail.
 
 **Gate on the writer, not on "an engine app exists."** Those are different questions, and only one
 of them is the one worth asking: an estate can contain many apps of that family while the single
