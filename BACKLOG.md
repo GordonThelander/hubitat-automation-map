@@ -330,6 +330,7 @@ in our read path, and no dependency on that app being responsive while we scan.
 | capabilities | **not in the file.** The scan strips them anyway, and two call sites read them live on purpose because a rating shown today must answer for the engine as it is today |
 | completeness | whole set every write, roughly 80 KB. No incremental diff path |
 | device names | ours. `mergeHaiFeed` keeps our own node where the scan already found it and only tags the engine, so a device rename cannot stale the file |
+| **app node ids** | **must be `a<installedAppId>` of the app as the hub installs it.** `mergeHaiFeed` keys on node id: an id our scan already found is kept and tagged `engine: HAI`, an id it did not find is created from the feed. If the engine ever emits a logical rule id instead, every rule appears **twice** - once as a plain app from our scan, once as an HAI rule from the feed, with no edge between them and no error anywhere. Silent duplication, not a failure. The engine is pinning this with a test that asserts the installed id and rejects the logical one |
 | pause lag | immediate on the submission path, otherwise one watchdog tick, about 60 seconds worst case |
 
 **One signal deliberately, not three.** A `revision` and a `statusEpoch` were offered alongside the
