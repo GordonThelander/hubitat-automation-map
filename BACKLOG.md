@@ -377,9 +377,33 @@ the hub, and a roll-back of all three of its apps is on the table. The sequencin
 Either way this is not work to start now, and it is not blocked on anyone: it is waiting for the
 answer that decides which of the two it is.
 
-**Next action when that settles:** read the file in the scan path with the endpoint as the
-fallback, move the ratings cache key off the scan-stored feed in the same change, and treat a
-missing file as "older build" rather than an error - the same rule as item 41.
+**A condition of building this at all: "the file exists" must never mean "a producer is alive."**
+The engine's writer only exists in the newer build. If that build is rolled back, uninstalled,
+disabled, or restored from an older backup, `hai-am-state.json` stays on the hub at its last
+content - present, readable, well-formed, and progressively wrong, with nothing inside it able to
+say so. The content hash cannot show staleness once the producer is gone, because it describes the
+file rather than the hub, and no field the producer writes can help for the same reason.
+
+This is the stale capability list of 2026-09-24 in a form that cannot be fixed from the producer
+side. The fix is here and it is nearly free: **the scan already enumerates every installed app on
+the hub, so use the file only when that same scan also found the engine app present.** Producer
+absent, file ignored, fall through to the endpoint or to nothing, which is the behaviour a missing
+file already gets. That covers rollback, uninstall, disable, and an old restore in one check, none
+of which a field inside the file could ever have reported.
+
+A `producerRevision` field was offered and declined: it only means anything when compared against a
+live endpoint, which is the very call the file exists to avoid, and it is a second value describing
+the same thing as the hash.
+
+**Keep the claims separate.** This file is a consumer optimisation for the scan's read path. It is
+not evidence that the engine's parent-state ownership change worked, and the two must be measured
+and reported separately. The temptation runs one way: the file is the visible, verifiable artefact
+of the two, which makes it easy to let it stand in for the one that is neither.
+
+**Next action when that settles:** read the file in the scan path **gated on the engine app being
+found in the same scan**, with the endpoint as the fallback, move the ratings cache key off the
+scan-stored feed in the same change, and treat a missing file as "older build" rather than an
+error - the same rule as item 41.
 
 ### 24. Variable usage Automation Map cannot decode
 
