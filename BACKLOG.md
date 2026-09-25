@@ -405,6 +405,27 @@ found in the same scan**, with the endpoint as the fallback, move the ratings ca
 scan-stored feed in the same change, and treat a missing file as "older build" rather than an
 error - the same rule as item 41.
 
+### 44. On a phone the only visible action is Scan, and the map link is below the fold
+
+Seen 2026-09-25 on a phone through Remote Admin. Opening the app shows the summary paragraph, the
+flow-decoding sentence and any warning text, and the viewport ends around there. **"View Automation
+Map" sits below the fold and "Scan relationships now" is the only action a user can see**, so the
+natural thing to press is Scan.
+
+That is the wrong default in both directions. A scan is the expensive operation - roughly 52
+seconds, a full pass over every app and device, and load on a hub that has hit 37,808 KB free -
+and the map is what the person actually came for. The existing data is almost always good enough
+to open, and if it is not, the page already says when the last scan ran.
+
+Worse on the remote path specifically, which is where this was seen: off the hub's own origin the
+page cannot poll `/scan-status` (item 33), so a scan started from a phone gives the least feedback
+of any route.
+
+**Next action:** put the map link above the scan button in the rendered order, or make the map the
+primary action and the scan a secondary one. Worth checking the whole page at phone width while in
+there rather than fixing the one control - the same warning text that pushed the button down will
+push other things down on a narrower screen.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston
