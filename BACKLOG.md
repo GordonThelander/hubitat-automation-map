@@ -587,6 +587,95 @@ this path correct, which is why reading the two obvious lines did not reveal it.
 the case being worried about, before reporting it. Tracing the branch is not the same as establishing
 its precondition.
 
+### 47. DONE 2026-09-26. The map needed two CDNs reachable every time it was opened
+
+**Observed on 2026-09-26** on Gordon's own Chrome, and by this session earlier the same day: the map
+page showed "Could not load the drawing libraries" and drew nothing. It renders correctly on a
+retry, so the failure is intermittent rather than permanent.
+
+**What was ruled out.** Both library URLs return HTTP 200, and the SHA-384 of each file as served
+matches the `integrity` attribute in the page exactly. The URLs, the versions and the SRI hashes are
+all correct. The page's own check is `typeof window.vis === 'undefined'` on plain blocking script
+tags, so when it fires the browser genuinely failed to fetch or execute the file. The message is
+honest; the dependency is the defect.
+
+**The dependency.** The map's primary view needs `unpkg.com` and `cdn.jsdelivr.net` both reachable
+at the moment it is opened, every time, for every user:
+
+| | | |
+| --- | --- | --- |
+| vis-network 10.1.1 | 652 KB | unpkg, needed on every map view |
+| mermaid 10.9.8 | 3.34 MB | jsdelivr, needed only when a flowchart is opened |
+
+**The two are not the same problem.** vis-network is small and always required. mermaid is five times
+larger and is fetched on every view whether or not a flowchart is ever opened. Loading mermaid only
+on demand removes about 84% of the bytes and most of the exposure on its own, before anything is
+hosted locally.
+
+**Hosting locally is the real fix, and it is a solved problem.** HPM installs File Manager files, and
+two packages on this hub already ship their UI JavaScript that way: Zigbee Map delivers
+`zigbee-neighbors.js` and `zigbee-routes.js`, and Hub Detailed Information Display delivers
+`chart.js`. The manifest takes a `files` array alongside `apps` and `drivers`.
+
+**Storage is not the constraint, and an earlier claim here that it was should be disregarded.** The
+hub holds 18.35 MB across 82 files already, four of them over 1 MB, including a 1.19 MB copy of this
+app's own source. Adding these is a fifth of what is already there. The "do not put weight on the
+hub" rule is about app state and memory, which is a different resource entirely.
+
+**What the work actually is:**
+
+- Vendor the files into the repository and add a `files` array to all three channel manifests. The
+  repository grows by the same amount it adds to the hub.
+- Put the version in the file name, so an upgrade ships a new name and never has to reason about
+  whether an existing file is current.
+- Keep `integrity` on the local script tag. A wrong or truncated local copy then fails SRI and falls
+  back on its own, which means **the version check is free and needs no code**.
+- **The CDN cannot be removed.** `/local/` is LAN-only, so anyone reaching the map through Remote
+  Admin or a cloud link still needs it. The design is local first, CDN second, existing message
+  third, not a replacement.
+- The real implementation cost is the load order. The page currently runs its setup inline,
+  assuming the libraries are already present because the script tags are synchronous. A fallback
+  chain means loading them programmatically and starting the map once they resolve.
+
+**Sequence worth considering:** lazy-load mermaid first, on its own. It is the larger share of the
+risk, needs no new files anywhere, and can be judged before committing to vendoring anything.
+
+**Built and verified on the Dev hub, app code version 310.** Both parts shipped together.
+
+The graph library loads from `/local/` with the CDN behind it, injected by `document.write` so the
+fallback is fetched during parsing and is in place before the page's own setup reads `window.vis`.
+An injected tag would have been async and that code would have run first against a library that had
+not arrived. `integrity` is kept on the hub copy, so a truncated or wrong-version local file fails
+the hash and falls through to the CDN on its own: the hash is the version check and no code compares
+versions or knows what is installed.
+
+The flowchart library is no longer fetched on a map view at all. It loads on the first flowchart,
+hub copy first and CDN second, and initialises once. Measured at 631 ms from the hub.
+
+**The closing tag is split rather than escaped.** The page is a Groovy GString and a backslash in one
+is a compile error, which the file already warned about for regex literals. The first attempt used
+`<\/script>` and the hub refused to compile it.
+
+**Measured, both paths:**
+
+| | |
+| --- | --- |
+| Before the files existed | one request to unpkg, map drew, fallback proven |
+| After upload | one request, `http://10.0.0.125/local/vis-network-10.1.1.min.js`, **no internet request at all** |
+| Flowchart library on a map view | not fetched |
+| Flowchart library on first flowchart | `/local/mermaid-10.9.8.min.js`, 631 ms |
+
+Delivery is a `files` array in the manifest, the same mechanism Zigbee Map and Hub Detailed
+Information Display already use on this hub. Version numbers are in the file names, so an upgrade
+ships new names rather than reasoning about whether an existing file is current.
+
+**Storage was never the constraint.** The File Manager reports 980.7 MB free at 1.9% used. These two
+files are 0.4% of what is free. An earlier note in this item claiming hub weight was a reason to
+prefer a lesser fix was wrong and has been struck.
+
+**Still to do before this reaches production:** the preprod and main manifests need the same `files`
+array with their own branch URLs, and the files need to exist on those branches.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston

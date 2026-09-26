@@ -18,5 +18,19 @@
       "primary": true,
       "version": "2.4.0"
     }
+  ],
+  "files": [
+    {
+      "id": "8f4b1c02-3a77-4d61-9f5e-2b6c0d8a91e4",
+      "name": "vis-network-10.1.1.min.js",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/public/vendor/vis-network-10.1.1.min.js",
+      "required": true
+    },
+    {
+      "id": "c1d9e73a-5b48-42f0-8e27-6a3f4b9c0d12",
+      "name": "mermaid-10.9.8.min.js",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/public/vendor/mermaid-10.9.8.min.js",
+      "required": true
+    }
   ]
 }

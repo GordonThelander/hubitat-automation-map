@@ -13100,8 +13100,27 @@ String buildMapHtml() {
      closed (the browser refuses to execute it) instead of running with the
      hub's own trust. Regenerate both hashes if either version above is ever
      bumped - they are tied to these exact files, not the package version. -->
-<script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js" integrity="sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP" crossorigin="anonymous"></script>
+<!-- The graph library, from this hub first and the CDN only if that fails.
+     A hub copy needs no internet and is a LAN fetch rather than 652 KB over
+     the wire. The CDN stays because /local/ is LAN-only: anyone reaching this
+     page through Remote Admin or a cloud link cannot read it.
+     integrity is kept on the hub copy deliberately - a truncated or
+     wrong-version local file fails the hash, window.vis stays undefined, and
+     the fallback below takes over. That makes the hash the version check, so
+     nothing here has to compare versions or know what is installed.
+     The closing tag is split rather than escaped: this page is a Groovy
+     GString and a backslash in one is a compile error, which the note further
+     down about regex literals already warns about.
+     document.write, not an injected tag: this runs during parsing, so the
+     fallback is fetched and executed in order, before the page's own setup
+     code further down reads window.vis. An injected tag would be async and
+     that code would run first, against a library that had not arrived. -->
+<script src="/local/vis-network-10.1.1.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS"></script>
+<script>
+if (typeof window.vis === 'undefined') {
+  document.write('<scr' + 'ipt src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS" crossorigin="anonymous"><' + '/scr' + 'ipt>');
+}
+</script>
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
@@ -15355,15 +15374,40 @@ const FLOWS = GRAPH.flows || {};
 // the AI export builds its own shape from the same GRAPH.ruleVariables
 // separately, see buildExportPayload().
 const RULE_VARIABLES = GRAPH.ruleVariables || {};
-if (window.mermaid) {
-  // A bare top-level fontSize option does nothing on this pinned mermaid
-  // build (10.9.8) - confirmed live, still measured 16px with it set. The
-  // theme's own themeVariables.fontSize is what actually reaches the
-  // rendered node text; confirmed live via mermaid.render() directly before
-  // changing this, not assumed. Added per Gordon's request - the rendered
-  // node text (mermaid's own 16px default) was the dominant reason the
-  // panel ran large.
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '12px' } });
+// The flowchart library is 3.34 MB against the graph library's 652 KB, and
+// most map views never open a flowchart. Fetching it on every view spent that
+// on nothing and made the page depend on a second host being reachable to
+// draw a graph it is not used for. Loaded on the first flowchart instead:
+// hub copy first, CDN second, same order and the same reasoning as the graph
+// library above. initialize runs once, after whichever copy arrives.
+var mermaidReady = null;
+function loadMermaid() {
+  if (mermaidReady) return mermaidReady;
+  mermaidReady = new Promise(function (resolve, reject) {
+    function add(src, integrity, crossorigin, onFail) {
+      var tag = document.createElement('script');
+      tag.src = src;
+      if (integrity) tag.integrity = integrity;
+      if (crossorigin) tag.crossOrigin = 'anonymous';
+      tag.onload = function () { window.mermaid ? resolve() : onFail(); };
+      tag.onerror = onFail;
+      document.head.appendChild(tag);
+    }
+    add('/local/mermaid-10.9.8.min.js', 'sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP', false, function () {
+      add('https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js', 'sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP', true,
+          function () { reject(new Error('the flowchart library could not be loaded')); });
+    });
+  }).then(function () {
+    // A bare top-level fontSize option does nothing on this pinned mermaid
+    // build (10.9.8) - confirmed live, still measured 16px with it set. The
+    // theme's own themeVariables.fontSize is what actually reaches the
+    // rendered node text; confirmed live via mermaid.render() directly before
+    // changing this, not assumed. Added per Gordon's request - the rendered
+    // node text (mermaid's own 16px default) was the dominant reason the
+    // panel ran large.
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '12px' } });
+  });
+  return mermaidReady;
 }
 
 // Written without regex literals on purpose: this whole page is a Groovy
@@ -16196,7 +16240,9 @@ function showFlow(appId) {
     : 'Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
-  mermaid.render(id, mermaidFor(steps)).then(function (res) {
+  loadMermaid().then(function () {
+    return mermaid.render(id, mermaidFor(steps));
+  }).then(function (res) {
     // A newer selection (any type - another app, a device, a hub variable)
     // has already started since this render began. Writing flowChart or
     // re-opening the panel now would silently restore this stale selection
