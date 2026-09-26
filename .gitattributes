@@ -22,8 +22,3 @@ tools/production-builder/*.groovy text eol=lf
 *.mp3    binary
 *.woff2  binary
 
-# Vendored libraries are served to browsers with an SRI integrity hash pinned
-# in the app source. Any line-ending conversion changes the bytes, the hash
-# stops matching, and every browser silently refuses the file. Treated as
-# binary so git never rewrites them in either direction.
-public/vendor/** -text
