@@ -191,6 +191,18 @@ boolean showSanta() {
 // own: a hub that has the engine reads the engine, not a file about it.
 @Field static final String HAI_PUBLIC_CAPABILITIES_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/public/hai-capabilities.json'
 @Field static final String HAI_PUBLIC_CONTRACT = 'hai.capabilities/1'
+// The engine publishes this to the hub's own file store. A fixed name needs no
+// address, no token and nothing for a user to paste.
+@Field static final String HAI_STATE_FILE = 'hai-am-state.json'
+// Matched as a prefix, not a fixed name: the engine names its type per channel,
+// 'HAI Runtime' and 'HAI Runtime (Dev)', and a channel rename must not silently
+// turn detection off. Same rule the graph's own HAI tagging already follows.
+@Field static final String HAI_RUNTIME_TYPE_PREFIX = 'HAI Runtime'
+// The engine publishes its capability list here as a bare array of rows, on
+// build cadence rather than per rule change, and declares that file's SHA-256
+// in the state file. Deliberately a second file: the state file is rewritten
+// whenever a rule changes and this list only moves when the engine is built.
+@Field static final String HAI_CAPABILITIES_FILE = 'hai-am-capabilities.json'
 
 
 @Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
@@ -244,11 +256,24 @@ void updated() {
     // that created the telemetry child device (v2.1.2-2.1.7) needs it
     // cleaned up - see migrateRemoveTelemetryDevice().
     migrateRemoveTelemetryDevice()
+    // v2.4.0: the engine is detected, not configured, so the address field is
+    // gone - see migrateRemoveHaiFeedSetting().
+    migrateRemoveHaiFeedSetting()
     // Rescheduled on every updated() so any change to the enabled toggle or
     // chosen time takes effect immediately.
     scheduleAutoScan()
     scheduleDiagnosticLoggingExpiry()
     scheduleUpdateCheck()
+}
+
+// v2.4.0: the Automation Intelligence feed address was removed - the engine is
+// a sibling app on the same hub, so its presence is detected during the scan.
+// An instance that carried an address is holding another app's OAuth token in
+// cleartext, and a credential should not outlive the field that asked for it.
+void migrateRemoveHaiFeedSetting() {
+    if (settings?.haiFeedUrl == null) return
+    app.removeSetting('haiFeedUrl')
+    log.info "${app.label}: removed the obsolete Automation Intelligence feed address, which carried an access token"
 }
 
 // Update notice (backlog item 21). Tells the user a newer version has been
@@ -848,15 +873,6 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                 if (settings.diagnosticLoggingEnabled) {
                     paragraph "Diagnostic logging is currently <b>on</b> and will turn itself off within an hour. Turn it off here sooner if you are done before then."
                 }
-            }
-            section {
-                // Its rules are child apps of another app, so the hub's own
-                // app scan cannot see what each one touches. Its feed can.
-                paragraph "If you run Hubitat Automation Intelligence, paste the address of its Automation Map feed here and its rules appear on the map alongside your other automations. The address is read from your own hub at each scan, and nothing is sent anywhere."
-                input name: 'haiFeedUrl', type: 'text',
-                    title: 'Automation Intelligence feed address',
-                    required: false, submitOnChange: true
-                if ("${settings.haiFeedUrl ?: ''}".trim()) paragraph haiFeedStatusText()
             }
         }
 
@@ -1504,7 +1520,8 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Experimental HAI Rule Engine, webCoRE pistons, Notifier as well as hub and local variables.</span>"
+    String haiNote = haiRuntimeInstalled() ? '' : ' (not installed)'
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Experimental HAI Rule Engine${haiNote}, webCoRE pistons, Notifier as well as hub and local variables.</span>"
     s << haiCoverageSummary(graph)
     return s.toString()
 }
@@ -2970,6 +2987,11 @@ void finishScan(data = null) {
         // definite answer from this generation, never a stale one.
         // Without the capability list: it is long, the graph never reads it,
         // and the coverage report fetches its own copy when it is asked for.
+        // Fetched with the capability list and stripped of it immediately: the
+        // graph never reads the list, but capabilitiesHash beside it is what
+        // keeps the migration-ratings cache key moving when the engine's
+        // features change. Dropping the fetch would quietly demote that key to
+        // a version string that does not move between builds.
         Map fetchedFeed = new LinkedHashMap(fetchHaiFeed())
         fetchedFeed.remove('capabilities')
         state.haiFeed = fetchedFeed
@@ -6833,7 +6855,7 @@ String haiFeedVersionForCache() {
 // so a stored copy of it goes stale silently while the rating around it is fine.
 String haiStatusesNote(boolean noCapabilities, String feedState) {
     if (!noCapabilities) return 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
-    if (feedState == 'OFF') return 'No feed address is set for that engine, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
+    if (feedState == 'OFF') return 'That engine is not installed on this hub, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
     return 'Not determined yet'
 }
 
@@ -10017,10 +10039,15 @@ Map rmCoverageReport() {
     ((feed.capabilities ?: []) as List).each { Object raw ->
         if (raw instanceof Map && (raw as Map).id) capsById["${(raw as Map).id}"] = raw as Map
     }
-    // No capability list means there is nothing to compare against. Say that,
-    // rather than answering with a comparison of zero against zero, which
-    // reads as full parity and marks every construct unrecognised.
+    // The published file the graph reads carries rules, not the capability
+    // list, so an OK feed with no capabilities is now the ordinary case rather
+    // than a fault. Fall back to the openly published list first, exactly as
+    // the no-feed path above does, and only then say the figures are missing.
+    // Never answer with a comparison of zero against zero, which reads as full
+    // parity and marks every construct unrecognised.
     if (capsById.isEmpty()) {
+        Map published = fetchHaiPublicCapabilities()
+        if (published) return published
         return [ok: false, reason: feed.capabilitiesError
             ? "${feed.engine ?: 'The rule engine'} published no capability list: ${feed.capabilitiesError}"
             : "${feed.engine ?: 'The rule engine'} published no capability list, so there is nothing to compare Rule Machine against."]
@@ -10756,44 +10783,81 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
 // address on port 80, which an app on this hub cannot call - that port is the
 // browser's way in, not the app platform's. Same hub, so the path is kept and
 // the host swapped for the loopback every other internal read already uses.
-String haiFeedLoopbackUrl(String raw) {
-    String url = "${raw ?: ''}".trim()
-    if (!url) return ''
-    java.util.regex.Matcher origin = ORIGIN_PATTERN.matcher(url)
-    if (!origin.find()) return url
-    String hostPort = origin.group(1).replaceFirst('^https?://', '')
-    String host = hostPort.contains(':') ? hostPort.substring(0, hostPort.indexOf(':')) : hostPort
-    String hubIp = "${location?.hub?.localIP ?: ''}"
-    if (host != hubIp && host != '127.0.0.1' && host != 'localhost') return url
-    java.util.regex.Matcher path = URL_PATTERN.matcher(url)
-    return path.find() ? "${LOOPBACK_BASE}${path.group(1)}" : url
-}
-
-// What the settings page says about the feed, from the last scan's attempt.
-String haiFeedStatusText() {
-    Map feed = (state.haiFeed ?: [:]) as Map
-    String status = "${feed.state ?: ''}"
-    if (status == 'OK') {
-        int ruleCount = ((feed.nodes ?: []) as List).count { it instanceof Map && "${(it as Map).group}" == 'app' } as Integer
-        String caps = feed.capabilitiesError ?
-            " Its feature list could not be read (${feed.capabilitiesError}), which only affects the webCoRE migration assessment." : ''
-        return "Last scan read ${ruleCount} rule${ruleCount == 1 ? '' : 's'} from the feed.${caps}"
+// Whether the sibling engine is on this hub. Its presence is a fact the scan
+// already holds, so there is nothing to configure: no address, no token, and
+// no field inviting a user to paste one app's credentials into another.
+boolean haiRuntimeInstalled() {
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    return appInfo.any { Object id, Object raw ->
+        raw instanceof Map && "${(raw as Map).type ?: ''}".startsWith(HAI_RUNTIME_TYPE_PREFIX)
     }
-    if (status == 'FAILED') return "<span style='color:#c0392b'>The last scan could not read the feed: ${feed.error}.</span> Everything else on the map is unaffected."
-    return 'The feed is read at the next scan.'
 }
 
-// Reads the Automation Map feed Hubitat Automation Intelligence serves for its
-// own rules. One small local request per scan, only when an address is set.
+// SHA-256 as lower-case hex. Same MessageDigest path webcoreDeviceHashToken
+// already runs on this hub, with a different algorithm.
+String sha256Hex(String text) {
+    MessageDigest md = MessageDigest.getInstance('SHA-256')
+    byte[] digest = md.digest("${text ?: ''}".getBytes('UTF-8'))
+    StringBuilder hex = new StringBuilder()
+    digest.each { byte b -> hex << String.format('%02x', b & 0xFF) }
+    return hex.toString()
+}
+
+// Rows to a map keyed by capability id. Accepts the bare array the engine
+// publishes to this hub and the enveloped form the openly published copy uses,
+// so one parser serves both sources.
+Map haiCapsById(Object parsed) {
+    List rows = (parsed instanceof List) ? (parsed as List)
+        : ((parsed instanceof Map) ? (((parsed as Map).capabilities ?: []) as List) : [])
+    Map capsById = [:]
+    rows.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        String capId = "${(raw as Map).id ?: ''}"
+        if (capId) capsById[capId] = raw as Map
+    }
+    return capsById
+}
+
+// The engine's feature list, which its rule file deliberately does not carry.
+// Read from the copy it publishes to this hub and verified against the hash it
+// declares, rather than taken on trust: a deploy that moves the hash while the
+// file upload fails leaves a copy that is present, readable and stale, which no
+// missing-file check can catch. Verifying is not extra work invented here - it
+// is the check the engine's own app performs before it will serve the list.
+Map haiCapabilitySource() {
+    if (haiRuntimeInstalled()) {
+        // Text rather than parsed JSON: the declared hash covers the bytes as
+        // served, so the body must be hashed before anything interprets it.
+        Map fetched = httpFetch("${LOOPBACK_BASE}/local/${HAI_CAPABILITIES_FILE}",
+                                HAI_FEED_TIMEOUT_SEC, [contentType: 'text/plain'])
+        String body = fetched.ok ? "${fetched.data ?: ''}" : ''
+        if (body) {
+            String actual = sha256Hex(body)
+            // Declared nothing is an older engine build, not a disagreement,
+            // so the list is still used - unverified rather than refused.
+            String declared = "${((state.haiFeed ?: [:]) as Map).capabilitiesHash ?: ''}"
+            if (!declared || declared == actual) {
+                Map caps = [:]
+                try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
+                catch (Exception ignored) { caps = [:] }
+                if (caps) return [caps: caps, hash: actual, verified: (declared as boolean)]
+            }
+        }
+    }
+    return null
+}
+
+// Reads the Automation Map feed Hubitat Automation Intelligence publishes for
+// its own rules. One small local request per scan, only when it is installed.
 // A feed on a contract this version does not know is refused rather than
 // merged half-understood: the shape is what the merge below relies on.
 Map fetchHaiFeed() {
-    String url = haiFeedLoopbackUrl("${settings.haiFeedUrl ?: ''}".trim())
-    if (!url) return [state: 'OFF', nodes: [], edges: []]
+    if (!haiRuntimeInstalled()) return [state: 'OFF', nodes: [], edges: []]
+    String url = "${LOOPBACK_BASE}/local/${HAI_STATE_FILE}"
     Map fetched = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
     if (!fetched.ok || !(fetched.data instanceof Map)) {
         return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
-                error: "${fetched.timedOut ? 'the feed did not answer in time' : (fetched.error ?: 'the feed gave no readable answer - an answer that is not JSON usually means the access token is wrong')}"]
+                error: "${fetched.timedOut ? 'the feed did not answer in time' : (fetched.error ?: 'the engine is installed but has not published its feed yet')}"]
     }
     Map feed = fetched.data as Map
     // The engine answers its own failures as JSON now. A reply that is not JSON
@@ -10807,6 +10871,12 @@ Map fetchHaiFeed() {
         return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
                 error: "the feed is on contract ${contract ?: '(none given)'}, this version reads ${HAI_FEED_CONTRACT}"]
     }
+    // The rule file carries no capability list by design, so it is joined on
+    // here from the file that does. Same shape the endpoint used to return, so
+    // every consumer downstream is unchanged.
+    Map capSource = haiCapabilitySource()
+    List capList = capSource ? ((capSource.caps as Map).values() as List) : []
+    String capHash = capSource ? "${capSource.hash}" : "${feed.capabilitiesHash ?: ''}"
     return [state: 'OK', fetched: now(),
             nodes: (feed.nodes ?: []) as List,
             edges: (feed.edges ?: []) as List,
@@ -10816,15 +10886,15 @@ Map fetchHaiFeed() {
             // A hash of the capability list the engine is actually serving. The
             // version string does not move between builds; this does, so it is
             // the thing to compare a stored copy against.
-            capabilitiesHash: "${feed.capabilitiesHash ?: ''}",
+            capabilitiesHash: capHash,
             statusMeanings: (feed.statusMeanings ?: [:]) as Map,
             evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map,
             generatedAt: "${feed.generatedAt ?: ''}",
             // The capability list is for the webCoRE migration assessment, not
             // for the graph, so only its size is kept here - state holds the
             // whole hub's map already and this list is long.
-            capabilities: (feed.capabilities ?: []) as List,
-            capabilityCount: ((feed.capabilities ?: []) as List).size(),
+            capabilities: capList,
+            capabilityCount: capList.size(),
             capabilitiesError: feed.capabilitiesError ? "${feed.capabilitiesError}" : null]
 }
 

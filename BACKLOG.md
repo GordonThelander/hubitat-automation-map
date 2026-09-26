@@ -65,6 +65,24 @@ both sides' documents are wrong often enough to matter: on 2026-09-24 a claim of
 [strong] was wrong and HAI's challenge was right, and on the same day HAI offered to withdraw a
 correct challenge in our favour, which was refused.
 
+**Known properties of the feed contract, recorded so neither side files them as defects.**
+
+- **The feed carries the hub's current device names, not the names captured when a rule was
+  authored.** The engine re-resolves every device reference against live hub names before rendering
+  a step, so a rule written long ago whose device has since been renamed still draws correctly here.
+  The consequence is that a device reference's authored name is structurally unreachable from this
+  side: it is not an input to anything we receive. If a name on our map ever differs from what a
+  user sees in the engine's own editor, this is why, and it is correct behaviour on both sides.
+  Established 2026-09-26, when it silently defeated a test we had jointly designed around renaming
+  device references.
+- **The feed is a complete document.** Every rule that has not been removed appears, whatever
+  changed. Our merge depends on this in three places that all fail silently on a partial document:
+  the stripping of placeholder `exposed` edges is keyed on the ids in the response, the engine tag,
+  editor link and status flags are applied per node present, and flows are keyed on ids present.
+  The engine has pinned this as a named test on its side that fails on exactly the mutation an
+  incremental-write optimisation would make. If a `partial` or `delta` marker is ever proposed, we
+  need a retained-copy merge path built first.
+
 The standing rules for the exchange:
 
 - **Measure rather than defer.** Where the two sides disagree, run it on the hub. A concession
@@ -312,7 +330,7 @@ consequence that the flow text does not mention.
 colour mode with its values for `getSetColor`. Deferred 2026-09-25 while resources go to the other
 project's milestone.
 
-### 43. Read the engine's rules from a published state file rather than its endpoint
+### 43. DONE 2026-09-26. Read the engine's rules from a published state file rather than its endpoint
 
 Agreed with the engine's project 2026-09-25, not yet built on either side. The scan currently
 fetches nodes, edges and flows from a live endpoint on the other app. That endpoint now assembles
@@ -434,6 +452,42 @@ not evidence that the engine's parent-state ownership change worked, and the two
 and reported separately. The temptation runs one way: the file is the visible, verifiable artefact
 of the two, which makes it easy to let it stand in for the one that is neither.
 
+**Built and verified on the Dev hub 2026-09-26, app code version 305.** What shipped, including
+where it departed from the plan above:
+
+- The scan reads `/local/hai-am-state.json` over loopback, gated on the engine's runtime app being
+  found in the same scan, matched on the `HAI Runtime` type prefix so a channel rename cannot
+  silently turn detection off.
+- **The configured feed address is gone entirely, and so is the endpoint fallback.** That is a
+  deliberate departure from the plan, on Gordon's instruction: the engine is a sibling app, so the
+  integration should need no configuration, and the unusual case of running it elsewhere is not
+  worth catering for. The removed setting held the other app's OAuth token in cleartext; cleared by
+  `migrateRemoveHaiFeedSetting()`, and verified gone from the hub.
+- The decoder line on the main page now reads "Experimental HAI Rule Engine (not installed)" when
+  the engine is absent.
+- **The capability list is joined on from the second file the engine publishes**,
+  `hai-am-capabilities.json`, a bare array on build cadence. Its bytes are hashed here and compared
+  against the `capabilitiesHash` the state file declares, rather than trusted: a deploy that moves
+  the hash while the file upload fails leaves a copy that is present, readable and stale, which no
+  missing-file check catches. A declared hash that is absent means an older engine build and the
+  list is used unverified; a hash that disagrees means the pair is not current and neither is served.
+
+**Three consumers broke on the way, and only one was noticed without re-reading this item.** The
+coverage report, the webCoRE migration ratings, and the ratings cache key all read the capability
+list through the scan feed. The cache-key demotion is the one this item had already predicted in
+writing, under "the cache key needs moving", with the instruction to do it in the same change. That
+prediction existed and was not re-read at the moment it applied, which is worse than not having
+written it down. All three are fixed by one change at the source: `fetchHaiFeed()` joins the
+capability list on, and the scan keeps stripping it while retaining the hash beside it.
+
+Verified after the fix: the coverage report returns a full report with hub statistics rather than
+the published fallback, and the stored feed carries `capabilitiesHash` matching the hash computed
+independently from the file's bytes, with `capabilityCount` 156.
+
+**Superseded from the plan above:** the content-hash skip-the-parse optimisation was not built, the
+graph is still rebuilt whole every scan, and `runtimeAmStateError` is not read. None were needed to
+land the transport change and each can be taken on its own merits.
+
 **Next action when that settles:** read the file in the scan path **gated on the engine app being
 found in the same scan**, with the endpoint as the fallback, move the ratings cache key off the
 scan-stored feed in the same change, and treat a missing file as "older build" rather than an
@@ -503,6 +557,35 @@ confirming that taking the flag without the status word was the right split.
 
 Two unrelated confirmations fell out of the same scan: apps went 189 to 151 and nodes 495 to 457,
 both exactly 38 fewer, matching the engine's removal of its 38 test fixtures.
+
+### 46. WITHDRAWN. The engine's flow text does not go stale
+
+**Raised and disproved the same day, 2026-09-26. Not a defect. Recorded because the reasoning that
+raised it was wrong in a way worth remembering.**
+
+The claim was that `buildGraph`'s fallback to the previously built graph's flow runs before
+`mergeHaiFeed`, and the merge skips any id already present, so the engine's fresh flow text would be
+skipped on every scan after the first.
+
+**Disproved on the hub.** The engine built a throwaway probe rule, seeded it, then changed its
+trigger value and action command so the step text differed while the device refs stayed identical.
+Feed served `becomes off` / `Turn off`; the stored graph held `becomes on` / `Turn on`. After a scan
+the map drew `becomes off` / `Turn off`, matching the live feed. A positive reading of a present
+string, not an inference from a missing one.
+
+**Why the reasoning was wrong.** Both halves of the path were read correctly. What was never checked
+was whether the input to that branch can be non-empty when it matters. `startScan` sets
+`state.graph = null` before a scan begins, so `priorFlows` is always empty during one. The fallback
+only fires on a rebuild, and a rebuild does not re-fetch the feed either, so the retained flow and
+the retained feed agree by construction.
+
+That null is the drop-not-hold memory hardening from 2026-08-13, which stopped the app holding two
+graph copies after that pattern crashed a 74-app hub. A decision taken for peak memory is what makes
+this path correct, which is why reading the two obvious lines did not reveal it.
+
+**Carry forward:** when a branch looks dangerous, check whether its guard can actually be true in
+the case being worried about, before reporting it. Tracing the branch is not the same as establishing
+its precondition.
 
 ### 24. Variable usage Automation Map cannot decode
 
