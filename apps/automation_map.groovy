@@ -6867,7 +6867,12 @@ Map migrationRatingsMapping() {
     String engineVersion = haiFeedVersionForCache()
     Map appInfo = (state.appInfo ?: [:]) as Map
     Map liveFeed = (state.haiFeed ?: [:]) as Map
-    String liveNote = haiStatusesNote(((liveFeed.capabilities ?: []) as List).isEmpty(), "${liveFeed.state ?: ''}")
+    // capabilityCount, not capabilities: the scan deliberately strips the list
+    // before storing the feed and keeps the count beside it, so testing the
+    // list here asked a question whose answer was always "empty" and this note
+    // read "Not determined yet" even when the engine had published 156
+    // capabilities and the rating beside it had used them.
+    String liveNote = haiStatusesNote(((liveFeed.capabilityCount ?: 0) as Integer) == 0, "${liveFeed.state ?: ''}")
     List out = []
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
