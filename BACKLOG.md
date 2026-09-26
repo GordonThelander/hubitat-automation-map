@@ -165,37 +165,36 @@ date as its freshness signal.
 "Last scan read N rules from the feed" line, so the condition is visible without opening the
 graph. Small, and the only part of this incident the app can actually fix.
 
-### 38. Location Event triggers are all mapped to the sunrise/sunset capability
+### 38. DONE 2026-09-27. Location Event triggers now answer to one capability
 
-`RM_CONSTRUCT_CAPABILITY` maps `trigger:Location Event` to
-`trigger.location-event-sunrise-sunset-sunrisetime-sunset` and nothing else. The mapping is keyed
-on the trigger's capability name alone, so it never reads `tstate<n>`, which is where the actual
-event name lives (6.4 of the storage document). A trigger on `lowMemory` or `severeLoad` is
-therefore reported as covered by the sun-events capability, which does not include either.
+The engine retired its two hand-enumerated location-event rows in favour of a single
+`trigger.location-event`, carrying both old ids as `formerIds`. This app's per-event lookup table is
+replaced by one constant, so every event name answers to that id, `lowMemory` included.
 
-Two rules on this hub use Location Event triggers; rule 2100 `_Overload` triggers on `lowMemory`
-and `severeLoad`. The engine's parity list carries a second location-event row for the system
-events (`systemStart`, `severeLoad`, `zigbeeOff/On`, `zwaveCrashed`) and has no row for
-`lowMemory` at all, so the correct outcomes are: sun events to the first row, system events to the
-second, and `lowMemory` reported **unmapped** until the engine adds it.
+**The old ids were the defect, not just untidy.** They named their member events in the id itself,
+and the names had drifted from what the rows covered: one listed `sunset` twice and omitted
+`sunsettime`, the other named three events while five mapped to it. Reading a missing name out of an
+id is what produced the conclusion that the engine could not trigger on `lowMemory`. It always
+could - its trigger takes an arbitrary event-name list with no allow-list, so the gap was in the
+capability catalogue rather than in the engine. That conclusion was reported to Gordon as a finding
+before it was checked against the engine's source.
 
-This makes `/rm-coverage` overstate. The 2026-09-24 run reported 62 of 62 rules covered with 0
-unmapped; at least one of those rules was covered only by a mis-attribution. The figures had
-already been passed to the engine's project and were corrected there.
+**Verified on the Dev hub at app code version 313:** 155 capabilities from the live feed, and
+`_Overload` no longer appears as unmatched. 65 of 65 Rule Machine rules covered, 0 unmapped
+constructs, no rule with gaps. The hash pair agrees, `9775de72...` declared and computed.
 
-The same weakness applies anywhere a capability's identity depends on a value rather than the
-construct name. Location Event is the case found; the mapping should be audited for others.
+**Evidence caveat worth keeping.** The row's evidence reads `hub`, which under the engine's own
+definition is about the shared mechanism rather than each named event. The sun events were watched
+on two consecutive days; `systemStart`, `severeLoad`, the Zigbee events and `zwaveCrashed` were
+tested locally and never provoked on a hub; and no `lowMemory` event has ever been watched firing.
+Do not read this row's `hub` as covering `lowMemory`.
 
-**Done 2026-09-24 (Dev revision 298).** `extractRuleConstructs` now carries the event name in the
-token (`trigger:Location Event:<event>`), `RM_LOCATION_EVENT_TO_HAI` maps the four sun events and
-the five system events to their two capabilities, and `haiCapabilityIdFor` answers that prefix
-**before** the generic `trigger:` fallback, so an unrecognised hub event cannot quietly become an
-ordinary device trigger. Focused cases pass for sunrise, severeLoad, lowMemory, an unknown name,
-an empty name, a mapped device trigger and an unmapped one, plus extraction cases for rule 2100's
-two bare-index triggers and a sun event beside an untouched Motion trigger.
-
-Re-run after a fresh scan: `lowMemory` now reports **unmapped** and rule 2100 `_Overload` is no
-longer counted as covered; `severeLoad` and `systemStart` map to the system-events capability.
+**What the published row does not carry.** The engine's schema publishes a free-text note only for
+Partial, Format and Missing rows, so a Runs row offers `feature` and nothing else. The measured
+`lowMemory` particulars - value is free memory in KB as a string, `unit` is null so nothing declares
+the scale, and it repeats while memory stays low rather than firing once per episode - are recorded
+in this repository's storage document and in the engine's tracker, but a consumer reading the feed
+will not see them. Anything surfacing them has to do so from this side.
 
 ### 39. Condition text truncation: not a defect here (closed)
 

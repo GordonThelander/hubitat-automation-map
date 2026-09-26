@@ -9960,9 +9960,10 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'trigger:Days of Week'        : 'trigger.days-of-week-days-or-days-plus-time',
     'trigger:Periodic Schedule'   : 'trigger.periodic-schedule-minutes-hourly-daily-weekly-mo',
     'trigger:Mode'                : 'trigger.mode',
-    // 'trigger:Location Event' is deliberately absent: which capability answers it
-    // depends on the event name in tstate<n>, not on the trigger type. See
-    // RM_LOCATION_EVENT_TO_HAI and haiCapabilityIdFor.
+    // 'trigger:Location Event' is deliberately absent: the event name from
+    // tstate<n> travels with the token so the map can name which event a rule
+    // waits on, even though every name now answers to one capability. See
+    // HAI_LOCATION_EVENT_CAPABILITY and haiCapabilityIdFor.
     'trigger:HSM Status'          : 'trigger.hsm-status-armed-away-home-night-delayed-arming',
     'trigger:HSM Alert'           : 'trigger.hsm-alert-intrusion-smoke-water-rule-arming-canc',
     'trigger:Variable'            : 'trigger.variable-hub-or-local-variable-value',
@@ -9988,17 +9989,18 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 // capabilities. Keyed lower-case; an event in neither list is unmapped, which
 // is the honest answer for lowMemory - Rule Machine offers it and the engine
 // lists it nowhere.
-@Field static final Map RM_LOCATION_EVENT_TO_HAI = [
-    'sunrise'     : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
-    'sunset'      : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
-    'sunrisetime' : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
-    'sunsettime'  : 'trigger.location-event-sunrise-sunset-sunrisetime-sunset',
-    'systemstart' : 'trigger.location-event-systemstart-severeload-zigbeeoff',
-    'severeload'  : 'trigger.location-event-systemstart-severeload-zigbeeoff',
-    'zigbeeoff'   : 'trigger.location-event-systemstart-severeload-zigbeeoff',
-    'zigbeeon'    : 'trigger.location-event-systemstart-severeload-zigbeeoff',
-    'zwavecrashed': 'trigger.location-event-systemstart-severeload-zigbeeoff'
-]
+// One capability, whatever the event is named. The engine subscribes to an
+// arbitrary event name with no allow-list, so every Location Event trigger maps
+// here regardless of the name Rule Machine stored.
+//
+// This replaced two hand-enumerated rows on 2026-09-27, which had named their
+// member events in the id itself. Those names had drifted from what the rows
+// actually covered - one listed sunset twice and omitted sunsettime, the other
+// named three events while five mapped to it - and reading a missing name out
+// of an id was what produced the false conclusion that the engine could not
+// trigger on lowMemory. It always could. The engine publishes both retired ids
+// as formerIds on the replacement.
+@Field static final String HAI_LOCATION_EVENT_CAPABILITY = 'trigger.location-event'
 
 // The token a Location Event construct carries, so the event name travels with
 // the trigger rather than being lost at extraction.
@@ -10062,8 +10064,11 @@ String haiCapabilityIdFor(String token) {
     // Before the generic trigger fallback, or an unrecognised hub event would
     // quietly be reported as an ordinary device trigger and counted as covered.
     if (token.startsWith(RM_LOCATION_EVENT_PREFIX)) {
-        String event = token.substring(RM_LOCATION_EVENT_PREFIX.length()).trim().toLowerCase()
-        return event ? (RM_LOCATION_EVENT_TO_HAI[event] as String) : null
+        // Any named event, one capability. Still gated on the name being
+        // present: a Location Event trigger that stored no name is a rule this
+        // app could not read, not a covered construct.
+        String event = token.substring(RM_LOCATION_EVENT_PREFIX.length()).trim()
+        return event ? HAI_LOCATION_EVENT_CAPABILITY : null
     }
     if (token.startsWith('trigger:')) return HAI_DEVICE_TRIGGER_ID
     if (token.startsWith('condition:')) return HAI_DEVICE_CONDITION_ID
@@ -10879,7 +10884,14 @@ Map haiCapsById(Object parsed) {
 // file upload fails leaves a copy that is present, readable and stale, which no
 // missing-file check can catch. Verifying is not extra work invented here - it
 // is the check the engine's own app performs before it will serve the list.
-Map haiCapabilitySource() {
+// declaredHash comes from the state file being read in this same pass, not
+// from the feed stored by the last scan. Reading it from stored state compared
+// this build's capability file against the previous build's declaration, so the
+// first read after the engine deployed always disagreed and fell back to the
+// published list. It corrected itself only once a later scan had committed the
+// new hash, which made it look like a warm-up rather than a fault: measured
+// 2026-09-27 as three calls before the live list was served.
+Map haiCapabilitySource(String declaredHash) {
     if (haiRuntimeInstalled()) {
         // Text rather than parsed JSON: the declared hash covers the bytes as
         // served, so the body must be hashed before anything interprets it.
@@ -10890,7 +10902,7 @@ Map haiCapabilitySource() {
             String actual = sha256Hex(body)
             // Declared nothing is an older engine build, not a disagreement,
             // so the list is still used - unverified rather than refused.
-            String declared = "${((state.haiFeed ?: [:]) as Map).capabilitiesHash ?: ''}"
+            String declared = "${declaredHash ?: ''}"
             if (!declared || declared == actual) {
                 Map caps = [:]
                 try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
@@ -10929,7 +10941,9 @@ Map fetchHaiFeed() {
     // The rule file carries no capability list by design, so it is joined on
     // here from the file that does. Same shape the endpoint used to return, so
     // every consumer downstream is unchanged.
-    Map capSource = haiCapabilitySource()
+    // The hash this document declares, from this read, so the pair is judged
+    // as it was published rather than against whatever a previous scan stored.
+    Map capSource = haiCapabilitySource("${feed.capabilitiesHash ?: ''}")
     List capList = capSource ? ((capSource.caps as Map).values() as List) : []
     String capHash = capSource ? "${capSource.hash}" : "${feed.capabilitiesHash ?: ''}"
     return [state: 'OK', fetched: now(),
