@@ -615,27 +615,49 @@ a repair to justify with an undiagnosed fault.
 served matches the `integrity` attribute exactly. Whatever the two failures were, they were not a
 wrong URL, a wrong version or a stale hash.
 
-**A separate finding, unrelated to the libraries and not caused by any change here.** The map page
-can currently not be fetched over Hubitat's cloud relay. Both the production and the dev app return
-**HTTP 504, "No response from hub"**, at about 10.8 s, which appears to be the relay's own budget. A
-small endpoint on the same app over the same relay returns 200 in 4.5 s, so cloud access itself
-works.
+**A separate finding, unrelated to the libraries and not caused by any change here. The map page
+cannot be fetched over Hubitat's cloud relay, on production or dev, and the cause is the page's own
+size.**
 
-**This is a hub-load symptom, not a property of the app, and an earlier version of this note saying
-the map "is LAN-only and has been" was wrong.** Gordon reports it has worked remotely before, and
-the measurements support him. At the time of the failure the hub had 94,636 KB free, down from
-292,076 KB after that morning's restart, and Hubitat itself rated that "moderate". Generating the
-~780 KB page was taking 4.9 s for production and 9.8 s for dev over the LAN, so generation alone
-consumed most of the relay's budget before any transfer began. On a freshly restarted hub the same
-page generates far faster and fits.
+**Two wrong explanations were published here before this one, and both are recorded because the
+second was disproved by a test that was set up to confirm it.** The first said the map "is LAN-only
+and has been", a historical claim with no evidence behind it; Gordon reports it worked remotely
+before. The second said it was hub memory pressure. The hub was rebooted on 2026-09-26 specifically
+to test that, with the stated prediction that cloud access would return. **It did not.**
 
-**Falsifiable prediction:** after a hub restart, cloud access to the map works again. If it does not,
-this explanation is wrong.
+**Measured on a settled hub with 233,924 KB free:**
 
-**Worth separating** if this is pursued: the page is ~780 KB because the whole graph is embedded in
-it, and that size is the reason it sits so close to the relay's limit at all. Shrinking it, or
-serving the graph as a separate fetch, would put real margin under remote access rather than relying
-on the hub being freshly restarted.
+| | | |
+| --- | --- | --- |
+| production map, LAN | 780,169 bytes | 4.0 s, 200 |
+| dev map, LAN | 787,459 bytes | 4.7 s, 200 |
+| production map, cloud | | 10.9 s, **504** |
+| dev map, cloud | | 10.8 s, **504** |
+
+LAN generation came back *faster* than before the reboot, 4.0 s against 4.9 s, while memory more than
+doubled, and cloud still failed. Memory was not the cause.
+
+**The relay measured against payload size:**
+
+| | | |
+| --- | --- | --- |
+| 353 bytes | 4.3 s | 200 |
+| 29,824 bytes | 5.8 s | 200 |
+| 101,291 bytes | 5.4 s | 200 |
+| 780,169 bytes | 10.8 s | **504** |
+
+About 4.3 s of fixed relay overhead, 100 KB carried comfortably, and the map page over the budget.
+Generation is only 4 s of it; the rest is transfer.
+
+**Which explains the history without needing a hub event.** The page embeds the entire graph, so it
+grew with the hub. It crossed the relay's limit at some point and stayed over. Nothing broke on a
+particular day and nothing will restore it, including a restart.
+
+**Next action:** serve the map as a small page shell that fetches the graph as a separate request.
+That puts it back under the limit with margin, and the margin survives the hub growing further.
+The same change also reduces the amount of work a map view costs the hub. Note that the graph
+fetch itself would then be ~700 KB over the relay and would need the same treatment or pagination,
+so this is a design task rather than a one-line move.
 
 ### 24. Variable usage Automation Map cannot decode
 
