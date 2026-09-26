@@ -394,7 +394,7 @@ String lockVsState() {
     String gen = (state.activeGenerationToken ?: '') as String
     return "lock=${lock ? lock.tokenize('-').last() : 'none'}" +
            " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
-           " running=${state.scanRunning == true} phase=${state.scanPhase ?: '-'}" +
+           " running=${state.scanRunning == true} phase=${atomicState.scanPhase ?: '-'}" +
            " graph=${state.graph != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
            " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
            " appResultsReady=${state.appResultsReady == true}"
@@ -706,7 +706,9 @@ Map main() {
                 // even once - its heartbeat was never written. Driving it through the endpoint
                 // runs the scan in an ordinary app execution, which works.
                 paragraph scanButtonHtml(scanActive)
-                if (state.scanTotal) {
+                Integer pageScanTotal = (atomicState.scanTotal ?: 0) as Integer
+                String pageScanPhase = "${atomicState.scanPhase ?: ''}"
+                if (pageScanTotal) {
                     // state.scanDone is only ever written once per phase now
                     // (by the phase-starting execution and by its finalize) -
                     // callbacks/reapers stay entirely state-free, so this
@@ -714,12 +716,12 @@ Map main() {
                     // without reading the live scan accumulator instead. Same
                     // fix as scanStatusJson().
                     ConcurrentHashMap liveScan = null
-                    if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
-                    else if (state.scanPhase == 'apps') liveScan = liveAppScan()
-                    Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: 0) as Integer
-                    Integer total = (state.scanTotal ?: 1) as Integer
+                    if (pageScanPhase == 'devices') liveScan = liveDeviceScan()
+                    else if (pageScanPhase == 'apps') liveScan = liveAppScan()
+                    Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (atomicState.scanDone ?: 0) as Integer
+                    Integer total = pageScanTotal
+                    boolean isDevicePhase = pageScanPhase != 'apps'
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
-                    boolean isDevicePhase = state.scanPhase != 'apps'
                     // total/done during the device phase count driver-type
                     // representatives (34 on this hub), not individual devices
                     // (194) - dispatchDeviceOne fetches capabilities once per
@@ -1354,8 +1356,12 @@ void clearAbandonedScan() {
     // watchdog/reaper is live is therefore not a belt-and-suspenders
     // addition any more, it is the only thing standing between a perfectly
     // healthy in-progress scan and this function marking it abandoned.
-    boolean asyncDeviceScanActive = state.scanPhase == 'devices' && liveDeviceScan() != null
-    boolean asyncAppScanActive = state.scanPhase == 'apps' && liveAppScan() != null
+    // Read once. This is the guard the comment above calls the only thing
+    // standing between a healthy in-progress scan and being marked abandoned,
+    // so it has to see the phase the scan is actually in.
+    String scanPhaseNow = "${atomicState.scanPhase ?: ''}"
+    boolean asyncDeviceScanActive = scanPhaseNow == 'devices' && liveDeviceScan() != null
+    boolean asyncAppScanActive = scanPhaseNow == 'apps' && liveAppScan() != null
     if (asyncDeviceScanActive || asyncAppScanActive) {
         return
     }
@@ -1406,7 +1412,7 @@ void clearAbandonedScan() {
     // completion invariant. Reproduced live in v2.0.8: updating the app code
     // erased APP_SCANS/SCAN_LOCKS, recovery saw an empty queue, and published
     // the still-empty state.appInfo as a successful zero-app graph.
-    if (state.scanPhase == 'apps') {
+    if ("${atomicState.scanPhase ?: ''}" == 'apps') {
         // Live SCAN_LOCKS snapshot, not a remembered token - same reasoning
         // as this function's own genuinely-abandoned branch below: this is a
         // recovery path, so it trusts the freshest ground truth for "what is
@@ -1932,9 +1938,19 @@ Map startScan() {
     // and confusing. deviceScanTotal is the real device count, kept
     // separately purely for that display - see main()'s progress paragraph.
     state.deviceScanTotal = (bulk.labels as Map).size()
-    state.scanTotal = repIds.size()
-    state.scanDone = 0
-    state.scanPhase = 'devices'
+    // atomicState, not state: these three coordinate across executions that
+    // run concurrently with this one. state is loaded per execution and saved
+    // whole on return, so any other execution that had already loaded state
+    // before this write saves its own older copy over it - a lost update.
+    // Measured on the Dev hub 2026-09-26: after a completed scan the hub held
+    // phase 'devices' and total 87 beside a scanDone of 151, because the app
+    // phase's write of phase and total had been clobbered while the later
+    // finalize write of scanDone survived. Same reason graphVersion is already
+    // atomicState. The old state keys are cleared so nothing reads a stale one.
+    state.remove('scanPhase'); state.remove('scanTotal'); state.remove('scanDone')
+    atomicState.scanTotal = repIds.size()
+    atomicState.scanDone = 0
+    atomicState.scanPhase = 'devices'
     // Phase start, so the finalize below can report how long the phase took.
     // Durable rather than static: the finalize runs in a different execution.
     state.devicePhaseStartedAt = now()
@@ -2398,7 +2414,7 @@ void finalizeDevicePhase(String scanId) {
         (scan.unreadableDevs as ConcurrentHashMap).keySet().each { String devId -> unreadable << devId }
         state.deviceIdsUnreadable = unreadable
 
-        state.scanDone = scan.total as Integer
+        atomicState.scanDone = scan.total as Integer
         state.scanHeartbeat = now()
         if (diagOn()) {
             log.info "${app.label}: device phase done in ${phaseElapsedSeconds(state.devicePhaseStartedAt)}s" +
@@ -2456,12 +2472,16 @@ void startAppPhase(String lockToken) {
     }
     state.appIds = appIds as List
 
-    state.scanPhase = 'apps'
+    // atomicState for the same reason as the device phase above: this write
+    // is precisely the one observed being lost, which left the whole app phase
+    // reporting device-phase numbers and, worse, left scanPhase unable to
+    // match either branch of the abandoned-scan deferral below.
+    atomicState.scanPhase = 'apps'
     // Same reasoning as the device phase: stamped at the start so the finalize,
     // which runs in a later execution, can report the phase duration.
     state.appPhaseStartedAt = now()
-    state.scanTotal = appIds.size()
-    state.scanDone = 0
+    atomicState.scanTotal = appIds.size()
+    atomicState.scanDone = 0
     state.scanQueue = []
 
     if (appIds.isEmpty()) {
@@ -2821,7 +2841,7 @@ void finalizeAppPhase(String scanId) {
         (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> others << eng }
         state.otherEngines = others
 
-        state.scanDone = scan.total as Integer
+        atomicState.scanDone = scan.total as Integer
         // Last app-result write in this execution. Hubitat commits the whole
         // state snapshot atomically when the execution returns, so recovery
         // can never observe true with only a partial appInfo publication.
@@ -12839,9 +12859,16 @@ String scanStatusJson(boolean forceRunning = false) {
     // live counters are DEVICE_SCANS/APP_SCANS[scanId]'s own accumulator;
     // read directly from there rather than report a frozen, misleadingly-
     // early snapshot for the whole phase.
+    // Read once into locals so phase, total and done in the response describe
+    // the same moment. Read separately they could straddle a phase change and
+    // report an app count against the device total, which is exactly the
+    // "151 of 87 (173%)" this endpoint was serving before.
+    String scanPhaseNow = "${atomicState.scanPhase ?: ''}"
+    Integer scanTotalNow = (atomicState.scanTotal ?: 0) as Integer
+    Integer scanDoneNow = (atomicState.scanDone ?: 0) as Integer
     ConcurrentHashMap liveScan = null
-    if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
-    else if (state.scanPhase == 'apps') liveScan = liveAppScan()
+    if (scanPhaseNow == 'devices') liveScan = liveDeviceScan()
+    else if (scanPhaseNow == 'apps') liveScan = liveAppScan()
     int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
     // liveScan null while state.scanRunning is still true, for this SAME
     // phase, means finalizeXPhase() already removed the accumulator - which
@@ -12853,14 +12880,14 @@ String scanStatusJson(boolean forceRunning = false) {
     // 2026-08-28 as a false "0 of 112 (0%)" flash right before "scan
     // complete". The phase is provably done by the time liveScan is null
     // for state's own current phase, so total is the correct fallback.
-    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: state.scanTotal)
+    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (scanDoneNow ?: scanTotalNow)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
         running: forceRunning || scanEffectivelyActive(),
         alreadyStarting: forceRunning,
-        phase: state.scanPhase,
+        phase: scanPhaseNow ?: null,
         done: done,
-        total: state.scanTotal,
+        total: scanTotalNow,
         queued: queued,
         apps: (state.appInfo ?: [:]).size(),
         devices: (state.deviceLabels ?: [:]).size(),
