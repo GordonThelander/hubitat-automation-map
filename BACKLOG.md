@@ -615,49 +615,34 @@ a repair to justify with an undiagnosed fault.
 served matches the `integrity` attribute exactly. Whatever the two failures were, they were not a
 wrong URL, a wrong version or a stale hash.
 
-**A separate finding, unrelated to the libraries and not caused by any change here. The map page
-cannot be fetched over Hubitat's cloud relay, on production or dev, and the cause is the page's own
-size.**
+**A note about remote access that was wrong three times, kept because the error is instructive.**
 
-**Two wrong explanations were published here before this one, and both are recorded because the
-second was disproved by a test that was set up to confirm it.** The first said the map "is LAN-only
-and has been", a historical claim with no evidence behind it; Gordon reports it worked remotely
-before. The second said it was hub memory pressure. The hub was rebooted on 2026-09-26 specifically
-to test that, with the stated prediction that cloud access would return. **It did not.**
+The map was claimed here to be "LAN-only and has been", then to be broken remotely by hub memory
+pressure, then to be broken remotely because the page exceeds the cloud relay's budget. **All three
+were wrong, and remote access works.** Gordon demonstrated it: the dev map rendering on a phone over
+GSM through `s.aws.hubitat.com`.
 
-**Measured on a settled hub with 233,924 KB free:**
+**The error was testing one transport and generalising to "remote access".** Hubitat has two, and
+they are not the same thing:
 
-| | | |
-| --- | --- | --- |
-| production map, LAN | 780,169 bytes | 4.0 s, 200 |
-| dev map, LAN | 787,459 bytes | 4.7 s, 200 |
-| production map, cloud | | 10.9 s, **504** |
-| dev map, cloud | | 10.8 s, **504** |
+| | |
+| --- | --- |
+| `s.aws.hubitat.com` | Remote Admin. Proxies the hub's own web UI. This is what a user opens the map with remotely, and it works. |
+| `cloud.hubitat.com/api/<hubUID>/apps/...` | The app's OAuth cloud endpoint. A different relay with its own budget. |
 
-LAN generation came back *faster* than before the reboot, 4.0 s against 4.9 s, while memory more than
-doubled, and cloud still failed. Memory was not the cause.
+Every measurement recorded here was against the second one, which users do not use to open the map.
+Nobody was asked which transport was actually in use before a conclusion was drawn from it.
 
-**The relay measured against payload size:**
+**What remains true, and its actual significance.** The OAuth cloud endpoint does return HTTP 504 for
+the map page, on production and dev, at about 10.8 s, while the same relay returns 200 for 353 bytes
+(4.3 s), 29,824 bytes (5.8 s) and 101,291 bytes (5.4 s). That is a real limit on that endpoint for
+large payloads. It does not affect opening the map, because the page reaches a remote browser through
+Remote Admin instead. It would only matter to something fetching the map page itself through the
+OAuth endpoint, which nothing currently does.
 
-| | | |
-| --- | --- | --- |
-| 353 bytes | 4.3 s | 200 |
-| 29,824 bytes | 5.8 s | 200 |
-| 101,291 bytes | 5.4 s | 200 |
-| 780,169 bytes | 10.8 s | **504** |
-
-About 4.3 s of fixed relay overhead, 100 KB carried comfortably, and the map page over the budget.
-Generation is only 4 s of it; the rest is transfer.
-
-**Which explains the history without needing a hub event.** The page embeds the entire graph, so it
-grew with the hub. It crossed the relay's limit at some point and stayed over. Nothing broke on a
-particular day and nothing will restore it, including a restart.
-
-**Next action:** serve the map as a small page shell that fetches the graph as a separate request.
-That puts it back under the limit with margin, and the margin survives the hub growing further.
-The same change also reduces the amount of work a map view costs the hub. Note that the graph
-fetch itself would then be ~700 KB over the relay and would need the same treatment or pagination,
-so this is a design task rather than a one-line move.
+**No action.** This is recorded so the next person measuring remote behaviour checks which transport
+they are on first, and asks, rather than assuming the one their tooling reaches for is the one that
+matters.
 
 ### 24. Variable usage Automation Map cannot decode
 
