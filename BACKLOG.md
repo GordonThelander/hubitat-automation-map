@@ -615,11 +615,27 @@ a repair to justify with an undiagnosed fault.
 served matches the `integrity` attribute exactly. Whatever the two failures were, they were not a
 wrong URL, a wrong version or a stale hash.
 
-**A separate finding, unrelated to the libraries and not caused by any change here.** The map page is
-**not reachable over Hubitat's cloud relay at all**. Measured: `scan-status` over cloud returns 200
-in 5.3 s and `rm-coverage` returns 200 in 5.1 s, but `automation-map.html` returns **HTTP 504, "No
-response from hub"**, at about 790 KB. The hub serves the same page over the LAN in 3.9 s. So the
-map is LAN-only in practice, and has been. Worth its own item, including whether the README says so.
+**A separate finding, unrelated to the libraries and not caused by any change here.** The map page
+can currently not be fetched over Hubitat's cloud relay. Both the production and the dev app return
+**HTTP 504, "No response from hub"**, at about 10.8 s, which appears to be the relay's own budget. A
+small endpoint on the same app over the same relay returns 200 in 4.5 s, so cloud access itself
+works.
+
+**This is a hub-load symptom, not a property of the app, and an earlier version of this note saying
+the map "is LAN-only and has been" was wrong.** Gordon reports it has worked remotely before, and
+the measurements support him. At the time of the failure the hub had 94,636 KB free, down from
+292,076 KB after that morning's restart, and Hubitat itself rated that "moderate". Generating the
+~780 KB page was taking 4.9 s for production and 9.8 s for dev over the LAN, so generation alone
+consumed most of the relay's budget before any transfer began. On a freshly restarted hub the same
+page generates far faster and fits.
+
+**Falsifiable prediction:** after a hub restart, cloud access to the map works again. If it does not,
+this explanation is wrong.
+
+**Worth separating** if this is pursued: the page is ~780 KB because the whole graph is embedded in
+it, and that size is the reason it sits so close to the relay's limit at all. Shrinking it, or
+serving the graph as a separate fetch, would put real margin under remote access rather than relying
+on the hub being freshly restarted.
 
 ### 24. Variable usage Automation Map cannot decode
 
