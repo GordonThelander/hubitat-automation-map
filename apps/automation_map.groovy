@@ -16238,7 +16238,12 @@ function showFlow(appId) {
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
   const steps = FLOWS[appId];
-  if (!steps || !steps.length || !window.mermaid) {
+  // Deliberately does NOT test window.mermaid. The flowchart library is loaded
+  // on demand now, so it is absent until the first chart is drawn, and testing
+  // it here made this branch always true - every rule reported no flow. The
+  // render below calls loadMermaid() and surfaces its own failure if the
+  // library cannot be fetched.
+  if (!steps || !steps.length) {
     // No decoded flow to draw is not the same as nothing to say - the
     // Community Context Card below still applies to every app, decoded flow
     // or not (this used to just hide the panel and show nothing at all,
