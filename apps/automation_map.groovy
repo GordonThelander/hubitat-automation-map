@@ -197,7 +197,11 @@ boolean showSanta() {
 // Matched as a prefix, not a fixed name: the engine names its type per channel,
 // 'HAI Runtime' and 'HAI Runtime (Dev)', and a channel rename must not silently
 // turn detection off. Same rule the graph's own HAI tagging already follows.
-@Field static final String HAI_RUNTIME_TYPE_PREFIX = 'HAI Runtime'
+// Matched as prefixes, case-insensitively, so one entry covers every channel:
+// 'HAI Engine' answers for 'HAI Engine (DEV)', 'HAI Engine (PreProd)' and the
+// bare production name. 'HAI Runtime' is the pre-2026-09-27 parent, kept so a
+// hub that has not been migrated still resolves.
+@Field static final List<String> HAI_PARENT_TYPE_PREFIXES = ['HAI Engine', 'HAI Runtime']
 // The engine publishes its capability list here as a bare array of rows, on
 // build cadence rather than per rule change, and declares that file's SHA-256
 // in the state file. Deliberately a second file: the state file is rewritten
@@ -705,6 +709,28 @@ Map main() {
                 // no job was scheduled, and the async pipeline never advanced
                 // even once - its heartbeat was never written. Driving it through the endpoint
                 // runs the scan in an ordinary app execution, which works.
+                // Backlog item 44: the map link used to sit below the summary
+                // text, so on a phone the only action above the fold was Scan
+                // and people pressed it to get to a map they already had. The
+                // primary action goes first; Scan keeps its place below for
+                // anyone who actually wants one.
+                //
+                // graphIsStale() runs migrateGraphVersionIfNeeded() and
+                // selfHealGraphIfNeeded(), so it is evaluated once here and the
+                // result reused below rather than called from both places.
+                boolean graphStale = graphIsStale()
+                if (state.graph && !scanActive && !graphStale) {
+                    paragraph '''<style type="text/css">
+a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
+a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
+</style>'''
+                    href(
+                        name: 'mapLink', title: 'View Automation Map',
+                        description: 'Open the relationship graph',
+                        url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
+                        style: 'embedded', state: 'complete', required: false,
+                   )
+                }
                 paragraph scanButtonHtml(scanActive)
                 Map pageProg = scanProgress()
                 String pagePhase = "${pageProg.phase ?: ''}"
@@ -775,23 +801,15 @@ Map main() {
                         // reports the previous graph's counts and offers a map
                         // link that refuses to render. The progress line above
                         // already says what is happening.
-                    } else if (graphIsStale()) {
+                    } else if (graphStale) {
                         // A graph built by an older version can carry relationship
                         // kinds this version no longer renders, which silently draws
                         // as uncoloured edges rather than failing visibly.
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
+                        // The map link for this state is rendered above, before
+                        // the Scan button.
                         paragraph compatibilitySummary(g)
-                        paragraph '''<style type="text/css">
-a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
-a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
-</style>'''
-                        href(
-                            name: 'mapLink', title: 'View Automation Map',
-                            description: 'Open the relationship graph',
-                            url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
-                            style: 'embedded', state: 'complete', required: false,
-                       )
                     }
                 } else if (!scanActive && atomicState.graphVersion != null) {
                     // Confirmed live 2026-08-30: state.graph can read null for one request
@@ -1552,7 +1570,7 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    String haiNote = haiRuntimeInstalled() ? '' : ' (not installed)'
+    String haiNote = haiParentInstalled() ? '' : ' (not installed)'
     s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Experimental HAI Rule Engine${haiNote}, webCoRE pistons, Notifier as well as hub and local variables.</span>"
     s << haiCoverageSummary(graph)
     return s.toString()
@@ -1564,6 +1582,20 @@ String compatibilitySummary(Map graph) {
 String haiCoverageSummary(Map graph) {
     Map feed = (state.haiFeed ?: [:]) as Map
     String status = "${feed.state ?: ''}"
+    // Not installed is the ordinary case, and the line above already says so.
+    // What is not obvious is that the RM 5.1 comparison still works without the
+    // engine: it falls back to the capability list that engine publishes
+    // openly, so the coverage report is populated rather than empty. Verified
+    // with the engine absent - 156 capabilities across 7 areas from the
+    // published list, per-hub statistics being the only part that needs it
+    // installed. A feed file present with no app that writes it is diagnosed in
+    // the log rather than here; see fetchHaiFeed.
+    if (!haiParentInstalled()) {
+        // Informational, not a fault, so it takes the same blue the links on
+        // this page already use rather than the red kept for real failures.
+        return "<br><span style='color:#1976d2'>HAI Engine is not installed but its compatibility" +
+               " capabilities are surfaced.</span>"
+    }
     if (status != 'FAILED') return ''
     return "<br><span style='color:#c0392b'>HAI rules are missing from this map: ${feed.error}.</span>"
 }
@@ -10846,10 +10878,12 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
 // Whether the sibling engine is on this hub. Its presence is a fact the scan
 // already holds, so there is nothing to configure: no address, no token, and
 // no field inviting a user to paste one app's credentials into another.
-boolean haiRuntimeInstalled() {
+boolean haiParentInstalled() {
     Map appInfo = (state.appInfo ?: [:]) as Map
     return appInfo.any { Object id, Object raw ->
-        raw instanceof Map && "${(raw as Map).type ?: ''}".startsWith(HAI_RUNTIME_TYPE_PREFIX)
+        if (!(raw instanceof Map)) return false
+        String type = "${(raw as Map).type ?: ''}".toLowerCase()
+        return HAI_PARENT_TYPE_PREFIXES.any { type.startsWith(it.toLowerCase()) }
     }
 }
 
@@ -10892,7 +10926,7 @@ Map haiCapsById(Object parsed) {
 // new hash, which made it look like a warm-up rather than a fault: measured
 // 2026-09-27 as three calls before the live list was served.
 Map haiCapabilitySource(String declaredHash) {
-    if (haiRuntimeInstalled()) {
+    if (haiParentInstalled()) {
         // Text rather than parsed JSON: the declared hash covers the bytes as
         // served, so the body must be hashed before anything interprets it.
         Map fetched = httpFetch("${LOOPBACK_BASE}/local/${HAI_CAPABILITIES_FILE}",
@@ -10919,8 +10953,31 @@ Map haiCapabilitySource(String declaredHash) {
 // A feed on a contract this version does not know is refused rather than
 // merged half-understood: the shape is what the merge below relies on.
 Map fetchHaiFeed() {
-    if (!haiRuntimeInstalled()) return [state: 'OFF', nodes: [], edges: []]
     String url = "${LOOPBACK_BASE}/local/${HAI_STATE_FILE}"
+    if (!haiParentInstalled()) {
+        // OFF used to cover two different things: this hub does not run the
+        // engine, and this app could not find it. They render identically, so a
+        // rename of the engine's app type would have taken these rules off the
+        // map with nothing said. A feed file present on a hub with no app that
+        // writes it is a contradiction, so it is reported rather than read: the
+        // producer is the gate (see backlog 43), and the file outliving the app
+        // is exactly the rollback case that gate exists for.
+        Map probe = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+        boolean orphanFile = probe.ok && (probe.data instanceof Map) &&
+            "${((probe.data as Map).contract ?: '')}" == HAI_FEED_CONTRACT
+        if (orphanFile) {
+            // Which app types were looked for is what diagnoses a rename, and it
+            // is meaningless to anyone else, so it goes to the log rather than
+            // onto the settings page.
+            log.warn "${app.label}: an Automation Intelligence feed file is present but no app that writes it" +
+                     " was found - looked for an installed app whose type starts with" +
+                     " ${HAI_PARENT_TYPE_PREFIXES.join(' or ')}"
+            return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                    error: 'this hub has one of its feed files but no app that writes it, so its rules are left' +
+                           ' off rather than read from a file nothing appears to own']
+        }
+        return [state: 'OFF', nodes: [], edges: []]
+    }
     Map fetched = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
     if (!fetched.ok || !(fetched.data instanceof Map)) {
         return [state: 'FAILED', nodes: [], edges: [], fetched: now(),

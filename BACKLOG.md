@@ -492,7 +492,7 @@ found in the same scan**, with the endpoint as the fallback, move the ratings ca
 scan-stored feed in the same change, and treat a missing file as "older build" rather than an
 error - the same rule as item 41.
 
-### 44. On a phone the only visible action is Scan, and the map link is below the fold
+### 44. DONE 2026-09-27. On a phone the only visible action was Scan, and the map link was below the fold
 
 Seen 2026-09-25 on a phone through Remote Admin. Opening the app shows the summary paragraph, the
 flow-decoding sentence and any warning text, and the viewport ends around there. **"View Automation
@@ -507,6 +507,18 @@ to open, and if it is not, the page already says when the last scan ran.
 Worse on the remote path specifically, which is where this was seen: off the hub's own origin the
 page cannot poll `/scan-status` (item 33), so a scan started from a phone gives the least feedback
 of any route.
+
+**Done: the map link now renders above the Scan button.** It is the first thing on the page after the
+title, so the primary action is above the fold at phone width and Scan sits below it for anyone who
+actually wants a rescan. The summary text and the last-scan line keep their place under Scan.
+
+The link still only appears when there is a map to open: a graph exists, no scan is running, and the
+stored graph is not on a retired schema. `graphIsStale()` runs `migrateGraphVersionIfNeeded()` and
+`selfHealGraphIfNeeded()`, so it is now evaluated once into a local and reused by both the new block
+and the stale-format branch below, rather than being called from two places on every page render.
+
+**Not addressed here:** the rest of the page at phone width, which the original note also raised.
+Only the ordering was changed.
 
 **Next action:** put the map link above the scan button in the rendered order, or make the map the
 primary action and the scan a secondary one. Worth checking the whole page at phone width while in
