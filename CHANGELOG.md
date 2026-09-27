@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.1
+
+Dev channel. The engine this app reads its experimental rules from is now found on the hub by itself: there is no address to paste and the setting that asked for one is gone, along with the access token it held. When that engine is not installed the page says so and explains that its Rule Machine comparison still works, because the capability list it publishes openly is used instead. If a feed file is found with no app that writes it, its rules are left off the map and the reason is logged rather than guessed at. Location event triggers of every name, including lowMemory, now match the single capability that engine publishes for them, so a rule using one is no longer reported as having nothing to move to. View Automation Map moves above the Scan button so the map is reachable without scrolling on a phone. Scan progress no longer reports one phase's count against another phase's total. A paused rule of that engine is shown as paused rather than running. The flowchart library is fetched when a flowchart is first opened instead of on every view of the map.
+
 ## 2.4.0
 
 In development on the dev channel.
