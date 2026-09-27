@@ -136,6 +136,20 @@ renders inherits that seam: wherever a construct carries derived values the rend
 both sides equally, and the pair agrees without either having examined the part that could
 differ.
 
+**Exchange, 2026-09-27 (evening).** HAI acted on our correction that its published approval
+wording could only be coming from its own capability rows: `beyond.approvals` was still listed as
+`Runs` after the mechanism behind it was deleted, so it was advertising a safeguard it no longer
+had. It is now in `retired` rather than merely absent, which is the difference between a consumer
+being able to tell and not. Checking our own side for the mirror of that defect found one, and it
+is recorded under item 41: a retired id reaches our migration assessment as a clean pass, not as a
+gap. Neither side's checks would have found its own; each found the other's.
+
+Also settled: our answer on RM enumeration (names, ids and English labels, not structured triggers
+and actions) closed that dependency, and HAI has stopped waiting on us for it. HAI is considering
+`/edges` (`am.edges/1`) as the acceptance check for a converted clone, comparing a clone's edges
+against the RM original's to catch a valid rule wired to the wrong devices. It has explicitly not
+asked for that yet and will ask properly if it decides to depend on it, so nothing here is owed.
+
 **Next action:** take the 22 defects against the storage document section by section.
 
 ### 37. The HAI capability list can go stale without anyone noticing
@@ -293,14 +307,35 @@ What it now guarantees, and what this app should use when the engine's build is 
   what is explicitly not promised. Node and edge ids are hub-local and must not be pinned. The
   feed may gain fields, so unknown fields must be ignored rather than treated as errors.
 
-**Not present on this hub yet.** Treat the field's absence as "older build", never as an error,
-which is also what the published contract says to do.
+**Not verified on this hub yet.** Treat the field's absence as "older build", never as an error,
+which is also what the published contract says to do. HAI states (2026-09-27, evening) that
+`retired` is now populated, with `beyond.approvals` its first entry, and that the capability file
+changed at its revision 113 to hash `5976dea39c8700117f09e4f430ab668fe4f14a0395486ddf6b009c02f3012a0b`.
+That is their claim, unverified here: the hub was rebooting when it arrived. Confirm it against the
+published file on the next scan before relying on it.
 
-**Next action:** when `capabilityIdsHash` appears on the hub, record it alongside the feed version
-already cached, resolve a mapped id through `formerIds` / `retired` before reporting a construct
-unmapped, and say plainly in the coverage panel when a pinned id has been retired rather than
-silently reporting the construct as uncovered. Until then this is a watch item, not work in
-progress.
+**Correction, 2026-09-27: this item had the failure mode backwards, and the safe-sounding version
+is the one that is wrong.** It said a retired id would be "silently reporting the construct as
+uncovered". Traced through `webcoreHaiVerdict()` in `apps/automation_map.groovy`, an id that is
+absent from the published list yields `status = ''`, the `if (status && status != 'Runs')` guard
+fails, and the function falls through to `return [rmVerdict, rmNote]` - Rule Machine's own verdict,
+which for every one of the twelve ids in `WEBCORE_HAI_CAPABILITY` is `yes`. So a withdrawn
+capability is reported to the user as **supported**, not as uncovered. Under-reporting coverage is
+a cosmetic fault; over-reporting it tells someone a migration target holds a capability that no
+longer exists. The same defect class HAI fixed on its own side the same day, in the other
+direction: they published a safeguard they had removed, we would consume one.
+
+Absence has two causes and both deserve the same flag: the id was retired, or it was never in the
+list and the mapping here is wrong. Neither should pass silently. The empty-list case (file
+unreadable) is already handled separately and correctly.
+
+None of the twelve currently mapped ids is `beyond.approvals`, so no row in the migration
+assessment is wrong today.
+
+**Next action:** make an absent capability id an explicit outcome in `webcoreHaiVerdict()` rather
+than a fall-through, resolving through `formerIds` / `retired` first. Then record
+`capabilityIdsHash` alongside the cached feed version, and say plainly in the coverage panel when a
+pinned id has been retired.
 
 ### 42. Flow text says nothing about custom actions, colours or metering
 
