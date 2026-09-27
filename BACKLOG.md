@@ -165,6 +165,25 @@ present them as the engine's words, but a reader weighs the number rather than t
 stale evidence level arrives on our page in our formatting. We cannot audit them; only the engine
 can. Told it plainly that a smaller number it trusts beats a larger one it has not re-checked.
 
+**2026-09-28: two of the four "short" rows on our coverage page are wrong, and they are the only
+two of their kind.** The engine reports that `action.devices-disable-enable-devices` and
+`action.devices-start-stop-z-wave-polling` are published as `Missing` with notes claiming Hubitat's
+app API offers no call for them. It now says the first note is false (`/device/disable` is a JSON
+endpoint in the hub's own bundle) and the second half of it was a policy it adopted without Gordon
+deciding it, written as though it were a platform limit. Both are "not implemented", not "blocked".
+
+Counted against the file we already verified: of 154 rows, 150 are `Runs`, 2 are `Partial` and 2 are
+`Missing`. Fourteen have nothing in Rule Machine to measure against, so of the 140 RM-5 rows, 136
+run and exactly 4 fall short. Those 4 are the 2 Partial plus these 2 Missing. So the "4 short of
+that" sentence on the HAI RM5 Coverage page is half composed of rows the engine has now disavowed,
+and the notes a reader sees assert a Hubitat platform limitation that does not exist. Neither id is
+among the twelve in `WEBCORE_HAI_CAPABILITY`, so the webCoRE migration assessment is unaffected.
+
+The engine will correct the rows when the work lands rather than twice. Until it does, our page
+carries the claim. This is the same shape as `beyond.approvals` in the other direction: that row
+claimed a safeguard that was gone, these claim a limitation that never existed. Third of that shape
+in a week, second handed to us.
+
 **Next action:** take the 22 defects against the storage document section by section.
 
 ### 37. The HAI capability list can go stale without anyone noticing
