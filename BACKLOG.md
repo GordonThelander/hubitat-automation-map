@@ -150,6 +150,21 @@ and actions) closed that dependency, and HAI has stopped waiting on us for it. H
 against the RM original's to catch a valid rule wired to the wrong devices. It has explicitly not
 asked for that yet and will ask properly if it decides to depend on it, so nothing here is owed.
 
+**Exchange, 2026-09-28.** The engine answered the feed's write trigger from source: immediate on
+announce (which a pause, resume, disable, activate or edit forces), plus an unconditional watchdog
+every fifteen minutes, keyed on a hash that includes each rule's run state and the paused list. So
+worst-case staleness for the status flags item 45 surfaces is about fifteen minutes, not unbounded.
+Accepted as sufficient: those flags are read on a map, not acted on, and we asked the engine not to
+tighten the interval on our account.
+
+**Open, and the most likely real defect in what we publish.** The engine has not re-audited its
+capability evidence levels since its permission model changed, and some rows carry evidence from
+before that change. Our HAI RM5 Coverage page republishes those levels verbatim - currently 75 of
+140 seen working on a hub, 136 built and passing its own checks, 61 never watched running. We
+present them as the engine's words, but a reader weighs the number rather than the attribution, so a
+stale evidence level arrives on our page in our formatting. We cannot audit them; only the engine
+can. Told it plainly that a smaller number it trusts beats a larger one it has not re-checked.
+
 **Next action:** take the 22 defects against the storage document section by section.
 
 ### 37. The HAI capability list can go stale without anyone noticing
@@ -347,6 +362,17 @@ None of the twelve currently mapped ids is `beyond.approvals`, and all twelve we
 present in the published list on 2026-09-28, so no row in the migration assessment is wrong today.
 `beyond.approvals` vanishing with no consumer-visible signal is this item's failure mode occurring
 in the wild on its first real use, on an id that happens not to be one of ours.
+
+**Settled 2026-09-28: the engine will not publish a retirement signal, and we asked it not to.**
+HAI offered to add one, its own preference being a sibling file rather than a shape change to the
+list we parse. Declined. Every route costs more than the signal is worth: list-to-object breaks our
+parse for something we would consult once a year, a withdrawn row inside a list of live capabilities
+is worse than absence because a consumer that does not special-case it reads it as a capability, and
+a sibling file is a second artifact to publish, hash, version and keep honest in order to tell us
+something we can detect ourselves. The defect was never that a removal went unannounced. It was that
+this app treats absence as normal. Once absence is handled properly, absence is a complete signal.
+If the engine ever changes the published file's shape for its own reasons, that does reach us and we
+want warning.
 
 **Next action:** make an absent capability id an explicit outcome in `webcoreHaiVerdict()` rather
 than a fall-through, resolving through `formerIds` / `retired` first. Then record
