@@ -17288,7 +17288,15 @@ function mrEngineHead(done, e, levelId) {
     ? extEsc(first.automatic.reason) + (unrated ? ', ' + unrated + ' not assessed' : '')
     : auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '');
   const provenance = (first && first.statusesNote) ? '<div class="sub">' + extEsc(first.statusesNote) + '</div>' : '';
-  return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option value="null">Not assessed</option></select></label></div>' +
+  // Only the levels this engine actually has. The fixed 1-5 list offered
+  // choices that could not match: no piston on this hub rates 2 for any engine
+  // (level 2 needs zero rework AND more than five parts), so picking it emptied
+  // the list with nothing said. The bar beside this already shows only the
+  // levels present, and the two now agree.
+  let opts = '<option value="">Any</option>';
+  counts.forEach(function (n, i) { if (n) opts += '<option>' + (i + 1) + '</option>'; });
+  if (unrated) opts += '<option value="null">Not assessed</option>';
+  return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '">' + opts + '</select></label></div>' +
     '<div class="mrBar">' + (bar || '<span class="mrEmpty">No results yet</span>') + '</div>' +
     '<div class="sub">' + foot + '</div>' + provenance + '</div>';
 }
@@ -17342,6 +17350,11 @@ function mrRenderPistons() {
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
     mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
     mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
+  // A filter that matches nothing used to render an empty box. Say so, since
+  // the search box can empty it too and neither case explains itself.
+  if (done.length && !rows.length) {
+    h += '<p class="sub">No piston matches the current filters. Set every Level back to Any, or clear the search, to see all ' + done.length + '.</p>';
+  }
   h += '<div class="mrList">' + rows.map(function (r) {
     return '<details class="mrRow"><summary><span class="mrName"><span class="mrCaret" aria-hidden="true"></span><span class="mrNameText" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</span></span>' +
       mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + mrCell(r.body.hai || {}) + '</summary>' +
