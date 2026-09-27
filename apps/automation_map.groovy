@@ -12621,6 +12621,10 @@ String externalsJson() {
 // only its name and its members - so the rectangle geometry is this app's own
 // note about the user's setup, the same category as an icon correction, and it
 // is kept here because the hub has nowhere to put it.
+// Mirrors RP_NO_ROOM_NAMES on the page. The second entry is the hub's own
+// device UI wording, taken from its bundle rather than guessed.
+@Field static final List<String> ROOM_NO_ROOM_NAMES = ['Unassigned', 'No assigned room', 'No room assigned', 'None']
+
 @Field static final String ROOM_COMMIT_UNAVAILABLE =
     'Applying room changes to the hub is not wired up yet, so nothing you have arranged here has touched it. ' +
     'Staged moves are kept in this page until you discard them or reload.'
@@ -12657,7 +12661,7 @@ List hubRoomList() {
             // Unassigned and this panel's Not Allocated are the same thing, so
             // only one of them is shown. Matched on the name too, not just the
             // id, because the id is an implementation detail of one firmware.
-            if (roomId == '999999' || name.equalsIgnoreCase('Unassigned')) return
+            if (roomId == '999999' || ROOM_NO_ROOM_NAMES.any { name.equalsIgnoreCase(it as String) }) return
             if (name) out << [id: roomId, name: name]
         }
     }
@@ -19647,12 +19651,16 @@ function roomPlanNames() {
   return names;
 }
 
-// The hub calls it Unassigned, this panel calls it Not Allocated, and they are
-// the same thing. Normalised in one place so a device reporting that room name
-// lands in the bucket rather than conjuring a second bucket beside it.
+// The same idea has three spellings. The hub's room list calls it Unassigned
+// (the synthetic room, id 999999), the hub's own device UI calls it
+// "No assigned room" (read out of its bundle: isDeviceHasRoom compares against
+// that literal), and this panel calls it Not Allocated. Any of them means the
+// device has no room, so they are folded together here rather than each
+// conjuring its own bucket on the canvas.
+const RP_NO_ROOM_NAMES = ['unassigned', 'no assigned room', 'no room assigned', 'none'];
 function roomPlanNormalise(name) {
   const n = (name || '').trim();
-  return n.toLowerCase() === 'unassigned' ? RP_UNASSIGNED : n;
+  return RP_NO_ROOM_NAMES.indexOf(n.toLowerCase()) !== -1 ? RP_UNASSIGNED : n;
 }
 
 function roomPlanMatches(d) {
