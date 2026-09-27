@@ -12652,11 +12652,12 @@ List hubRoomList() {
             String name = "${d.name ?: ''}".trim()
             String roomId = "${d.id ?: ''}".trim()
             // The hub adds its own synthetic bucket for devices with no room,
-            // id 999999, which is not in the real room table (confirmed against
-            // it live: 30 rooms there, 31 here). This panel already has that
-            // concept as Not Allocated, and showing both would give the user
-            // two different places meaning the same thing.
-            if (roomId == '999999') return
+            // id 999999 and named Unassigned, which is not in the real room
+            // table (confirmed against it live: 30 rooms there, 31 here).
+            // Unassigned and this panel's Not Allocated are the same thing, so
+            // only one of them is shown. Matched on the name too, not just the
+            // id, because the id is an implementation detail of one firmware.
+            if (roomId == '999999' || name.equalsIgnoreCase('Unassigned')) return
             if (name) out << [id: roomId, name: name]
         }
     }
@@ -19635,14 +19636,23 @@ function roomPlanLoad() {
 function roomPlanNames() {
   const names = [];
   (ROOMPLAN.rooms || []).forEach(function (r) {
-    if (r && r.name && names.indexOf(r.name) === -1) names.push(r.name);
+    const rn = r ? roomPlanNormalise(r.name) : '';
+    if (rn && names.indexOf(rn) === -1) names.push(rn);
   });
   (ICONS.devices || []).forEach(function (d) {
-    const rm = (d.room || '').trim();
+    const rm = roomPlanNormalise(d.room);
     if (rm && names.indexOf(rm) === -1) names.push(rm);
   });
   names.sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
   return names;
+}
+
+// The hub calls it Unassigned, this panel calls it Not Allocated, and they are
+// the same thing. Normalised in one place so a device reporting that room name
+// lands in the bucket rather than conjuring a second bucket beside it.
+function roomPlanNormalise(name) {
+  const n = (name || '').trim();
+  return n.toLowerCase() === 'unassigned' ? RP_UNASSIGNED : n;
 }
 
 function roomPlanMatches(d) {
@@ -19654,7 +19664,7 @@ function roomPlanMatches(d) {
 function roomPlanCurrent(d) {
   const id = String(d.id);
   if (Object.prototype.hasOwnProperty.call(roomPending, id)) return roomPending[id];
-  return (d.room || '').trim();
+  return roomPlanNormalise(d.room);
 }
 
 function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
@@ -19742,7 +19752,7 @@ function roomPlanStage(devId, targetRoom) {
   if (!d) return;
   // Dragging a device back where it started is not a change - drop the entry
   // rather than staging a write of the value already there.
-  if ((d.room || '').trim() === targetRoom) delete roomPending[String(devId)];
+  if (roomPlanNormalise(d.room) === roomPlanNormalise(targetRoom)) delete roomPending[String(devId)];
   else roomPending[String(devId)] = targetRoom;
   roomPlanRender();
 }
