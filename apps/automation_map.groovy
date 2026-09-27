@@ -13610,6 +13610,11 @@ String buildMapHtml() {
      Insights reuses .sub for its own "Used by"/"Controlling apps" detail
      rows at the full large-panel width, which this must not narrow. */
   #flowSub { max-width:calc(var(--leftColWidth) - 32px); }
+  /* The only in-panel route to another engine's own rule page. This existed
+     solely in the node right-click menu, which nobody finds. */
+  #flowEngineLink { margin:2px 0 6px 0; font-size:0.85em; }
+  #flowEngineLink a { display:inline-block; padding:3px 9px; border:1px solid #81BC00; border-radius:5px; color:#81BC00; text-decoration:none; font-weight:600; }
+  #flowEngineLink a:hover { background:#81BC00; color:#121214; }
   /* A webCoRE panel draws no mermaid, so its content sat flush at the panel
      padding while an RM panel's flow cards start about 24px further in,
      shifting everything sideways as you switch between the two. Reserves that
@@ -14039,7 +14044,7 @@ String buildMapHtml() {
   </div>
 </div>
 <div id="migrationCard" hidden></div>
-<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div id="flowEngineLink" style="display:none"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
 <div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
@@ -15449,8 +15454,9 @@ function loadMermaid() {
     // rendered node text; confirmed live via mermaid.render() directly before
     // changing this, not assumed. Added per Gordon's request - the rendered
     // node text (mermaid's own 16px default) was the dominant reason the
-    // panel ran large.
-    mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '12px' } });
+    // panel ran large. 12px then read as too small against the 375px panel, so
+    // 14px is the settled middle: still under mermaid's default, still legible.
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '14px' } });
   });
   return mermaidReady;
 }
@@ -16083,6 +16089,24 @@ function setFlowSub(text, isWebcoreNotice) {
   el.textContent = text;
   el.classList.toggle('webcoreNotice', !!isWebcoreNotice);
   flowPanel.classList.remove('wcIndent');
+  // Cleared here, not in each caller: every panel path goes through
+  // setFlowSub, so a stale link cannot survive into the next selection.
+  const link = document.getElementById('flowEngineLink');
+  if (link) { link.innerHTML = ''; link.style.display = 'none'; }
+}
+
+// Only another engine publishes a url for its own rule page (engineUrl comes
+// from the HAI feed), so absence is the normal case for a Rule Machine app.
+function renderEngineLink(node) {
+  const box = document.getElementById('flowEngineLink');
+  if (!box || !node || node.engine !== 'HAI' || !node.engineUrl) return;
+  const a = document.createElement('a');
+  a.href = location.origin + node.engineUrl;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = 'Open in HAI rule editor';
+  box.appendChild(a);
+  box.style.display = '';
 }
 
 // Called after setFlowSub, which clears the class unconditionally.
@@ -16266,6 +16290,7 @@ function showFlow(appId) {
           ? 'Hubitat Automation Intelligence published no steps for this rule. Its devices, variables and rule links are on the map as usual, and its own page has the rule itself.'
           : 'This app has no decoded rule flow to show.')), isWebcoreNotice);
     setFlowWebcoreIndent(node);
+    renderEngineLink(node);
     flowChart.innerHTML = '';
     // Gate C (v2.1.4): a rule can have variable evidence even when its step
     // sequence itself could not be decoded (or genuinely has none) - shown
@@ -16288,6 +16313,7 @@ function showFlow(appId) {
   setFlowSub(node && node.engine === 'HAI'
     ? 'Steps as Hubitat Automation Intelligence publishes them for this rule. A reading aid: the rule page itself remains the authority.'
     : 'Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
+  renderEngineLink(node);
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
   loadMermaid().then(function () {
