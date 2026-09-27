@@ -12528,6 +12528,7 @@ mappings {
     path('/webcore-migration-ratings') { action: [ GET: 'migrationRatingsMapping' ] }
     path('/rm-coverage') { action: [ GET: 'rmCoverageMapping' ] }
     path('/edges') { action: [ GET: 'edgesMapping' ] }
+    path('/rooms') { action: [ GET: 'roomPlanGetMapping', POST: 'roomPlanSaveMapping' ] }
 }
 
 // The map page was read-only until this. It now accepts one write: the user's
@@ -12616,6 +12617,132 @@ String externalsJson() {
 // else, one write accepted here, guarded by the same access token as the map
 // itself, and touching nothing but this app's own state - no device, no
 // other app.
+// Room planner. The hub has no concept of where a room is or how big it is -
+// only its name and its members - so the rectangle geometry is this app's own
+// note about the user's setup, the same category as an icon correction, and it
+// is kept here because the hub has nowhere to put it.
+@Field static final String ROOM_COMMIT_UNAVAILABLE =
+    'Applying room changes to the hub is not wired up yet, so nothing you have arranged here has touched it. ' +
+    'Staged moves are kept in this page until you discard them or reload.'
+
+// /hub2/roomsList answers a Map holding one key, roomNodes: a tree whose top
+// level is the rooms and whose children are that room's devices, measured live
+// on 2026-09-28 rather than assumed (an earlier guess at a flat id-keyed map
+// read nothing at all). Only each room's own name and id are taken; the child
+// device records are deliberately dropped, because the whole response runs to
+// roughly 400KB and the device inventory this panel already holds is the
+// cheaper source for membership.
+//
+// An empty room can only come from here: the device inventory shows a room
+// only once it has a member, which is exactly the room a user most wants to
+// drag something into.
+List hubRoomList() {
+    List out = []
+    Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/roomsList", 15)
+    Object data = fetched.ok ? fetched.data : null
+    Object nodes = (data instanceof Map) ? (data as Map).roomNodes : data
+    if (nodes instanceof List) {
+        (nodes as List).each { Object n ->
+            if (!(n instanceof Map)) return
+            Object rawData = (n as Map).data
+            if (!(rawData instanceof Map)) return
+            Map d = rawData as Map
+            String type = "${d.type ?: 'Room'}".trim()
+            if (type && type != 'Room') return
+            String name = "${d.name ?: ''}".trim()
+            String roomId = "${d.id ?: ''}".trim()
+            // The hub adds its own synthetic bucket for devices with no room,
+            // id 999999, which is not in the real room table (confirmed against
+            // it live: 30 rooms there, 31 here). This panel already has that
+            // concept as Not Allocated, and showing both would give the user
+            // two different places meaning the same thing.
+            if (roomId == '999999') return
+            if (name) out << [id: roomId, name: name]
+        }
+    }
+    if (out) return out.sort { "${it.name}".toLowerCase() }
+
+    // Fallback: the rooms the last scan actually saw on devices. Empty rooms
+    // are invisible this way, which is why it is the fallback and not the
+    // source - the panel says so rather than quietly showing a short list.
+    Map deviceRooms = (state.deviceRooms ?: [:]) as Map
+    Set seen = [] as Set
+    deviceRooms.each { Object k, Object v ->
+        String name = v == null ? '' : "${v}".trim()
+        if (name) seen << name
+    }
+    return seen.sort { it.toLowerCase() }.collect { [id: '', name: it] }
+}
+
+Map roomPlanGetMapping() {
+    return render(status: 200, contentType: 'application/json', data: roomPlanJson(null))
+}
+
+String roomPlanJson(String message) {
+    List rooms = hubRoomList()
+    Map layout = (state.roomLayout ?: [:]) as Map
+    return JsonOutput.toJson([
+        ok          : true,
+        rooms       : rooms,
+        roomsFrom   : rooms.any { (it as Map).id } ? 'hub' : 'devices',
+        layout      : layout,
+        canCommit   : false,
+        commitNote  : ROOM_COMMIT_UNAVAILABLE,
+        message     : message ?: '',
+    ])
+}
+
+Map roomPlanSaveMapping() {
+    Map payload = [:]
+    try {
+        def body = request?.JSON
+        if (body instanceof Map) payload = body as Map
+    } catch (Exception ignored) { payload = [:] }
+
+    // Two different writes share this path. A layout save is this app's own
+    // note and always allowed; a moves apply would change the hub itself and
+    // is refused until that route exists, rather than silently accepted.
+    if (payload.containsKey('moves')) {
+        Map moves = (payload.moves instanceof Map) ? (payload.moves as Map) : [:]
+        return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+            ok       : false,
+            applied  : 0,
+            requested: moves.size(),
+            reason   : ROOM_COMMIT_UNAVAILABLE,
+        ]))
+    }
+
+    Map incoming = (payload.layout instanceof Map) ? (payload.layout as Map) : [:]
+    Map clean = [:]
+    incoming.each { Object k, Object v ->
+        if (!(v instanceof Map)) return
+        Map g = v as Map
+        // Numbers only, and bounded, so a bad payload cannot park a room off
+        // screen where the user cannot reach it to drag it back.
+        Integer x = roomPlanCoord(g.x, 0, 20000)
+        Integer y = roomPlanCoord(g.y, 0, 20000)
+        Integer w = roomPlanCoord(g.w, 120, 2000)
+        Integer h = roomPlanCoord(g.h, 90, 2000)
+        if (x == null || y == null || w == null || h == null) return
+        clean["${k}"] = [x: x, y: y, w: w, h: h]
+    }
+    state.roomLayout = clean
+    // Deliberately not roomPlanJson(): that re-reads /hub2/roomsList, roughly
+    // 400KB, and this runs at the end of every room drag. The caller already
+    // holds the geometry it just sent, so an acknowledgement is all it needs.
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+        ok: true, saved: clean.size()
+    ]))
+}
+
+Integer roomPlanCoord(Object raw, int lo, int hi) {
+    if (raw == null) return null
+    Integer n
+    try { n = Math.round(("${raw}" as BigDecimal).toDouble()) as Integer }
+    catch (Exception ignored) { return null }
+    return Math.max(lo, Math.min(hi, n))
+}
+
 Map iconOverridesGetMapping() {
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
 }
@@ -13809,6 +13936,37 @@ String buildMapHtml() {
      shown here too so the effective icon is visible at a glance instead of
      only as text inside the override dropdown. */
   .devIconGlyph { font-family:'AMIcons'; display:inline-block; width:16px; margin-right:6px; text-align:center; color:#7fb6d6; }
+  /* Room planner. Rooms are absolutely positioned inside #roomCanvas, whose
+     height is set from the lowest rectangle so the panel body scrolls rather
+     than clipping a room the user dragged down. */
+  #roomPlan, #roomPlanBar, #roomPlanSub, #roomCanvas { font-size:10px; }
+  #roomPlanBar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 0 8px 0; border-bottom:1px solid #16323c; margin-bottom:8px; }
+  #roomPlanSearch { flex:0 1 220px; font-size:10px; padding:3px 7px; border-radius:999px; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; }
+  #roomPlanBar button { font-size:10px; padding:3px 9px; }
+  #roomPlanBar .rpCount { font-weight:700; color:#81BC00; }
+  #roomPlanBar .rpCount.rpNone { color:#7f9aa6; font-weight:600; }
+  #roomPlanMsg { color:#9fd0e4; font-size:10px; }
+  #roomCanvas { position:relative; min-height:200px; }
+  .roomRect { position:absolute; background:rgba(9,32,43,0.92); border:1px solid #1e5878; border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
+  .roomRect.rpUnassigned { border:2px solid #e0443e; background:rgba(58,16,16,0.92); }
+  .roomRectHead { display:flex; align-items:baseline; justify-content:space-between; gap:8px; padding:5px 9px; background:rgba(255,255,255,0.05); cursor:move; user-select:none; }
+  .roomRectName { font-weight:700; color:#cfe9fb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .roomRectCount { color:#7f9aa6; font-size:10px; white-space:nowrap; }
+  .roomRectBody { flex:1; min-height:0; overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:4px; }
+  .roomRectBody.dropHot { background:rgba(129,188,0,0.16); outline:1px dashed #81BC00; outline-offset:-3px; }
+  .roomRectGrip { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, #1e5878 50%); }
+  /* flex:0 0 auto is load-bearing: these are flex items in a column, so the
+     default flex-shrink squashed them (measured at 4px tall with 50 in the
+     Not Allocated box) and the text spilled out of its own chip. Shrink
+     happens before overflow-y ever gets a say. */
+  .devChip { flex:0 0 auto; display:flex; align-items:center; gap:2px; padding:2px 5px; border-radius:5px; background:rgba(255,255,255,0.06); cursor:grab; font-size:10px; color:#dceaf2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .devChip:hover { background:rgba(255,255,255,0.12); }
+  .devChip.dragging { opacity:0.4; }
+  /* A staged move is visibly not yet real - the whole point of commit. */
+  .devChip.rpStaged { background:rgba(129,188,0,0.22); outline:1px solid #81BC00; }
+  .roomRectEmpty { color:#5f7883; font-size:10px; font-style:italic; padding:2px 4px; }
+  /* The glyph is a pictogram, not prose - it needs more than 10px to read. */
+  #roomCanvas .devIconGlyph { font-size:12px; width:14px; margin-right:4px; }
   #icons tr.overridden td { background:rgba(79,179,169,0.09); }
   #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -14034,6 +14192,7 @@ String buildMapHtml() {
   <div id="toolRail">
     <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External systems</button></div>
     <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
+    <button id="roomPlanBtn" type="button" title="Arrange rooms and drag devices between them, then apply the batch">Room planner</button>
     <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
     <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
     <button id="rmCoverageBtn" type="button" title="Check every Rule Machine rule on this hub against what the HAI rule engine can do">HAI RM5 Coverage</button>
@@ -14049,6 +14208,7 @@ String buildMapHtml() {
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomCanvas"></div></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
@@ -16047,7 +16207,7 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel, rmCoveragePanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel, rmCoveragePanel, roomPlanPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
@@ -19341,6 +19501,7 @@ function extImport(evt) {
 // device. This is where that gets corrected - one override per device,
 // saved here, applied the next time the graph is built.
 const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
+const ROOMPLAN_URL = amPickURL('${getLocalURL('rooms')}', '${getCloudURL('rooms')}');
 // Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
 // published contract). A read-only iframe preview of Community Utilities'
 // releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
@@ -19432,6 +19593,273 @@ function releaseActivityLoad() {
   const cta = document.createElement('div');
   cta.innerHTML = releaseActivityLinksHtml('Open the full Update Tracker');
   releaseActivityBody.appendChild(cta);
+}
+
+const roomPlanPanel = document.getElementById('roomPlan');
+// Deliberately free of apostrophes in every string below: this page is a Groovy
+// GString, where a backslash-escaped quote is eaten by Groovy and ends the JS
+// string early, killing the whole page.
+var ROOMPLAN = { rooms: [], layout: {}, canCommit: false, commitNote: '' };
+// devId -> target room name. Empty string means the Not Allocated bucket.
+// Nothing staged here has touched the hub; that is what Apply is for.
+var roomPending = {};
+var roomLayoutTimer = null;
+var roomSearch = '';
+const RP_UNASSIGNED = '';
+const RP_W = 250, RP_H = 210, RP_GAP = 14, RP_PERROW = 4;
+
+function roomPlanOpen() {
+  bringToFront(roomPlanPanel);
+  roomPlanLoad();
+}
+
+function roomPlanLoad() {
+  const canvas = document.getElementById('roomCanvas');
+  canvas.innerHTML = '<p class="sub">Loading...</p>';
+  Promise.all([
+    fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); })
+  ]).then(function (res) {
+    ROOMPLAN = res[0] || ROOMPLAN;
+    ICONS = res[1] || ICONS;
+    roomPending = {};
+    roomPlanRender();
+  }).catch(function (e) {
+    canvas.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
+  });
+}
+
+// Every room the planner should offer: the hub list, plus any room a device
+// claims that the list did not return, so a device can never be stranded in a
+// room with nowhere to sit.
+function roomPlanNames() {
+  const names = [];
+  (ROOMPLAN.rooms || []).forEach(function (r) {
+    if (r && r.name && names.indexOf(r.name) === -1) names.push(r.name);
+  });
+  (ICONS.devices || []).forEach(function (d) {
+    const rm = (d.room || '').trim();
+    if (rm && names.indexOf(rm) === -1) names.push(rm);
+  });
+  names.sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
+  return names;
+}
+
+function roomPlanMatches(d) {
+  if (!roomSearch) return true;
+  return (d.name || '').toLowerCase().indexOf(roomSearch) !== -1 ||
+         (roomPlanCurrent(d) || '').toLowerCase().indexOf(roomSearch) !== -1;
+}
+
+function roomPlanCurrent(d) {
+  const id = String(d.id);
+  if (Object.prototype.hasOwnProperty.call(roomPending, id)) return roomPending[id];
+  return (d.room || '').trim();
+}
+
+function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
+
+function roomPlanGeom(name, index) {
+  const saved = (ROOMPLAN.layout || {})[roomPlanLayoutKey(name)];
+  if (saved && saved.w) return { x: saved.x, y: saved.y, w: saved.w, h: saved.h };
+  return {
+    x: (index % RP_PERROW) * (RP_W + RP_GAP),
+    y: Math.floor(index / RP_PERROW) * (RP_H + RP_GAP),
+    w: RP_W, h: RP_H
+  };
+}
+
+function roomPlanRender() {
+  const canvas = document.getElementById('roomCanvas');
+  const devices = (ICONS.devices || []).slice().sort(function (a, b) {
+    return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+  });
+
+  // Not Allocated leads, because it is the pile the user came here to empty.
+  const buckets = [RP_UNASSIGNED].concat(roomPlanNames());
+  const byRoom = {};
+  buckets.forEach(function (n) { byRoom[roomPlanLayoutKey(n)] = []; });
+  devices.forEach(function (d) {
+    const key = roomPlanLayoutKey(roomPlanCurrent(d));
+    if (!byRoom[key]) byRoom[key] = [];
+    byRoom[key].push(d);
+  });
+
+  let maxBottom = 0;
+  let h = '';
+  buckets.forEach(function (name, i) {
+    const key = roomPlanLayoutKey(name);
+    const g = roomPlanGeom(name, i);
+    maxBottom = Math.max(maxBottom, g.y + g.h);
+    const all = byRoom[key] || [];
+    // Rooms always stay on screen while searching: a hidden room is a room you
+    // cannot drop into, which is the one thing a search must not take away.
+    const list = roomSearch ? all.filter(roomPlanMatches) : all;
+    const isUnassigned = name === RP_UNASSIGNED;
+    h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') + '" data-room="' + extEsc(key) + '"' +
+         ' style="left:' + g.x + 'px; top:' + g.y + 'px; width:' + g.w + 'px; height:' + g.h + 'px;">';
+    h += '<div class="roomRectHead" title="Drag to move this room. Drag the corner to resize it.">' +
+         '<span class="roomRectName">' + extEsc(isUnassigned ? 'Not Allocated' : name) + '</span>' +
+         '<span class="roomRectCount">' + (roomSearch ? (list.length + ' of ' + all.length) : all.length) + '</span></div>';
+    h += '<div class="roomRectBody" data-drop="' + extEsc(name) + '">';
+    if (!list.length) h += '<div class="roomRectEmpty">' + (roomSearch && all.length ? 'no match' : 'empty') + '</div>';
+    list.forEach(function (d) {
+      const staged = Object.prototype.hasOwnProperty.call(roomPending, String(d.id));
+      h += '<div class="devChip' + (staged ? ' rpStaged' : '') + '" draggable="true" data-dev="' + extEsc(d.id) + '"' +
+           ' title="' + extEsc(d.name) + (staged ? ' (staged, not yet applied)' : '') + '">' +
+           '<span class="devIconGlyph">' + (ICON_GLYPHS[iconsEffectiveKey(d)] || ICON_GLYPHS.unknown) + '</span>' +
+           extEsc(d.name) + '</div>';
+    });
+    h += '</div><div class="roomRectGrip" title="Drag to resize"></div></div>';
+  });
+
+  canvas.innerHTML = h;
+  canvas.style.height = (maxBottom + RP_GAP) + 'px';
+  roomPlanRenderBar();
+  roomPlanWire();
+}
+
+function roomPlanRenderBar() {
+  const n = Object.keys(roomPending).length;
+  // Updated in place, never rebuilt: the search box lives in this bar, and an
+  // innerHTML rewrite on every keystroke would take the focus and the caret
+  // with it.
+  const status = document.getElementById('roomPlanStatus');
+  status.textContent = n ? (n + (n === 1 ? ' staged move' : ' staged moves')) : 'No staged moves';
+  status.className = 'rpCount' + (n ? '' : ' rpNone');
+  document.getElementById('roomPlanApply').disabled = !n;
+  document.getElementById('roomPlanDiscard').disabled = !n;
+  document.getElementById('roomPlanSub').textContent =
+    'Drag a device into a room. Drag a room by its title to move it, or its corner to resize it. ' +
+    'Nothing reaches the hub until you press Apply.' +
+    (ROOMPLAN.roomsFrom === 'devices'
+      ? ' The room list came from devices rather than from the hub, so a room with nothing in it may be missing.'
+      : '');
+}
+
+function roomPlanStage(devId, targetRoom) {
+  const d = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(devId); })[0];
+  if (!d) return;
+  // Dragging a device back where it started is not a change - drop the entry
+  // rather than staging a write of the value already there.
+  if ((d.room || '').trim() === targetRoom) delete roomPending[String(devId)];
+  else roomPending[String(devId)] = targetRoom;
+  roomPlanRender();
+}
+
+function roomPlanWire() {
+  const canvas = document.getElementById('roomCanvas');
+  canvas.querySelectorAll('.devChip').forEach(function (chip) {
+    chip.addEventListener('dragstart', function (ev) {
+      ev.dataTransfer.setData('text/plain', chip.getAttribute('data-dev'));
+      ev.dataTransfer.effectAllowed = 'move';
+      chip.classList.add('dragging');
+    });
+    chip.addEventListener('dragend', function () { chip.classList.remove('dragging'); });
+  });
+  canvas.querySelectorAll('.roomRectBody').forEach(function (zone) {
+    zone.addEventListener('dragover', function (ev) {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      zone.classList.add('dropHot');
+    });
+    zone.addEventListener('dragleave', function () { zone.classList.remove('dropHot'); });
+    zone.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      zone.classList.remove('dropHot');
+      const devId = ev.dataTransfer.getData('text/plain');
+      if (devId) roomPlanStage(devId, zone.getAttribute('data-drop'));
+    });
+  });
+  canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
+}
+
+// Move and resize share one pointer loop. Geometry is written into
+// ROOMPLAN.layout on release so the re-render that any drop causes keeps it.
+function roomPlanDraggableRect(rect) {
+  const key = rect.getAttribute('data-room');
+  const head = rect.querySelector('.roomRectHead');
+  const grip = rect.querySelector('.roomRectGrip');
+  let mode = null, startX = 0, startY = 0, base = null;
+
+  function begin(which, ev) {
+    mode = which;
+    startX = ev.clientX; startY = ev.clientY;
+    base = { x: rect.offsetLeft, y: rect.offsetTop, w: rect.offsetWidth, h: rect.offsetHeight };
+    ev.preventDefault();
+  }
+  head.addEventListener('mousedown', function (ev) { begin('move', ev); });
+  grip.addEventListener('mousedown', function (ev) { begin('size', ev); });
+
+  document.addEventListener('mousemove', function (ev) {
+    if (!mode) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (mode === 'move') {
+      rect.style.left = Math.max(0, base.x + dx) + 'px';
+      rect.style.top = Math.max(0, base.y + dy) + 'px';
+    } else {
+      rect.style.width = Math.max(120, base.w + dx) + 'px';
+      rect.style.height = Math.max(90, base.h + dy) + 'px';
+    }
+  });
+  document.addEventListener('mouseup', function () {
+    if (!mode) return;
+    mode = null;
+    if (!ROOMPLAN.layout) ROOMPLAN.layout = {};
+    ROOMPLAN.layout[key] = {
+      x: rect.offsetLeft, y: rect.offsetTop, w: rect.offsetWidth, h: rect.offsetHeight
+    };
+    const canvas = document.getElementById('roomCanvas');
+    let maxBottom = 0;
+    canvas.querySelectorAll('.roomRect').forEach(function (r) {
+      maxBottom = Math.max(maxBottom, r.offsetTop + r.offsetHeight);
+    });
+    canvas.style.height = (maxBottom + RP_GAP) + 'px';
+    roomPlanQueueLayoutSave();
+  });
+}
+
+// Debounced: a resize drag settles over many mouseups, and each save is a hub
+// state write.
+function roomPlanQueueLayoutSave() {
+  if (roomLayoutTimer) clearTimeout(roomLayoutTimer);
+  roomLayoutTimer = setTimeout(function () {
+    fetch(ROOMPLAN_URL, {
+      method: 'POST', cache: 'no-store', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layout: ROOMPLAN.layout || {} })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function () {
+      const msg = document.getElementById('roomPlanMsg');
+      if (msg && msg.textContent.indexOf('Layout') === 0) msg.textContent = '';
+    }).catch(function (e) {
+      // Previously swallowed. A layout that silently fails to save looks
+      // identical to one that saved, until the panel is reopened and the
+      // arrangement is gone.
+      const msg = document.getElementById('roomPlanMsg');
+      if (msg) msg.textContent = 'Layout not saved: ' + e;
+    });
+  }, 700);
+}
+
+function roomPlanApply() {
+  const ids = Object.keys(roomPending);
+  if (!ids.length) return;
+  const msg = document.getElementById('roomPlanMsg');
+  msg.textContent = 'Applying ' + ids.length + '...';
+  fetch(ROOMPLAN_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moves: roomPending })
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d && d.ok) { roomPending = {}; roomPlanLoad(); return; }
+      // Refused rather than failed: the staged moves stay exactly as they are.
+      msg.textContent = (d && d.reason) || 'Could not apply.';
+    })
+    .catch(function (e) { msg.textContent = 'Could not apply: ' + e; });
 }
 
 const iconsPanel = document.getElementById('icons');
@@ -20280,6 +20708,20 @@ document.getElementById('iconsBtn').addEventListener('click', function () {
 });
 document.getElementById('iconsClose').addEventListener('click', function () {
   iconsPanel.style.display = 'none';
+  syncLegendVisibility();
+});
+document.getElementById('roomPlanBtn').addEventListener('click', roomPlanOpen);
+document.getElementById('roomPlanApply').addEventListener('click', roomPlanApply);
+document.getElementById('roomPlanDiscard').addEventListener('click', function () {
+  roomPending = {};
+  roomPlanRender();
+});
+document.getElementById('roomPlanSearch').addEventListener('input', function (ev) {
+  roomSearch = (ev.target.value || '').trim().toLowerCase();
+  roomPlanRender();
+});
+document.getElementById('roomPlanClose').addEventListener('click', function () {
+  roomPlanPanel.style.display = 'none';
   syncLegendVisibility();
 });
 document.getElementById('releaseActivityBtn').addEventListener('click', function () {
