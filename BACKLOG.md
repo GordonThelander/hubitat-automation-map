@@ -307,12 +307,26 @@ What it now guarantees, and what this app should use when the engine's build is 
   what is explicitly not promised. Node and edge ids are hub-local and must not be pinned. The
   feed may gain fields, so unknown fields must be ignored rather than treated as errors.
 
-**Not verified on this hub yet.** Treat the field's absence as "older build", never as an error,
-which is also what the published contract says to do. HAI states (2026-09-27, evening) that
-`retired` is now populated, with `beyond.approvals` its first entry, and that the capability file
-changed at its revision 113 to hash `5976dea39c8700117f09e4f430ab668fe4f14a0395486ddf6b009c02f3012a0b`.
-That is their claim, unverified here: the hub was rebooting when it arrived. Confirm it against the
-published file on the next scan before relying on it.
+**Checked against the published files, 2026-09-28.** Treat a field's absence as "older build",
+never as an error, which is also what the published contract says to do. Of the three things HAI
+stated on 2026-09-27, two hold and one does not:
+
+- **The hash holds.** `hai-am-capabilities.json` as served hashes to
+  `5976dea39c8700117f09e4f430ab668fe4f14a0395486ddf6b009c02f3012a0b`, which is both the hash HAI
+  stated and the `capabilitiesHash` the feed declares. The same-read verification in
+  `haiCapabilitySource()` therefore passes and the list is used verified rather than as fallback.
+- **`formerIds` is real and in use**, on exactly one row: `trigger.location-event`, carrying the two
+  ids it replaced. That is the location-event collapse this app already handles.
+- **There is no `retired` map.** HAI stated that `beyond.approvals` "is in `retired` rather than
+  simply absent, so a consumer that saw it can tell it went deliberately". From the consumer side it
+  is simply absent: the string appears nowhere in `hai-am-capabilities.json`, `hai-editor-specs.json`
+  or `hai-author-guide.txt`, and the capability file is a bare 154-row JSON list with no container
+  for a top-level `retired` key. The valuable half did happen, in that the false parity row is gone.
+  The signal that was meant to make the removal legible to us did not reach us. Recorded as a
+  disagreement rather than a defect filed against them: it may exist in their repo and simply not be
+  published.
+
+`capabilityIdsHash` is still absent from the feed, as this item predicted.
 
 **Correction, 2026-09-27: this item had the failure mode backwards, and the safe-sounding version
 is the one that is wrong.** It said a retired id would be "silently reporting the construct as
@@ -329,8 +343,10 @@ Absence has two causes and both deserve the same flag: the id was retired, or it
 list and the mapping here is wrong. Neither should pass silently. The empty-list case (file
 unreadable) is already handled separately and correctly.
 
-None of the twelve currently mapped ids is `beyond.approvals`, so no row in the migration
-assessment is wrong today.
+None of the twelve currently mapped ids is `beyond.approvals`, and all twelve were confirmed
+present in the published list on 2026-09-28, so no row in the migration assessment is wrong today.
+`beyond.approvals` vanishing with no consumer-visible signal is this item's failure mode occurring
+in the wild on its first real use, on an id that happens not to be one of ours.
 
 **Next action:** make an absent capability id an explicit outcome in `webcoreHaiVerdict()` rather
 than a fall-through, resolving through `formerIds` / `retired` first. Then record
