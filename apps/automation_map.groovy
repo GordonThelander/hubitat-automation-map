@@ -17350,10 +17350,27 @@ function mrRenderPistons() {
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
     mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
     mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
-  // A filter that matches nothing used to render an empty box. Say so, since
-  // the search box can empty it too and neither case explains itself.
+  // A filter that matches nothing used to render an empty box. Name what was
+  // actually asked for, because the three Level filters combine and nothing on
+  // screen says so: three engines each set to 4 asks for a piston that is 4 on
+  // all three at once, which is rarely what someone means and is often empty
+  // even when each engine has plenty at that level on its own.
   if (done.length && !rows.length) {
-    h += '<p class="sub">No piston matches the current filters. Set every Level back to Any, or clear the search, to see all ' + done.length + '.</p>';
+    const active = [];
+    if (levelRm) active.push('level ' + extEsc(levelRm) + ' for ' + MR_ENGINES[0][1]);
+    if (levelVrb) active.push('level ' + extEsc(levelVrb) + ' for ' + MR_ENGINES[1][1]);
+    if (levelHai) active.push('level ' + extEsc(levelHai) + ' for ' + MR_ENGINES[2][1]);
+    let why = '';
+    if (active.length > 1) {
+      why = 'No piston is ' + active.slice(0, -1).join(', ') + ' and ' + active[active.length - 1] +
+            ' at the same time. The Level filters combine, so each one you set narrows the list further.';
+    } else if (active.length === 1) {
+      why = 'No piston is ' + active[0] + '.';
+    } else {
+      why = 'No piston matches that search.';
+    }
+    if (active.length && text) why += ' The search is narrowing it too.';
+    h += '<p class="sub">' + why + ' Set every Level back to Any, and clear the search, to see all ' + done.length + '.</p>';
   }
   h += '<div class="mrList">' + rows.map(function (r) {
     return '<details class="mrRow"><summary><span class="mrName"><span class="mrCaret" aria-hidden="true"></span><span class="mrNameText" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</span></span>' +
