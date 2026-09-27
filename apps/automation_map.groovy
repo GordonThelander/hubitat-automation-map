@@ -15721,7 +15721,11 @@ function makePanelDraggable(panel, header) {
     // close the panel, not start a drag.
     if (e.target.closest('.panelClose')) return;
     dragging = true;
-    panelCustomPosition.set(panel, true);
+    // Deliberately NOT marked as user-positioned here. Marking on mousedown
+    // meant a bare click on the header - to focus the panel, or a click that
+    // never moved - opted that panel out of sizeModernPanel() for the rest of
+    // the session, including out of the viewport re-measure above. The flag
+    // means "the user placed this", so it is earned by actual movement.
     const rect = panel.getBoundingClientRect();
     startX = e.clientX; startY = e.clientY;
     startLeft = rect.left; startTop = rect.top;
@@ -15729,8 +15733,12 @@ function makePanelDraggable(panel, header) {
   });
   document.addEventListener('mousemove', function (e) {
     if (!dragging) return;
-    panel.style.left = (startLeft + (e.clientX - startX)) + 'px';
-    panel.style.top = (startTop + (e.clientY - startY)) + 'px';
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    // A few pixels of travel during a click is not a drag.
+    if (!panelCustomPosition.get(panel) && Math.abs(dx) + Math.abs(dy) < 4) return;
+    panelCustomPosition.set(panel, true);
+    panel.style.left = (startLeft + dx) + 'px';
+    panel.style.top = (startTop + dy) + 'px';
   });
   document.addEventListener('mouseup', function () {
     if (!dragging) return;
@@ -15922,6 +15930,27 @@ window.addEventListener('resize', function () {
   if (!flowUserSize || flowPanel.classList.contains('modernPanelLarge')) return;
   flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
   applyFlowUserSize();
+});
+// sizeModernPanel() writes width and height as inline pixels, once, when a
+// panel opens. Browser zoom changes window.innerWidth/innerHeight in CSS
+// pixels and fires resize, so a panel opened before the zoom keeps the
+// previous viewport's pixel width and runs under the control rail - the
+// wider the zoom, the further under. Re-measure against the real #status and
+// #controls on the same terms bringToFront() already uses: full-area panels
+// only, and never one the user has dragged, whose position is theirs to keep.
+// Classic #flow is excluded by the modernPanelLarge test, since it sizes to
+// its own content rather than to the viewport.
+var panelViewportTimer = null;
+window.addEventListener('resize', function () {
+  if (panelViewportTimer) clearTimeout(panelViewportTimer);
+  panelViewportTimer = setTimeout(function () {
+    allPanels().forEach(function (p) {
+      if (!p || p.style.display !== 'flex') return;
+      if (!p.classList.contains('modernPanelLarge')) return;
+      if (panelCustomPosition.get(p)) return;
+      sizeModernPanel(p);
+    });
+  }, 150);
 });
 // Panel zoom. Ctrl with the mouse wheel over the normal flow view zooms its
 // content instead of the whole page, which a large flowchart needs. Held while
