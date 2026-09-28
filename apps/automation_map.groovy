@@ -12773,10 +12773,20 @@ Map roomPlanWriteDeviceRoom(String devId, String roomId) {
 }
 
 Map roomPlanApplyMoves(Map moves) {
-    Map roomIdByName = [:]
-    hubRoomList().each { Object r ->
-        Map m = r as Map
-        if (m.name && m.id) roomIdByName["${m.name}".toLowerCase()] = "${m.id}"
+    // The cache is filled every time the panel loads its room list, which
+    // always happens before a user can stage anything to apply. Only a cache
+    // miss pays for the full room tree.
+    Map roomIdByName = (state.roomIdCache ?: [:]) as Map
+    boolean needed = moves.any { Object k, Object v ->
+        String t = "${v ?: ''}".trim()
+        return t && !roomIdByName["${t.toLowerCase()}"]
+    }
+    if (needed) {
+        hubRoomList().each { Object r ->
+            Map m = r as Map
+            if (m.name && m.id) roomIdByName["${m.name}".toLowerCase()] = "${m.id}"
+        }
+        state.roomIdCache = roomIdByName
     }
     List results = []
     moves.each { Object k, Object v ->
@@ -12818,6 +12828,13 @@ Map roomPlanGetMapping() {
 
 String roomPlanJson(String message) {
     List rooms = hubRoomList()
+    // Cached so an apply does not refetch /hub2/roomsList, which is roughly
+    // 400KB of room tree. Paying that on every apply, on top of three round
+    // trips per device, is what left the panel sitting on "Applying..." with
+    // the response still in flight long after the writes had landed.
+    Map idByName = [:]
+    rooms.each { Object r -> Map m = r as Map; if (m.name && m.id) idByName["${m.name}".toLowerCase()] = "${m.id}" }
+    state.roomIdCache = idByName
     Map layout = (state.roomLayout ?: [:]) as Map
     return JsonOutput.toJson([
         ok          : true,
@@ -20001,12 +20018,28 @@ function roomPlanApply() {
   if (!ids.length) return;
   const msg = document.getElementById('roomPlanMsg');
   msg.textContent = 'Applying ' + ids.length + '...';
+  // Each device costs a read, a write and a read-back, so a batch is slow by
+  // design. A slow apply and a dead one look identical from here, so say which
+  // rather than leave the user watching "Applying..." forever. The writes carry
+  // on hub-side regardless; this only governs what the panel claims.
+  let settled = false;
+  const slowTimer = setTimeout(function () {
+    if (!settled) msg.textContent = 'Still applying ' + ids.length + '. Each device is read, written and checked, so a large batch takes a while.';
+  }, 8000);
+  const giveUpTimer = setTimeout(function () {
+    if (settled) return;
+    settled = true;
+    msg.textContent = 'No answer yet. The writes may still have landed - reopen the planner to see where these devices actually are before retrying.';
+  }, 120000);
+  const done = function () { settled = true; clearTimeout(slowTimer); clearTimeout(giveUpTimer); };
   fetch(ROOMPLAN_URL, {
     method: 'POST', cache: 'no-store', credentials: 'omit',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ moves: roomPending })
   }).then(function (r) { return r.json(); })
     .then(function (d) {
+      if (settled) return;
+      done();
       // Trust what each write read back off the device, not a re-fetch of the
       // panel's device list: that list is built from scan state, so reloading
       // here drew a just-moved device back in its old room and made a write
@@ -20032,7 +20065,11 @@ function roomPlanApply() {
         ? (moved + ' moved, ' + failed.length + ' failed: ' + (failed[0].reason || 'no reason given'))
         : ((d && d.reason) || 'Could not apply.');
     })
-    .catch(function (e) { msg.textContent = 'Could not apply: ' + e; });
+    .catch(function (e) {
+      if (settled) return;
+      done();
+      msg.textContent = 'Could not apply: ' + e;
+    });
 }
 
 const iconsPanel = document.getElementById('icons');
