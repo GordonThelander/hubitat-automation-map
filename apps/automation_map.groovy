@@ -13982,6 +13982,14 @@ String buildMapHtml() {
      a different width, which is why the left column looked ragged as you moved
      between apps. Everything text now wraps inside one fixed width instead. */
   .flowClassicSize { max-width:var(--leftColWidth); max-height:90vh; }
+  /* A flowchart is rendered at its natural size and is routinely two to three
+     times wider than the left column: measured at 766px against a 328px chart
+     area, so more than half the diagram sat off-screen behind a scrollbar.
+     Scaling it down to fit instead would have put the node text near 6px.
+     Only the chart case is widened - an inert app, an unreferenced variable or
+     a rule with no decoded flow still sizes to the left column exactly as
+     before, which is the panel Gordon asked to leave alone. */
+  #flow.flowHasChart.flowClassicSize { max-width:min(74vw, 980px); }
   /* A decoded flowchart is the one child that cannot wrap - it is an SVG with
      its own intrinsic size. Scroll it inside the panel rather than letting it
      set the panel's width, which is what the cap above exists to prevent. */
@@ -14235,14 +14243,19 @@ String buildMapHtml() {
   #roomPlanBar .rpCount { font-weight:700; color:#81BC00; }
   #roomPlanBar .rpCount.rpNone { color:#7f9aa6; font-weight:600; }
   #roomPlanMsg { color:#9fd0e4; font-size:10px; }
-  #roomTip { position:relative; margin:0 0 10px 0; padding:9px 30px 9px 12px; border-radius:6px;
-             background:rgba(129,188,0,0.10); border:1px solid rgba(129,188,0,0.45); color:#dceaf2; font-size:10px; }
-  #roomTip strong { display:block; margin-bottom:4px; color:#cfe9fb; font-size:11px; }
-  #roomTip ul { margin:0; padding-left:16px; }
-  #roomTip li { margin:2px 0; }
-  #roomTip b { color:#a9d94a; font-weight:700; }
-  #roomTip .roomTipClose { position:absolute; top:4px; right:7px; background:none; border:0; color:#7f9aa6;
-                           font-size:15px; line-height:1; cursor:pointer; }
+  /* Same card the right-click tip uses, not a banner: it is teaching a gesture,
+     so it wants the illustration and the weight that goes with one. */
+  #roomTip { position:absolute; left:50%; top:16px; transform:translateX(-50%); z-index:40;
+             width:min(88%,430px); box-sizing:border-box; background:rgba(4,20,27,0.98);
+             border:1px solid rgba(129,188,0,0.55); border-radius:8px;
+             box-shadow:0 8px 32px rgba(0,0,0,0.6); padding:14px 18px 12px 18px; font-size:12px; color:#e8f3f6; }
+  #roomTip h3 { margin:0 0 6px 0; font-size:14px; color:#cfe9fb; }
+  #roomTip p { margin:0 0 8px 0; color:#cfe1e7; line-height:1.45; }
+  #roomTip p.roomTipFoot { margin:0; color:#9fb6bf; }
+  #roomTip b { color:#a9d94a; }
+  #roomTip .roomTipArt { display:block; margin:2px auto 12px auto; }
+  #roomTip .roomTipClose { position:absolute; top:7px; right:10px; background:none; border:0; color:#9fb6bf;
+                           font-size:17px; line-height:1; cursor:pointer; }
   #roomTip .roomTipClose:hover { color:#e0443e; }
   #roomCanvas { position:relative; min-height:200px; }
   .roomRect { position:absolute; background:rgba(9,32,43,0.92); border:1px solid #1e5878; border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
@@ -14513,7 +14526,7 @@ String buildMapHtml() {
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
-<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomTip" hidden><button class="roomTipClose" type="button" id="roomTipClose" title="Got it" aria-label="Got it">&times;</button><strong>Three things that are easy to miss</strong><ul><li><b>Pick several at once.</b> Click a device to select it, ctrl-click or keep clicking to add more, shift-click to take a whole run. Then drag any one of them and the rest come too.</li><li><b>Drag between rooms.</b> Devices move by dragging, including out of Not Allocated on the left. Nothing reaches the hub until you press Apply.</li><li><b>The small x on a room deletes it.</b> Its devices are not deleted, they land in Not Allocated. Double-click a room name to rename it.</li></ul></div><div id="roomCanvas"></div></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomTip" role="dialog" aria-labelledby="roomTipTitle" hidden><button class="roomTipClose" type="button" id="roomTipClose" title="Close" aria-label="Close">&times;</button><h3 id="roomTipTitle">Moving devices between rooms</h3><svg class="roomTipArt" width="250" height="88" viewBox="0 0 250 88" role="img" aria-label="Click devices to select several, then drag them into another room"><rect x="4" y="8" width="86" height="72" rx="5" fill="rgba(224,68,62,0.12)" stroke="#e0443e"></rect><text x="12" y="23" fill="#e8b0ad" font-size="9">Not Allocated</text><rect x="12" y="30" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="45" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="60" width="70" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><path d="M96 46 h44" stroke="#81BC00" stroke-width="2" fill="none"></path><path d="M140 46 l-8 -5 v10 z" fill="#81BC00"></path><path d="M112 44 l14 12 -5 1 3 7 -4 1 -3 -7 -4 3 z" fill="#e8f3f6"></path><rect x="150" y="8" width="96" height="72" rx="5" fill="rgba(255,255,255,0.06)" stroke="#1e5878"></rect><text x="158" y="23" fill="#cfe9fb" font-size="9">Kitchen</text><text x="228" y="23" fill="#7f9aa6" font-size="9">&#215;</text><rect x="158" y="30" width="80" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><rect x="158" y="45" width="80" height="11" rx="3" fill="rgba(129,188,0,0.35)" stroke="#81BC00"></rect></svg><p><b>Click devices to pick several</b>, then drag any one of them and the rest follow. Shift-click takes a whole run. Nothing reaches the hub until you press Apply.</p><p class="roomTipFoot">Double-click a room name to rename it. The small &#215; on a room deletes it - its devices are kept, and land back in Not Allocated.</p></div><div id="roomCanvas"></div></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
@@ -16579,6 +16592,10 @@ function bringToFront(panel) {
 // to whatever it holds. For a container that turns a dead end into the most
 // direct route to its children on the whole map.
 function setFlowSub(text, isWebcoreNotice) {
+  // Cleared on every panel path, then re-added only by a successful chart
+  // render, so a wide flowchart cannot leave the panel wide for the next
+  // selection that has nothing to draw.
+  flowPanel.classList.remove('flowHasChart');
   const el = document.getElementById('flowSub');
   el.textContent = text;
   el.classList.toggle('webcoreNotice', !!isWebcoreNotice);
@@ -16819,6 +16836,7 @@ function showFlow(appId) {
     // over whatever the user has actually picked since.
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
+    flowPanel.classList.add('flowHasChart');
     renderRuleVariablesCard(appId);
     noteFlowItem(node);
     renderDecodeCoverageCard(node);
