@@ -12679,6 +12679,126 @@ List hubRoomList() {
     return seen.sort { it.toLowerCase() }.collect { [id: '', name: it] }
 }
 
+// Writing a device's room means POSTing the hub's own device form back to it.
+// Measured on the hub 2026-09-28 rather than inferred: the device page sends
+// POST /device/update, application/x-www-form-urlencoded, with all 24 fields of
+// the record - not a patch. roomId carries the room, and roomId=0 clears it
+// (not empty, not the synthetic 999999). version is a row version that
+// increments on every save, so it has to be read fresh per device.
+//
+// The consequence, and the reason every field below is copied forward rather
+// than sent blank: a bare id+roomId post would wipe that device's notes, tags,
+// icon and dashboard assignments. This reads the record first and changes
+// exactly one field.
+@Field static final String ROOM_CLEARED_ID = '0'
+
+String roomPlanFormValue(Object v) { return v == null ? '' : "${v}" }
+
+// dashboardIds and homeKitEnabled are the two the device page sends that do not
+// live under fullJson's own device object - they sit at the top level.
+Map roomPlanDeviceForm(Map full, String roomId) {
+    Map d = (full?.device instanceof Map) ? full.device as Map : [:]
+    if (!d) return null
+    List dashIds = []
+    Object dashboards = full?.dashboards
+    if (dashboards instanceof List) {
+        (dashboards as List).each { Object x ->
+            if (x instanceof Map && (x as Map).id != null) dashIds << "${(x as Map).id}"
+        }
+    }
+    Object rawTags = d.tags
+    String tags = (rawTags instanceof List) ? (rawTags as List).collect { "${it}" }.join(',') : roomPlanFormValue(rawTags)
+    return [
+        name                  : roomPlanFormValue(d.name),
+        label                 : roomPlanFormValue(d.label),
+        zigbeeId              : roomPlanFormValue(d.zigbeeId),
+        maxEvents             : roomPlanFormValue(d.maxEvents),
+        maxStates             : roomPlanFormValue(d.maxStates),
+        spammyThreshold       : roomPlanFormValue(d.spammyThreshold),
+        deviceNetworkId       : roomPlanFormValue(d.deviceNetworkId),
+        deviceTypeId          : roomPlanFormValue(d.deviceTypeId),
+        deviceTypeReadableType: roomPlanFormValue(d.deviceTypeReadableType),
+        roomId                : roomId,
+        meshEnabled           : roomPlanFormValue(d.meshEnabled),
+        retryEnabled          : roomPlanFormValue(d.retryEnabled),
+        meshFullSync          : roomPlanFormValue(d.meshFullSync),
+        homeKitEnabled        : roomPlanFormValue(full?.homeKitEnabled),
+        locationId            : roomPlanFormValue(d.locationId),
+        hubId                 : roomPlanFormValue(d.hubId),
+        groupId               : roomPlanFormValue(d.groupId),
+        dashboardIds          : dashIds.join(','),
+        tags                  : tags,
+        defaultIcon           : roomPlanFormValue(d.defaultIcon),
+        notes                 : roomPlanFormValue(d.notes),
+        id                    : roomPlanFormValue(d.id),
+        version               : roomPlanFormValue(d.version),
+        controllerType        : roomPlanFormValue(d.controllerType),
+    ]
+}
+
+// One device, read then written then read back. The read-back is not
+// ceremony: this posts a whole device record, so "the hub said 200" is not
+// evidence the room actually changed.
+Map roomPlanWriteDeviceRoom(String devId, String roomId) {
+    Map before = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
+    if (!before.ok || !(before.data instanceof Map)) {
+        return [id: devId, ok: false, reason: 'could not read this device, so nothing was written']
+    }
+    Map form = roomPlanDeviceForm(before.data as Map, roomId)
+    if (form == null) {
+        return [id: devId, ok: false, reason: 'device record had no device object, so nothing was written']
+    }
+    Integer status = null
+    String failure = null
+    try {
+        httpPost([uri    : LOOPBACK_BASE,
+                  path   : '/device/update',
+                  requestContentType: 'application/x-www-form-urlencoded',
+                  body   : form,
+                  timeout: 15]) { resp -> status = resp?.status as Integer }
+    } catch (Exception e) {
+        failure = "${e.message}"
+    }
+    if (failure) return [id: devId, ok: false, reason: failure]
+
+    Map after = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
+    String landed = ''
+    if (after.ok && after.data instanceof Map) {
+        Object dev = (after.data as Map).device
+        if (dev instanceof Map) landed = "${(dev as Map).roomId ?: ''}"
+    }
+    boolean ok = (landed == roomId) || (roomId == ROOM_CLEARED_ID && (landed == '' || landed == '0'))
+    return [id: devId, ok: ok, status: status, roomId: landed,
+            reason: ok ? '' : "posted roomId ${roomId} but the device reads back ${landed ?: 'nothing'}"]
+}
+
+Map roomPlanApplyMoves(Map moves) {
+    Map roomIdByName = [:]
+    hubRoomList().each { Object r ->
+        Map m = r as Map
+        if (m.name && m.id) roomIdByName["${m.name}".toLowerCase()] = "${m.id}"
+    }
+    List results = []
+    moves.each { Object k, Object v ->
+        String devId = "${k}".trim()
+        String target = "${v ?: ''}".trim()
+        String roomId
+        if (!target) {
+            roomId = ROOM_CLEARED_ID
+        } else {
+            roomId = roomIdByName["${target.toLowerCase()}"]
+            if (!roomId) {
+                results << [id: devId, ok: false, reason: "this hub has no room named ${target}"]
+                return
+            }
+        }
+        results << roomPlanWriteDeviceRoom(devId, roomId)
+    }
+    Integer applied = results.count { (it as Map).ok } as Integer
+    return [ok: applied == results.size() && applied > 0, applied: applied,
+            requested: results.size(), results: results]
+}
+
 Map roomPlanGetMapping() {
     return render(status: 200, contentType: 'application/json', data: roomPlanJson(null))
 }
@@ -12691,7 +12811,7 @@ String roomPlanJson(String message) {
         rooms       : rooms,
         roomsFrom   : rooms.any { (it as Map).id } ? 'hub' : 'devices',
         layout      : layout,
-        canCommit   : false,
+        canCommit   : true,
         commitNote  : ROOM_COMMIT_UNAVAILABLE,
         message     : message ?: '',
     ])
@@ -12709,12 +12829,13 @@ Map roomPlanSaveMapping() {
     // is refused until that route exists, rather than silently accepted.
     if (payload.containsKey('moves')) {
         Map moves = (payload.moves instanceof Map) ? (payload.moves as Map) : [:]
-        return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
-            ok       : false,
-            applied  : 0,
-            requested: moves.size(),
-            reason   : ROOM_COMMIT_UNAVAILABLE,
-        ]))
+        if (!moves) {
+            return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+                ok: false, applied: 0, requested: 0, reason: 'nothing to apply'
+            ]))
+        }
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanApplyMoves(moves)))
     }
 
     Map incoming = (payload.layout instanceof Map) ? (payload.layout as Map) : [:]
