@@ -12822,6 +12822,116 @@ Map roomPlanApplyMoves(Map moves) {
             requested: results.size(), results: results]
 }
 
+// Room create, rename and delete. Captured from the hub's own Rooms page on
+// 2026-09-28, not inferred:
+//
+//   POST /room/save    {"roomId":0,     "name":"x", "deviceIds":[]}   create
+//   POST /room/save    {"roomId":"133", "name":"y", "deviceIds":[...]} rename
+//   GET  /room/delete/<id>                                            delete
+//
+// JSON, three fields, no version token and no whole-record overwrite - a far
+// gentler shape than /device/update. Two things to respect:
+//
+// deviceIds is the room's membership. The hub's own UI sends the full list, so
+// sending an empty one on a populated room would unassign everything in it.
+// Renames therefore read the current membership first and refuse rather than
+// guess. Delete really is a bare GET, so the only confirmation that exists is
+// the one this app puts in front of it.
+Map roomPlanRoomMembers(String roomId) {
+    Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/roomsList", 15)
+    Object data = fetched.ok ? fetched.data : null
+    Object nodes = (data instanceof Map) ? (data as Map).roomNodes : data
+    if (!(nodes instanceof List)) return [ok: false, ids: []]
+    for (Object n in (nodes as List)) {
+        if (!(n instanceof Map)) continue
+        Object raw = (n as Map).data
+        if (!(raw instanceof Map)) continue
+        if ("${(raw as Map).id ?: ''}" != roomId) continue
+        List ids = []
+        Object kids = (n as Map).children
+        if (kids instanceof List) {
+            (kids as List).each { Object k ->
+                if (!(k instanceof Map)) return
+                Object kd = (k as Map).data
+                if (kd instanceof Map) {
+                    String devId = "${(kd as Map).id ?: (kd as Map).deviceId ?: ''}".trim()
+                    if (devId) ids << devId
+                }
+            }
+        }
+        return [ok: true, ids: ids]
+    }
+    return [ok: false, ids: []]
+}
+
+Map roomPlanPostRoom(Map payload) {
+    Integer status = null
+    String failure = null
+    try {
+        httpPost([uri: LOOPBACK_BASE, path: '/room/save',
+                  requestContentType: 'application/json',
+                  body: JsonOutput.toJson(payload), timeout: 15]) { resp -> status = resp?.status as Integer }
+    } catch (Exception e) {
+        failure = "${e.message}"
+    }
+    state.roomIdCache = [:]
+    return [status: status, failure: failure]
+}
+
+Map roomPlanCreateRoom(String name) {
+    String clean = "${name ?: ''}".trim()
+    if (!clean) return [ok: false, reason: 'a room needs a name']
+    if (hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }) {
+        return [ok: false, reason: "this hub already has a room called ${clean}"]
+    }
+    Map res = roomPlanPostRoom([roomId: 0, name: clean, deviceIds: []])
+    if (res.failure) return [ok: false, reason: res.failure]
+    boolean landed = hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }
+    return [ok: landed, name: clean,
+            reason: landed ? '' : 'the hub accepted the request but the room is not in its list']
+}
+
+Map roomPlanRenameRoom(String roomId, String name) {
+    String clean = "${name ?: ''}".trim()
+    if (!clean) return [ok: false, reason: 'a room needs a name']
+    if (!roomId) return [ok: false, reason: 'no room id']
+    // The membership has to be carried across. Refusing beats guessing: an
+    // empty deviceIds on a populated room empties it.
+    Map members = roomPlanRoomMembers(roomId)
+    if (!members.ok) {
+        return [ok: false, reason: 'could not read this room current devices, so it was not renamed']
+    }
+    Integer before = (members.ids as List).size()
+    Map res = roomPlanPostRoom([roomId: roomId, name: clean, deviceIds: members.ids])
+    if (res.failure) return [ok: false, reason: res.failure]
+    Map after = roomPlanRoomMembers(roomId)
+    Integer now = (after.ids as List).size()
+    if (after.ok && now != before) {
+        return [ok: false, reason: "renamed, but this room went from ${before} devices to ${now} - check it"]
+    }
+    return [ok: true, name: clean, devices: now]
+}
+
+Map roomPlanDeleteRoom(String roomId) {
+    if (!roomId) return [ok: false, reason: 'no room id']
+    Map members = roomPlanRoomMembers(roomId)
+    Integer freed = (members.ids as List).size()
+    Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
+    state.roomIdCache = [:]
+    boolean gone = !hubRoomList().any { "${(it as Map).id}" == roomId }
+    if (!gone) {
+        return [ok: false, reason: fetched.ok ? 'the hub still lists this room' : 'the delete request failed']
+    }
+    // Devices are unassigned rather than deleted, so the panel's own room map
+    // has to follow or they will keep showing in a room that no longer exists.
+    if (freed) {
+        Map rooms = (state.deviceRooms ?: [:]) as Map
+        (members.ids as List).each { Object devId -> rooms["${devId}"] = '' }
+        state.deviceRooms = rooms
+    }
+    return [ok: true, freed: freed]
+}
+
 Map roomPlanGetMapping() {
     return render(status: 200, contentType: 'application/json', data: roomPlanJson(null))
 }
@@ -12866,6 +12976,20 @@ Map roomPlanSaveMapping() {
         }
         return render(status: 200, contentType: 'application/json',
                       data: JsonOutput.toJson(roomPlanApplyMoves(moves)))
+    }
+
+    if (payload.containsKey('createRoom')) {
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanCreateRoom("${payload.createRoom}")))
+    }
+    if (payload.containsKey('renameRoom')) {
+        Map r = (payload.renameRoom instanceof Map) ? (payload.renameRoom as Map) : [:]
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanRenameRoom("${r.id ?: ''}".trim(), "${r.name ?: ''}")))
+    }
+    if (payload.containsKey('deleteRoom')) {
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanDeleteRoom("${payload.deleteRoom}".trim())))
     }
 
     Map incoming = (payload.layout instanceof Map) ? (payload.layout as Map) : [:]
@@ -14107,6 +14231,9 @@ String buildMapHtml() {
   .roomRect.rpUnassigned { border:2px solid #e0443e; background:rgba(58,16,16,0.92); }
   .roomRectHead { display:flex; align-items:baseline; justify-content:space-between; gap:8px; padding:5px 9px; background:rgba(255,255,255,0.05); cursor:move; user-select:none; }
   .roomRectName { font-weight:700; color:#cfe9fb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .roomRectName[data-rename] { cursor:text; }
+  .roomRectDel { background:none; border:0; color:#5f7883; font-size:13px; line-height:1; padding:0 2px; cursor:pointer; }
+  .roomRectDel:hover { color:#e0443e; }
   .roomRectCount { color:#7f9aa6; font-size:10px; white-space:nowrap; }
   .roomRectBody { flex:1; min-height:0; overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:4px; }
   .roomRectBody.dropHot { background:rgba(129,188,0,0.16); outline:1px dashed #81BC00; outline-offset:-3px; }
@@ -14368,7 +14495,7 @@ String buildMapHtml() {
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
-<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomCanvas"></div></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomCanvas"></div></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
@@ -19834,6 +19961,29 @@ function roomPlanMatches(d) {
          (roomPlanCurrent(d) || '').toLowerCase().indexOf(roomSearch) !== -1;
 }
 
+function roomPlanIdFor(name) {
+  const hit = (ROOMPLAN.rooms || []).filter(function (r) {
+    return r && String(r.name).toLowerCase() === String(name).toLowerCase();
+  })[0];
+  return hit ? String(hit.id) : '';
+}
+
+function roomPlanCrud(body, busy) {
+  const msg = document.getElementById('roomPlanMsg');
+  msg.textContent = busy;
+  return fetch(ROOMPLAN_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d && d.ok) { msg.textContent = ''; roomPlanLoad(); return d; }
+      msg.textContent = (d && d.reason) || 'That did not work.';
+      return d;
+    })
+    .catch(function (e) { msg.textContent = 'Failed: ' + e; });
+}
+
 function roomPlanCurrent(d) {
   const id = String(d.id);
   if (Object.prototype.hasOwnProperty.call(roomPending, id)) return roomPending[id];
@@ -19911,8 +20061,12 @@ function roomPlanRender() {
     const isUnassigned = name === RP_UNASSIGNED;
     h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') + '" data-room="' + extEsc(key) + '"' +
          ' style="left:' + g.x + 'px; top:' + g.y + 'px; width:' + g.w + 'px; height:' + g.h + 'px;">';
-    h += '<div class="roomRectHead" title="Drag to move this room. Drag the corner to resize it.">' +
-         '<span class="roomRectName">' + extEsc(isUnassigned ? 'Not Allocated' : name) + '</span>' +
+    const roomId = isUnassigned ? '' : roomPlanIdFor(name);
+    h += '<div class="roomRectHead" title="Drag to move this room. Drag the corner to resize it.' +
+         (isUnassigned ? '' : ' Double-click the name to rename.') + '">' +
+         '<span class="roomRectName"' + (isUnassigned ? '' : ' data-rename="' + extEsc(roomId) + '"') + '>' +
+         extEsc(isUnassigned ? 'Not Allocated' : name) + '</span>' +
+         (isUnassigned || !roomId ? '' : '<button class="roomRectDel" type="button" data-del="' + extEsc(roomId) + '" title="Delete this room">&times;</button>') +
          '<span class="roomRectCount">' + (roomSearch ? (list.length + ' of ' + all.length) : all.length) + '</span></div>';
     h += '<div class="roomRectBody" data-drop="' + extEsc(name) + '">';
     if (!list.length) h += '<div class="roomRectEmpty">' + (roomSearch && all.length ? 'no match' : 'empty') + '</div>';
@@ -20034,6 +20188,31 @@ function roomPlanWire() {
       payload.split(',').forEach(function (devId) { roomPlanStage(devId, target, true); });
       roomSelection = {};
       roomPlanRender();
+    });
+  });
+  canvas.querySelectorAll('.roomRectName[data-rename]').forEach(function (el) {
+    el.addEventListener('dblclick', function (ev) {
+      ev.stopPropagation();
+      const current = el.textContent;
+      const next = window.prompt('Rename this room. Rule Machine, dashboards and Room Lighting refer to rooms by name, so anything using this one will need updating.', current);
+      if (next === null || !next.trim() || next.trim() === current) return;
+      roomPlanCrud({ renameRoom: { id: el.getAttribute('data-rename'), name: next.trim() } }, 'Renaming...');
+    });
+  });
+  canvas.querySelectorAll('.roomRectDel').forEach(function (btn) {
+    btn.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    btn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      const rect = btn.closest('.roomRect');
+      const nm = rect.querySelector('.roomRectName').textContent;
+      const n = (rect.querySelectorAll('.devChip') || []).length;
+      // Say what it costs. The hub deletes a room on a bare GET with no
+      // confirmation of its own, so this is the only one there is.
+      const warn = n
+        ? ('Delete the room ' + nm + '? Its ' + n + (n === 1 ? ' device' : ' devices') + ' will not be deleted, but they will end up in Not Allocated.')
+        : ('Delete the room ' + nm + '? It has no devices in it.');
+      if (!window.confirm(warn)) return;
+      roomPlanCrud({ deleteRoom: btn.getAttribute('data-del') }, 'Deleting...');
     });
   });
   canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
@@ -21026,6 +21205,11 @@ document.getElementById('roomPlanDiscard').addEventListener('click', function ()
   roomPending = {};
   roomSelection = {};
   roomPlanRender();
+});
+document.getElementById('roomPlanNew').addEventListener('click', function () {
+  const name = window.prompt('Name the new room');
+  if (name === null || !name.trim()) return;
+  roomPlanCrud({ createRoom: name.trim() }, 'Creating...');
 });
 document.getElementById('roomPlanReset').addEventListener('click', function () {
   // A room the user dragged keeps its saved geometry forever, so a change to
