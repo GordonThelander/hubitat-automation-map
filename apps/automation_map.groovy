@@ -12792,7 +12792,20 @@ Map roomPlanApplyMoves(Map moves) {
                 return
             }
         }
-        results << roomPlanWriteDeviceRoom(devId, roomId)
+        Map res = roomPlanWriteDeviceRoom(devId, roomId)
+        // state.deviceRooms is filled by a scan, and the panel's device list is
+        // built from it. Without this, a confirmed write is immediately
+        // contradicted by the next read: Gordon saw a device he had just moved
+        // drawn back in its old room, because the panel reloaded scan state
+        // that predated the write. Keeping it current here is what makes the
+        // room change survive a reload without forcing a full rescan.
+        if (res.ok) {
+            Map rooms = (state.deviceRooms ?: [:]) as Map
+            rooms[devId] = target
+            state.deviceRooms = rooms
+            res.roomName = target
+        }
+        results << res
     }
     Integer applied = results.count { (it as Map).ok } as Integer
     return [ok: applied == results.size() && applied > 0, applied: applied,
@@ -19994,9 +20007,30 @@ function roomPlanApply() {
     body: JSON.stringify({ moves: roomPending })
   }).then(function (r) { return r.json(); })
     .then(function (d) {
-      if (d && d.ok) { roomPending = {}; roomPlanLoad(); return; }
-      // Refused rather than failed: the staged moves stay exactly as they are.
-      msg.textContent = (d && d.reason) || 'Could not apply.';
+      // Trust what each write read back off the device, not a re-fetch of the
+      // panel's device list: that list is built from scan state, so reloading
+      // here drew a just-moved device back in its old room and made a write
+      // that had actually landed look like it had failed.
+      const results = (d && d.results) || [];
+      let moved = 0;
+      results.forEach(function (res) {
+        if (!res || !res.ok) return;
+        moved += 1;
+        const dev = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(res.id); })[0];
+        if (dev) dev.room = res.roomName || '';
+        delete roomPending[String(res.id)];
+      });
+      roomPlanRender();
+      if (d && d.ok) {
+        msg.textContent = moved + (moved === 1 ? ' device moved.' : ' devices moved.');
+        return;
+      }
+      // Partial or refused. Whatever did not land stays staged, so a retry
+      // sends only the ones still outstanding.
+      const failed = results.filter(function (r) { return r && !r.ok; });
+      msg.textContent = failed.length
+        ? (moved + ' moved, ' + failed.length + ' failed: ' + (failed[0].reason || 'no reason given'))
+        : ((d && d.reason) || 'Could not apply.');
     })
     .catch(function (e) { msg.textContent = 'Could not apply: ' + e; });
 }
