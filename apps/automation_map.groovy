@@ -3955,6 +3955,14 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             // only (spec section 4.1) - never added to the AI-friendly export.
             if (installedApp?.appTypeId != null) {
                 out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
+                // Same table, read for a second purpose: it holds only the app
+                // types the user installed, so presence in it is the hub's own
+                // answer to built-in versus user app. Null when the table is
+                // empty, which means the lookup failed rather than that every
+                // app on this hub ships with it.
+                if (appTypeNamespaces) {
+                    out.userApp = appTypeNamespaces.containsKey("${installedApp.appTypeId}")
+                }
             }
             // Stored for EVERY app, not only the empty ones, because it is read
             // in the opposite direction from the one it is written in. A
@@ -11418,6 +11426,16 @@ Map buildGraph() {
         // 4.1) - deliberately absent from buildExportPayload()'s apps[]
         // mapping, so it never reaches the AI-friendly export.
         if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
+        // /hub2/userAppTypes lists the app types the USER installed, so an app
+        // whose type is in it came from HPM or a manual paste, and one that is
+        // not is shipped with the hub. That is exactly the distinction the hub
+        // draws itself with its own "Add built-in app" and "Add user app"
+        // buttons. Left null when the namespace table could not be read at
+        // all, so a failed lookup does not relabel every app on the hub as
+        // built-in.
+        if (appMap.containsKey('userApp') && appMap.userApp != null) {
+            nodes[appNodeId].userApp = (appMap.userApp == true)
+        }
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (appMap.disabled) nodes[appNodeId].disabled = true
         if (appMap.paused) nodes[appNodeId].paused = true
@@ -14245,11 +14263,14 @@ String buildMapHtml() {
   #roomPlanMsg { color:#9fd0e4; font-size:10px; }
   /* Same card the right-click tip uses, not a banner: it is teaching a gesture,
      so it wants the illustration and the weight that goes with one. */
-  #roomTip { position:absolute; left:50%; top:16px; transform:translateX(-50%); z-index:40;
+  /* Sits clear of the top rows so it does not cover the rooms it is talking
+     about, and is draggable by its heading for when it covers the one you
+     want anyway. */
+  #roomTip { position:absolute; left:50%; top:330px; transform:translateX(-50%); z-index:40;
              width:min(88%,430px); box-sizing:border-box; background:rgba(4,20,27,0.98);
              border:1px solid rgba(129,188,0,0.55); border-radius:8px;
              box-shadow:0 8px 32px rgba(0,0,0,0.6); padding:14px 18px 12px 18px; font-size:12px; color:#e8f3f6; }
-  #roomTip h3 { margin:0 0 6px 0; font-size:14px; color:#cfe9fb; }
+  #roomTip h3 { margin:0 0 6px 0; font-size:14px; color:#cfe9fb; cursor:move; user-select:none; }
   #roomTip p { margin:0 0 8px 0; color:#cfe1e7; line-height:1.45; }
   #roomTip p.roomTipFoot { margin:0; color:#9fb6bf; }
   #roomTip b { color:#a9d94a; }
@@ -18078,10 +18099,21 @@ function renderCommunityCard(node) {
 // Short prefix tag for an app's building engine or origin, agreed with
 // Gordon 2026-08-19 - purely a display label, sort order is untouched (the
 // list below is already sorted on the real title before this ever runs).
-// CUS is the deliberate catch-all: every app not specifically recognised
-// gets it, so nothing is ever left with no tag, and nothing here has to be
-// certain whether an unrecognised app is Gordon's own, a community app, or
-// something else - only the HUB row needs that confidence.
+// INT and CUS are no longer guessed from a hand-kept list. INT means an app
+// Hubitat ships with the platform, CUS one the user installed through HPM or by
+// hand - the same split the hub draws with its own "Add built-in app" and "Add
+// user app" buttons. The scan reads it from /hub2/userAppTypes, which lists
+// only user-installed app types, so the answer comes from the hub rather than
+// from anyone's judgement about a name.
+//
+// Corrected 2026-09-28: nine integrations were listed here as INT because the
+// tag had been read as "integration". Every one of them - LIFX Light Manager,
+// CoCoHue, Kasa, Tapo, Sensibo, Chromecast, Meross, Google Home, BOM Weather
+// Alerts - is a user-installed app, so all nine were labelled as shipping with
+// the hub when none of them do.
+//
+// The engine tags below are all built-in engines and stay explicit, because
+// they say something more useful than "built-in" does.
 const APP_TYPE_TAGS = {
   'Rule-5.1': 'RM5',
   'Visual Rule Builder 2.0': 'VRB',
@@ -18101,15 +18133,6 @@ const APP_TYPE_TAGS = {
   // nothing external.
   'webCoRE': 'WCE',
   'webCoRE Piston': 'WCP',
-  'Chromecast Integration': 'INT',
-  'CoCoHue - Hue Bridge Integration': 'INT',
-  'Google Home': 'INT',
-  'Kasa Integration': 'INT',
-  'LIFX Light Manager': 'INT',
-  'Meross MSG100 Garage Door Setup': 'INT',
-  'Sensibo Integration': 'INT',
-  'Tapo Integration': 'INT',
-  'BOM Weather Alerts': 'INT',
   'Rule Machine': 'HUB',
   'Groups and Scenes': 'HUB',
   'Maker API': 'HUB',
@@ -18128,7 +18151,11 @@ function appOptionText(n) {
   // by the type prefix its engine and runtime apps share, not by a fixed
   // list that a channel rename would silently drop back to CUS.
   const isHai = n.engine === 'HAI' || (n.appType && n.appType.indexOf('HAI ') === 0);
-  const tag = isHai ? 'HAI' : (APP_TYPE_TAGS[n.appType] || 'CUS');
+  // n.userApp is the hub's own answer; CUS is the fallback only when the scan
+  // could not read it, where assuming user-installed is the safer guess - a
+  // community app mislabelled as shipping with the hub is the worse error.
+  const tag = isHai ? 'HAI'
+            : (APP_TYPE_TAGS[n.appType] || (n.userApp === false ? 'INT' : 'CUS'));
   // That engine labels its own rules "[HAI] name", so prefixing again reads
   // "[HAI] [HAI] name". One tag is enough whoever wrote it.
   if (title.indexOf('[' + tag + '] ') === 0) return title;
@@ -21271,6 +21298,36 @@ document.getElementById('roomPlanDiscard').addEventListener('click', function ()
   roomPlanRender();
 });
 document.getElementById('roomTipClose').addEventListener('click', roomTipDismiss);
+// Draggable by its heading, on the same four-pixel threshold the panels use so
+// a click on the card is not read as a move. Position is not persisted: the
+// card is shown once per version, so where it was last dragged is of no use to
+// anybody the next time it appears.
+(function () {
+  const tip = document.getElementById('roomTip');
+  const grip = document.getElementById('roomTipTitle');
+  if (!tip || !grip) return;
+  let dragging = false, startX = 0, startY = 0, baseL = 0, baseT = 0, moved = false;
+  grip.addEventListener('mousedown', function (ev) {
+    const r = tip.getBoundingClientRect();
+    const parent = tip.offsetParent ? tip.offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
+    dragging = true; moved = false;
+    startX = ev.clientX; startY = ev.clientY;
+    baseL = r.left - parent.left; baseT = r.top - parent.top;
+    ev.preventDefault();
+  });
+  document.addEventListener('mousemove', function (ev) {
+    if (!dragging) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    moved = true;
+    // The centring transform has to go the moment it is positioned by hand,
+    // or every drag is offset by half the card's width.
+    tip.style.transform = 'none';
+    tip.style.left = Math.max(0, baseL + dx) + 'px';
+    tip.style.top = Math.max(0, baseT + dy) + 'px';
+  });
+  document.addEventListener('mouseup', function () { dragging = false; });
+})();
 document.getElementById('roomPlanNew').addEventListener('click', function () {
   const name = window.prompt('Name the new room');
   if (name === null || !name.trim()) return;
