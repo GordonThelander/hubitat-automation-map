@@ -12699,11 +12699,20 @@ String roomPlanFormValue(Object v) { return v == null ? '' : "${v}" }
 Map roomPlanDeviceForm(Map full, String roomId) {
     Map d = (full?.device instanceof Map) ? full.device as Map : [:]
     if (!d) return null
+    // fullJson's dashboards array lists EVERY dashboard on the hub, each with a
+    // selected flag - it is not the set this device belongs to. Collecting all
+    // of their ids would add the device to every dashboard on the hub. Only the
+    // selected ones are carried forward. Measured against a hub with one
+    // dashboard and one assignment, where the two are indistinguishable, so the
+    // flag is honoured rather than the shape assumed.
     List dashIds = []
     Object dashboards = full?.dashboards
     if (dashboards instanceof List) {
         (dashboards as List).each { Object x ->
-            if (x instanceof Map && (x as Map).id != null) dashIds << "${(x as Map).id}"
+            if (!(x instanceof Map)) return
+            Map dash = x as Map
+            if (dash.id == null) return
+            if (dash.selected == true) dashIds << "${dash.id}"
         }
     }
     Object rawTags = d.tags
