@@ -14120,6 +14120,10 @@ String buildMapHtml() {
   .devChip.dragging { opacity:0.4; }
   /* A staged move is visibly not yet real - the whole point of commit. */
   .devChip.rpStaged { background:rgba(129,188,0,0.22); outline:1px solid #81BC00; }
+  /* Picked, not yet moved. Distinct from staged, which has already been
+     dropped somewhere and is waiting on Apply. */
+  .devChip.rpSelected { background:rgba(79,179,169,0.30); outline:1px solid #4fb3a9; }
+  .devChip.rpSelected.rpStaged { outline:1px solid #81BC00; }
   .roomRectEmpty { color:#5f7883; font-size:10px; font-style:italic; padding:2px 4px; }
   /* The glyph is a pictogram, not prose - it needs more than 10px to read. */
   #roomCanvas .devIconGlyph { font-size:12px; width:14px; margin-right:4px; }
@@ -14364,7 +14368,7 @@ String buildMapHtml() {
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
-<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomCanvas"></div></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomCanvas"></div></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
@@ -19761,8 +19765,18 @@ var ROOMPLAN = { rooms: [], layout: {}, canCommit: false, commitNote: '' };
 var roomPending = {};
 var roomLayoutTimer = null;
 var roomSearch = '';
+// Device ids the user has clicked. Dragging any one of them moves the whole
+// set, because filing 50 devices one at a time is the thing this panel exists
+// to avoid.
+var roomSelection = {};
 const RP_UNASSIGNED = '';
-const RP_W = 250, RP_H = 210, RP_GAP = 14, RP_PERROW = 4;
+// A room shows three devices before it scrolls: header + 3 chips at 21px
+// pitch + padding. Narrow and short so as many rooms as possible sit on one
+// screen, which is the point of the canvas. Not Allocated is the exception -
+// it is the pile being emptied, so it gets a full-height column of its own
+// down the left rather than competing for a slot in the grid.
+const RP_W = 178, RP_H = 104, RP_GAP = 10;
+const RP_UNALLOC_W = 215;
 
 function roomPlanOpen() {
   bringToFront(roomPlanPanel);
@@ -19828,12 +19842,16 @@ function roomPlanCurrent(d) {
 
 function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
 
-function roomPlanGeom(name, index) {
+// index is the position among the ordinary rooms only; Not Allocated is placed
+// separately and does not consume a grid slot.
+function roomPlanGeom(name, index, perRow, columnHeight) {
   const saved = (ROOMPLAN.layout || {})[roomPlanLayoutKey(name)];
   if (saved && saved.w) return { x: saved.x, y: saved.y, w: saved.w, h: saved.h };
+  if (name === RP_UNASSIGNED) return { x: 0, y: 0, w: RP_UNALLOC_W, h: columnHeight };
+  const left = RP_UNALLOC_W + RP_GAP;
   return {
-    x: (index % RP_PERROW) * (RP_W + RP_GAP),
-    y: Math.floor(index / RP_PERROW) * (RP_H + RP_GAP),
+    x: left + (index % perRow) * (RP_W + RP_GAP),
+    y: Math.floor(index / perRow) * (RP_H + RP_GAP),
     w: RP_W, h: RP_H
   };
 }
@@ -19854,11 +19872,25 @@ function roomPlanRender() {
     byRoom[key].push(d);
   });
 
+  // Room columns are fitted to the space actually available, so the grid packs
+  // to the window rather than to a number chosen in advance.
+  const bodyEl = document.getElementById('roomPlanBody');
+  const avail = Math.max(320, (bodyEl ? bodyEl.clientWidth : 1200) - RP_UNALLOC_W - RP_GAP - 18);
+  const perRow = Math.max(1, Math.floor((avail + RP_GAP) / (RP_W + RP_GAP)));
+  const roomCount = buckets.length - 1;
+  const rows = Math.ceil(roomCount / perRow);
+  const columnHeight = Math.max(
+    rows * (RP_H + RP_GAP) - RP_GAP,
+    bodyEl ? bodyEl.clientHeight - 16 : 600
+  );
+
   let maxBottom = 0;
   let h = '';
+  let roomIndex = -1;
   buckets.forEach(function (name, i) {
     const key = roomPlanLayoutKey(name);
-    const g = roomPlanGeom(name, i);
+    if (name !== RP_UNASSIGNED) roomIndex += 1;
+    const g = roomPlanGeom(name, roomIndex, perRow, columnHeight);
     maxBottom = Math.max(maxBottom, g.y + g.h);
     const all = byRoom[key] || [];
     // Rooms always stay on screen while searching: a hidden room is a room you
@@ -19874,7 +19906,8 @@ function roomPlanRender() {
     if (!list.length) h += '<div class="roomRectEmpty">' + (roomSearch && all.length ? 'no match' : 'empty') + '</div>';
     list.forEach(function (d) {
       const staged = Object.prototype.hasOwnProperty.call(roomPending, String(d.id));
-      h += '<div class="devChip' + (staged ? ' rpStaged' : '') + '" draggable="true" data-dev="' + extEsc(d.id) + '"' +
+      const sel = roomSelection[String(d.id)] === true;
+      h += '<div class="devChip' + (staged ? ' rpStaged' : '') + (sel ? ' rpSelected' : '') + '" draggable="true" data-dev="' + extEsc(d.id) + '"' +
            ' title="' + extEsc(d.name) + (staged ? ' (staged, not yet applied)' : '') + '">' +
            '<span class="devIconGlyph">' + (ICON_GLYPHS[iconsEffectiveKey(d)] || ICON_GLYPHS.unknown) + '</span>' +
            extEsc(d.name) + '</div>';
@@ -19894,7 +19927,9 @@ function roomPlanRenderBar() {
   // innerHTML rewrite on every keystroke would take the focus and the caret
   // with it.
   const status = document.getElementById('roomPlanStatus');
-  status.textContent = n ? (n + (n === 1 ? ' staged move' : ' staged moves')) : 'No staged moves';
+  const picked = Object.keys(roomSelection).length;
+  status.textContent = (n ? (n + (n === 1 ? ' staged move' : ' staged moves')) : 'No staged moves') +
+                       (picked ? ('  |  ' + picked + ' selected') : '');
   status.className = 'rpCount' + (n ? '' : ' rpNone');
   document.getElementById('roomPlanApply').disabled = !n;
   document.getElementById('roomPlanDiscard').disabled = !n;
@@ -19906,25 +19941,56 @@ function roomPlanRenderBar() {
       : '');
 }
 
-function roomPlanStage(devId, targetRoom) {
+var roomPlanLastClicked = null;
+
+// defer=true when staging a whole dragged selection: render once at the end
+// rather than once per device.
+function roomPlanStage(devId, targetRoom, defer) {
   const d = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(devId); })[0];
   if (!d) return;
   // Dragging a device back where it started is not a change - drop the entry
   // rather than staging a write of the value already there.
   if (roomPlanNormalise(d.room) === roomPlanNormalise(targetRoom)) delete roomPending[String(devId)];
   else roomPending[String(devId)] = targetRoom;
-  roomPlanRender();
+  if (!defer) roomPlanRender();
 }
 
 function roomPlanWire() {
   const canvas = document.getElementById('roomCanvas');
   canvas.querySelectorAll('.devChip').forEach(function (chip) {
-    chip.addEventListener('dragstart', function (ev) {
-      ev.dataTransfer.setData('text/plain', chip.getAttribute('data-dev'));
-      ev.dataTransfer.effectAllowed = 'move';
-      chip.classList.add('dragging');
+    const id = chip.getAttribute('data-dev');
+    chip.addEventListener('click', function (ev) {
+      // Plain click toggles. Shift extends from the last click within the same
+      // room, which is how a run of devices gets picked without 20 clicks.
+      if (ev.shiftKey && roomPlanLastClicked) {
+        const body = chip.closest('.roomRectBody');
+        const ids = body ? [].slice.call(body.querySelectorAll('.devChip')).map(function (c) { return c.getAttribute('data-dev'); }) : [];
+        const a = ids.indexOf(roomPlanLastClicked), b = ids.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (x) { roomSelection[x] = true; });
+          roomPlanRender();
+          return;
+        }
+      }
+      if (roomSelection[id]) delete roomSelection[id]; else roomSelection[id] = true;
+      roomPlanLastClicked = id;
+      roomPlanRender();
     });
-    chip.addEventListener('dragend', function () { chip.classList.remove('dragging'); });
+    chip.addEventListener('dragstart', function (ev) {
+      // Dragging an unselected chip drags just that one, and drops the
+      // selection - otherwise a stray earlier click silently drags devices the
+      // user has forgotten they picked.
+      if (!roomSelection[id]) { roomSelection = {}; roomSelection[id] = true; }
+      const ids = Object.keys(roomSelection);
+      ev.dataTransfer.setData('text/plain', ids.join(','));
+      ev.dataTransfer.effectAllowed = 'move';
+      canvas.querySelectorAll('.devChip').forEach(function (c) {
+        if (roomSelection[c.getAttribute('data-dev')]) c.classList.add('dragging');
+      });
+    });
+    chip.addEventListener('dragend', function () {
+      canvas.querySelectorAll('.devChip').forEach(function (c) { c.classList.remove('dragging'); });
+    });
   });
   canvas.querySelectorAll('.roomRectBody').forEach(function (zone) {
     zone.addEventListener('dragover', function (ev) {
@@ -19936,8 +20002,12 @@ function roomPlanWire() {
     zone.addEventListener('drop', function (ev) {
       ev.preventDefault();
       zone.classList.remove('dropHot');
-      const devId = ev.dataTransfer.getData('text/plain');
-      if (devId) roomPlanStage(devId, zone.getAttribute('data-drop'));
+      const payload = ev.dataTransfer.getData('text/plain');
+      if (!payload) return;
+      const target = zone.getAttribute('data-drop');
+      payload.split(',').forEach(function (devId) { roomPlanStage(devId, target, true); });
+      roomSelection = {};
+      roomPlanRender();
     });
   });
   canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
@@ -20328,6 +20398,10 @@ function exportJSON() {
 // One call, no hub reads: the ratings the Migration Assessment panel already
 // computed are cached on the hub, so an export no longer waits on 25 decodes.
 // A piston nobody has rated yet is reported as not-rated rather than guessed at.
+// ${''} <- load bearing, not a typo. Groovy caps a single GString literal
+// segment at 65535 characters, and this page's script had grown past that
+// in one unbroken run, so the app stopped compiling. An empty
+// interpolation splits the segment and renders as nothing.
 function fetchMigrationRatings(btn, failedFetches) {
   const nameOfNode = {};
   ALL_NODES.forEach(function (n) { nameOfNode[n.id] = n.name || n.label || n.id; });
@@ -20924,7 +20998,23 @@ document.getElementById('roomPlanBtn').addEventListener('click', roomPlanOpen);
 document.getElementById('roomPlanApply').addEventListener('click', roomPlanApply);
 document.getElementById('roomPlanDiscard').addEventListener('click', function () {
   roomPending = {};
+  roomSelection = {};
   roomPlanRender();
+});
+document.getElementById('roomPlanReset').addEventListener('click', function () {
+  // A room the user dragged keeps its saved geometry forever, so a change to
+  // the default layout is invisible on any room already moved. This is the way
+  // back to the defaults without hunting each room down.
+  ROOMPLAN.layout = {};
+  roomPlanRender();
+  const msg = document.getElementById('roomPlanMsg');
+  fetch(ROOMPLAN_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layout: {} })
+  }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+    .then(function () { if (msg) msg.textContent = 'Layout reset.'; })
+    .catch(function (e) { if (msg) msg.textContent = 'Layout not reset: ' + e; });
 });
 document.getElementById('roomPlanSearch').addEventListener('input', function (ev) {
   roomSearch = (ev.target.value || '').trim().toLowerCase();
