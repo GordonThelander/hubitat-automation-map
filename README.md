@@ -6,7 +6,7 @@ It answers questions the hub itself makes tedious: what does this rule really to
 
 > **Development channel:** This `dev` branch documents the current parallel test build. It installs as **Automation Map (Dev)** with separate settings and scan data. The production release remains on `main`. See the [changelog](CHANGELOG.md) for the complete development history.
 
-**It never commands a device or changes an automation.** No switch is flipped, no rule is edited, no app is altered. What it can change is where things live: the Room planner assigns devices to rooms and creates, renames and deletes rooms, because doing that one device at a time in the hub UI is miserable. Nothing reaches the hub until you press Apply, and a room change only ever alters that device's room, never the rest of its settings. Everything else you can edit is the app's own notes about your setup - device icon corrections and external system declarations.
+**It never commands a device or changes an automation.** No switch is flipped, no rule is edited, no app is altered. What it can change is where things live: the Room Manager assigns devices to rooms and creates, renames and deletes rooms. The hub can already do that a room at a time, from its own Rooms page; this does it across every room at once, with everything unallocated sitting beside every destination. Nothing reaches the hub until you press Apply, and a room change only ever alters that device's room, never the rest of its settings. Everything else you can edit is the app's own notes about your setup - device icon corrections and external system declarations.
 
 ## What you get
 
@@ -56,7 +56,7 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 
 **AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
 
-### Room planner
+### Room Manager
 
 Filing devices into rooms through the hub's own pages means opening every device in turn. This
 does it on one screen.

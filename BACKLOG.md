@@ -751,7 +751,7 @@ OAuth endpoint, which nothing currently does.
 they are on first, and asks, rather than assuming the one their tooling reaches for is the one that
 matters.
 
-### 48. DONE 2026-09-28. Room planner, and the hub write endpoints it is built on
+### 48. DONE 2026-09-28. Room Manager, and the hub write endpoints it is built on
 
 Gordon asked for GUI room management: rooms as rectangles, devices dragged between them and a
 Not Allocated bucket, then one explicit commit. Built into the map rather than as a separate app,
