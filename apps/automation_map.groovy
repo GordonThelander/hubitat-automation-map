@@ -14539,32 +14539,31 @@ String buildMapHtml() {
       <option value="deviceRead">webCoRE device state reads only</option>
     </select></label>
     <div id="headerActions">
-      <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
-      <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit map</button>
+      <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show All</button>
+      <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit Map</button>
     </div>
   </div>
   <div id="toolRail">
-    <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External systems</button></div>
-    <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
-    <button id="roomPlanBtn" type="button" title="Arrange rooms and drag devices between them, then apply the batch">Room planner</button>
-    <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+    <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External Systems</button></div>
+    <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot Tables</button><button id="iconsBtn" type="button">Device Icons</button></div>
+    <button id="roomPlanBtn" type="button" title="Arrange rooms and drag devices between them, then apply the batch">Room Manager</button>
+    <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI Friendly Export</button>
     <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
     <button id="rmCoverageBtn" type="button" title="Check every Rule Machine rule on this hub against what the HAI rule engine can do">HAI RM5 Coverage</button>
-    <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities &#8599;</button>
-    <button id="hubTipBtn" type="button" title="How to open a device or app on the hub">Opening objects on the hub</button>
-    <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
+    <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat Release Activity</button>
+    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community Utilities &#8599;</button>
+    <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit Map</button>
   </div>
 </div>
 <div id="migrationCard" hidden></div>
 <div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div id="flowEngineLink" style="display:none"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
-<div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
-<div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
+<div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External Systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
+<div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot Tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
-<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomTip" role="dialog" aria-labelledby="roomTipTitle" hidden><button class="roomTipClose" type="button" id="roomTipClose" title="Close" aria-label="Close">&times;</button><h3 id="roomTipTitle">Moving devices between rooms</h3><svg class="roomTipArt" width="250" height="88" viewBox="0 0 250 88" role="img" aria-label="Click devices to select several, then drag them into another room"><rect x="4" y="8" width="86" height="72" rx="5" fill="rgba(224,68,62,0.12)" stroke="#e0443e"></rect><text x="12" y="23" fill="#e8b0ad" font-size="9">Not Allocated</text><rect x="12" y="30" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="45" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="60" width="70" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><path d="M96 46 h44" stroke="#81BC00" stroke-width="2" fill="none"></path><path d="M140 46 l-8 -5 v10 z" fill="#81BC00"></path><path d="M112 44 l14 12 -5 1 3 7 -4 1 -3 -7 -4 3 z" fill="#e8f3f6"></path><rect x="150" y="8" width="96" height="72" rx="5" fill="rgba(255,255,255,0.06)" stroke="#1e5878"></rect><text x="158" y="23" fill="#cfe9fb" font-size="9">Kitchen</text><text x="228" y="23" fill="#7f9aa6" font-size="9">&#215;</text><rect x="158" y="30" width="80" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><rect x="158" y="45" width="80" height="11" rx="3" fill="rgba(129,188,0,0.35)" stroke="#81BC00"></rect></svg><p><b>Click devices to pick several</b>, then drag any one of them and the rest follow. Shift-click takes a whole run. Nothing reaches the hub until you press Apply.</p><p class="roomTipFoot">Double-click a room name to rename it. The small &#215; on a room deletes it - its devices are kept, and land back in Not Allocated.</p></div><div id="roomCanvas"></div></div></div>
-<div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
-<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room Manager</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomTip" role="dialog" aria-labelledby="roomTipTitle" hidden><button class="roomTipClose" type="button" id="roomTipClose" title="Close" aria-label="Close">&times;</button><h3 id="roomTipTitle">Moving devices between rooms</h3><svg class="roomTipArt" width="250" height="88" viewBox="0 0 250 88" role="img" aria-label="Click devices to select several, then drag them into another room"><rect x="4" y="8" width="86" height="72" rx="5" fill="rgba(224,68,62,0.12)" stroke="#e0443e"></rect><text x="12" y="23" fill="#e8b0ad" font-size="9">Not Allocated</text><rect x="12" y="30" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="45" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="60" width="70" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><path d="M96 46 h44" stroke="#81BC00" stroke-width="2" fill="none"></path><path d="M140 46 l-8 -5 v10 z" fill="#81BC00"></path><path d="M112 44 l14 12 -5 1 3 7 -4 1 -3 -7 -4 3 z" fill="#e8f3f6"></path><rect x="150" y="8" width="96" height="72" rx="5" fill="rgba(255,255,255,0.06)" stroke="#1e5878"></rect><text x="158" y="23" fill="#cfe9fb" font-size="9">Kitchen</text><text x="228" y="23" fill="#7f9aa6" font-size="9">&#215;</text><rect x="158" y="30" width="80" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><rect x="158" y="45" width="80" height="11" rx="3" fill="rgba(129,188,0,0.35)" stroke="#81BC00"></rect></svg><p><b>Click devices to pick several</b>, then drag any one of them and the rest follow. Shift-click takes a whole run. Nothing reaches the hub until you press Apply.</p><p class="roomTipFoot">Double-click a room name to rename it. The small &#215; on a room deletes it - its devices are kept, and land back in Not Allocated.</p></div><div id="roomCanvas"></div></div></div>
+<div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device Icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
+<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat Release Activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
 <div id="hubTip" role="dialog" aria-labelledby="hubTipTitle" hidden>
   <button class="hubTipClose" type="button" id="hubTipClose" title="Close" aria-label="Close">&times;</button>
@@ -17502,57 +17501,75 @@ function rmcRender() {
       (b.publishedAt ? ', generated ' + extEsc(String(b.publishedAt)) : '') + '. ' +
       extEsc(String(b.whatThisIs || '')) + '</p>';
   }
-  const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0 };
+  const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0, scoped: 0 };
   rmCats.forEach(function (c) {
-    ['dimensions', 'runs', 'format', 'partial', 'missing', 'hubProven'].forEach(function (k) { tot[k] += (c[k] || 0); });
+    ['dimensions', 'runs', 'format', 'partial', 'missing', 'hubProven', 'scoped'].forEach(function (k) { tot[k] += (c[k] || 0); });
   });
-  // A column of zeros teaches nothing. It appears on a hub where something is
-  // actually in that state and stays away otherwise.
+  // Four states, ordered by how much of the work is actually done: Tested,
+  // Implemented, Scoped, Not built. Tested and Implemented are the same
+  // published status split on whether anyone has watched it run, which is the
+  // distinction carrying most of this report's value. Scoped sits on the
+  // not-working side deliberately: the engine describes it as the route being
+  // known with nothing built, and grouping it with the working side would
+  // overstate the engine in the one place it has already overstated itself.
+  const tested = function (c) { return c.hubProven || 0; };
+  const implemented = function (c) { return Math.max(0, (c.runs || 0) - (c.hubProven || 0)); };
+  // Partly and the format state are older values no row currently uses. A
+  // column of zeros teaches nothing, so each appears only on a hub where
+  // something is actually in that state.
   const showFormat = tot.format > 0;
-  const fmtCell = function (n) { return showFormat ? '<td>' + extEsc(String(n)) + '</td>' : ''; };
-  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th><th>Works in ' + extEsc(eng.name || 'HAI-1') + '</th>' +
-    '<th>of those, seen on a hub</th>' + (showFormat ? '<th>Writes but does not run</th>' : '') +
-    '<th>Partly</th><th>Not built</th></tr></thead><tbody>';
+  const showPartial = tot.partial > 0;
+  const optCell = function (show, n) { return show ? '<td>' + extEsc(String(n)) + '</td>' : ''; };
+  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th>' +
+    '<th>Tested</th><th>Implemented</th><th>Scoped</th><th>Not built</th>' +
+    (showPartial ? '<th>Partly</th>' : '') + (showFormat ? '<th>Writes but does not run</th>' : '') +
+    '</tr></thead><tbody>';
   rmCats.forEach(function (c) {
     html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.dimensions)) +
-      '</td><td>' + extEsc(String(c.runs)) + '</td><td>' + extEsc(String(c.hubProven || 0)) +
-      '</td>' + fmtCell(c.format) + '<td>' +
-      extEsc(String(c.partial)) + '</td><td>' + extEsc(String(c.missing)) + '</td></tr>';
+      '</td><td>' + extEsc(String(tested(c))) + '</td><td>' + extEsc(String(implemented(c))) +
+      '</td><td>' + extEsc(String(c.scoped || 0)) + '</td><td>' + extEsc(String(c.missing || 0)) + '</td>' +
+      optCell(showPartial, c.partial || 0) + optCell(showFormat, c.format || 0) + '</tr>';
   });
-  let extraRuns = 0, extraHub = 0;
-  extraCats.forEach(function (c) { extraRuns += (c.runs || 0); extraHub += (c.hubProven || 0); });
-  if (extraRuns) {
+  let extraRuns = 0, extraHub = 0, extraScoped = 0, extraMissing = 0;
+  extraCats.forEach(function (c) {
+    extraRuns += (c.runs || 0); extraHub += (c.hubProven || 0);
+    extraScoped += (c.scoped || 0); extraMissing += (c.missing || 0);
+  });
+  if (extraRuns || extraScoped || extraMissing) {
     html += '<tr><td>New capabilities <span style="opacity:0.7">(nothing in Rule Machine to measure against)</span></td>' +
-      '<td>0</td><td>' + extEsc(String(extraRuns)) + '</td><td>' + extEsc(String(extraHub)) +
-      '</td>' + fmtCell(0) + '<td>0</td><td>0</td></tr>';
+      '<td>0</td><td>' + extEsc(String(extraHub)) + '</td><td>' + extEsc(String(Math.max(0, extraRuns - extraHub))) +
+      '</td><td>' + extEsc(String(extraScoped)) + '</td><td>' + extEsc(String(extraMissing)) + '</td>' +
+      optCell(showPartial, 0) + optCell(showFormat, 0) + '</tr>';
   }
-  html += '<tr><td><b>Every area</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td><td><b>' +
-    extEsc(String(tot.runs + extraRuns)) + '</b></td><td><b>' + extEsc(String(tot.hubProven + extraHub)) + '</b></td>' +
-    (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '<td><b>' +
-    extEsc(String(tot.partial)) + '</b></td><td><b>' + extEsc(String(tot.missing)) + '</b></td></tr>';
-  // The other direction, on the same table: where Rule Machine has nothing and
-  // the engine has something. Counted as 0 against RM-5 so it cannot be read
-  // as parity, and kept below the total for the same reason.
+  html += '<tr><td><b>Every area</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td>' +
+    '<td><b>' + extEsc(String(tot.hubProven)) + '</b></td>' +
+    '<td><b>' + extEsc(String(Math.max(0, tot.runs - tot.hubProven))) + '</b></td>' +
+    '<td><b>' + extEsc(String(tot.scoped)) + '</b></td>' +
+    '<td><b>' + extEsc(String(tot.missing)) + '</b></td>' +
+    (showPartial ? '<td><b>' + extEsc(String(tot.partial)) + '</b></td>' : '') +
+    (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '</tr>';
   html += '</tbody></table>';
-  const shortfall = tot.dimensions - tot.runs;
+
   const engName = eng.name || 'HAI-1';
   html += '<p class="sub"><b>' + extEsc(String(tot.hubProven)) + ' of ' + extEsc(String(tot.dimensions)) +
     ' Rule Machine 5.1 capabilities have been seen working on a hub in ' + extEsc(engName) + '.</b> ' +
-    extEsc(String(tot.runs)) + ' are built and pass that engine own checks' +
-    (shortfall ? ', leaving ' + extEsc(String(shortfall)) + ' short of that' : ', which is all of them') +
-    ', and ' + extEsc(String(tot.runs - tot.hubProven)) + ' of those have never been watched running.' +
-    (extraRuns ? ' The other ' + extEsc(String(extraRuns)) + ' have nothing in Rule Machine to measure against.' : '') + '</p>';
+    'Another ' + extEsc(String(Math.max(0, tot.runs - tot.hubProven))) +
+    ' are built but have never been watched running. ' +
+    (tot.scoped ? extEsc(String(tot.scoped)) + ' are scoped, meaning the route is known and nothing is built yet. ' : '') +
+    (tot.missing ? extEsc(String(tot.missing)) + (tot.missing === 1 ? ' is not built at all.' : ' are not built at all.') : '') +
+    (extraRuns ? ' A further ' + extEsc(String(extraRuns)) + ' capabilities have nothing in Rule Machine to measure against.' : '') +
+    '</p>';
+
   // The engine publishes what each status means, so this report quotes it
   // rather than keeping a second copy that can drift out of step.
   const meanings = eng.statusMeanings || {};
   const ev = eng.evidenceMeanings || {};
   const known = { Runs: 'Works', Format: 'Writes but does not run', Partial: 'Partly',
-                  Scoped: 'Route known, nothing built', Missing: 'Not built' };
-  const meaningRows = [['Works', meanings.Runs], ['Seen on a hub', ev.hub], ['Built and simulated only', ev.simulated],
-                       (showFormat ? ['Writes but does not run', meanings.Format] : ['', null]),
-                       ['Partly', meanings.Partial],
-                       ['Route known, nothing built', meanings.Scoped],
-                       ['Not built', meanings.Missing]]
+                  Scoped: 'Scoped', Missing: 'Not built' };
+  const meaningRows = [['Tested', ev.hub], ['Implemented', ev.simulated],
+                       ['Scoped', meanings.Scoped], ['Not built', meanings.Missing],
+                       (showPartial ? ['Partly', meanings.Partial] : ['', null]),
+                       (showFormat ? ['Writes but does not run', meanings.Format] : ['', null])]
     .filter(function (r) { return !!r[1]; });
   // Anything the engine defines that this build has no wording for is still
   // shown, under its own name, rather than silently dropped. The engine has
@@ -17564,6 +17581,20 @@ function rmcRender() {
     html += '<p class="sub">';
     meaningRows.forEach(function (r) { html += '<b>' + extEsc(r[0]) + '</b>: ' + extEsc(r[1]) + ' '; });
     html += 'Those are the words ' + extEsc(engName) + ' publishes about itself. This app repeats them; it does not test them, and the engine that sets them also writes the code they describe.</p>';
+  }
+  // A status this build does not recognise is reported rather than absorbed,
+  // so a count that no longer adds up says why.
+  const unknownTotals = {};
+  rmCats.concat(extraCats).forEach(function (c) {
+    Object.keys(c.unknownStatus || {}).forEach(function (k) {
+      unknownTotals[k] = (unknownTotals[k] || 0) + c.unknownStatus[k];
+    });
+  });
+  const unknownKeys = Object.keys(unknownTotals);
+  if (unknownKeys.length) {
+    html += '<p class="sub"><b>Not counted above:</b> ' +
+      unknownKeys.map(function (k) { return extEsc(String(unknownTotals[k])) + ' row(s) with status "' + extEsc(k) + '"'; }).join(', ') +
+      '. This build of the map does not recognise that status, so it is shown here rather than guessed into one of the columns.</p>';
   }
 
   // Part two: this hub's own rules, measured against the same list.
@@ -22197,11 +22228,6 @@ function hubTipDemo() {
 document.getElementById('hubTipClose').addEventListener('click', hubTipDismiss);
 document.getElementById('hubTipGot').addEventListener('click', hubTipDismiss);
 // Always available, so the card is never the only way to learn the gesture.
-document.getElementById('hubTipBtn').addEventListener('click', function () {
-  hideNodeMenu();
-  hubTipEl.hidden = false;
-});
-
 document.getElementById('hubTipDemo').addEventListener('click', function (e) { e.stopPropagation(); hubTipDismiss(); hubTipDemo(); });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !hubTipEl.hidden) hubTipDismiss(); });
 
