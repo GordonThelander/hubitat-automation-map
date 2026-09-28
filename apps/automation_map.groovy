@@ -10373,7 +10373,22 @@ Map haiCategoryRows(Map capsById, Set usedCapIds) {
         }
         else if (status == 'Format') row.format = ((row.format ?: 0) as Integer) + 1
         else if (status == 'Missing') row.missing = ((row.missing ?: 0) as Integer) + 1
-        else row.partial = ((row.partial ?: 0) as Integer) + 1
+        else if (status == 'Partial') row.partial = ((row.partial ?: 0) as Integer) + 1
+        // Scoped, added by the engine at hub revision 117, means the route is
+        // known and nothing is built. It is on the not-working side of the
+        // line, and it used to land in partial through the catch-all below -
+        // which reads as "partly works" on the page and overstated the engine
+        // exactly where it had already been overstating itself.
+        else if (status == 'Scoped') row.scoped = ((row.scoped ?: 0) as Integer) + 1
+        // A status this build has never seen is counted as itself rather than
+        // folded into the nearest familiar bucket. The engine adds enum values
+        // (Scoped was the fifth), and guessing which side of working an
+        // unknown word belongs on is how a count quietly becomes wrong.
+        else {
+            Map unknown = (row.unknownStatus ?: [:]) as Map
+            unknown[status ?: 'unset'] = ((unknown[status ?: 'unset'] ?: 0) as Integer) + 1
+            row.unknownStatus = unknown
+        }
         // What it costs to take a rule built on this back to Rule Machine, as
         // that engine now publishes it. Only its own extra features carry one.
         if (row.engineOnly) {
@@ -17531,10 +17546,20 @@ function rmcRender() {
   // rather than keeping a second copy that can drift out of step.
   const meanings = eng.statusMeanings || {};
   const ev = eng.evidenceMeanings || {};
+  const known = { Runs: 'Works', Format: 'Writes but does not run', Partial: 'Partly',
+                  Scoped: 'Route known, nothing built', Missing: 'Not built' };
   const meaningRows = [['Works', meanings.Runs], ['Seen on a hub', ev.hub], ['Built and simulated only', ev.simulated],
                        (showFormat ? ['Writes but does not run', meanings.Format] : ['', null]),
-                       ['Partly', meanings.Partial], ['Not built', meanings.Missing]]
+                       ['Partly', meanings.Partial],
+                       ['Route known, nothing built', meanings.Scoped],
+                       ['Not built', meanings.Missing]]
     .filter(function (r) { return !!r[1]; });
+  // Anything the engine defines that this build has no wording for is still
+  // shown, under its own name, rather than silently dropped. The engine has
+  // added a status before and will again.
+  Object.keys(meanings).forEach(function (k) {
+    if (!known[k] && meanings[k]) meaningRows.push([k, meanings[k]]);
+  });
   if (meaningRows.length) {
     html += '<p class="sub">';
     meaningRows.forEach(function (r) { html += '<b>' + extEsc(r[0]) + '</b>: ' + extEsc(r[1]) + ' '; });
