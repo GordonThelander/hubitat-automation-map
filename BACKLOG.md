@@ -796,9 +796,17 @@ seconds, three hub calls each, with no failures and nothing lost.
 (synthetic room `999999`), the device UI compares against the literal `"No assigned room"`, and
 this panel says `Not Allocated`.
 
-**Still open:** `defaultIcon` and `dashboardIds` are untested in the round trip - no device on this
-hub carries either, so they cannot be exercised here, and `dashboardIds` is the one derived from a
-different part of the JSON and joined by comma. Worth a test on any hub that has them.
+**`dashboards` in fullJson is every dashboard on the hub, each with a `selected` flag - not the
+set this device belongs to.** Collecting all of their ids, which the first implementation did,
+would have added the moved device to every dashboard on the hub. Invisible on a hub with one
+dashboard, where the two readings are identical. Caught by reading the array before testing rather
+than after, once a second dashboard existed to tell them apart.
+
+**Every one of the 24 fields is now proven end to end**, on this hub: notes and tags on device
+3606, `defaultIcon` and `dashboardIds` on device 3619 with two dashboards present and only one
+assigned, a room set, a room cleared via `roomId=0`, and 50 devices applied in one batch. The
+device kept its custom icon, stayed on the dashboard it was on, and was not added to the one it
+was not.
 
 ### 24. Variable usage Automation Map cannot decode
 
