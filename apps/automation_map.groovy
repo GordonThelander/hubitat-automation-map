@@ -19856,6 +19856,18 @@ function roomPlanGeom(name, index, perRow, columnHeight) {
   };
 }
 
+// Selection is a class on a chip, not a change to what rooms hold, so it
+// repaints in place. Re-rendering the canvas for every click rebuilt every
+// chip and reset each room's scroll position under the pointer, which is what
+// made picking several devices feel like the list was jumping around.
+function roomPlanSyncSelection() {
+  const canvas = document.getElementById('roomCanvas');
+  canvas.querySelectorAll('.devChip').forEach(function (chip) {
+    chip.classList.toggle('rpSelected', roomSelection[chip.getAttribute('data-dev')] === true);
+  });
+  roomPlanRenderBar();
+}
+
 function roomPlanRender() {
   const canvas = document.getElementById('roomCanvas');
   const devices = (ICONS.devices || []).slice().sort(function (a, b) {
@@ -19915,7 +19927,21 @@ function roomPlanRender() {
     h += '</div><div class="roomRectGrip" title="Drag to resize"></div></div>';
   });
 
+  // A rebuild throws away every room body and with it its scroll position, so
+  // a room scrolled halfway down snaps back to the top the moment anything is
+  // staged. Carried across by room key.
+  const scrolls = {};
+  canvas.querySelectorAll('.roomRect').forEach(function (r) {
+    const body = r.querySelector('.roomRectBody');
+    if (body && body.scrollTop) scrolls[r.getAttribute('data-room')] = body.scrollTop;
+  });
   canvas.innerHTML = h;
+  canvas.querySelectorAll('.roomRect').forEach(function (r) {
+    const was = scrolls[r.getAttribute('data-room')];
+    if (!was) return;
+    const body = r.querySelector('.roomRectBody');
+    if (body) body.scrollTop = was;
+  });
   canvas.style.height = (maxBottom + RP_GAP) + 'px';
   roomPlanRenderBar();
   roomPlanWire();
@@ -19968,13 +19994,13 @@ function roomPlanWire() {
         const a = ids.indexOf(roomPlanLastClicked), b = ids.indexOf(id);
         if (a !== -1 && b !== -1) {
           ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (x) { roomSelection[x] = true; });
-          roomPlanRender();
+          roomPlanSyncSelection();
           return;
         }
       }
       if (roomSelection[id]) delete roomSelection[id]; else roomSelection[id] = true;
       roomPlanLastClicked = id;
-      roomPlanRender();
+      roomPlanSyncSelection();
     });
     chip.addEventListener('dragstart', function (ev) {
       // Dragging an unselected chip drags just that one, and drops the
