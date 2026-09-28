@@ -14304,7 +14304,9 @@ String buildMapHtml() {
   #roomTip .roomTipClose:hover { color:#e0443e; }
   #roomCanvas { position:relative; min-height:200px; }
   .roomRect { position:absolute; background:rgba(9,32,43,0.92); border:1px solid #1e5878; border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
-  .roomRect.rpUnassigned { border:2px solid #e0443e; background:rgba(58,16,16,0.92); }
+  /* Border only. The fill stays the same as every other room: tinting the
+     whole box red read as an alarm state rather than a label. */
+  .roomRect.rpUnassigned { border:2px solid #e0443e; }
   .roomRectHead { display:flex; align-items:baseline; justify-content:space-between; gap:8px; padding:5px 9px; background:rgba(255,255,255,0.05); cursor:move; user-select:none; }
   .roomRectName { font-weight:700; color:#cfe9fb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .roomRectName[data-rename] { cursor:text; }
