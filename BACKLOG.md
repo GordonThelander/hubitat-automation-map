@@ -751,6 +751,55 @@ OAuth endpoint, which nothing currently does.
 they are on first, and asks, rather than assuming the one their tooling reaches for is the one that
 matters.
 
+### 48. DONE 2026-09-28. Room planner, and the hub write endpoints it is built on
+
+Gordon asked for GUI room management: rooms as rectangles, devices dragged between them and a
+Not Allocated bucket, then one explicit commit. Built into the map rather than as a separate app,
+on his call, which means **this app now writes to the hub** for the first time. The README promise
+was rewritten accordingly.
+
+**The endpoints, captured from the hub's own pages on 2026-09-28 by intercepting its requests,
+not inferred.** Recorded here because every attempt to read them out of the JS bundles failed:
+the device save is in a lazily loaded webpack chunk, and the room save builds its URL rather than
+carrying it as a literal, so no amount of grepping finds either.
+
+| Operation | Call |
+| --- | --- |
+| Set a device's room | `POST /device/update`, form-encoded, **all 24 fields** |
+| Create a room | `POST /room/save` `{"roomId":0,"name":"x","deviceIds":[]}` |
+| Rename a room | `POST /room/save` `{"roomId":"133","name":"y","deviceIds":[...]}` |
+| Delete a room | `GET /room/delete/<id>` |
+| Read rooms | `GET /hub2/roomsList` - a `roomNodes` tree, roughly 400KB |
+
+**The two traps, both real rather than theoretical.**
+
+`/device/update` is a whole-record overwrite, not a patch. Its fields are `name, label, zigbeeId,
+maxEvents, maxStates, spammyThreshold, deviceNetworkId, deviceTypeId, deviceTypeReadableType,
+roomId, meshEnabled, retryEnabled, meshFullSync, homeKitEnabled, locationId, hubId, groupId,
+dashboardIds, tags, defaultIcon, notes, id, version, controllerType`. Posting `id`+`roomId` alone
+would blank that device's notes, tags, icon and dashboards. So every write reads
+`/device/fullJson/<id>` first and carries all 24 across; `homeKitEnabled` and `dashboards` are at
+that JSON's top level rather than under its `device` object. `roomId=0` clears a room - not empty,
+not the synthetic `999999`. `version` is a row version that increments per save.
+
+`/room/save` carries `deviceIds`, which is the room's membership. Renaming with an empty list
+would empty the room, so a rename reads the current members, refuses rather than guessing if it
+cannot, and checks the count afterwards. Delete is a bare GET with no confirmation of the hub's
+own, so the only one that exists is the one this app shows.
+
+**Verified on the hub.** A POST from inside an app sandbox is accepted - no browser session
+cookie, no CSRF token, which was the unknown that could have killed the design. Notes and tags
+survived the 24-field round trip on a device carrying both. 50 devices were filed in about 25
+seconds, three hub calls each, with no failures and nothing lost.
+
+**Three spellings of "no room", all folded into one bucket:** the room list says `Unassigned`
+(synthetic room `999999`), the device UI compares against the literal `"No assigned room"`, and
+this panel says `Not Allocated`.
+
+**Still open:** `defaultIcon` and `dashboardIds` are untested in the round trip - no device on this
+hub carries either, so they cannot be exercised here, and `dashboardIds` is the one derived from a
+different part of the JSON and joined by comma. Worth a test on any hub that has them.
+
 ### 24. Variable usage Automation Map cannot decode
 
 Two scopes remain from thebearmay's original community feedback. The webCoRE half is closed: piston

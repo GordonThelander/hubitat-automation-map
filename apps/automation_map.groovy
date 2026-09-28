@@ -14226,6 +14226,15 @@ String buildMapHtml() {
   #roomPlanBar .rpCount { font-weight:700; color:#81BC00; }
   #roomPlanBar .rpCount.rpNone { color:#7f9aa6; font-weight:600; }
   #roomPlanMsg { color:#9fd0e4; font-size:10px; }
+  #roomTip { position:relative; margin:0 0 10px 0; padding:9px 30px 9px 12px; border-radius:6px;
+             background:rgba(129,188,0,0.10); border:1px solid rgba(129,188,0,0.45); color:#dceaf2; font-size:10px; }
+  #roomTip strong { display:block; margin-bottom:4px; color:#cfe9fb; font-size:11px; }
+  #roomTip ul { margin:0; padding-left:16px; }
+  #roomTip li { margin:2px 0; }
+  #roomTip b { color:#a9d94a; font-weight:700; }
+  #roomTip .roomTipClose { position:absolute; top:4px; right:7px; background:none; border:0; color:#7f9aa6;
+                           font-size:15px; line-height:1; cursor:pointer; }
+  #roomTip .roomTipClose:hover { color:#e0443e; }
   #roomCanvas { position:relative; min-height:200px; }
   .roomRect { position:absolute; background:rgba(9,32,43,0.92); border:1px solid #1e5878; border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
   .roomRect.rpUnassigned { border:2px solid #e0443e; background:rgba(58,16,16,0.92); }
@@ -14495,7 +14504,7 @@ String buildMapHtml() {
 <div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
 <div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
-<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomCanvas"></div></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room planner</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomTip" hidden><button class="roomTipClose" type="button" id="roomTipClose" title="Got it" aria-label="Got it">&times;</button><strong>Three things that are easy to miss</strong><ul><li><b>Pick several at once.</b> Click a device to select it, ctrl-click or keep clicking to add more, shift-click to take a whole run. Then drag any one of them and the rest come too.</li><li><b>Drag between rooms.</b> Devices move by dragging, including out of Not Allocated on the left. Nothing reaches the hub until you press Apply.</li><li><b>The small x on a room deletes it.</b> Its devices are not deleted, they land in Not Allocated. Double-click a room name to rename it.</li></ul></div><div id="roomCanvas"></div></div></div>
 <div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
 <div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
@@ -19905,8 +19914,36 @@ const RP_UNASSIGNED = '';
 const RP_W = 178, RP_H = 104, RP_GAP = 10;
 const RP_UNALLOC_W = 215;
 
+// Same contract as the hub tip below: browser-local so each person is told
+// once rather than one dismissal silencing it for the household, keyed per
+// installed app so Dev does not mark it seen for production, and keyed on the
+// app version so it returns after an upgrade that adds gestures. Guarded
+// throughout - a private window or blocked site data throws rather than
+// returning null.
+function roomTipKey() {
+  const parts = String(location.pathname || '').split('/');
+  const at = parts.indexOf('api');
+  const id = (at !== -1 && parts.length > at + 1) ? parts[at + 1] : 'unknown';
+  return 'automationMap.roomTip.' + id + '.version';
+}
+
+function roomTipSync() {
+  const el = document.getElementById('roomTip');
+  if (!el) return;
+  let seen = null;
+  try { seen = window.localStorage.getItem(roomTipKey()); } catch (e) { seen = null; }
+  el.hidden = (seen === APP_VERSION_JS);
+}
+
+function roomTipDismiss() {
+  const el = document.getElementById('roomTip');
+  if (el) el.hidden = true;
+  try { window.localStorage.setItem(roomTipKey(), APP_VERSION_JS); } catch (e) { /* storage unavailable */ }
+}
+
 function roomPlanOpen() {
   bringToFront(roomPlanPanel);
+  roomTipSync();
   roomPlanLoad();
 }
 
@@ -21206,6 +21243,7 @@ document.getElementById('roomPlanDiscard').addEventListener('click', function ()
   roomSelection = {};
   roomPlanRender();
 });
+document.getElementById('roomTipClose').addEventListener('click', roomTipDismiss);
 document.getElementById('roomPlanNew').addEventListener('click', function () {
   const name = window.prompt('Name the new room');
   if (name === null || !name.trim()) return;
