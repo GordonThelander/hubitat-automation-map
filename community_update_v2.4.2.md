@@ -6,13 +6,12 @@ Screenshot to accompany it: `docs/release-assets/room-manager-2.4.2.webp` (Room 
 devices multi-selected in Not Allocated and dragged into Guest Bathroom, drop target highlighted,
 tip card visible).
 
-Two things to check before posting: the app is still named Automation Map everywhere including the
-HPM package, so the HAM heading below is ahead of the code; and the production release on `main` is
-still 2.3.2 at the time of writing.
+One thing to check before posting: the production release on `main` is still 2.3.2 at the
+time of writing.
 
 ---
 
-**Hubitat Automation Manager (HAM) 2.4.2**
+**Hubitat Automation Map 2.4.2**
 
 **1. Room Manager**
 
@@ -36,11 +35,11 @@ its devices.
 
 **2. Hubitat Automation Intelligence (HAI 1.0)**
 
-You will see HAI mentioned around the app. It is HAM's sibling: a modern Rule Machine 5 alternative
-with a GUI and a fully portable JSON rule format, currently under development. Nothing in HAM
-depends on it. If you do not have it, the map works as before, but HAI benefits from HAM's decoding.
+You will see HAI mentioned around the app. It is Automation Map's sibling: a modern Rule Machine 5 alternative
+with a GUI and a fully portable JSON rule format, currently under development. Nothing in Automation Map
+depends on it. If you do not have it, the map works as before, but HAI benefits from Automation Map's decoding.
 
-HAM reads what your Rule Machine rules actually do, so it can tell you what would move across. The
+Automation Map reads what your Rule Machine rules actually do, so it can tell you what would move across. The
 HAI RM5 Coverage page measures every rule on your hub against what HAI can do, and the webCoRE
 Migration Assessment rates each piston the same way. Both work whether or not HAI is installed.
 
