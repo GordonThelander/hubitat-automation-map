@@ -72,7 +72,9 @@ function makeSandbox() {
         window: { addEventListener: function (type, fn) { if (type === 'popstate') popListeners.push(fn); } },
         network: { fit: function () { }, getViewPosition: function () { return { x: 0, y: 0 }; }, getScale: function () { return 1; }, moveTo: function () { } },
         showFlow: function () { }, showUnreferencedLocalPanel: function () { }, syncLegendVisibility: function () { },
-        closeSecondaryPanels: function () { }, renderBackLink: function () { }, setTimeout: function (fn) { fn(); }
+        closeSecondaryPanels: function () { }, renderBackLink: function () { }, setTimeout: function (fn) { fn(); },
+        // Added with the migration card; exitToWholeMap calls it.
+        hideMigrationCard: function () { }
     };
     const script =
         'let focusGenerationSeq = 0;\nlet poppingHistory = false;\n' +

@@ -500,8 +500,10 @@ check('the shared drag helper and the other panels are untouched', function () {
     const drag = extractFunction('makePanelDraggable');
     ['flowUserSize', 'clampFlowSize', 'clampFlowPosition', 'flowItemId', 'flowUserSized', 'flowResize']
         .forEach(function (n) { assert(drag.indexOf(n) < 0, 'drag helper references ' + n); });
-    assert(block.indexOf('allPanels') < 0 && block.indexOf('extPanel') < 0 && block.indexOf('pivotPanel') < 0,
-        'reaches other panels');
+    // v2.4.2 deliberately widened the viewport re-measure to every open panel,
+    // so allPanels() belongs here. Direct coupling to a named panel does not.
+    assert(block.indexOf('extPanel') < 0 && block.indexOf('pivotPanel') < 0,
+        'reaches a named panel directly');
 });
 check('a new item is recognised by the item shown, not by the focusNode counter', function () {
     // The selection generation also moves when the panel is closed or replaced,
@@ -509,8 +511,17 @@ check('a new item is recognised by the item shown, not by the focusNode counter'
     assert(extractFunction('startFlowItemIfNew').indexOf('focusGenerationSeq') < 0, 'still keyed on focusGenerationSeq');
 });
 check('every item-open site records the item before the panel is sized', function () {
-    const pairs = (source.match(/noteFlowItem\(node\);\r?\n[ \t]*renderDecodeCoverageCard\(node\);\r?\n[ \t]*renderCommunityCard\(node\);\r?\n[ \t]*setFlowSizeMode\(false\);/g) || []).length;
-    assert(pairs === 5, 'recorded before sizing at ' + pairs + ' of 5 sites');
+    // The invariant is the ordering, not the exact adjacent lines: cards are
+    // added between the two calls and that must not read as a regression.
+    const sites = [];
+    const re = /noteFlowItem\(node\);/g;
+    let m;
+    while ((m = re.exec(source)) !== null) sites.push(m.index);
+    assert(sites.length === 5, 'found ' + sites.length + ' item-open sites, expected 5');
+    const ordered = sites.filter(function (i) {
+        return source.slice(i, i + 600).indexOf('setFlowSizeMode(') > 0;
+    }).length;
+    assert(ordered === 5, 'recorded before sizing at ' + ordered + ' of 5 sites');
 });
 check('the header clamp is registered after the shared drag helper', function () {
     const helper = source.indexOf("makePanelDraggable(flowPanel, document.getElementById('flowHeader'));");

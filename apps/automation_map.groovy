@@ -12749,10 +12749,6 @@ String externalsJson() {
 // device UI wording, taken from its bundle rather than guessed.
 @Field static final List<String> ROOM_NO_ROOM_NAMES = ['Unassigned', 'No assigned room', 'No room assigned', 'None']
 
-@Field static final String ROOM_COMMIT_UNAVAILABLE =
-    'Applying room changes to the hub is not wired up yet, so nothing you have arranged here has touched it. ' +
-    'Staged moves are kept in this page until you discard them or reload.'
-
 // /hub2/roomsList answers a Map holding one key, roomNodes: a tree whose top
 // level is the rooms and whose children are that room's devices, measured live
 // on 2026-09-28 rather than assumed (an earlier guess at a flat id-keyed map
@@ -12893,16 +12889,88 @@ Map roomPlanWriteDeviceRoom(String devId, String roomId) {
         failure = "${e.message}"
     }
     if (failure) return [id: devId, ok: false, reason: failure]
+    // A non-2xx is a failure even when the body parses. Reporting success off a
+    // 302 to a login page is how a write that never happened reads as done.
+    if (status == null || status < 200 || status >= 300) {
+        return [id: devId, ok: false, status: status,
+                reason: "the hub answered ${status ?: 'nothing'} to the update, so it was not accepted"]
+    }
 
     Map after = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
-    String landed = ''
-    if (after.ok && after.data instanceof Map) {
-        Object dev = (after.data as Map).device
-        if (dev instanceof Map) landed = "${(dev as Map).roomId ?: ''}"
+    if (!after.ok || !(after.data instanceof Map)) {
+        return [id: devId, ok: false, status: status,
+                reason: 'the device could not be read back, so the change could not be confirmed']
     }
-    boolean ok = (landed == roomId) || (roomId == ROOM_CLEARED_ID && (landed == '' || landed == '0'))
-    return [id: devId, ok: ok, status: status, roomId: landed,
-            reason: ok ? '' : "posted roomId ${roomId} but the device reads back ${landed ?: 'nothing'}"]
+    String landed = ''
+    Object devAfter = (after.data as Map).device
+    if (devAfter instanceof Map) landed = "${(devAfter as Map).roomId ?: ''}"
+    boolean roomOk = (landed == roomId) || (roomId == ROOM_CLEARED_ID && (landed == '' || landed == '0'))
+    if (!roomOk) {
+        return [id: devId, ok: false, status: status, roomId: landed,
+                reason: "posted roomId ${roomId} but the device reads back ${landed ?: 'nothing'}"]
+    }
+    // The room landing is not the contract. This posts the whole device record,
+    // so the promise that nothing else changed has to be checked rather than
+    // assumed - every field carried forward is compared before and after.
+    List drift = roomPlanPreservationDrift(before.data as Map, after.data as Map)
+    if (drift) {
+        return [id: devId, ok: false, status: status, roomId: landed, changed: drift,
+                reason: "the room moved but ${drift.join(', ')} changed too, which this app promises not to do"]
+    }
+    return [id: devId, ok: true, status: status, roomId: landed, reason: '']
+}
+
+// Fields this app carries forward unchanged, compared before and after a write.
+// roomId is excluded because the write is meant to move it, and version
+// because the hub increments its own record token on every write.
+@Field static final List<String> ROOM_PRESERVED_FIELDS = [
+    'name', 'label', 'zigbeeId', 'maxEvents', 'maxStates', 'spammyThreshold',
+    'deviceNetworkId', 'deviceTypeId', 'deviceTypeReadableType', 'meshEnabled',
+    'retryEnabled', 'meshFullSync', 'locationId', 'hubId', 'groupId', 'tags',
+    'defaultIcon', 'notes', 'id', 'controllerType']
+
+// Null, empty and absent all mean "not set" on this hub's records, and a
+// number may come back as a string. Comparing raw values reports drift that is
+// only a representation difference.
+String roomPlanNormalise(Object v) {
+    String t = (v == null) ? '' : "${v}".trim()
+    return t.equalsIgnoreCase('null') ? '' : t
+}
+
+// tags go out as a comma string and can come back as either a string or a
+// list, so they are compared as a list of values rather than as text.
+String roomPlanNormaliseTags(Object v) {
+    List parts = (v instanceof List) ? (v as List).collect { "${it}" }
+                                     : roomPlanNormalise(v).tokenize(',')
+    return parts.collect { it.trim() }.findAll { it }.join(',')
+}
+
+List roomPlanPreservationDrift(Map before, Map after) {
+    Map b = (before?.device instanceof Map) ? before.device as Map : [:]
+    Map a = (after?.device instanceof Map) ? after.device as Map : [:]
+    List changed = []
+    ROOM_PRESERVED_FIELDS.each { String f ->
+        boolean same = (f == 'tags') ? roomPlanNormaliseTags(b[f]) == roomPlanNormaliseTags(a[f])
+                                     : roomPlanNormalise(b[f]) == roomPlanNormalise(a[f])
+        if (!same) changed << f
+    }
+    // Dashboards live outside the device object and are the field most likely
+    // to go wrong, since fullJson lists every dashboard on the hub with a
+    // selected flag rather than only this device's.
+    if (roomPlanSelectedDashboards(before) != roomPlanSelectedDashboards(after)) changed << 'dashboards'
+    if (roomPlanNormalise(before?.homeKitEnabled) != roomPlanNormalise(after?.homeKitEnabled)) changed << 'homeKitEnabled'
+    return changed
+}
+
+List roomPlanSelectedDashboards(Map full) {
+    List out = []
+    Object dashboards = full?.dashboards
+    if (dashboards instanceof List) {
+        (dashboards as List).each { Object x ->
+            if (x instanceof Map && (x as Map).selected == true && (x as Map).id != null) out << "${(x as Map).id}"
+        }
+    }
+    return out.sort()
 }
 
 Map roomPlanApplyMoves(Map moves) {
@@ -12992,7 +13060,7 @@ Map roomPlanRoomMembers(String roomId) {
                 }
             }
         }
-        return [ok: true, ids: ids]
+        return [ok: true, ids: ids, name: "${(raw as Map).name ?: ''}"]
     }
     return [ok: false, ids: []]
 }
@@ -13006,6 +13074,9 @@ Map roomPlanPostRoom(Map payload) {
                   body: JsonOutput.toJson(payload), timeout: 15]) { resp -> status = resp?.status as Integer }
     } catch (Exception e) {
         failure = "${e.message}"
+    }
+    if (!failure && (status == null || status < 200 || status >= 300)) {
+        failure = "the hub answered ${status ?: 'nothing'}, so the request was not accepted"
     }
     state.roomIdCache = [:]
     return [status: status, failure: failure]
@@ -13037,9 +13108,18 @@ Map roomPlanRenameRoom(String roomId, String name) {
     Integer before = (members.ids as List).size()
     Map res = roomPlanPostRoom([roomId: roomId, name: clean, deviceIds: members.ids])
     if (res.failure) return [ok: false, reason: res.failure]
+    // Success is read back, not assumed. Without this a rename that never
+    // landed, or one that emptied the room, reports as done.
     Map after = roomPlanRoomMembers(roomId)
+    if (!after.ok) {
+        return [ok: false, reason: 'the rename was sent but this room could not be read back, so it is unconfirmed']
+    }
     Integer now = (after.ids as List).size()
-    if (after.ok && now != before) {
+    String landedName = "${after.name ?: ''}".trim()
+    if (landedName != clean) {
+        return [ok: false, reason: "asked for ${clean} but this room reads back as ${landedName ?: 'nothing'}"]
+    }
+    if (now != before) {
         return [ok: false, reason: "renamed, but this room went from ${before} devices to ${now} - check it"]
     }
     return [ok: true, name: clean, devices: now]
@@ -13047,7 +13127,12 @@ Map roomPlanRenameRoom(String roomId, String name) {
 
 Map roomPlanDeleteRoom(String roomId) {
     if (!roomId) return [ok: false, reason: 'no room id']
+    // Destructive, so it fails closed. Not knowing what is in the room is a
+    // reason to stop, not a reason to go ahead and find out afterwards.
     Map members = roomPlanRoomMembers(roomId)
+    if (!members.ok) {
+        return [ok: false, reason: 'could not read what is in this room, so it was not deleted']
+    }
     Integer freed = (members.ids as List).size()
     Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
     state.roomIdCache = [:]
@@ -13085,7 +13170,6 @@ String roomPlanJson(String message) {
         roomsFrom   : rooms.any { (it as Map).id } ? 'hub' : 'devices',
         layout      : layout,
         canCommit   : true,
-        commitNote  : ROOM_COMMIT_UNAVAILABLE,
         message     : message ?: '',
     ])
 }
@@ -17525,7 +17609,7 @@ function requestDecodeCoverage() {
 }
 
 // Migration assessment card (v2.3.1). Fetched on piston selection. Collapsed it shows a header and
-// one rating each for Rule Machine and Visual Rule Builder; a click expands the reasons and the parts
+// one rating for each engine assessed; a click expands the reasons and the parts
 // that need manual work. Silent when the assessment cannot run. Labels avoid apostrophes because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
 const MIGRATION_URL = amPickURL('${getLocalURL('webcore-migration-assessment')}', '${getCloudURL('webcore-migration-assessment')}');
@@ -17809,11 +17893,18 @@ function migrationListHtml(items) {
 function migrationCardHtml(body) {
   const rm = body.ruleMachine || {};
   const vrb = body.visualRuleBuilder || {};
+  const hai = body.hai || {};
+  const haiName = hai.engineName || 'HAI-1';
   const c = rm.counts || {};
   let h = migrationRowHtml('Rule Machine', rm) + migrationComponentsHtml(rm) + migrationRowHtml('Visual Rule Builder', vrb) + migrationComponentsHtml(vrb);
+  // The assessment rates three engines and the panel shows three. This card
+  // read only two, so the same piston answered differently depending on where
+  // it was opened.
+  if (body.hai) h += migrationRowHtml(haiName, hai) + migrationComponentsHtml(hai);
   h += '<h5>Rule Machine 5.1</h5>' + migrationListHtml(rm.summary);
   h += migrationBlockersHtml(rm);
   h += '<h5>Visual Rule Builder 2.0</h5>' + migrationListHtml(vrb.summary) + migrationBlockersHtml(vrb);
+  if (body.hai) h += '<h5>' + extEsc(haiName) + '</h5>' + migrationListHtml(hai.summary) + migrationBlockersHtml(hai);
   h += '<h5>Scale</h5><div class="maScale">' +
     '<span class="maBadge maL1">1</span><span>Direct equivalent, simple</span>' +
     '<span class="maBadge maL2">2</span><span>Direct equivalent, more steps</span>' +
@@ -20134,7 +20225,7 @@ const roomPlanPanel = document.getElementById('roomPlan');
 // Deliberately free of apostrophes in every string below: this page is a Groovy
 // GString, where a backslash-escaped quote is eaten by Groovy and ends the JS
 // string early, killing the whole page.
-var ROOMPLAN = { rooms: [], layout: {}, canCommit: false, commitNote: '' };
+var ROOMPLAN = { rooms: [], layout: {}, canCommit: false };
 // devId -> target room name. Empty string means the Not Allocated bucket.
 // Nothing staged here has touched the hub; that is what Apply is for.
 var roomPending = {};
