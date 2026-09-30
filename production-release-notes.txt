@@ -1,12 +1,15 @@
-v2.2.0: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.
+v2.4.2: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export. It now also groups devices by room.
 
-Since the last production release (2.1.1):
+Changes since v2.3.2:
 
-- Improved nested Device discovery
-- Local Variables now appear as their own nodes on the map and in exports, correctly distinguished from Hub Variables and Variable Connector devices.
-- The four Focus dropdowns (Apps, Devices, Hub Variables, Local Variables) are now a single searchable control each, instead of one long scrollable list.
-- The automatic-scan time field now shows its real default time instead of appearing blank.
-- Added a diagnostic-logging toggle for troubleshooting.
-- Refreshed the visual style.
-- Fixed two scan-completion timing issues that could leave the map looking stuck, or briefly hide the map link and counts, right after a scan actually finished.
-- Fixed a timing issue in registry lookups that could leave dependency information incomplete under specific conditions.
+- Room Manager: Arrange rooms as movable, resizable rectangles with device icons inside them. Devices without a room appear in a "Not Allocated" column. Drag devices into rooms, use Ctrl-click or Shift-click to select several, and create, rename or delete rooms without leaving the page. Changes remain staged until you press Apply. Discard removes staged changes, and failed changes remain staged so you can retry only those items.
+- Hub writes are limited to room assignments: This is Automation Map's first release that writes to the hub. Room Manager does not command devices, edit rules or change other apps. Deleting a room leaves its devices intact and unallocated, with a confirmation showing how many will be affected. Before changing a device's room, Automation Map reads its current record, preserves its other fields and verifies them afterward.
+- Experimental HAI integration: Hubitat Automation Intelligence Engine can now appear on the map. Hubs without HAI continue to use Automation Map normally.
+- HAI RM5 Coverage report: Compare Rule Machine 5.1 and HAI capabilities, see which HAI capabilities have been observed running on a hub, and see which capabilities your own rules use.
+- webCoRE Migration Assessment: Adds an HAI Engine rating alongside Rule Machine and Visual Rule Builder.
+- Read-only relationship API: Other apps can retrieve Automation Map's device relationships.
+- Easier-to-read flowcharts: Diagrams open in a wider panel that adjusts when you zoom or resize the browser.
+- Faster map opening: The flowchart library now loads when you first open a flowchart, removing about 3 MB from the initial map load.
+- Better phone layout: The link to open the map now appears above the Scan button.
+
+After upgrading: Run a rescan to refresh app tags.

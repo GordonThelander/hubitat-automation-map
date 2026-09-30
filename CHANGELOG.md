@@ -4,6 +4,127 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.2
+
+Dev channel. **Room Manager**, a new panel that files devices into rooms from one screen. Every room is a rectangle you can move and resize, with its devices shown as chips carrying the same icons the map draws. Anything with no room sits in a Not Allocated column down the left, beside every possible destination rather than behind a separate page. Drag a device to move it, ctrl-click to pick several and drag them together, shift-click to take a whole run. Rooms can be created, renamed and deleted without leaving the page, and the rectangle layout is remembered. Nothing reaches the hub until Apply is pressed: moves are staged and highlighted until then, Discard throws them away, and anything that fails to apply stays staged so a retry sends only what is outstanding.
+
+This is the first time this app writes to the hub, and it was added for this feature and no other. It does not command devices, edit rules or alter other apps. The only thing it writes is a device's room. Deleting a room does not delete its devices: they become unallocated, and the confirmation says how many before it happens. Because the hub's own device page rewrites the whole device record on any change, a room move reads the device first and carries every other field across unchanged; notes, tags, custom icons and dashboard assignments were verified to survive it.
+
+App tags were wrong for nine apps. INT means an app that ships with the hub and CUS means one you installed, and LIFX Light Manager, CoCoHue, Kasa, Tapo, Sensibo, Chromecast, Meross, Google Home and BOM Weather Alerts were all labelled as shipping with the hub. They do not. The tag is now read from the hub's own list of user-installed app types rather than from a list kept by hand, so it corrects itself after a scan.
+
+The HAI RM5 Coverage table now reports Implemented, of those working on hub, Scoped, and Not built, replacing a set of columns that described the engine's older vocabulary rather than how much of the work is done. A capability status this app does not recognise is listed under its own name instead of being counted as partly working, which it previously was.
+
+A rule flowchart opens wide enough to read. It renders at its natural size and was routinely wider than the panel, so more than half of a diagram sat behind a scrollbar. Panels also re-measure themselves when the browser is zoomed or the window resized, where before they kept the size they had when opened and could sit under the control rail. The Opening objects on the hub button is gone; the card it opened still appears by itself after an upgrade.
+
+## 2.4.1
+
+Dev channel. The engine this app reads its experimental rules from is now found on the hub by itself: there is no address to paste and the setting that asked for one is gone, along with the access token it held. When that engine is not installed the page says so and explains that its Rule Machine comparison still works, because the capability list it publishes openly is used instead. If a feed file is found with no app that writes it, its rules are left off the map and the reason is logged rather than guessed at. Location event triggers of every name, including lowMemory, now match the single capability that engine publishes for them, so a rule using one is no longer reported as having nothing to move to. View Automation Map moves above the Scan button so the map is reachable without scrolling on a phone. Scan progress no longer reports one phase's count against another phase's total. A paused rule of that engine is shown as paused rather than running. The flowchart library is fetched when a flowchart is first opened instead of on every view of the map.
+
+## 2.4.0
+
+In development on the dev channel.
+
+Rules from Hubitat Automation Intelligence now appear on the map, marked experimental. That app
+publishes its own rules in this app's graph shape, so the map reads them from it at each scan
+rather than decoding them: what each rule triggers on, what it commands and with which commands,
+and what it treats as a condition. Paste the feed address from that app into the new setting on
+this app's settings page and its rules join the map alongside everything else. Previously those
+rules could only be drawn from their device permissions, which read as "published to an external
+system" and said nothing about what the rule does; those placeholder lines are now replaced.
+Selecting one of these rules explains that its steps live in that app and points to its own page,
+rather than drawing a flowchart. The main page reports how many of these rules and relationships
+came from the feed, and says so plainly when the feed could not be read. Nothing is sent: the
+address is read from your own hub.
+
+
+The Community information card no longer claims a package's declared identity did not match its
+source. That check is a static parse, and a package naming itself through a constant read as a
+difference with nothing actually wrong, including this one. The card now says the identity could not
+be confirmed and to treat the match as unconfirmed rather than wrong. The parser behind it was fixed
+separately in the Community Utilities crawl.
+
+A condition that nothing evaluates now draws as a dotted line on the map, in the same colour
+as a normal condition, with a legend entry. Previously a device could only be marked when every
+one of its relationships was dead, so a device that was both used and pointlessly named in an
+old condition showed nothing.
+
+Set Variable actions that calculate a value now show the variables they read and print the
+arithmetic, for example "Set Variable Counter = TestNumber + 5". A plain copy from one
+variable to another reads the same way.
+
+Rule Machine wait-for-event devices are no longer drawn as rule triggers. Those devices are
+stored under a separate key family that the old check also matched, which affected three rules
+on a 66-rule hub, and they now appear as monitored devices.
+
+A Set Variable action that writes a number from a device attribute now shows that source.
+Numeric variables use a different field for it than text variables, and only the text one was
+read.
+
+webCoRE flow charts now draw a switch's default branch as `else` after its cases. Case values are
+still shown as not decoded.
+
+Opened through Hubitat remote access, the settings page no longer sits on "Remote scanning" after a
+scan finishes. It reloads every 15 seconds while a scan runs, for at most three minutes.
+
+The webCoRE construct registry now records the three fuel-stream commands as declared. They are
+added by a conditional block the generator previously skipped.
+
+## 2.3.2
+
+Released 2026-09-16.
+
+**Open anything on the hub.** Right-click any device or app on the map to reach its page in the
+Hubitat admin UI in a second tab: the device page for a device, the status page or the app page for
+an app or rule. The menu also copies the link, focuses the node, and re-reads that object from the
+hub. Empty canvas and shift with right-click keep the browser's own menu, so saving the image is
+still where it always was. A local variable node offers its owning app. A node with no hub page says
+so rather than doing nothing. A short card explains the gesture the first time a view with clickable
+objects is opened, again after an upgrade, and monthly only while the gesture has never been used;
+"Opening objects on the hub" in the Focus panel shows it any time. What each browser has seen is tracked per installed app, so a Dev or Preprod install cannot mark the card seen for the production one.
+
+**Rescan this object.** One device or app re-read from the hub without a full scan, applied to the
+map in place, so the current view, zoom and focus are kept. A device has no record of its own, so
+its edges come from the apps that use it and those are what get re-read, up to a bounded number.
+Label, type and the Disabled flag are refreshed for the devices in scope, which a full scan was
+previously the only way to pick up. It refuses while a full scan is running. Capabilities, rooms and
+hub-wide insights still come from the last full scan.
+
+**Export schema 14.** Two additions:
+
+- `edges[].unusedConstraint` marks a constraint edge whose condition nothing evaluates, the same
+  determination the map draws as the UNUSED tag. Scoped to that app, never a claim that the device
+  is unused on the hub.
+- `migrationRatings[]` carries each webCoRE piston's rating for Rule Machine and Visual Rule Builder
+  2.0, with its label, up to three reasons, the number of parts needing rework, and whether
+  automatic conversion is possible. The full per-part breakdown stays in the Migration Assessment
+  panel. Ratings are cached on the hub as that panel computes them and read back in one call, so the
+  export performs no hub reads of its own; each record carries `ratedAt`, a `stale` flag when it
+  predates the last graph rebuild, and `not-rated` for a piston nobody has assessed yet.
+
+The community thread link on the app's settings page now opens the newest post.
+
+## 2.2.1
+
+In development on the dev channel. Insights gains a set of findings for things that look fine but
+silently do nothing, each pairing a state with the second fact that makes it worth acting on rather
+than reporting the state alone:
+
+- A paused or disabled rule that another rule still runs, so that step in the caller silently does
+  nothing. Pause/resume links are deliberately excluded, since a rule whose job is to resume this
+  one is the mechanism working rather than a failure.
+- A disabled device automations still command or wait on as a trigger. Constraint and monitor reads
+  are excluded as a weaker, much noisier claim than a command that cannot land.
+- Rules Hubitat itself marks broken, read from its own label rather than judged by this scan.
+- Every paused or disabled rule as plain context under expected patterns, not as a fault list, and
+  never double-counted with the ones reported under Needs attention.
+- Local Variables declared in a rule with no decoded read or write, carrying the same "may simply be
+  unused" caveat the equivalent Hub Variable finding already has.
+
+All findings reach the AI-friendly export as additive fields with their own limitations, which no
+consumer is required to understand, so the export schema version is unchanged. Note that none of
+this observes runtime behaviour: it is static configuration evidence that a step cannot do anything,
+not evidence that it was ever reached.
+
 ## 2.2.0
 
 Production-cleanup release. Local review and automated gates passed; deployed to Automation Map
