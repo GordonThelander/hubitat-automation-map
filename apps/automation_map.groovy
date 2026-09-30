@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit c7194ee966a8938bbf802d171ba9f15ed23024d8; developer
+ * builder from the annotated Dev source at commit e3af569ad7b5bbb1a1139cd484a503c50b06b43e; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/c7194ee966a8938bbf802d171ba9f15ed23024d8/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/e3af569ad7b5bbb1a1139cd484a503c50b06b43e/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.3.2'
+@Field static final String APP_VERSION = '2.4.2'
 
 
 
@@ -140,6 +140,38 @@ boolean showSanta() {
 
 
 @Field static final String DECODED_ENGINES_TEXT = 'Rule-5.1, Notifier, and Visual Rule Builder 2.0'
+
+
+
+
+
+
+@Field static final String HAI_PUBLIC_CAPABILITIES_URL = 'https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/public/hai-capabilities.json'
+@Field static final String HAI_PUBLIC_CONTRACT = 'hai.capabilities/1'
+
+
+@Field static final String HAI_STATE_FILE = 'hai-am-state.json'
+
+
+
+
+
+
+
+@Field static final List<String> HAI_PARENT_TYPE_PREFIXES = ['HAI Engine', 'HAI Runtime']
+
+
+
+
+@Field static final String HAI_CAPABILITIES_FILE = 'hai-am-capabilities.json'
+
+
+@Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
+
+
+
+@Field static final String EDGES_CONTRACT = 'am.edges/1'
+@Field static final int HAI_FEED_TIMEOUT_SEC = 10
 @Field static final Pattern URL_PATTERN = ~/^https?:\/\/[^\/]+(.+)/
 
 
@@ -187,9 +219,22 @@ void updated() {
     migrateRemoveTelemetryDevice()
     
     
+    migrateRemoveHaiFeedSetting()
+    
+    
     scheduleAutoScan()
     scheduleDiagnosticLoggingExpiry()
     scheduleUpdateCheck()
+}
+
+
+
+
+
+void migrateRemoveHaiFeedSetting() {
+    if (settings?.haiFeedUrl == null) return
+    app.removeSetting('haiFeedUrl')
+    log.info "${app.label}: removed the obsolete Automation Intelligence feed address, which carried an access token"
 }
 
 
@@ -310,7 +355,7 @@ String lockVsState() {
     String gen = (state.activeGenerationToken ?: '') as String
     return "lock=${lock ? lock.tokenize('-').last() : 'none'}" +
            " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
-           " running=${state.scanRunning == true} phase=${state.scanPhase ?: '-'}" +
+           " running=${state.scanRunning == true} phase=${scanProgress().phase ?: '-'}" +
            " graph=${state.graph != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
            " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
            " appResultsReady=${state.appResultsReady == true}"
@@ -621,8 +666,33 @@ Map main() {
                 
                 
                 
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                boolean graphStale = graphIsStale()
+                if (state.graph && !scanActive && !graphStale) {
+                    paragraph '''<style type="text/css">
+a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
+a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
+</style>'''
+                    href(
+                        name: 'mapLink', title: 'View Automation Map',
+                        description: 'Open the relationship graph',
+                        url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
+                        style: 'embedded', state: 'complete', required: false,
+                   )
+                }
                 paragraph scanButtonHtml(scanActive)
-                if (state.scanTotal) {
+                Map pageProg = scanProgress()
+                String pagePhase = "${pageProg.phase ?: ''}"
+                Integer pageTotal = (pageProg.total ?: 0) as Integer
+                if (pageTotal) {
                     
                     
                     
@@ -630,12 +700,12 @@ Map main() {
                     
                     
                     ConcurrentHashMap liveScan = null
-                    if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
-                    else if (state.scanPhase == 'apps') liveScan = liveAppScan()
-                    Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: 0) as Integer
-                    Integer total = (state.scanTotal ?: 1) as Integer
+                    if (pagePhase == 'devices') liveScan = liveDeviceScan()
+                    else if (pagePhase == 'apps') liveScan = liveAppScan()
+                    Integer done = liveScan ? (liveScan.processed as AtomicInteger).get() : (pageProg.done ?: 0) as Integer
+                    Integer total = pageTotal
                     Integer pct = total > 0 ? ((done * 100) / total) as Integer : 0
-                    boolean isDevicePhase = state.scanPhase != 'apps'
+                    boolean isDevicePhase = pagePhase != 'apps'
                     
                     
                     
@@ -688,23 +758,15 @@ Map main() {
                         
                         
                         
-                    } else if (graphIsStale()) {
+                    } else if (graphStale) {
                         
                         
                         
                         paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
+                        
+                        
                         paragraph compatibilitySummary(g)
-                        paragraph '''<style type="text/css">
-a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
-a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
-</style>'''
-                        href(
-                            name: 'mapLink', title: 'View Automation Map',
-                            description: 'Open the relationship graph',
-                            url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
-                            style: 'embedded', state: 'complete', required: false,
-                       )
                     }
                 } else if (!scanActive && atomicState.graphVersion != null) {
                     
@@ -939,6 +1001,31 @@ boolean shouldAutoScan() {
 
 
 
+
+
+void setScanProgress(String phase, Integer total, Integer done) {
+    SCAN_PROGRESS.put("${app.id}".toString(), [phase: phase, total: total, done: done])
+    state.scanPhase = phase
+    state.scanTotal = total
+    state.scanDone = done
+}
+
+
+
+void setScanDone(Integer done) {
+    Map live = SCAN_PROGRESS.get("${app.id}".toString()) as Map
+    if (live) setScanProgress("${live.phase ?: ''}", (live.total ?: 0) as Integer, done)
+    else state.scanDone = done
+}
+
+Map scanProgress() {
+    Map live = SCAN_PROGRESS.get("${app.id}".toString()) as Map
+    if (live) return live
+    
+    return [phase: "${state.scanPhase ?: ''}", total: (state.scanTotal ?: 0) as Integer,
+            done: (state.scanDone ?: 0) as Integer]
+}
+
 boolean scanEffectivelyActive() {
     boolean liveLock = SCAN_LOCKS.get("${app.id}") != null
     boolean durable = state.scanRunning == true
@@ -1150,8 +1237,18 @@ if (${scanActive ? 'true' : 'false'}) {
   } else {
     document.addEventListener('DOMContentLoaded', amShowRemoteProgress);
     if (document.readyState !== 'loading') amShowRemoteProgress();
+    // The remote UI cannot poll and does not reliably honour refreshInterval,
+    // so reload every 15s while the scan runs, capped at 3 minutes.
+    try {
+      var amRemoteReloads = parseInt(sessionStorage.getItem('amRemoteReloads'), 10) || 0;
+      if (amRemoteReloads < 12) {
+        sessionStorage.setItem('amRemoteReloads', String(amRemoteReloads + 1));
+        setTimeout(function () { location.reload(); }, 15000);
+      }
+    } catch (ignore) { }
   }
 } else {
+  try { sessionStorage.removeItem('amRemoteReloads'); } catch (ignore) { }
   // Bounded retry for the amStartScan() cloud path's own fixed 4-second
   // reload, which can legitimately land before startScan()'s two HTTP
   // calls finish and scanRunning commits. Without this, that one reload
@@ -1260,8 +1357,12 @@ void clearAbandonedScan() {
     
     
     
-    boolean asyncDeviceScanActive = state.scanPhase == 'devices' && liveDeviceScan() != null
-    boolean asyncAppScanActive = state.scanPhase == 'apps' && liveAppScan() != null
+    
+    
+    
+    String phaseNow = "${scanProgress().phase ?: ''}"
+    boolean asyncDeviceScanActive = phaseNow == 'devices' && liveDeviceScan() != null
+    boolean asyncAppScanActive = phaseNow == 'apps' && liveAppScan() != null
     if (asyncDeviceScanActive || asyncAppScanActive) {
         return
     }
@@ -1312,7 +1413,7 @@ void clearAbandonedScan() {
     
     
     
-    if (state.scanPhase == 'apps') {
+    if ("${scanProgress().phase ?: ''}" == 'apps') {
         
         
         
@@ -1426,8 +1527,34 @@ String compatibilitySummary(Map graph) {
     s << ", resulting in ${relationshipCount} relationships"
     if (inert > 0) s << ", including ${inert} freestanding apps"
     s << "."
-    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Notifier, webCoRE pistons as well as hub and local variables.</span>"
+    String haiNote = haiParentInstalled() ? '' : ' (not installed)'
+    s << "<br><span style='opacity:0.75'>Flow decoding supports Rule Machine 5.1, Visual Rule Builder 2.0, Experimental HAI Rule Engine${haiNote}, webCoRE pistons, Notifier as well as hub and local variables.</span>"
+    s << haiCoverageSummary(graph)
     return s.toString()
+}
+
+
+
+
+String haiCoverageSummary(Map graph) {
+    Map feed = (state.haiFeed ?: [:]) as Map
+    String status = "${feed.state ?: ''}"
+    
+    
+    
+    
+    
+    
+    
+    
+    if (!haiParentInstalled()) {
+        
+        
+        return "<br><span style='color:#1976d2'>HAI Engine is not installed but its compatibility" +
+               " capabilities are surfaced.</span>"
+    }
+    if (status != 'FAILED') return ''
+    return "<br><span style='color:#c0392b'>HAI rules are missing from this map: ${feed.error}.</span>"
 }
 
 
@@ -1571,6 +1698,28 @@ ConcurrentHashMap liveAppScan() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final ConcurrentHashMap<String, Map> SCAN_PROGRESS = new ConcurrentHashMap<>()
 
 @Field static final ConcurrentHashMap<String, String> SCAN_LOCKS = new ConcurrentHashMap<>()
 
@@ -1826,9 +1975,7 @@ Map startScan() {
     
     
     state.deviceScanTotal = (bulk.labels as Map).size()
-    state.scanTotal = repIds.size()
-    state.scanDone = 0
-    state.scanPhase = 'devices'
+    setScanProgress('devices', repIds.size(), 0)
     
     
     state.devicePhaseStartedAt = now()
@@ -2292,7 +2439,7 @@ void finalizeDevicePhase(String scanId) {
         (scan.unreadableDevs as ConcurrentHashMap).keySet().each { String devId -> unreadable << devId }
         state.deviceIdsUnreadable = unreadable
 
-        state.scanDone = scan.total as Integer
+        setScanDone(scan.total as Integer)
         state.scanHeartbeat = now()
         if (diagOn()) {
             log.info "${app.label}: device phase done in ${phaseElapsedSeconds(state.devicePhaseStartedAt)}s" +
@@ -2350,12 +2497,10 @@ void startAppPhase(String lockToken) {
     }
     state.appIds = appIds as List
 
-    state.scanPhase = 'apps'
     
     
     state.appPhaseStartedAt = now()
-    state.scanTotal = appIds.size()
-    state.scanDone = 0
+    setScanProgress('apps', appIds.size(), 0)
     state.scanQueue = []
 
     if (appIds.isEmpty()) {
@@ -2715,7 +2860,7 @@ void finalizeAppPhase(String scanId) {
         (scan.otherEngines as ConcurrentHashMap).keySet().each { String eng -> others << eng }
         state.otherEngines = others
 
-        state.scanDone = scan.total as Integer
+        setScanDone(scan.total as Integer)
         
         
         
@@ -2875,6 +3020,26 @@ void finishScan(data = null) {
         
         
         state.hubVariableInventory = fetchHubVariableInventory()
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Map fetchedFeed = new LinkedHashMap(fetchHaiFeed())
+        fetchedFeed.remove('capabilities')
+        state.haiFeed = fetchedFeed
+        Map haiFeed = (state.haiFeed ?: [:]) as Map
+        if (haiFeed.state == 'FAILED') {
+            log.warn "${app.label}: the Automation Intelligence feed could not be read, continuing without it: ${haiFeed.error}"
+        } else if (haiFeed.state == 'OK' && diagOn()) {
+            log.info "${app.label}: Automation Intelligence feed gave ${((haiFeed.nodes ?: []) as List).size()} node(s) and ${((haiFeed.edges ?: []) as List).size()} edge(s)"
+        }
 
         
         
@@ -3747,6 +3912,14 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             
             if (installedApp?.appTypeId != null) {
                 out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
+                
+                
+                
+                
+                
+                if (appTypeNamespaces) {
+                    out.userApp = appTypeNamespaces.containsKey("${installedApp.appTypeId}")
+                }
             }
             
             
@@ -3927,6 +4100,7 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 
                 
                 out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
+                out.rmConstructs = extractRuleConstructs(data)
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 
@@ -4110,8 +4284,6 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
         case 'switch':
             
             
-            
-            
             boolean opened = false
             ((st.cs instanceof List) ? st.cs as List : []).each { Object raw ->
                 if (!(raw instanceof Map)) return
@@ -4119,6 +4291,12 @@ void webcoreFlowStatement(Map st, List steps, int depth) {
                 steps << webcoreFlowControl(opened ? 'elseif' : 'if', 'case not decoded')
                 opened = true
                 webcoreFlowStatements((branch.s instanceof List) ? branch.s as List : [], steps, depth + 1)
+            }
+            List defaultBody = (st.e instanceof List) ? st.e as List : []
+            if (defaultBody) {
+                steps << (opened ? webcoreFlowControl('else', '') : webcoreFlowControl('if', 'no case matched'))
+                opened = true
+                webcoreFlowStatements(defaultBody, steps, depth + 1)
             }
             if (opened) steps << webcoreFlowControl('endif', '')
             break
@@ -6683,9 +6861,21 @@ void cacheMigrationRating(String appId, Map rating) {
         return [level: e.level, label: e.label,
                 reasons: ((e.summary ?: []) as List).take(3),
                 partsNeedingRework: counts.manualComponents,
+                
+                
+                components: counts.components,
+                blockers: ((e.blockers ?: []) as List).take(12),
+                engineName: e.engineName,
+                statusesNote: e.statusesNote,
+                automatic: auto ?: null,
                 automaticConversion: auto.containsKey('available') ? (auto.available as Boolean) : null]
     }
-    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder)]
+    
+    
+    
+    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
+                    hai: side(rating.hai),
+                    engineVersion: ((rating.hai ?: [:]) as Map).version]
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -6696,21 +6886,57 @@ void cacheMigrationRating(String appId, Map rating) {
 
 
 
+
+
+
+String haiFeedVersionForCache() {
+    Map feed = (state.haiFeed ?: [:]) as Map
+    
+    
+    
+    return "${feed.capabilitiesHash ?: feed.haiVersion ?: ''}"
+}
+
+
+
+
+String haiStatusesNote(boolean noCapabilities, String feedState) {
+    if (!noCapabilities) return 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
+    if (feedState == 'OFF') return 'That engine is not installed on this hub, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
+    return 'Not determined yet'
+}
+
 Map migrationRatingsMapping() {
     Map cache = (state.migrationRatingCache ?: [:]) as Map
     Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
+    
+    
+    String engineVersion = haiFeedVersionForCache()
     Map appInfo = (state.appInfo ?: [:]) as Map
+    Map liveFeed = (state.haiFeed ?: [:]) as Map
+    
+    
+    
+    
+    
+    String liveNote = haiStatusesNote(((liveFeed.capabilityCount ?: 0) as Integer) == 0, "${liveFeed.state ?: ''}")
     List out = []
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         if ("${(info as Map).type ?: ''}".trim() != 'webCoRE Piston') return
         Map hit = (cache[appId] ?: [:]) as Map
         Long ratedAt = (hit.ratedAt ?: 0) as Long
+        
+        
+        
+        boolean engineMoved = ratedAt && engineVersion && hit.engineVersion && "${hit.engineVersion}" != engineVersion
         out << [appId: appId,
                 status: ratedAt ? 'complete' : 'not-rated',
                 ratedAt: ratedAt ?: null,
-                stale: ratedAt ? (ratedAt < graphAt) : null,
-                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder]
+                stale: ratedAt ? ((ratedAt < graphAt) || engineMoved) : null,
+                staleReason: ratedAt ? (engineMoved ? 'engine-version' : ((ratedAt < graphAt) ? 'graph-rebuilt' : null)) : null,
+                ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder,
+                hai: hit.hai ? ((hit.hai as Map) + [statusesNote: liveNote]) : hit.hai]
     }
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
@@ -6751,7 +6977,8 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
         parentIndex.each { k, v -> if ("${v}" ==~ /^[0-9]+$/) tokenToDeviceId["${k}".toString()] = "${v}" as Integer }
         Map rating = webcoreMigrationRating(decoded.document as Map, hubVariableTypes, tokenToDeviceId)
         cacheMigrationRating(appId, rating)
-        return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine, visualRuleBuilder: rating.visualRuleBuilder]]
+        return [http: 200, body: [status: 'complete', appId: appId, ruleMachine: rating.ruleMachine,
+                                   visualRuleBuilder: rating.visualRuleBuilder, hai: rating.hai]]
     } catch (Exception ignored) {
         return [http: 422, body: [status: 'error', error: 'assessment-failed']]
     } finally {
@@ -7714,14 +7941,45 @@ List webcoreVrbDeviceVerdict(String row, Map ctx) {
 }
 
 
-Map webcoreRateEngine(List components, String engine, List sourceProblems) {
-    int ruleIndex = engine == 'rm' ? 1 : 3
+
+
+
+
+List webcoreHaiVerdict(String row, String rmVerdict, String rmNote, Map capsById) {
+    List own = WEBCORE_HAI_VERDICT[row] as List
+    if (own) return [own[0] as String, own[1] as String]
+    String capId = WEBCORE_HAI_CAPABILITY[row] as String
+    if (capId && rmVerdict == 'yes') {
+        Map cap = (capsById ?: [:])[capId] as Map
+        String status = "${cap?.status ?: ''}"
+        if (status && status != 'Runs') {
+            String feature = "${cap?.feature ?: capId}"
+            String because = "${cap?.note ?: ''}".trim()
+            return ['partial', ("HAI-1 lists ${feature} as ${status.toLowerCase()}" +
+                (because ? ": ${because}" : '')).toString()]
+        }
+    }
+    return [rmVerdict, rmNote]
+}
+
+
+Map webcoreRateEngine(List components, String engine, List sourceProblems, Map haiCaps = [:]) {
+    
+    
+    boolean hai = (engine == 'hai')
+    int ruleIndex = (engine == 'vrb') ? 3 : 1
     List items = []
     Integer firstUnit = null
     boolean decisionTaken = false
     boolean seenDecision = false
-    Closure verdictOf = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex] as String }
-    Closure noteOf = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex + 1] as String }
+    Closure rawVerdict = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex] as String }
+    Closure rawNote = { String row -> ((WEBCORE_EQUIVALENCE[row] ?: WEBCORE_EQUIVALENCE['unknown']) as List)[ruleIndex + 1] as String }
+    Closure verdictOf = { String row ->
+        hai ? (webcoreHaiVerdict(row, rawVerdict(row), rawNote(row), haiCaps)[0] as String) : rawVerdict(row)
+    }
+    Closure noteOf = { String row ->
+        hai ? (webcoreHaiVerdict(row, rawVerdict(row), rawNote(row), haiCaps)[1] as String) : rawNote(row)
+    }
     int counted = 0
     
     boolean repeatUnsafe = components.any { Map c ->
@@ -7771,7 +8029,9 @@ Map webcoreRateEngine(List components, String engine, List sourceProblems) {
             List er = extraRun(row, verdict, note)
             verdict = er[0] as String; note = er[1] as String
         } else {
-            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) { verdict = 'partial'; note = 'rebuild as Between two times' }
+            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) {
+                verdict = 'partial'; note = hai ? 'rebuild as a between-two-times condition' : 'rebuild as Between two times'
+            }
             if (row in ['stmt.on']) { if (seenDecision) { effectiveRow = 'stmt.on.extra'; verdict = verdictOf(effectiveRow); note = noteOf(effectiveRow) }; seenDecision = true }
         }
         if (effectiveRow == 'setting.localVariable') return
@@ -7876,12 +8136,92 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     Map rm = webcoreRateEngine(components, 'rm', problems)
     Map vrb = webcoreRateEngine(components, 'vrb', problems)
     
+    
+    Map haiFeed = fetchHaiFeed()
+    Map haiCaps = [:]
+    ((haiFeed.capabilities ?: []) as List).each { Object raw ->
+        if (raw instanceof Map && (raw as Map).id) haiCaps["${(raw as Map).id}"] = raw as Map
+    }
+    Map hai = webcoreRateEngine(components, 'hai', problems, haiCaps)
+    hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
+    hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
+    hai.statusesNote = haiStatusesNote(haiCaps.isEmpty(), "${haiFeed.state ?: ''}")
+    
     Map rmAuto = webcoreMigrationAssessment(originalPiston, hubVariableTypes, tokenToDeviceId.keySet().collect { "${it}".toString() } as Set).ruleMachine as Map
     Map vrbAuto = webcoreVrbAssessment(originalPiston, hubVariableTypes, tokenToDeviceId)
     rm.automatic = [available: (rmAuto.counts as Map).blockers == 0 && !problems, parts: (rmAuto.counts as Map).blockers]
     vrb.automatic = [available: (vrbAuto.level as int) <= 2, parts: (vrbAuto.counts as Map).manualComponents]
-    return [ruleMachine: rm, visualRuleBuilder: vrb, components: components.size()]
+    
+    
+    hai.automatic = [available: false, parts: null, reason: 'no converter exists for this engine yet']
+    return [ruleMachine: rm, visualRuleBuilder: vrb, hai: hai, components: components.size()]
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final Map WEBCORE_HAI_CAPABILITY = [
+    'act.openClose'   : 'action.hsm-doors-locks-valves-open-close-garage-door',
+    'vact.mode'       : 'action.variables-mode-files-custom-set-mode',
+    'act.thermostat'  : 'action.thermostats-set-thermostats-thermostat-scheduler',
+    'mod.interaction' : 'trigger.digital-switch-physical-switch-physical-dimmer-l',
+    'act.refresh'     : 'action.devices-refresh-devices',
+    'vact.state'      : 'action.devices-capture-devices-restore-devices',
+    'vact.cancelTasks': 'action.rules-cancel-rule-timers',
+    'vact.pauseRule'  : 'action.rules-pause-resume-rules',
+    'vact.runRule'    : 'action.rules-run-rule-actions',
+    'vact.hsm'        : 'action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari',
+    'act.lock'        : 'action.hsm-doors-locks-valves-lock-unlock-locks',
+    'vact.setVariable': 'action.variables-mode-files-custom-set-variable-all-ope'
+]
+
+@Field static final Map WEBCORE_HAI_VERDICT = [
+    
+    'cond.device.changedWithin': ['yes', 'a condition can require a reading no older than a set time'],
+    'cond.group'               : ['yes', 'conditions are a tree, so a group stays a group'],
+    'cond.followedBy'          : ['partial', 'rebuild as a wait for the second event with a timeout'],
+    'setting.async'            : ['yes', 'set the rule to run in parallel, with a limit'],
+    'setting.taskPolicy'       : ['yes', 'set the rule to restart, ignore, queue or run in parallel'],
+    'setting.pistonOption'     : ['partial', 'check it against the rule settings; HAI-1 has more of them than Rule Machine'],
+    'stmt.triggersAnd'         : ['partial', 'rebuild as one trigger with the rest as conditions, as in Rule Machine'],
+    
+    
+    
+    
+    
+    'mod.changesInIf'          : ['warning', 'HAI-1 fires on a transition by default where Rule Machine does not always; check this one after rebuilding'],
+    'trig.device.stays'        : ['warning', 'supported, but set the rule to run in parallel: at its default a re-trigger cancels the run, where Rule Machine starts a second one (proven on this hub 2026-09-20)'],
+    'vact.wait'                : ['warning', 'supported, but set the rule to run in parallel: at its default a re-trigger cancels this wait, where Rule Machine runs the actions again (proven on this hub 2026-09-20)'],
+    'setting.restriction'      : ['warning', 'supported, but HAI-1 keeps listening where Rule Machine drops its subscriptions, which other apps can see'],
+    
+    
+    'act.lock'                 : ['warning', 'supported, but a lock needs a one-time approval before HAI-1 will send it'],
+    'act.alarm'                : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
+    'act.alarmPart'            : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
+    
+    'cond.expression'          : ['no', 'HAI-1 has no expression language; rebuild the test from conditions'],
+    'stmt.each'                : ['no', 'HAI-1 has no loop over a device list'],
+    'vact.parseJson'           : ['no', 'HAI-1 does not parse a JSON reply'],
+    'vact.wol'                 : ['no', 'HAI-1 has no wake on LAN'],
+    'vact.integration'         : ['no', 'HAI-1 has no equivalent for these webCoRE integrations'],
+    'vact.toggleRandom'        : ['no', 'HAI-1 has no random device choice'],
+    'trig.device.parity'       : ['no', 'HAI-1 cannot test even or odd'],
+    'cond.device.parity'       : ['no', 'HAI-1 cannot test even or odd']
+]
+
 
 @Field static final Map WEBCORE_AUTOMATIC_NOTES = [
     'stmt.if': ['IF with one condition or one trigger', 'one decision'],
@@ -8086,7 +8426,10 @@ List extractHubVariableWrites(Map data) {
         
         
         
-        if (settingValues["valStringOp.${num}"] == 'Device attribute') {
+        
+        
+        String varSource = (settingValues["valStringOp.${num}"] ?: settingValues["numOp.${num}"] ?: '') as String
+        if (varSource.equalsIgnoreCase('Device attribute')) {
             String attr = settingValues["tCustomAttr.${num}"]
             List srcDevices = settingDevices["customDev.${num}"] ?: []
             List srcDeviceIds = settingDeviceIds["customDev.${num}"] ?: []
@@ -8171,6 +8514,40 @@ List extractHubVariableReads(Map data) {
             String key = "${varName}|${role}|${field}"
             if (foundKeys.add(key)) {
                 found << [variable: varName, confirmed: true, usageRole: role,
+                          evidenceKind: 'structured-setting', field: field]
+            }
+        }
+    }
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    settingValues.keySet().findAll { it.startsWith('numOp.') || it.startsWith('valStringOp.') }.sort().each { String key ->
+        String num = key.substring(key.indexOf('.') + 1)
+        String mode = "${settingValues[key] ?: ''}".toLowerCase()
+        if (mode == 'copy variable') mode = 'variable'
+        List<String> operandFields = []
+        if (mode == 'variable math') operandFields = ["xVar3.${num}", "xVar4.${num}"]
+        
+        
+        else if (mode == 'variable') operandFields = ["xVar3.${num}"]
+        else if (mode == 'add number') operandFields = ["xVarV.${num}"]
+        else return
+        operandFields.each { String field ->
+            String varName = "${settingValues[field] ?: ''}"
+            
+            
+            if (!varName || varName == '(constant)') return
+            String key2 = "${varName}|value-source|${field}"
+            if (foundKeys.add(key2)) {
+                found << [variable: varName, confirmed: true, usageRole: 'value-source',
                           evidenceKind: 'structured-setting', field: field]
             }
         }
@@ -8274,7 +8651,9 @@ List buildRuleFlow(Map data) {
     List steps = []
 
     
-    settingDevices.keySet().findAll { it.startsWith('tDev') }.sort().each { String n ->
+    
+    
+    settingDevices.keySet().findAll { it.startsWith('tDev') && !it.startsWith('tDev-') }.sort().each { String n ->
         String num = n.replaceAll('^tDev_?', '')
         steps << [kind: 'trigger', label: (capabs[num] ?: "Trigger ${num}"), devices: settingDevices[n]]
     }
@@ -8676,11 +9055,28 @@ String actionLabel(String method, String num, Map act, Map settingValues, Map se
             
             
             
-            
-            if (settingValues["valStringOp.${num}"] == 'Device attribute') {
+            String valSource = (settingValues["valStringOp.${num}"] ?: settingValues["numOp.${num}"] ?: '') as String
+            if (valSource.equalsIgnoreCase('Device attribute')) {
                 String attr = settingValues["tCustomAttr.${num}"]
                 List srcDevices = settingDevices["customDev.${num}"] ?: []
                 if (attr && srcDevices) return "Set Variable ${varName} from ${srcDevices[0]}.${attr}"
+            }
+            if (valSource.equalsIgnoreCase('variable math')) {
+                String left = settingValues["xVar3.${num}"]
+                String right = settingValues["xVar4.${num}"]
+                String op = settingValues["valMathOp.${num}"]
+                
+                if (right == '(constant)') right = settingValues["valConst2.${num}"]
+                if (left == '(constant)') left = settingValues["valConst.${num}"]
+                if (left && op && right) return "Set Variable ${varName} = ${left} ${op} ${right}"
+            }
+            if (valSource.equalsIgnoreCase('variable') || valSource.equalsIgnoreCase('Copy variable')) {
+                String copied = settingValues["xVar3.${num}"]
+                if (copied) return "Set Variable ${varName} = ${copied}"
+            }
+            if (valSource.equalsIgnoreCase('add number')) {
+                String amount = settingValues["valNumber.${num}"]
+                if (amount) return "Set Variable ${varName} + ${amount}"
             }
             return "Set Variable ${varName}"
         case 'getOnOffSwitch':
@@ -9129,6 +9525,11 @@ List unusedConstraintDeviceIds(Map data) {
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
     
     
+    
+    
+    
+    
+    if (settingName.startsWith('tDev-')) return 'monitor'
     if (settingName.startsWith('tDev')) return 'trigger'
     if (settingName.startsWith('rDev')) return 'constraint'
     
@@ -9459,6 +9860,610 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 
 
 
+
+
+
+
+
+@Field static final Map RM_CONSTRUCT_TO_HAI = [
+    
+    'action:getOnOffSwitch'       : 'action.switches-turn-switches-on-off',
+    'action:getToggleSwitch'      : 'action.switches-toggle-switches',
+    'action:getFlashSwitch'       : 'action.switches-flash-switches',
+    'action:getPerModeSwitch'     : 'action.switches-set-switches-per-mode-choose-switches-p',
+    'action:getPushButton'        : 'action.switches-push-button-push-button-per-mode-choose',
+    
+    
+    
+    
+    
+    
+    'action:getSetDimmer'         : 'action.dimmers-set-dimmer-level-fade-time-variable-leve',
+    
+    
+    'action:getSetDimmers'        : 'action.dimmers-set-dimmer-level-fade-time-variable-leve',
+    'action:getDimmersPerMode'    : 'action.dimmers-set-dimmer-per-mode',
+    'action:getToggleDimmer'      : 'action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha',
+    'action:getAdjustDimmer'      : 'action.dimmers-toggle-dimmer-adjust-dimmer-relative-cha',
+    'action:getFadeDimmer'        : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getStopFade'          : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getRLDimmer'          : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getStopDimmer'        : 'action.dimmers-fade-dimmer-over-time-stop-fade-start-ra',
+    'action:getSetColor'          : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
+    'action:getToggleColor'       : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
+    'action:getColorPerMode'      : 'action.dimmers-set-color-toggle-color-set-color-per-mod',
+    'action:getSetColorTemp'      : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getToggleColorTemp'   : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getColorTempPerMode'  : 'action.dimmers-set-color-temperature-toggle-per-mode',
+    'action:getFadeCT'            : 'action.dimmers-change-color-temperature-over-time-stop',
+    'action:getStopCTFade'        : 'action.dimmers-change-color-temperature-over-time-stop',
+    'action:getTrackEvent'        : 'action.dimmers-track-event-dimmer-track-event-switch',
+    'action:getShadePosition'     : 'action.shades-and-fans-open-close-shades-set-position-s',
+    'action:getFanSpeed'          : 'action.shades-and-fans-set-fan-speed-cycle-fans',
+    'action:getActivateScenes'    : 'action.scenes-activate-scenes-activate-scenes-per-mode',
+    'action:getArmHSM'            : 'action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari',
+    'action:getOCGarage'          : 'action.hsm-doors-locks-valves-open-close-garage-door',
+    'action:getLockUnlock'        : 'action.hsm-doors-locks-valves-lock-unlock-locks',
+    'action:getOCValve'           : 'action.hsm-doors-locks-valves-open-close-valves',
+    'action:getThermostat'        : 'action.thermostats-set-thermostats-thermostat-scheduler',
+    'action:getMsg'               : 'action.messages-send-speak-a-message-with-variables',
+    'action:getLogMsg'            : 'action.messages-log-a-message',
+    'action:getHTTPPost'          : 'action.messages-send-http-get-send-http-post',
+    'action:getPingIP'            : 'action.messages-ping-ip-address',
+    'action:getMusicPlayer'       : 'action.music-and-sounds-control-music-player',
+    'action:getSetVolume'         : 'action.music-and-sounds-set-volume-mute-unmute',
+    'action:getMuteUnmute'        : 'action.music-and-sounds-set-volume-mute-unmute',
+    'action:getChime'             : 'action.music-and-sounds-sound-tone-sound-chime',
+    'action:getSiren'             : 'action.music-and-sounds-control-siren',
+    'action:getSetVariable'       : 'action.variables-mode-files-custom-set-variable-all-ope',
+    'variable:hubMultiType'       : 'variable.hub-variables-number-decimal-string-boolean-date',
+    'variable:hubRead'            : 'variable.read-a-hub-variable-in-a-condition',
+    'variable:hubWrite'           : 'variable.write-a-hub-variable',
+    'variable:localMultiType'     : 'variable.local-rule-variables-all-five-types',
+    
+    
+    
+    
+    
+    'condition:Variable'          : 'condition.variable-hub-or-local',
+    'condition:Mode'              : 'condition.mode',
+    'condition:Time of day'       : 'condition.time-of-day',
+    'condition:Between two times' : 'condition.between-two-times-fixed-sunrise-sunset-offsets-v',
+    'condition:Between two dates' : 'condition.between-two-dates',
+    'condition:On a Day'          : 'condition.on-a-day',
+    'condition:Days of Week'      : 'condition.days-of-week-as-condition',
+    'condition:Private Boolean'   : 'condition.private-boolean',
+    'condition:Custom Attribute'  : 'condition.custom-attribute',
+    'condition:HSM Status'        : 'condition.hsm-status',
+    'option:displayCurrentValues' : 'option.display-current-values',
+    'option:logging'              : 'option.logging-events-triggers-actions',
+    'option:disableAction'        : 'option.disable-an-action',
+    'option:pauseResume'          : 'option.pause-resume',
+    'action:getSetMode'           : 'action.variables-mode-files-custom-set-mode',
+    'action:getDefinedAction'     : 'action.variables-mode-files-custom-run-custom-action-an',
+    'action:getWriteLocalFile'    : 'action.variables-mode-files-custom-write-append-delete',
+    'action:getAppendLocalFile'   : 'action.variables-mode-files-custom-write-append-delete',
+    'action:getDeleteLocalFile'   : 'action.variables-mode-files-custom-write-append-delete',
+    'action:getSetPrivateBoolean' : 'action.rules-set-private-booleans-this-rule-or-others',
+    'action:getRuleActions'       : 'action.rules-run-rule-actions',
+    'action:getStopActions'       : 'action.rules-cancel-rule-timers',
+    'action:getPauseResumeRules'  : 'action.rules-pause-resume-rules',
+    'action:getRoomLights'        : 'action.rules-activate-room-lights-for-mode-period-turn',
+    'action:getCapture'           : 'action.devices-capture-devices-restore-devices',
+    'action:getRestore'           : 'action.devices-capture-devices-restore-devices',
+    'action:getRefreshSwitch'     : 'action.devices-refresh-devices',
+    'action:getPollSwitch'        : 'action.devices-poll-devices',
+    'action:getDisableDevice'     : 'action.devices-disable-enable-devices',
+    'action:getZwavePolling'      : 'action.devices-start-stop-z-wave-polling',
+    
+    'action:getIfThen'            : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getElseIf'            : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getElse'              : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getEndIf'             : 'control.conditional-if-expression-then-else-if-else-end',
+    'action:getSimpleConditional' : 'control.conditional-simple-conditional-action-one-action',
+    'action:getRepeat'            : 'control.repeat-repeat-actions-every-n-n-times-stoppable',
+    'action:getRepeatWhile'       : 'control.repeat-repeat-while-expression-repeat-until-expr',
+    'action:getStopRepeat'        : 'control.repeat-stop-repeating-actions',
+    'action:getDelay'             : 'control.delay-wait-exit-delay-actions-blocking-with-canc',
+    'action:getCancelDelayed'     : 'control.delay-wait-exit-cancel-delayed-actions',
+    'action:getWaitEvents'        : 'control.delay-wait-exit-wait-for-events-one-or-many-any',
+    'action:getWaitRule'          : 'control.delay-wait-exit-wait-for-expression-timeout-dura',
+    'action:getExitRule'          : 'control.delay-wait-exit-exit-rule',
+    'action:getComment'           : 'control.delay-wait-exit-comment',
+    
+    'trigger:Custom Attribute'    : 'trigger.custom-attribute',
+    'trigger:Presence'            : 'trigger.presence-arrives-leaves',
+    'trigger:Button'              : 'trigger.button-pushed-held-double-tapped-released',
+    'trigger:Certain Time'        : 'trigger.certain-time-including-sunrise-and-sunset-with-o',
+    'trigger:Certain Time (and optional date)': 'trigger.certain-time-including-sunrise-and-sunset-with-o',
+    'trigger:Time of Day'         : 'trigger.time-of-day-as-trigger',
+    'trigger:Days of Week'        : 'trigger.days-of-week-days-or-days-plus-time',
+    'trigger:Periodic Schedule'   : 'trigger.periodic-schedule-minutes-hourly-daily-weekly-mo',
+    'trigger:Mode'                : 'trigger.mode',
+    
+    
+    
+    
+    'trigger:HSM Status'          : 'trigger.hsm-status-armed-away-home-night-delayed-arming',
+    'trigger:HSM Alert'           : 'trigger.hsm-alert-intrusion-smoke-water-rule-arming-canc',
+    'trigger:Variable'            : 'trigger.variable-hub-or-local-variable-value',
+    'trigger:Private Boolean'     : 'trigger.private-boolean',
+    'trigger:Rule Paused'         : 'trigger.rule-paused',
+    'trigger:Music Player'        : 'trigger.music-player-playing-paused-stopped',
+    'trigger:Lock Code'           : 'trigger.keypad-codes-lock-codes-by-code-name',
+    'trigger:Keypad'              : 'trigger.security-keypads-armed-disarmed-changed',
+    
+    'structure:conditionalTrigger': 'control.conditional-trigger',
+    'structure:requiredExpression': 'control.required-expression',
+    'structure:actionDelay'       : 'control.delay-wait-exit-delay-on-an-individual-action-sc'
+]
+
+
+
+
+@Field static final String HAI_DEVICE_TRIGGER_ID = 'trigger.acceleration-battery-carbon-dioxide-carbon-monox'
+@Field static final String HAI_DEVICE_CONDITION_ID = 'condition.any-device-capability-in-a-state-switch-motion-c'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String HAI_LOCATION_EVENT_CAPABILITY = 'trigger.location-event'
+
+
+
+@Field static final String RM_LOCATION_EVENT_PREFIX = 'trigger:Location Event:'
+
+
+
+
+
+
+List extractRuleConstructs(Map data) {
+    Set<String> out = new LinkedHashSet<String>()
+    boolean anyDelay = false
+    
+    
+    
+    
+    Map settingsByName = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (raw instanceof Map) settingsByName["${(raw as Map).name ?: ''}"] = (raw as Map).value
+    }
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        String name = "${s.name ?: ''}"
+        Object value = s.value
+        String v = (value instanceof String || value instanceof Number || value instanceof Boolean) ? "${value}".trim() : ''
+        if (!name || !v) return
+        if (name.startsWith('actSubType.')) out << "action:${v}".toString()
+        else if (name.startsWith('tCapab')) {
+            
+            
+            if (v == 'Location Event') {
+                String idx = name.substring('tCapab'.length())
+                String event = "${settingsByName["tstate${idx}"] ?: ''}".trim()
+                out << "${RM_LOCATION_EVENT_PREFIX}${event}".toString()
+            } else {
+                out << "trigger:${v}".toString()
+            }
+        }
+        
+        
+        
+        else if ((name.startsWith('rCapab_') || name.startsWith('RelrDev_')) && Character.isLetter(v.charAt(0))) {
+            out << "condition:${v}".toString()
+        }
+        
+        
+        
+        
+        else if (name == 'dValues' && v == 'true') out << 'option:displayCurrentValues'.toString()
+        else if (name == 'logging') out << 'option:logging'.toString()
+        else if ((name.startsWith('disable') || name.startsWith('disableAct')) && v == 'true') out << 'option:disableAction'.toString()
+        else if (name.startsWith('delayAct.') && v != 'none') anyDelay = true
+        else if (name.startsWith('isCondTrig') && v == 'true') out << 'structure:conditionalTrigger'.toString()
+        else if (name.startsWith('reqExp') && v == 'true') out << 'structure:requiredExpression'.toString()
+    }
+    if (anyDelay) out << 'structure:actionDelay'.toString()
+    return out.sort()
+}
+
+
+
+List variableConstructsFor(Object raw) {
+    if (!(raw instanceof Map)) return []
+    Map rv = raw as Map
+    Set<String> out = new LinkedHashSet<String>()
+    Map inventory = (((state.hubVariableInventory ?: [:]) as Map).variables ?: [:]) as Map
+    Set<String> hubTypes = new LinkedHashSet<String>()
+    ((rv.variableReferences ?: []) as List).each { Object r ->
+        if (!(r instanceof Map)) return
+        Map ref = r as Map
+        String scope = "${ref.scope ?: ''}"
+        String op = "${ref.operation ?: ''}"
+        if (scope == 'hub') {
+            if (op == 'write') out << 'variable:hubWrite'
+            else out << 'variable:hubRead'
+            
+            
+            
+            
+            
+            
+            
+            Object meta = inventory["${ref.canonicalName ?: ref.name ?: ''}"]
+            String vt = normalizeHubVariableType((meta instanceof Map) ? "${(meta as Map).type ?: ''}" : null)
+            if (vt) hubTypes << vt
+        }
+    }
+    
+    
+    Set<String> localTypes = new LinkedHashSet<String>()
+    ((rv.localVariables ?: []) as List).each { Object lv ->
+        if (!(lv instanceof Map)) return
+        String vt = normalizeHubVariableType("${(lv as Map).variableType ?: ''}")
+        if (vt) localTypes << vt
+    }
+    if (hubTypes.size() > 1) out << 'variable:hubMultiType'
+    if (localTypes.size() > 1) out << 'variable:localMultiType'
+    return out.toList()
+}
+
+
+
+
+String haiCapabilityIdFor(String token) {
+    String mapped = RM_CONSTRUCT_TO_HAI[token] as String
+    if (mapped) return mapped
+    
+    
+    if (token.startsWith(RM_LOCATION_EVENT_PREFIX)) {
+        
+        
+        
+        String event = token.substring(RM_LOCATION_EVENT_PREFIX.length()).trim()
+        return event ? HAI_LOCATION_EVENT_CAPABILITY : null
+    }
+    if (token.startsWith('trigger:')) return HAI_DEVICE_TRIGGER_ID
+    if (token.startsWith('condition:')) return HAI_DEVICE_CONDITION_ID
+    return null
+}
+
+
+
+
+
+
+
+
+Map rmCoverageReport() {
+    
+    
+    
+    Map feed = fetchHaiFeed()
+    if ("${feed.state}" != 'OK') {
+        
+        
+        
+        Map published = fetchHaiPublicCapabilities()
+        if (published) return published
+        return [ok: false, reason: 'HAI capability figures are not available right now. Try again shortly.']
+    }
+    Map capsById = [:]
+    ((feed.capabilities ?: []) as List).each { Object raw ->
+        if (raw instanceof Map && (raw as Map).id) capsById["${(raw as Map).id}"] = raw as Map
+    }
+    
+    
+    
+    
+    
+    
+    if (capsById.isEmpty()) {
+        Map published = fetchHaiPublicCapabilities()
+        if (published) return published
+        return [ok: false, reason: feed.capabilitiesError
+            ? "${feed.engine ?: 'The rule engine'} published no capability list: ${feed.capabilitiesError}"
+            : "${feed.engine ?: 'The rule engine'} published no capability list, so there is nothing to compare Rule Machine against."]
+    }
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    
+    
+    
+    
+    
+    Map ruleVars = ((state.graph ?: [:]) as Map).ruleVariables as Map ?: [:]
+    List rules = []
+    Map constructUse = [:]
+    appInfo.each { String appId, Object info ->
+        if (!(info instanceof Map)) return
+        Map appMap = info as Map
+        if (!"${appMap.type}".startsWith('Rule-')) return
+        List tokens = new ArrayList((appMap.rmConstructs ?: []) as List)
+        tokens.addAll(variableConstructsFor(ruleVars["a${appId}"]))
+        
+        
+        if (appMap.paused) tokens << 'option:pauseResume'.toString()
+        List gaps = []
+        if (tokens.isEmpty()) gaps << [token: 'assessmentUnavailable', verdict: 'unknown']
+        tokens.each { Object rawToken ->
+            String token = "${rawToken}"
+            String capId = haiCapabilityIdFor(token)
+            Map cap = capId ? (capsById[capId] as Map) : null
+            String status = "${cap?.status ?: ''}"
+            String verdict = !capId ? 'unmapped' :
+                (cap == null ? 'unknown' :
+                (status == 'Runs' ? 'runs' :
+                (status == 'Missing' ? 'missing' : 'partial')))
+            Map use = (constructUse[token] ?: [token: token, capabilityId: capId, feature: cap?.feature,
+                                               status: status ?: null, verdict: verdict, rules: 0]) as Map
+            use.rules = ((use.rules ?: 0) as Integer) + 1
+            constructUse[token] = use
+            if (verdict != 'runs') gaps << [token: token, verdict: verdict, capabilityId: capId, feature: cap?.feature]
+        }
+        rules << [id: "a${appId}", name: appMap.label, constructs: tokens.size(),
+                  assessed: !tokens.isEmpty(), covered: !tokens.isEmpty() && gaps.isEmpty(), gaps: gaps]
+    }
+    int covered = rules.count { (it as Map).covered == true } as Integer
+    List gapRules = rules.findAll { (it as Map).covered != true }
+    
+    
+    
+    
+    Set<String> usedCapIds = new LinkedHashSet<String>()
+    constructUse.values().each { Object raw ->
+        Map use = raw as Map
+        if (use.capabilityId) usedCapIds << "${use.capabilityId}".toString()
+    }
+    Map categories = haiCategoryRows(capsById, usedCapIds)
+    return [ok: true,
+            generatedAt: now(),
+            
+            
+            engine: [name: "${feed.engine ?: 'HAI-1'}", version: feed.haiVersion,
+                     capabilities: capsById.size(), feedFetched: feed.fetched,
+                     statusMeanings: (feed.statusMeanings ?: [:]) as Map,
+                     evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map],
+            summary: [rules: rules.size(), covered: covered, withGaps: gapRules.size(),
+                      unassessedRules: rules.count { (it as Map).assessed != true },
+                      unassessedConstructs: constructUse.values().count { (it as Map).verdict in ['unmapped', 'unknown'] },
+                      usedDimensions: usedCapIds.size(),
+                      constructs: constructUse.size(),
+                      unmapped: constructUse.values().count { (it as Map).verdict == 'unmapped' }],
+            categories: categories.values().toList().sort { Map c -> "${c.order}" },
+            rules: rules.sort { Map r -> [(r.covered == true) ? 1 : 0, "${r.name}"] },
+            constructs: constructUse.values().toList().sort { Map c -> [-(c.rules as Integer), "${c.token}"] }]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+Map edgesMapping() {
+    Map graph = (state.graph ?: [:]) as Map
+    List nodes = (graph.nodes ?: []) as List
+    Map appsById = [:]
+    Map devicesById = [:]
+    nodes.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map n = raw as Map
+        String id = "${n.id ?: ''}"
+        if (!id) return
+        if (n.group == 'app') {
+            appsById[id] = [id: id, name: n.name, engine: engineOfNode(n), appType: n.appType,
+                            paused: n.paused == true, disabled: n.disabled == true]
+        } else if (n.group == 'device') {
+            devicesById[id] = [id: id, name: n.name, disabled: n.disabled == true]
+        }
+    }
+    
+    
+    
+    Set deviceKinds = ['trigger', 'constraint', 'monitor', 'action', 'exposed', 'deviceRead'] as Set
+    Set ruleKinds = ['runs', 'pauseResume', 'cancelTimedActions', 'setspb'] as Set
+    Set varKinds = ['read', 'write', 'usesVar'] as Set
+    List deviceEdges = []
+    List ruleEdges = []
+    List variableEdges = []
+    ((graph.edges ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map e = raw as Map
+        String from = "${e.from ?: ''}"
+        String to = "${e.to ?: ''}"
+        String kind = "${e.kind ?: ''}"
+        if (!from || !to || !kind) return
+        if (deviceKinds.contains(kind) && devicesById.containsKey(to)) {
+            Map out = [app: from, device: to, kind: kind]
+            
+            out.stateful = (kind == 'action') ? (e.containsKey('stateful') ? e.stateful : null) : false
+            if (e.commands) out.commands = e.commands
+            if (e.attribute) out.attribute = "${e.attribute}"
+            if (e.unused == true) out.unused = true
+            deviceEdges << out
+        } else if (ruleKinds.contains(kind)) {
+            ruleEdges << [from: from, to: to, kind: kind]
+        } else if (varKinds.contains(kind) && to.startsWith('v')) {
+            variableEdges << [app: from, variable: to.substring(1), kind: kind,
+                              usageRole: e.usageRole ? "${e.usageRole}" : null]
+        }
+    }
+    Long committedAt = (state.graphCommittedAtLocal ?: 0) as Long
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+        contract: EDGES_CONTRACT,
+        generatedAt: committedAt ?: null,
+        scanRunning: scanEffectivelyActive(),
+        statefulMeaning: [true: 'this app leaves the device in a state it chose',
+                          false: 'this app does not leave a lasting state',
+                          'null': 'this app could not tell, so treat it as might-be-stateful, never as false'],
+        
+        
+        
+        
+        
+        kindMeaning: [action: 'this app sends this device a command',
+                      trigger: 'an event from this device starts this app',
+                      constraint: 'this app reads this device in a condition or a required expression',
+                      monitor: "this app reads this device's state without commanding it",
+                      exposed: 'this app publishes this device to something outside the hub, such as Maker API or Google Home. Not an automation relationship: exclude it before walking chains, or every published device appears connected to every other',
+                      deviceRead: 'a webCoRE piston references this device somewhere its role could not be attributed, such as an expression or a task parameter. Unattributed, not read: treat it as might-command, never as a read'],
+        unusedMeaning: 'set on a constraint edge that nothing evaluates: a dead condition, which cannot carry a chain',
+        apps: appsById.values().toList(),
+        devices: devicesById.values().toList(),
+        deviceEdges: deviceEdges,
+        ruleEdges: ruleEdges,
+        variableEdges: variableEdges]))
+}
+
+
+
+
+String engineOfNode(Map n) {
+    if ("${n.engine ?: ''}") return "${n.engine}"
+    String type = "${n.appType ?: ''}"
+    if (type.startsWith('Rule-')) return 'RM'
+    if (type == 'webCoRE Piston') return 'webCoRE'
+    if (type == 'webCoRE') return 'webCoRE'
+    if (type.startsWith('Visual Rule')) return 'VRB'
+    if (type == 'Notifier') return 'Notifier'
+    return type ?: 'other'
+}
+
+
+
+
+
+Map fetchHaiPublicCapabilities() {
+    Map body = null
+    try {
+        httpGet([uri: HAI_PUBLIC_CAPABILITIES_URL, contentType: 'application/json',
+                 timeout: HAI_FEED_TIMEOUT_SEC]) { resp -> body = resp?.data as Map }
+    } catch (ignored) {
+        return null
+    }
+    if (!body) return null
+    if ("${body.contract ?: ''}" != HAI_PUBLIC_CONTRACT) return null
+    Map capsById = [:]
+    ((body.capabilities ?: []) as List).each { Object raw ->
+        Map cap = raw as Map
+        String capId = "${cap?.id ?: ''}"
+        if (capId) capsById[capId] = cap
+    }
+    if (capsById.isEmpty()) return null
+    Map categories = haiCategoryRows(capsById, [] as Set)
+    return [ok: true, fromPublished: true, hubStats: false,
+            engine: [name: "${body.engine ?: 'HAI-1'}",
+                     capabilities: capsById.size(),
+                     statusMeanings: (body.statusMeanings ?: [:]) as Map,
+                     evidenceMeanings: (body.evidenceMeanings ?: [:]) as Map],
+            publishedAt: "${body.generatedAt ?: ''}",
+            whatThisIs: "${body.whatThisIs ?: ''}",
+            categories: categories.values().toList().sort { Map c -> "${c.order}" },
+            summary: [:], rules: [], constructs: []]
+}
+
+Map haiCategoryRows(Map capsById, Set usedCapIds) {
+    Map categories = [:]
+    capsById.each { String capId, Object raw ->
+        Map cap = raw as Map
+        String rm51 = "${cap.rm51 ?: ''}"
+        int sep = rm51.indexOf(':')
+        String section = (sep > 0 ? rm51.substring(0, sep) : rm51) ?: 'Other'
+        
+        
+        String name = section
+        int dot = name.indexOf('. ')
+        if (dot > 0 && name.substring(0, dot).isInteger()) name = name.substring(dot + 2)
+        
+        
+        
+        if (name == 'Variables') name = 'Variable capabilities'
+        
+        
+        Map row = (categories[section] ?: [section: section, name: name, order: section,
+                                           engineOnly: rm51.startsWith('8'),
+                                           dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0,
+                                           hubProven: 0, simulated: 0, usedHere: 0, usedHubProven: 0, lockIn: []]) as Map
+        row.dimensions = ((row.dimensions ?: 0) as Integer) + 1
+        String status = "${cap.status ?: ''}"
+        
+        
+        
+        
+        String evidence = "${((cap.evidence ?: [:]) as Map).level ?: ''}"
+        if (status == 'Runs') {
+            row.runs = ((row.runs ?: 0) as Integer) + 1
+            if (evidence == 'hub') row.hubProven = ((row.hubProven ?: 0) as Integer) + 1
+            else row.simulated = ((row.simulated ?: 0) as Integer) + 1
+        }
+        else if (status == 'Format') row.format = ((row.format ?: 0) as Integer) + 1
+        else if (status == 'Missing') row.missing = ((row.missing ?: 0) as Integer) + 1
+        else if (status == 'Partial') row.partial = ((row.partial ?: 0) as Integer) + 1
+        
+        
+        
+        
+        
+        else if (status == 'Scoped') row.scoped = ((row.scoped ?: 0) as Integer) + 1
+        
+        
+        
+        
+        else {
+            Map unknown = (row.unknownStatus ?: [:]) as Map
+            unknown[status ?: 'unset'] = ((unknown[status ?: 'unset'] ?: 0) as Integer) + 1
+            row.unknownStatus = unknown
+        }
+        
+        
+        if (row.engineOnly) {
+            String verdict = "${cap.rmVerdict ?: ''}"
+            if (verdict) {
+                List notes = (row.lockIn ?: []) as List
+                notes << [feature: "${cap.feature}", verdict: verdict, note: "${cap.rmNote ?: ''}"]
+                row.lockIn = notes
+            }
+        }
+        if (usedCapIds.contains(capId)) {
+            row.usedHere = ((row.usedHere ?: 0) as Integer) + 1
+            if (status == 'Runs') row.usedSupported = ((row.usedSupported ?: 0) as Integer) + 1
+            else if (status in ['Format', 'Missing', 'Partial', 'Scoped']) row.usedUnsupported = ((row.usedUnsupported ?: 0) as Integer) + 1
+            else row.usedUnassessed = ((row.usedUnassessed ?: 0) as Integer) + 1
+            
+            
+            
+            if (status != 'Runs') row.usedGaps = ((row.usedGaps ?: 0) as Integer) + 1
+            else if (evidence == 'hub') row.usedHubProven = ((row.usedHubProven ?: 0) as Integer) + 1
+        }
+        categories[section] = row
+    }
+    return categories
+}
+
+Map rmCoverageMapping() {
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson(rmCoverageReport()))
+}
+
 List extractLocalVariableDefinitions(Map data, String ownerAppId) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -9772,7 +10777,14 @@ void correctFlowVariableLabels(Map flows, Map ruleVariables) {
             String currentLabel = s.label as String
             if (!currentLabel?.startsWith('Set Variable ')) return
             String rest = currentLabel.substring('Set Variable '.length())
-            int fromIdx = rest.indexOf(' from ')
+            
+            
+            
+            int fromIdx = -1
+            [' from ', ' = ', ' + '].each { String marker ->
+                int at = rest.indexOf(marker)
+                if (at >= 0 && (fromIdx < 0 || at < fromIdx)) fromIdx = at
+            }
             String suffix = fromIdx >= 0 ? rest.substring(fromIdx) : ''
             String varName = (r.canonicalName ?: r.name) as String
             if (r.status == 'resolved' && r.scope == 'local') {
@@ -9928,6 +10940,267 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
         }
     }
     return flow ?: []
+}
+
+
+
+
+
+
+
+
+boolean haiParentInstalled() {
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    return appInfo.any { Object id, Object raw ->
+        if (!(raw instanceof Map)) return false
+        String type = "${(raw as Map).type ?: ''}".toLowerCase()
+        return HAI_PARENT_TYPE_PREFIXES.any { type.startsWith(it.toLowerCase()) }
+    }
+}
+
+
+
+String sha256Hex(String text) {
+    MessageDigest md = MessageDigest.getInstance('SHA-256')
+    byte[] digest = md.digest("${text ?: ''}".getBytes('UTF-8'))
+    StringBuilder hex = new StringBuilder()
+    digest.each { byte b -> hex << String.format('%02x', b & 0xFF) }
+    return hex.toString()
+}
+
+
+
+
+Map haiCapsById(Object parsed) {
+    List rows = (parsed instanceof List) ? (parsed as List)
+        : ((parsed instanceof Map) ? (((parsed as Map).capabilities ?: []) as List) : [])
+    Map capsById = [:]
+    rows.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        String capId = "${(raw as Map).id ?: ''}"
+        if (capId) capsById[capId] = raw as Map
+    }
+    return capsById
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map haiCapabilitySource(String declaredHash) {
+    if (haiParentInstalled()) {
+        
+        
+        Map fetched = httpFetch("${LOOPBACK_BASE}/local/${HAI_CAPABILITIES_FILE}",
+                                HAI_FEED_TIMEOUT_SEC, [contentType: 'text/plain'])
+        String body = fetched.ok ? "${fetched.data ?: ''}" : ''
+        if (body) {
+            String actual = sha256Hex(body)
+            
+            
+            String declared = "${declaredHash ?: ''}"
+            if (!declared || declared == actual) {
+                Map caps = [:]
+                try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
+                catch (Exception ignored) { caps = [:] }
+                if (caps) return [caps: caps, hash: actual, verified: (declared as boolean)]
+            }
+        }
+    }
+    return null
+}
+
+
+
+
+
+Map fetchHaiFeed() {
+    String url = "${LOOPBACK_BASE}/local/${HAI_STATE_FILE}"
+    if (!haiParentInstalled()) {
+        
+        
+        
+        
+        
+        
+        
+        Map probe = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+        boolean orphanFile = probe.ok && (probe.data instanceof Map) &&
+            "${((probe.data as Map).contract ?: '')}" == HAI_FEED_CONTRACT
+        if (orphanFile) {
+            
+            
+            
+            log.warn "${app.label}: an Automation Intelligence feed file is present but no app that writes it" +
+                     " was found - looked for an installed app whose type starts with" +
+                     " ${HAI_PARENT_TYPE_PREFIXES.join(' or ')}"
+            return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                    error: 'this hub has one of its feed files but no app that writes it, so its rules are left' +
+                           ' off rather than read from a file nothing appears to own']
+        }
+        return [state: 'OFF', nodes: [], edges: []]
+    }
+    Map fetched = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+    if (!fetched.ok || !(fetched.data instanceof Map)) {
+        return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                error: "${fetched.timedOut ? 'the feed did not answer in time' : (fetched.error ?: 'the engine is installed but has not published its feed yet')}"]
+    }
+    Map feed = fetched.data as Map
+    
+    
+    if (feed.error) {
+        return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                error: "${feed.message ?: feed.error}"]
+    }
+    String contract = "${feed.contract ?: ''}".trim()
+    if (contract != HAI_FEED_CONTRACT) {
+        return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
+                error: "the feed is on contract ${contract ?: '(none given)'}, this version reads ${HAI_FEED_CONTRACT}"]
+    }
+    
+    
+    
+    
+    
+    Map capSource = haiCapabilitySource("${feed.capabilitiesHash ?: ''}")
+    List capList = capSource ? ((capSource.caps as Map).values() as List) : []
+    String capHash = capSource ? "${capSource.hash}" : "${feed.capabilitiesHash ?: ''}"
+    return [state: 'OK', fetched: now(),
+            nodes: (feed.nodes ?: []) as List,
+            edges: (feed.edges ?: []) as List,
+            flows: (feed.flows ?: [:]) as Map,
+            engine: "${feed.engine ?: ''}",
+            haiVersion: "${feed.haiVersion ?: ''}",
+            
+            
+            
+            capabilitiesHash: capHash,
+            statusMeanings: (feed.statusMeanings ?: [:]) as Map,
+            evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map,
+            generatedAt: "${feed.generatedAt ?: ''}",
+            
+            
+            
+            capabilities: capList,
+            capabilityCount: capList.size(),
+            capabilitiesError: feed.capabilitiesError ? "${feed.capabilitiesError}" : null]
+}
+
+
+
+
+
+void mergeHaiFeed(Map feed, Map<String, Map> nodes, List<Map> edges, Map flows, Set<String> seen,
+                  Map labels, Set disabledDevices) {
+    if ("${feed?.state}" != 'OK') return
+    Set<String> feedRuleIds = new LinkedHashSet<String>()
+    ((feed.nodes ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map n = raw as Map
+        String id = "${n.id ?: ''}".trim()
+        if (!id) return
+        String group = "${n.group ?: ''}"
+        if (group == 'app') feedRuleIds << id
+        if (nodes[id]) {
+            
+            
+            
+            if (group == 'app') {
+                nodes[id].engine = 'HAI'
+                if (n.url) nodes[id].engineUrl = "${n.url}"
+                
+                
+                
+                
+                
+                
+                String feedStatus = "${n.status ?: ''}"
+                if (n.disabled == true) { nodes[id].disabled = true; nodes[id].inactive = true }
+                if (feedStatus == 'paused') { nodes[id].paused = true; nodes[id].inactive = true }
+                if (feedStatus == 'stopped') nodes[id].inactive = true
+            }
+            return
+        }
+        if (group == 'app') {
+            boolean disabled = (n.disabled == true)
+            
+            
+            String status = "${n.status ?: ''}"
+            
+            
+            String statusWord = disabled ? 'Disabled' :
+                (status == 'paused' ? 'Paused' : (status == 'stopped' ? 'Stopped' :
+                (status && status != 'active' ? "${status.capitalize()}" : null)))
+            nodes[id] = nodeEntry(id, "${n.label ?: id}", 'app', 'HAI rule', null, statusWord, false)
+            nodes[id].appType = 'HAI Rule'
+            nodes[id].engine = 'HAI'
+            if (n.url) nodes[id].engineUrl = "${n.url}"
+            if (disabled) nodes[id].disabled = true
+            if (status == 'paused') nodes[id].paused = true
+        } else if (group == 'device' && id.length() > 1) {
+            
+            
+            
+            String devId = id.substring(1)
+            boolean devDisabled = disabledDevices.contains(devId)
+            nodes[id] = nodeEntry(id, (labels[devId] ?: "${n.label ?: id}") as String, 'device',
+                                  null, null, devDisabled ? 'Disabled' : null)
+            if (devDisabled) nodes[id].disabled = true
+        }
+    }
+    
+    
+    
+    
+    if (feedRuleIds) {
+        
+        
+        
+        
+        List<Map> kept = edges.findAll { Map edge ->
+            !("${edge?.kind}" == 'exposed' && feedRuleIds.contains(edge?.from?.toString()))
+        }
+        edges.clear()
+        edges.addAll(kept)
+    }
+    ((feed.edges ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map e = raw as Map
+        String from = "${e.from ?: ''}".trim()
+        String to = "${e.to ?: ''}".trim()
+        String kind = "${e.kind ?: ''}".trim()
+        if (!from || !to || !kind) return
+        
+        
+        if (!nodes[from] || !nodes[to]) return
+        String key = "${from}|${to}|${kind}"
+        if (seen.contains(key)) return
+        seen << key
+        Map edge = [from: from, to: to, kind: kind]
+        if (e.stateful != null) edge.stateful = (e.stateful == true)
+        if (e.commands) edge.commands = e.commands
+        if (e.usageRole) edge.usageRole = "${e.usageRole}"
+        if (e.unused == true) edge.unused = true
+        edges << edge
+    }
+    
+    
+    
+    ((feed.flows ?: [:]) as Map).each { Object rawId, Object rawSteps ->
+        String id = "${rawId ?: ''}".trim()
+        if (!id || !nodes[id] || flows.containsKey(id)) return
+        if (!(rawSteps instanceof List) || !((rawSteps as List))) return
+        flows[id] = (rawSteps as List).findAll { it instanceof Map }
+    }
 }
 
 Map buildGraph() {
@@ -10216,6 +11489,16 @@ Map buildGraph() {
         
         
         if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
+        
+        
+        
+        
+        
+        
+        
+        if (appMap.containsKey('userApp') && appMap.userApp != null) {
+            nodes[appNodeId].userApp = (appMap.userApp == true)
+        }
         if (appMap.inactive) nodes[appNodeId].inactive = true
         if (appMap.disabled) nodes[appNodeId].disabled = true
         if (appMap.paused) nodes[appNodeId].paused = true
@@ -10845,6 +12128,10 @@ Map buildGraph() {
 
     
     
+    mergeHaiFeed((state.haiFeed ?: [:]) as Map, nodes, edges, flows, seen, labels, disabledDevices)
+
+    
+    
     
     correctFlowVariableLabels(flows, ruleVariables)
 
@@ -11320,6 +12607,9 @@ mappings {
     path('/webcore-migration-assessment') { action: [ GET: 'webcoreMigrationAssessmentMapping' ] }
     path('/webcore-migration-matrix') { action: [ GET: 'webcoreMigrationMatrixMapping' ] }
     path('/webcore-migration-ratings') { action: [ GET: 'migrationRatingsMapping' ] }
+    path('/rm-coverage') { action: [ GET: 'rmCoverageMapping' ] }
+    path('/edges') { action: [ GET: 'edgesMapping' ] }
+    path('/rooms') { action: [ GET: 'roomPlanGetMapping', POST: 'roomPlanSaveMapping' ] }
 }
 
 
@@ -11407,6 +12697,505 @@ String externalsJson() {
 
 
 
+
+
+
+
+
+
+
+@Field static final List<String> ROOM_NO_ROOM_NAMES = ['Unassigned', 'No assigned room', 'No room assigned', 'None']
+
+
+
+
+
+
+
+
+
+
+
+
+List hubRoomList() {
+    List out = []
+    Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/roomsList", 15)
+    Object data = fetched.ok ? fetched.data : null
+    Object nodes = (data instanceof Map) ? (data as Map).roomNodes : data
+    if (nodes instanceof List) {
+        (nodes as List).each { Object n ->
+            if (!(n instanceof Map)) return
+            Object rawData = (n as Map).data
+            if (!(rawData instanceof Map)) return
+            Map d = rawData as Map
+            String type = "${d.type ?: 'Room'}".trim()
+            if (type && type != 'Room') return
+            String name = "${d.name ?: ''}".trim()
+            String roomId = "${d.id ?: ''}".trim()
+            
+            
+            
+            
+            
+            
+            if (roomId == '999999' || ROOM_NO_ROOM_NAMES.any { name.equalsIgnoreCase(it as String) }) return
+            if (name) out << [id: roomId, name: name]
+        }
+    }
+    if (out) return out.sort { "${it.name}".toLowerCase() }
+
+    
+    
+    
+    Map deviceRooms = (state.deviceRooms ?: [:]) as Map
+    Set seen = [] as Set
+    deviceRooms.each { Object k, Object v ->
+        String name = v == null ? '' : "${v}".trim()
+        if (name) seen << name
+    }
+    return seen.sort { it.toLowerCase() }.collect { [id: '', name: it] }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String ROOM_CLEARED_ID = '0'
+
+String roomPlanFormValue(Object v) { return v == null ? '' : "${v}" }
+
+
+
+Map roomPlanDeviceForm(Map full, String roomId) {
+    Map d = (full?.device instanceof Map) ? full.device as Map : [:]
+    if (!d) return null
+    
+    
+    
+    
+    
+    
+    List dashIds = []
+    Object dashboards = full?.dashboards
+    if (dashboards instanceof List) {
+        (dashboards as List).each { Object x ->
+            if (!(x instanceof Map)) return
+            Map dash = x as Map
+            if (dash.id == null) return
+            if (dash.selected == true) dashIds << "${dash.id}"
+        }
+    }
+    Object rawTags = d.tags
+    String tags = (rawTags instanceof List) ? (rawTags as List).collect { "${it}" }.join(',') : roomPlanFormValue(rawTags)
+    return [
+        name                  : roomPlanFormValue(d.name),
+        label                 : roomPlanFormValue(d.label),
+        zigbeeId              : roomPlanFormValue(d.zigbeeId),
+        maxEvents             : roomPlanFormValue(d.maxEvents),
+        maxStates             : roomPlanFormValue(d.maxStates),
+        spammyThreshold       : roomPlanFormValue(d.spammyThreshold),
+        deviceNetworkId       : roomPlanFormValue(d.deviceNetworkId),
+        deviceTypeId          : roomPlanFormValue(d.deviceTypeId),
+        deviceTypeReadableType: roomPlanFormValue(d.deviceTypeReadableType),
+        roomId                : roomId,
+        meshEnabled           : roomPlanFormValue(d.meshEnabled),
+        retryEnabled          : roomPlanFormValue(d.retryEnabled),
+        meshFullSync          : roomPlanFormValue(d.meshFullSync),
+        homeKitEnabled        : roomPlanFormValue(full?.homeKitEnabled),
+        locationId            : roomPlanFormValue(d.locationId),
+        hubId                 : roomPlanFormValue(d.hubId),
+        groupId               : roomPlanFormValue(d.groupId),
+        dashboardIds          : dashIds.join(','),
+        tags                  : tags,
+        defaultIcon           : roomPlanFormValue(d.defaultIcon),
+        notes                 : roomPlanFormValue(d.notes),
+        id                    : roomPlanFormValue(d.id),
+        version               : roomPlanFormValue(d.version),
+        controllerType        : roomPlanFormValue(d.controllerType),
+    ]
+}
+
+
+
+
+Map roomPlanWriteDeviceRoom(String devId, String roomId) {
+    Map before = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
+    if (!before.ok || !(before.data instanceof Map)) {
+        return [id: devId, ok: false, reason: 'could not read this device, so nothing was written']
+    }
+    Map form = roomPlanDeviceForm(before.data as Map, roomId)
+    if (form == null) {
+        return [id: devId, ok: false, reason: 'device record had no device object, so nothing was written']
+    }
+    Integer status = null
+    String failure = null
+    try {
+        httpPost([uri    : LOOPBACK_BASE,
+                  path   : '/device/update',
+                  requestContentType: 'application/x-www-form-urlencoded',
+                  body   : form,
+                  timeout: 15]) { resp -> status = resp?.status as Integer }
+    } catch (Exception e) {
+        failure = "${e.message}"
+    }
+    if (failure) return [id: devId, ok: false, reason: failure]
+    
+    
+    if (status == null || status < 200 || status >= 300) {
+        return [id: devId, ok: false, status: status,
+                reason: "the hub answered ${status ?: 'nothing'} to the update, so it was not accepted"]
+    }
+
+    Map after = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
+    if (!after.ok || !(after.data instanceof Map)) {
+        return [id: devId, ok: false, status: status,
+                reason: 'the device could not be read back, so the change could not be confirmed']
+    }
+    String landed = ''
+    Object devAfter = (after.data as Map).device
+    if (devAfter instanceof Map) landed = "${(devAfter as Map).roomId ?: ''}"
+    boolean roomOk = (landed == roomId) || (roomId == ROOM_CLEARED_ID && (landed == '' || landed == '0'))
+    if (!roomOk) {
+        return [id: devId, ok: false, status: status, roomId: landed,
+                reason: "posted roomId ${roomId} but the device reads back ${landed ?: 'nothing'}"]
+    }
+    
+    
+    
+    List drift = roomPlanPreservationDrift(before.data as Map, after.data as Map)
+    if (drift) {
+        return [id: devId, ok: false, status: status, roomId: landed, changed: drift,
+                reason: "the room moved but ${drift.join(', ')} changed too, which this app promises not to do"]
+    }
+    return [id: devId, ok: true, status: status, roomId: landed, reason: '']
+}
+
+
+
+
+@Field static final List<String> ROOM_PRESERVED_FIELDS = [
+    'name', 'label', 'zigbeeId', 'maxEvents', 'maxStates', 'spammyThreshold',
+    'deviceNetworkId', 'deviceTypeId', 'deviceTypeReadableType', 'meshEnabled',
+    'retryEnabled', 'meshFullSync', 'locationId', 'hubId', 'groupId', 'tags',
+    'defaultIcon', 'notes', 'id', 'controllerType']
+
+
+
+
+String roomPlanNormalise(Object v) {
+    String t = (v == null) ? '' : "${v}".trim()
+    return t.equalsIgnoreCase('null') ? '' : t
+}
+
+
+
+String roomPlanNormaliseTags(Object v) {
+    List parts = (v instanceof List) ? (v as List).collect { "${it}" }
+                                     : roomPlanNormalise(v).tokenize(',')
+    return parts.collect { it.trim() }.findAll { it }.join(',')
+}
+
+List roomPlanPreservationDrift(Map before, Map after) {
+    Map b = (before?.device instanceof Map) ? before.device as Map : [:]
+    Map a = (after?.device instanceof Map) ? after.device as Map : [:]
+    List changed = []
+    ROOM_PRESERVED_FIELDS.each { String f ->
+        boolean same = (f == 'tags') ? roomPlanNormaliseTags(b[f]) == roomPlanNormaliseTags(a[f])
+                                     : roomPlanNormalise(b[f]) == roomPlanNormalise(a[f])
+        if (!same) changed << f
+    }
+    
+    
+    
+    if (roomPlanSelectedDashboards(before) != roomPlanSelectedDashboards(after)) changed << 'dashboards'
+    if (roomPlanNormalise(before?.homeKitEnabled) != roomPlanNormalise(after?.homeKitEnabled)) changed << 'homeKitEnabled'
+    return changed
+}
+
+List roomPlanSelectedDashboards(Map full) {
+    List out = []
+    Object dashboards = full?.dashboards
+    if (dashboards instanceof List) {
+        (dashboards as List).each { Object x ->
+            if (x instanceof Map && (x as Map).selected == true && (x as Map).id != null) out << "${(x as Map).id}"
+        }
+    }
+    return out.sort()
+}
+
+Map roomPlanApplyMoves(Map moves) {
+    
+    
+    
+    Map roomIdByName = (state.roomIdCache ?: [:]) as Map
+    boolean needed = moves.any { Object k, Object v ->
+        String t = "${v ?: ''}".trim()
+        return t && !roomIdByName["${t.toLowerCase()}"]
+    }
+    if (needed) {
+        hubRoomList().each { Object r ->
+            Map m = r as Map
+            if (m.name && m.id) roomIdByName["${m.name}".toLowerCase()] = "${m.id}"
+        }
+        state.roomIdCache = roomIdByName
+    }
+    List results = []
+    moves.each { Object k, Object v ->
+        String devId = "${k}".trim()
+        String target = "${v ?: ''}".trim()
+        String roomId
+        if (!target) {
+            roomId = ROOM_CLEARED_ID
+        } else {
+            roomId = roomIdByName["${target.toLowerCase()}"]
+            if (!roomId) {
+                results << [id: devId, ok: false, reason: "this hub has no room named ${target}"]
+                return
+            }
+        }
+        Map res = roomPlanWriteDeviceRoom(devId, roomId)
+        
+        
+        
+        
+        
+        
+        if (res.ok) {
+            Map rooms = (state.deviceRooms ?: [:]) as Map
+            rooms[devId] = target
+            state.deviceRooms = rooms
+            res.roomName = target
+        }
+        results << res
+    }
+    Integer applied = results.count { (it as Map).ok } as Integer
+    return [ok: applied == results.size() && applied > 0, applied: applied,
+            requested: results.size(), results: results]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map roomPlanRoomMembers(String roomId) {
+    Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/roomsList", 15)
+    Object data = fetched.ok ? fetched.data : null
+    Object nodes = (data instanceof Map) ? (data as Map).roomNodes : data
+    if (!(nodes instanceof List)) return [ok: false, ids: []]
+    for (Object n in (nodes as List)) {
+        if (!(n instanceof Map)) continue
+        Object raw = (n as Map).data
+        if (!(raw instanceof Map)) continue
+        if ("${(raw as Map).id ?: ''}" != roomId) continue
+        List ids = []
+        Object kids = (n as Map).children
+        if (kids instanceof List) {
+            (kids as List).each { Object k ->
+                if (!(k instanceof Map)) return
+                Object kd = (k as Map).data
+                if (kd instanceof Map) {
+                    String devId = "${(kd as Map).id ?: (kd as Map).deviceId ?: ''}".trim()
+                    if (devId) ids << devId
+                }
+            }
+        }
+        return [ok: true, ids: ids, name: "${(raw as Map).name ?: ''}"]
+    }
+    return [ok: false, ids: []]
+}
+
+Map roomPlanPostRoom(Map payload) {
+    Integer status = null
+    String failure = null
+    try {
+        httpPost([uri: LOOPBACK_BASE, path: '/room/save',
+                  requestContentType: 'application/json',
+                  body: JsonOutput.toJson(payload), timeout: 15]) { resp -> status = resp?.status as Integer }
+    } catch (Exception e) {
+        failure = "${e.message}"
+    }
+    if (!failure && (status == null || status < 200 || status >= 300)) {
+        failure = "the hub answered ${status ?: 'nothing'}, so the request was not accepted"
+    }
+    state.roomIdCache = [:]
+    return [status: status, failure: failure]
+}
+
+Map roomPlanCreateRoom(String name) {
+    String clean = "${name ?: ''}".trim()
+    if (!clean) return [ok: false, reason: 'a room needs a name']
+    if (hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }) {
+        return [ok: false, reason: "this hub already has a room called ${clean}"]
+    }
+    Map res = roomPlanPostRoom([roomId: 0, name: clean, deviceIds: []])
+    if (res.failure) return [ok: false, reason: res.failure]
+    boolean landed = hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }
+    return [ok: landed, name: clean,
+            reason: landed ? '' : 'the hub accepted the request but the room is not in its list']
+}
+
+Map roomPlanRenameRoom(String roomId, String name) {
+    String clean = "${name ?: ''}".trim()
+    if (!clean) return [ok: false, reason: 'a room needs a name']
+    if (!roomId) return [ok: false, reason: 'no room id']
+    
+    
+    Map members = roomPlanRoomMembers(roomId)
+    if (!members.ok) {
+        return [ok: false, reason: 'could not read this room current devices, so it was not renamed']
+    }
+    Integer before = (members.ids as List).size()
+    Map res = roomPlanPostRoom([roomId: roomId, name: clean, deviceIds: members.ids])
+    if (res.failure) return [ok: false, reason: res.failure]
+    
+    
+    Map after = roomPlanRoomMembers(roomId)
+    if (!after.ok) {
+        return [ok: false, reason: 'the rename was sent but this room could not be read back, so it is unconfirmed']
+    }
+    Integer now = (after.ids as List).size()
+    String landedName = "${after.name ?: ''}".trim()
+    if (landedName != clean) {
+        return [ok: false, reason: "asked for ${clean} but this room reads back as ${landedName ?: 'nothing'}"]
+    }
+    if (now != before) {
+        return [ok: false, reason: "renamed, but this room went from ${before} devices to ${now} - check it"]
+    }
+    return [ok: true, name: clean, devices: now]
+}
+
+Map roomPlanDeleteRoom(String roomId) {
+    if (!roomId) return [ok: false, reason: 'no room id']
+    
+    
+    Map members = roomPlanRoomMembers(roomId)
+    if (!members.ok) {
+        return [ok: false, reason: 'could not read what is in this room, so it was not deleted']
+    }
+    Integer freed = (members.ids as List).size()
+    Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
+    state.roomIdCache = [:]
+    boolean gone = !hubRoomList().any { "${(it as Map).id}" == roomId }
+    if (!gone) {
+        return [ok: false, reason: fetched.ok ? 'the hub still lists this room' : 'the delete request failed']
+    }
+    
+    
+    if (freed) {
+        Map rooms = (state.deviceRooms ?: [:]) as Map
+        (members.ids as List).each { Object devId -> rooms["${devId}"] = '' }
+        state.deviceRooms = rooms
+    }
+    return [ok: true, freed: freed]
+}
+
+Map roomPlanGetMapping() {
+    return render(status: 200, contentType: 'application/json', data: roomPlanJson(null))
+}
+
+String roomPlanJson(String message) {
+    List rooms = hubRoomList()
+    
+    
+    
+    
+    Map idByName = [:]
+    rooms.each { Object r -> Map m = r as Map; if (m.name && m.id) idByName["${m.name}".toLowerCase()] = "${m.id}" }
+    state.roomIdCache = idByName
+    Map layout = (state.roomLayout ?: [:]) as Map
+    return JsonOutput.toJson([
+        ok          : true,
+        rooms       : rooms,
+        roomsFrom   : rooms.any { (it as Map).id } ? 'hub' : 'devices',
+        layout      : layout,
+        canCommit   : true,
+        message     : message ?: '',
+    ])
+}
+
+Map roomPlanSaveMapping() {
+    Map payload = [:]
+    try {
+        def body = request?.JSON
+        if (body instanceof Map) payload = body as Map
+    } catch (Exception ignored) { payload = [:] }
+
+    
+    
+    
+    if (payload.containsKey('moves')) {
+        Map moves = (payload.moves instanceof Map) ? (payload.moves as Map) : [:]
+        if (!moves) {
+            return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+                ok: false, applied: 0, requested: 0, reason: 'nothing to apply'
+            ]))
+        }
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanApplyMoves(moves)))
+    }
+
+    if (payload.containsKey('createRoom')) {
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanCreateRoom("${payload.createRoom}")))
+    }
+    if (payload.containsKey('renameRoom')) {
+        Map r = (payload.renameRoom instanceof Map) ? (payload.renameRoom as Map) : [:]
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanRenameRoom("${r.id ?: ''}".trim(), "${r.name ?: ''}")))
+    }
+    if (payload.containsKey('deleteRoom')) {
+        return render(status: 200, contentType: 'application/json',
+                      data: JsonOutput.toJson(roomPlanDeleteRoom("${payload.deleteRoom}".trim())))
+    }
+
+    Map incoming = (payload.layout instanceof Map) ? (payload.layout as Map) : [:]
+    Map clean = [:]
+    incoming.each { Object k, Object v ->
+        if (!(v instanceof Map)) return
+        Map g = v as Map
+        
+        
+        Integer x = roomPlanCoord(g.x, 0, 20000)
+        Integer y = roomPlanCoord(g.y, 0, 20000)
+        Integer w = roomPlanCoord(g.w, 120, 2000)
+        Integer h = roomPlanCoord(g.h, 90, 2000)
+        if (x == null || y == null || w == null || h == null) return
+        clean["${k}"] = [x: x, y: y, w: w, h: h]
+    }
+    state.roomLayout = clean
+    
+    
+    
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([
+        ok: true, saved: clean.size()
+    ]))
+}
+
+Integer roomPlanCoord(Object raw, int lo, int hi) {
+    if (raw == null) return null
+    Integer n
+    try { n = Math.round(("${raw}" as BigDecimal).toDouble()) as Integer }
+    catch (Exception ignored) { return null }
+    return Math.max(lo, Math.min(hi, n))
+}
 
 Map iconOverridesGetMapping() {
     return render(status: 200, contentType: 'application/json', data: iconOverridesJson())
@@ -11752,9 +13541,15 @@ String scanStatusJson(boolean forceRunning = false) {
     
     
     
+    
+    
+    Map prog = scanProgress()
+    String progPhase = "${prog.phase ?: ''}"
+    Integer progTotal = (prog.total ?: 0) as Integer
+    Integer progDone = (prog.done ?: 0) as Integer
     ConcurrentHashMap liveScan = null
-    if (state.scanPhase == 'devices') liveScan = liveDeviceScan()
-    else if (state.scanPhase == 'apps') liveScan = liveAppScan()
+    if (progPhase == 'devices') liveScan = liveDeviceScan()
+    else if (progPhase == 'apps') liveScan = liveAppScan()
     int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
     
     
@@ -11766,14 +13561,14 @@ String scanStatusJson(boolean forceRunning = false) {
     
     
     
-    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (state.scanDone ?: state.scanTotal)
+    def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (progDone ?: progTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
         running: forceRunning || scanEffectivelyActive(),
         alreadyStarting: forceRunning,
-        phase: state.scanPhase,
+        phase: progPhase ?: null,
         done: done,
-        total: state.scanTotal,
+        total: progTotal,
         queued: queued,
         apps: (state.appInfo ?: [:]).size(),
         devices: (state.deviceLabels ?: [:]).size(),
@@ -11958,7 +13753,6 @@ String buildMapHtml() {
      hub's own trust. Regenerate both hashes if either version above is ever
      bumped - they are tied to these exact files, not the package version. -->
 <script src="https://unpkg.com/vis-network@10.1.1/standalone/umd/vis-network.min.js" integrity="sha384-hQiS3pHN272vQg3Yxv+h9eJDB+peejHT2uA031YxhWTxH7miNr5arcgJD2Ytx3uS" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js" integrity="sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP" crossorigin="anonymous"></script>
 <style>
   /* Device icons (light/door/water/etc, see styledNode). One glyph set at one
      weight, loaded directly as its own font-family rather than pulling in
@@ -12044,7 +13838,13 @@ String buildMapHtml() {
      full width where a panel overlapped it, and only every element
      inside the popup rendered topmost once #controls' own z-index was
      raised. */
-  #controls { position:absolute; top:10px; right:10px; z-index:9000; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:300px; }
+  /* 340, not 300: at 300 the longer of a paired row wrapped to two lines,
+     which made that one button taller than its neighbour and the rail
+     ragged. Widened rather than shrinking the type, so every label in the
+     rail stays the same size. The rail is anchored right, so this grows
+     leftward; the large panels measure its real edge rather than assuming
+     a width, so they follow it. */
+  #controls { position:absolute; top:10px; right:10px; z-index:9000; background:rgba(0,0,0,0.55); padding:10px 14px; border-radius:14px; font-size:14px; display:flex; flex-direction:column; gap:6px; width:340px; }
   /* Small bold letter-spaced label above each control - the same "eyebrow"
      treatment gordonthelander.github.io/HPM_Manifest_Crawl/ uses above its
      own headings (e.g. "COMMUNITY TOOLS FOR HUBITAT"), borrowed for shape/
@@ -12110,7 +13910,10 @@ String buildMapHtml() {
      #headerActions already uses for Show all/Fit map, factored into a
      class since this now applies to two separate row wrappers rather than
      one. */
+  /* Equal halves regardless of label length, so a long label cannot squeeze
+     its neighbour: min-width 0 lets a flex item shrink below its content. */
   .toolRailRow { display:flex; gap:8px; }
+  .toolRailRow > button { flex:1 1 0; min-width:0; white-space:nowrap; }
   .toolRailRow button { flex:1; margin-top:0; }
   /* Combined combobox (Focus app/device/hub variable/local variable) - replaces
      the old stacked search input + <select> pair, ported from the standalone
@@ -12353,6 +14156,14 @@ String buildMapHtml() {
      a different width, which is why the left column looked ragged as you moved
      between apps. Everything text now wraps inside one fixed width instead. */
   .flowClassicSize { max-width:var(--leftColWidth); max-height:90vh; }
+  /* A flowchart is rendered at its natural size and is routinely two to three
+     times wider than the left column: measured at 766px against a 328px chart
+     area, so more than half the diagram sat off-screen behind a scrollbar.
+     Scaling it down to fit instead would have put the node text near 6px.
+     Only the chart case is widened - an inert app, an unreferenced variable or
+     a rule with no decoded flow still sizes to the left column exactly as
+     before, which is the panel Gordon asked to leave alone. */
+  #flow.flowHasChart.flowClassicSize { max-width:min(74vw, 980px); }
   /* A decoded flowchart is the one child that cannot wrap - it is an SVG with
      its own intrinsic size. Scroll it inside the panel rather than letting it
      set the panel's width, which is what the cap above exists to prevent. */
@@ -12397,6 +14208,11 @@ String buildMapHtml() {
      Insights reuses .sub for its own "Used by"/"Controlling apps" detail
      rows at the full large-panel width, which this must not narrow. */
   #flowSub { max-width:calc(var(--leftColWidth) - 32px); }
+  /* The only in-panel route to another engine's own rule page. This existed
+     solely in the node right-click menu, which nobody finds. */
+  #flowEngineLink { margin:2px 0 6px 0; font-size:0.85em; }
+  #flowEngineLink a { display:inline-block; padding:3px 9px; border:1px solid #81BC00; border-radius:5px; color:#81BC00; text-decoration:none; font-weight:600; }
+  #flowEngineLink a:hover { background:#81BC00; color:#121214; }
   /* A webCoRE panel draws no mermaid, so its content sat flush at the panel
      padding while an RM panel's flow cards start about 24px further in,
      shifting everything sideways as you switch between the two. Reserves that
@@ -12481,36 +14297,56 @@ String buildMapHtml() {
   #migrationReportBody .mrTabs { display:flex; gap:6px; border-bottom:1px solid rgba(255,255,255,0.14); margin-bottom:10px; }
   #migrationReportBody .mrTabs button { background:none; border:0; border-bottom:3px solid transparent; border-radius:0; padding:8px 12px; color:inherit; opacity:0.7; }
   #migrationReportBody .mrTabs button[aria-selected="true"] { opacity:1; border-bottom-color:#c2185b; }
-  #migrationReportBody .mrHead { display:grid; grid-template-columns:minmax(0,1fr) 340px 340px; gap:12px; align-items:end; margin:10px 0; padding:0 13px; }
+  #migrationReportBody .mrHead { display:grid; grid-template-columns:minmax(0,1fr) repeat(3, minmax(220px, 300px)); gap:12px; align-items:stretch; margin:10px 0; padding:0 13px; }
   #migrationReportBody .mrHead .mrFilters { margin:0; align-self:end; }
-  #migrationReportBody .mrEngineTop { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  #migrationReportBody .mrEngineTop { display:flex; justify-content:space-between; align-items:start; gap:8px; min-height:3.1em; }
   #migrationReportBody .mrBar span[data-level] { cursor:pointer; }
-  #migrationReportBody .mrEngine { display:grid; gap:6px; padding:10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
+  #migrationReportBody .mrEngine { display:grid; gap:6px; align-content:start; padding:10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
   #migrationReportBody .mrBar { display:flex; height:22px; border-radius:5px; overflow:hidden; background:rgba(255,255,255,0.06); }
   #migrationReportBody .mrBar span { display:grid; place-items:center; color:#111; font-size:12px; font-weight:700; min-width:0; }
   #migrationReportBody .mrBar .mrEmpty { color:inherit; font-weight:400; padding:0 8px; }
   #migrationReportBody .mrFilters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0; }
   #migrationReportBody .mrList { display:grid; gap:6px; }
   #migrationReportBody .mrRow { border:1px solid rgba(255,255,255,0.12); border-radius:6px; }
-  #migrationReportBody .mrRow summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) 340px 340px; gap:12px; align-items:center; padding:8px 12px; }
+  #migrationReportBody .mrRow summary { list-style:none; cursor:pointer; display:grid; grid-template-columns:minmax(0,1fr) repeat(3, minmax(220px, 300px)); gap:12px; align-items:center; padding:8px 12px; }
   #migrationReportBody .mrRow summary::-webkit-details-marker { display:none; }
   #migrationReportBody .mrRow[open] summary { border-bottom:1px solid rgba(255,255,255,0.12); }
   #migrationReportBody .mrName { overflow-wrap:anywhere; font-weight:600; }
+  #migrationReportBody .mrNameText { cursor:pointer; }
+  #migrationReportBody .mrCaret { display:inline-block; width:0; height:0; margin-right:7px; vertical-align:middle;
+                                  border-top:5px solid transparent; border-bottom:5px solid transparent;
+                                  border-left:6px solid rgba(255,255,255,0.55); transition:transform 0.12s ease; }
+  #migrationReportBody .mrRow[open] .mrCaret { border-left:5px solid transparent; border-right:5px solid transparent;
+                                               border-top:6px solid rgba(255,255,255,0.75); border-bottom:0; }
+  #migrationReportBody .mrRow summary:hover .mrCaret { border-left-color:#e8f2f6; }
+  #migrationReportBody .mrRow[open] summary:hover .mrCaret { border-top-color:#e8f2f6; }
+  #migrationReportBody .mrReasons .mrRest { display:none; }
+  #migrationReportBody .mrReasons.mrReasonsAll .mrRest { display:grid; }
+  #migrationReportBody .mrMore { margin-top:6px; }
   #migrationReportBody .mrName a { color:inherit; text-decoration:underline; text-decoration-color:rgba(255,255,255,0.35); }
   #migrationReportBody .mrCell { display:flex; gap:8px; align-items:center; font-size:0.9em; }
   #migrationReportBody .mrBadge { display:inline-grid; place-items:center; flex:none; width:24px; height:24px; border-radius:50%; font-weight:700; color:#111; }
-  #migrationReportBody .mrDetail { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:8px 12px 12px; }
+  #migrationReportBody .mrDetail { display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; padding:8px 12px 12px; }
   #migrationReportBody .mrDetail h5 { margin:4px 0 6px; }
   #migrationReportBody .mrDetail ul { margin:0; padding-left:18px; display:grid; gap:4px; }
   #migrationReportBody .mrTag { font-size:0.72em; text-transform:uppercase; letter-spacing:0.05em; padding:1px 5px; border-radius:4px; background:rgba(255,255,255,0.08); margin-right:5px; }
   #migrationReportBody .mr_no { color:#ff8a80; } #migrationReportBody .mr_partial { color:#e8d15a; } #migrationReportBody .mr_warning { color:#f06292; } #migrationReportBody .mr_yes { color:#8fd694; }
   #migrationReportBody .mrProgress { color:#f06292; }
+  #rmCoverageBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
+  #rmCoverageBody .mrTable th, #rmCoverageBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
+  #rmCoverageBody h4 { margin:14px 0 6px 0; }
+  #rmCoverageBody .mrDefs { margin:6px 0 10px 0; }
+  #rmCoverageBody .mrDefs > summary { cursor:pointer; color:#9fd0e4; font-size:0.9em; }
+  #rmCoverageBody .mrDefs p { margin:6px 0 0 0; }
   #migrationReportBody .mrTableWrap { overflow-x:auto; }
   #migrationReportBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
   #migrationReportBody .mrTable th, #migrationReportBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
   #migrationReportBody .mrV { font-weight:700; white-space:nowrap; }
   #migrationReportBody .mrCmds { max-width:260px; overflow-wrap:anywhere; }
-  @media (max-width: 900px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary, #migrationReportBody .mrDetail { grid-template-columns:1fr; } }
+  /* Three engines need the width; below it they stack rather than squeeze. */
+  @media (max-width: 1500px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary { grid-template-columns:minmax(0,1fr) repeat(3, minmax(170px, 230px)); }
+    #migrationReportBody .mrCell { font-size:0.82em; } }
+  @media (max-width: 1100px) { #migrationReportBody .mrHead, #migrationReportBody .mrRow summary, #migrationReportBody .mrDetail { grid-template-columns:1fr; } }
   #communityCard.ccClickable { cursor:pointer; }
   #communityCard.ccClickable:hover { background:#e3ecef; }${''}
   /* Fully opaque, not near-opaque: at 0.97 the legend behind it still showed
@@ -12574,6 +14410,63 @@ String buildMapHtml() {
      shown here too so the effective icon is visible at a glance instead of
      only as text inside the override dropdown. */
   .devIconGlyph { font-family:'AMIcons'; display:inline-block; width:16px; margin-right:6px; text-align:center; color:#7fb6d6; }
+  /* Room planner. Rooms are absolutely positioned inside #roomCanvas, whose
+     height is set from the lowest rectangle so the panel body scrolls rather
+     than clipping a room the user dragged down. */
+  #roomPlan, #roomPlanBar, #roomPlanSub, #roomCanvas { font-size:10px; }
+  #roomPlanBar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 0 8px 0; border-bottom:1px solid #16323c; margin-bottom:8px; }
+  #roomPlanSearch { flex:0 1 220px; font-size:10px; padding:3px 7px; border-radius:999px; background:#123a52; color:#cfe9fb; border:1px solid #1e5878; }
+  #roomPlanBar button { font-size:10px; padding:3px 9px; }
+  #roomPlanBar .rpCount { font-weight:700; color:#81BC00; }
+  #roomPlanBar .rpCount.rpNone { color:#7f9aa6; font-weight:600; }
+  #roomPlanMsg { color:#9fd0e4; font-size:10px; }
+  /* Same card the right-click tip uses, not a banner: it is teaching a gesture,
+     so it wants the illustration and the weight that goes with one. */
+  /* Sits clear of the top rows so it does not cover the rooms it is talking
+     about, and is draggable by its heading for when it covers the one you
+     want anyway. */
+  #roomTip { position:absolute; left:50%; top:330px; transform:translateX(-50%); z-index:40;
+             width:min(88%,430px); box-sizing:border-box; background:rgba(4,20,27,0.98);
+             border:1px solid rgba(129,188,0,0.55); border-radius:8px;
+             box-shadow:0 8px 32px rgba(0,0,0,0.6); padding:14px 18px 12px 18px; font-size:12px; color:#e8f3f6; }
+  #roomTip h3 { margin:0 0 6px 0; font-size:14px; color:#cfe9fb; cursor:move; user-select:none; }
+  #roomTip p { margin:0 0 8px 0; color:#cfe1e7; line-height:1.45; }
+  #roomTip p.roomTipFoot { margin:0; color:#9fb6bf; }
+  #roomTip b { color:#a9d94a; }
+  #roomTip .roomTipArt { display:block; margin:2px auto 12px auto; }
+  #roomTip .roomTipClose { position:absolute; top:7px; right:10px; background:none; border:0; color:#9fb6bf;
+                           font-size:17px; line-height:1; cursor:pointer; }
+  #roomTip .roomTipClose:hover { color:#e0443e; }
+  #roomCanvas { position:relative; min-height:200px; }
+  .roomRect { position:absolute; background:rgba(9,32,43,0.92); border:1px solid #1e5878; border-radius:8px; display:flex; flex-direction:column; overflow:hidden; }
+  /* Border only. The fill stays the same as every other room: tinting the
+     whole box red read as an alarm state rather than a label. */
+  .roomRect.rpUnassigned { border:2px solid #e0443e; }
+  .roomRectHead { display:flex; align-items:baseline; justify-content:space-between; gap:8px; padding:5px 9px; background:rgba(255,255,255,0.05); cursor:move; user-select:none; }
+  .roomRectName { font-weight:700; color:#cfe9fb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .roomRectName[data-rename] { cursor:text; }
+  .roomRectDel { background:none; border:0; color:#5f7883; font-size:13px; line-height:1; padding:0 2px; cursor:pointer; }
+  .roomRectDel:hover { color:#e0443e; }
+  .roomRectCount { color:#7f9aa6; font-size:10px; white-space:nowrap; }
+  .roomRectBody { flex:1; min-height:0; overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:4px; }
+  .roomRectBody.dropHot { background:rgba(129,188,0,0.16); outline:1px dashed #81BC00; outline-offset:-3px; }
+  .roomRectGrip { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:nwse-resize; background:linear-gradient(135deg, transparent 50%, #1e5878 50%); }
+  /* flex:0 0 auto is load-bearing: these are flex items in a column, so the
+     default flex-shrink squashed them (measured at 4px tall with 50 in the
+     Not Allocated box) and the text spilled out of its own chip. Shrink
+     happens before overflow-y ever gets a say. */
+  .devChip { flex:0 0 auto; display:flex; align-items:center; gap:2px; padding:2px 5px; border-radius:5px; background:rgba(255,255,255,0.06); cursor:grab; font-size:10px; color:#dceaf2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .devChip:hover { background:rgba(255,255,255,0.12); }
+  .devChip.dragging { opacity:0.4; }
+  /* A staged move is visibly not yet real - the whole point of commit. */
+  .devChip.rpStaged { background:rgba(129,188,0,0.22); outline:1px solid #81BC00; }
+  /* Picked, not yet moved. Distinct from staged, which has already been
+     dropped somewhere and is waiting on Apply. */
+  .devChip.rpSelected { background:rgba(79,179,169,0.30); outline:1px solid #4fb3a9; }
+  .devChip.rpSelected.rpStaged { outline:1px solid #81BC00; }
+  .roomRectEmpty { color:#5f7883; font-size:10px; font-style:italic; padding:2px 4px; }
+  /* The glyph is a pictogram, not prose - it needs more than 10px to read. */
+  #roomCanvas .devIconGlyph { font-size:12px; width:14px; margin-right:4px; }
   #icons tr.overridden td { background:rgba(79,179,169,0.09); }
   #icons select { background:#0d2630; color:#e8f2f6; border:1px solid #2a4a57; border-radius:3px; padding:3px 5px; font-size:1em; font-family:inherit; }
   #icons .bar { margin-top:14px; padding-top:12px; border-top:1px solid #2a4a57; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -12792,28 +14685,30 @@ String buildMapHtml() {
       <option value="deviceRead">webCoRE device state reads only</option>
     </select></label>
     <div id="headerActions">
-      <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show all</button>
-      <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit map</button>
+      <button id="resetBtn" type="button" style="background:#d9822b; color:#121214; border-color:#a5701f;">Show All</button>
+      <button id="fitMapBtn" type="button" title="Re-fit the current view without changing what's focused">Fit Map</button>
     </div>
   </div>
   <div id="toolRail">
-    <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External systems</button></div>
-    <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot tables</button><button id="iconsBtn" type="button">Device icons</button></div>
-    <button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI friendly export</button>
+    <div class="toolRailRow"><button id="insightsBtn" type="button">Insights</button><button id="extBtn" type="button">External Systems</button></div>
+    <div class="toolRailRow"><button id="pivotBtn" type="button">Pivot Tables</button><button id="iconsBtn" type="button">Device Icons</button></div>
+    <div class="toolRailRow"><button id="roomPlanBtn" type="button" title="Arrange rooms and drag devices between them, then apply the batch">Room Manager</button><button id="exportBtn" type="button" title="Download the whole map as JSON, for an AI or other tool to read">AI Friendly Export</button></div>
     <button id="migrationReportBtn" type="button" title="Rate every webCoRE piston for Rule Machine and Visual Rule Builder">webCoRE Migration Assessment</button>
-    <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat release activity</button>
-    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community utilities &#8599;</button>
-    <button id="hubTipBtn" type="button" title="How to open a device or app on the hub">Opening objects on the hub</button>
-    <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit map</button>
+    <button id="rmCoverageBtn" type="button" title="Check every Rule Machine rule on this hub against what the HAI rule engine can do">HAI RM5 Coverage</button>
+    <button id="releaseActivityBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Preview Hubitat release activity from Community Utilities">Hubitat Release Activity</button>
+    <button id="communityUtilitiesBtn" type="button" style="background:#81BC00; color:#121214; border-color:#5c8500;" title="Open the Hubitat Community Utilities site in a new tab">Community Utilities &#8599;</button>
+    <button id="exitMapBtn" type="button" title="Return to this app's settings screen">Exit Map</button>
   </div>
 </div>
 <div id="migrationCard" hidden></div>
-<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
-<div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
-<div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
+<div id="flow" class="modernPanel flowClassicSize"><div id="flowHeader" class="modernPanelHeader" title="Drag to move. Double-click to reset size, position and zoom. Ctrl with the mouse wheel zooms this panel."><h3 id="flowTitle"></h3><button id="flowClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="flowBack" style="display:none"></div><div class="sub" id="flowSub"></div><div id="flowEngineLink" style="display:none"></div><div class="panelBody" id="flowBody"><div id="flowZoom"><div id="flowChart"></div><div id="decodeCoverageCard" hidden></div><div id="ruleVariablesCard"></div><div id="communityCard"></div></div></div><div id="flowResize" class="panelResizeGrip" title="Drag to resize"></div></div>
+<div id="ext" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>External Systems</h3><button id="extClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="extBody" class="panelBody"></div></div>
+<div id="pivot" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Pivot Tables</h3><button id="pivotClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="pivotBody" class="panelBody"></div></div>
 <div id="migrationReport" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>webCoRE Migration Assessment</h3><button id="migrationReportClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="migrationReportBody" class="panelBody"></div></div>
-<div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
-<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat release activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
+<div id="rmCoverage" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>HAI RM5 Coverage</h3><button id="rmCoverageClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Every Rule Machine rule on this hub, measured against what the HAI rule engine says it can do.</div><div id="rmCoverageBody" class="panelBody"></div></div>
+<div id="roomPlan" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Room Manager</h3><button id="roomPlanClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub" id="roomPlanSub"></div><div id="roomPlanBar"><input type="search" id="roomPlanSearch" placeholder="Search devices or rooms..."><span id="roomPlanStatus" class="rpCount rpNone">No staged moves</span><button id="roomPlanApply" type="button" disabled>Apply to hub</button><button id="roomPlanDiscard" type="button" disabled>Discard</button><button id="roomPlanNew" type="button" title="Create a room on the hub">New room</button><button id="roomPlanReset" type="button" title="Forget where rooms have been dragged and lay them out again">Reset layout</button><span id="roomPlanMsg"></span></div><div id="roomPlanBody" class="panelBody"><div id="roomTip" role="dialog" aria-labelledby="roomTipTitle" hidden><button class="roomTipClose" type="button" id="roomTipClose" title="Close" aria-label="Close">&times;</button><h3 id="roomTipTitle">Moving devices between rooms</h3><svg class="roomTipArt" width="250" height="88" viewBox="0 0 250 88" role="img" aria-label="Ctrl-click devices to select several, then drag them into another room"><rect x="4" y="8" width="86" height="72" rx="5" fill="rgba(224,68,62,0.12)" stroke="#e0443e"></rect><text x="12" y="23" fill="#e8b0ad" font-size="9">Not Allocated</text><rect x="12" y="30" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="45" width="70" height="11" rx="3" fill="rgba(79,179,169,0.45)" stroke="#4fb3a9"></rect><rect x="12" y="60" width="70" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><path d="M96 46 h44" stroke="#81BC00" stroke-width="2" fill="none"></path><path d="M140 46 l-8 -5 v10 z" fill="#81BC00"></path><path d="M112 44 l14 12 -5 1 3 7 -4 1 -3 -7 -4 3 z" fill="#e8f3f6"></path><rect x="150" y="8" width="96" height="72" rx="5" fill="rgba(255,255,255,0.06)" stroke="#1e5878"></rect><text x="158" y="23" fill="#cfe9fb" font-size="9">Kitchen</text><text x="228" y="23" fill="#7f9aa6" font-size="9">&#215;</text><rect x="158" y="30" width="80" height="11" rx="3" fill="rgba(255,255,255,0.10)"></rect><rect x="158" y="45" width="80" height="11" rx="3" fill="rgba(129,188,0,0.35)" stroke="#81BC00"></rect></svg><p><b>Ctrl-click to pick several</b>, or Shift-click to take a whole run, then drag any one of them and the rest follow. Nothing reaches the hub until you press Apply.</p><p class="roomTipFoot">Double-click a room name to rename it. The small &#215; on a room deletes it - its devices are kept and land back in Not Allocated when a room is deleted.</p></div><div id="roomCanvas"></div></div></div>
+<div id="icons" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Device Icons</h3><button id="iconsClose" class="panelClose" type="button" title="Close">&times;</button></div><div id="iconsBody" class="panelBody"></div></div>
+<div id="releaseActivity" class="modernPanel modernPanelLarge"><div class="modernPanelHeader"><h3>Hubitat Release Activity</h3><button id="releaseActivityClose" class="panelClose" type="button" title="Close">&times;</button></div><div class="sub">Community Utilities release history and documented changes.</div><div id="releaseActivityBody" class="panelBody"></div></div>
 <div id="nodeMenu" role="menu" aria-hidden="true"></div>
 <div id="hubTip" role="dialog" aria-labelledby="hubTipTitle" hidden>
   <button class="hubTipClose" type="button" id="hubTipClose" title="Close" aria-label="Close">&times;</button>
@@ -12887,6 +14782,7 @@ const LEGEND_GROUP_ROWS = [
 const LEGEND_EDGE_ROWS = [
   { key: 'trigger', html: '<span class="swatch sw-dot" style="background:' + roleColors.trigger + '"></span><span class="line" style="border-color:' + roleColors.trigger + '"></span>Trigger - app listens to this device' },
   { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '"></span>Constraint - condition / required expression' },
+  { key: 'constraint', html: '<span class="swatch sw-dot" style="background:' + roleColors.constraint + '"></span><span class="line" style="border-color:' + roleColors.constraint + '; border-top-style:dotted"></span>Constraint, dotted - nothing evaluates this condition' },
   { key: 'monitor', html: '<span class="swatch sw-dot" style="background:' + roleColors.monitor + '"></span><span class="line" style="border-color:' + roleColors.monitor + '"></span>Monitor - app reads this device' + "'" + 's state' },
   { key: 'action', html: '<span class="swatch sw-dot" style="background:' + roleColors.action + '"></span><span class="line" style="border-color:' + roleColors.action + '"></span>Action - app can command this device' },
   { key: 'exposed', html: '<span class="swatch sw-dot" style="background:' + roleColors.exposed + '"></span><span class="line" style="border-color:' + roleColors.exposed + '; border-top-style:dotted"></span>Exposed - published to an external system' },
@@ -13195,7 +15091,13 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   // device relationship because it is the rarer and more surprising one.
   const isRuleLink = RULE_LINK_KINDS.indexOf(e.kind) !== -1;
   let dashes = false;
-  if (e.kind === 'owns') dashes = true;
+  // A constraint edge whose condition nothing evaluates (backlog 31). The node
+  // tag cannot say this when the same device also has a live relationship, so
+  // the EDGE carries it: same colour, so it still reads as a constraint, drawn
+  // dotted and thin because nothing gates on it.
+  const deadConstraint = e.kind === 'constraint' && e.unused === true;
+  if (deadConstraint) dashes = [1, 5];
+  else if (e.kind === 'owns') dashes = true;
   else if (e.kind === 'exposed') dashes = [2, 4];
   else if (e.kind === 'cancelTimedActions') dashes = [8, 4];
   else if (e.kind === 'setspb') dashes = [2, 3];
@@ -13208,6 +15110,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'depends') dashes = (e.crit === 'RUNTIME') ? [6, 3] : [2, 5];
   let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
+  if (deadConstraint) width = 1;
   const edge = {
     // stateful stays three-valued (v2.2.8): true, false, or null for a webCoRE
     // action, where the command is proven but its lasting state is not. Every
@@ -14185,15 +16088,35 @@ const FLOWS = GRAPH.flows || {};
 // the AI export builds its own shape from the same GRAPH.ruleVariables
 // separately, see buildExportPayload().
 const RULE_VARIABLES = GRAPH.ruleVariables || {};
-if (window.mermaid) {
-  // A bare top-level fontSize option does nothing on this pinned mermaid
-  // build (10.9.8) - confirmed live, still measured 16px with it set. The
-  // theme's own themeVariables.fontSize is what actually reaches the
-  // rendered node text; confirmed live via mermaid.render() directly before
-  // changing this, not assumed. Added per Gordon's request - the rendered
-  // node text (mermaid's own 16px default) was the dominant reason the
-  // panel ran large.
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '12px' } });
+// The flowchart library is 3.34 MB against the graph library's 652 KB, and
+// most map views never open a flowchart. Fetching it up front spent that on
+// nothing: it was pulled on every view of a graph it is not used to draw.
+// Loaded on the first flowchart instead, and initialised once when it lands.
+var mermaidReady = null;
+function loadMermaid() {
+  if (mermaidReady) return mermaidReady;
+  mermaidReady = new Promise(function (resolve, reject) {
+    var tag = document.createElement('script');
+    tag.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js';
+    tag.integrity = 'sha384-N3QqR/7q+xm3BGX+CBbNI8AUmRRqcsDzToy+0z1NLDI0QmTKW8zvwLvqulJgk3dP';
+    tag.crossOrigin = 'anonymous';
+    tag.onload = function () {
+      window.mermaid ? resolve() : reject(new Error('the flowchart library could not be loaded'));
+    };
+    tag.onerror = function () { reject(new Error('the flowchart library could not be loaded')); };
+    document.head.appendChild(tag);
+  }).then(function () {
+    // A bare top-level fontSize option does nothing on this pinned mermaid
+    // build (10.9.8) - confirmed live, still measured 16px with it set. The
+    // theme's own themeVariables.fontSize is what actually reaches the
+    // rendered node text; confirmed live via mermaid.render() directly before
+    // changing this, not assumed. Added per Gordon's request - the rendered
+    // node text (mermaid's own 16px default) was the dominant reason the
+    // panel ran large. 12px then read as too small against the 375px panel, so
+    // 14px is the settled middle: still under mermaid's default, still legible.
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { useMaxWidth: false }, themeVariables: { fontSize: '14px' } });
+  });
+  return mermaidReady;
 }
 
 // Written without regex literals on purpose: this whole page is a Groovy
@@ -14456,7 +16379,11 @@ function makePanelDraggable(panel, header) {
     // close the panel, not start a drag.
     if (e.target.closest('.panelClose')) return;
     dragging = true;
-    panelCustomPosition.set(panel, true);
+    // Deliberately NOT marked as user-positioned here. Marking on mousedown
+    // meant a bare click on the header - to focus the panel, or a click that
+    // never moved - opted that panel out of sizeModernPanel() for the rest of
+    // the session, including out of the viewport re-measure above. The flag
+    // means "the user placed this", so it is earned by actual movement.
     const rect = panel.getBoundingClientRect();
     startX = e.clientX; startY = e.clientY;
     startLeft = rect.left; startTop = rect.top;
@@ -14464,8 +16391,12 @@ function makePanelDraggable(panel, header) {
   });
   document.addEventListener('mousemove', function (e) {
     if (!dragging) return;
-    panel.style.left = (startLeft + (e.clientX - startX)) + 'px';
-    panel.style.top = (startTop + (e.clientY - startY)) + 'px';
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    // A few pixels of travel during a click is not a drag.
+    if (!panelCustomPosition.get(panel) && Math.abs(dx) + Math.abs(dy) < 4) return;
+    panelCustomPosition.set(panel, true);
+    panel.style.left = (startLeft + dx) + 'px';
+    panel.style.top = (startTop + dy) + 'px';
   });
   document.addEventListener('mouseup', function () {
     if (!dragging) return;
@@ -14658,6 +16589,27 @@ window.addEventListener('resize', function () {
   flowUserSize = clampFlowSize(flowUserSize.width, flowUserSize.height, flowPanel.getBoundingClientRect());
   applyFlowUserSize();
 });
+// sizeModernPanel() writes width and height as inline pixels, once, when a
+// panel opens. Browser zoom changes window.innerWidth/innerHeight in CSS
+// pixels and fires resize, so a panel opened before the zoom keeps the
+// previous viewport's pixel width and runs under the control rail - the
+// wider the zoom, the further under. Re-measure against the real #status and
+// #controls on the same terms bringToFront() already uses: full-area panels
+// only, and never one the user has dragged, whose position is theirs to keep.
+// Classic #flow is excluded by the modernPanelLarge test, since it sizes to
+// its own content rather than to the viewport.
+var panelViewportTimer = null;
+window.addEventListener('resize', function () {
+  if (panelViewportTimer) clearTimeout(panelViewportTimer);
+  panelViewportTimer = setTimeout(function () {
+    allPanels().forEach(function (p) {
+      if (!p || p.style.display !== 'flex') return;
+      if (!p.classList.contains('modernPanelLarge')) return;
+      if (panelCustomPosition.get(p)) return;
+      sizeModernPanel(p);
+    });
+  }, 150);
+});
 // Panel zoom. Ctrl with the mouse wheel over the normal flow view zooms its
 // content instead of the whole page, which a large flowchart needs. Held while
 // the same item stays open and cleared when a new one is picked, exactly like a
@@ -14753,7 +16705,7 @@ ${''}
 //
 // flowPanel is deliberately outside secondaryPanels(): its callers hide it
 // themselves, since several re-open it a moment later with new content.
-function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel]; }
+function secondaryPanels() { return [extPanel, pivotPanel, iconsPanel, releaseActivityPanel, legendPanel, migrationReportPanel, rmCoveragePanel, roomPlanPanel]; }
 function allPanels() { return [flowPanel].concat(secondaryPanels()); }
 
 function syncLegendVisibility() {
@@ -14820,10 +16772,32 @@ function bringToFront(panel) {
 // to whatever it holds. For a container that turns a dead end into the most
 // direct route to its children on the whole map.
 function setFlowSub(text, isWebcoreNotice) {
+  // Cleared on every panel path, then re-added only by a successful chart
+  // render, so a wide flowchart cannot leave the panel wide for the next
+  // selection that has nothing to draw.
+  flowPanel.classList.remove('flowHasChart');
   const el = document.getElementById('flowSub');
   el.textContent = text;
   el.classList.toggle('webcoreNotice', !!isWebcoreNotice);
   flowPanel.classList.remove('wcIndent');
+  // Cleared here, not in each caller: every panel path goes through
+  // setFlowSub, so a stale link cannot survive into the next selection.
+  const link = document.getElementById('flowEngineLink');
+  if (link) { link.innerHTML = ''; link.style.display = 'none'; }
+}
+
+// Only another engine publishes a url for its own rule page (engineUrl comes
+// from the HAI feed), so absence is the normal case for a Rule Machine app.
+function renderEngineLink(node) {
+  const box = document.getElementById('flowEngineLink');
+  if (!box || !node || node.engine !== 'HAI' || !node.engineUrl) return;
+  const a = document.createElement('a');
+  a.href = location.origin + node.engineUrl;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = 'Open in HAI rule editor';
+  box.appendChild(a);
+  box.style.display = '';
 }
 
 // Called after setFlowSub, which clears the class unconditionally.
@@ -14979,7 +16953,12 @@ function showFlow(appId) {
   const node = ALL_NODES.filter(function (n) { return n.id === appId; })[0];
   if (node && (node.inert || node.unreadable)) { showInertPanel(node); return; }
   const steps = FLOWS[appId];
-  if (!steps || !steps.length || !window.mermaid) {
+  // Deliberately does NOT test window.mermaid. The flowchart library is loaded
+  // on demand now, so it is absent until the first chart is drawn, and testing
+  // it here made this branch always true - every rule reported no flow. The
+  // render below calls loadMermaid() and surfaces its own failure if the
+  // library cannot be fetched.
+  if (!steps || !steps.length) {
     // No decoded flow to draw is not the same as nothing to say - the
     // Community Context Card below still applies to every app, decoded flow
     // or not (this used to just hide the panel and show nothing at all,
@@ -14998,8 +16977,11 @@ function showFlow(appId) {
       ? webcorePistonDeviceCoverageMessage(node)
       : (node && node.appType === 'webCoRE' && node.webcoreDeviceRelationshipsSuppressed
         ? 'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.'
-        : 'This app has no decoded rule flow to show.'), isWebcoreNotice);
+        : (node && node.engine === 'HAI'
+          ? 'Hubitat Automation Intelligence published no steps for this rule. Its devices, variables and rule links are on the map as usual, and its own page has the rule itself.'
+          : 'This app has no decoded rule flow to show.')), isWebcoreNotice);
     setFlowWebcoreIndent(node);
+    renderEngineLink(node);
     flowChart.innerHTML = '';
     // Gate C (v2.1.4): a rule can have variable evidence even when its step
     // sequence itself could not be decoded (or genuinely has none) - shown
@@ -15017,16 +16999,24 @@ function showFlow(appId) {
   // Deliberately free of apostrophes. This page is a Groovy GString, so a
   // backslash-escaped quote is consumed by Groovy and ends the JS string early -
   // a syntax error that kills the entire page.
-  setFlowSub('Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
+  // A rule from another engine is not decoded here: that engine publishes its
+  // own steps, so the sentence must not claim this app read them off the hub.
+  setFlowSub(node && node.engine === 'HAI'
+    ? 'Steps as Hubitat Automation Intelligence publishes them for this rule. A reading aid: the rule page itself remains the authority.'
+    : 'Decoded execution order, reconstructed from the internal state of the app. A reading aid: the app page itself remains the authority.', false);
+  renderEngineLink(node);
   flowChart.innerHTML = '';
   const id = 'mmd' + Date.now();
-  mermaid.render(id, mermaidFor(steps)).then(function (res) {
+  loadMermaid().then(function () {
+    return mermaid.render(id, mermaidFor(steps));
+  }).then(function (res) {
     // A newer selection (any type - another app, a device, a hub variable)
     // has already started since this render began. Writing flowChart or
     // re-opening the panel now would silently restore this stale selection
     // over whatever the user has actually picked since.
     if (mySelectionSeq !== focusGenerationSeq) return;
     flowChart.innerHTML = res.svg;
+    flowPanel.classList.add('flowHasChart');
     renderRuleVariablesCard(appId);
     noteFlowItem(node);
     renderDecodeCoverageCard(node);
@@ -15379,7 +17369,10 @@ function ccFormatDate(iso) {
 function ccRecordHtml(record, identityMismatch) {
   let html = '<span class="ccBadge">' + extEsc(COMMUNITY_CONTEXT_AUTHORITY_LABELS[record.authority] || record.authority) + '</span>';
   if (identityMismatch) {
-    html += '<p class="sub ccCaution">Community Utilities flagged this package - its declared identity did not match its own source code at last check. Treat this match with extra care.</p>';
+    // Deliberately weaker than it once read. The check is a static parse of the
+    // source, and a package that names itself through a constant, or builds the
+    // name at runtime, reads as a difference without anything being wrong.
+    html += '<p class="sub ccCaution">Community Utilities could not confirm this package identity against its source at last check: the name declared in the source read differently from the one in the package manifest. That is often a harmless difference in how the source is written, so treat this match as unconfirmed rather than wrong.</p>';
   }
   html += '<p><b>' + extEsc(record.displayName || record.packageName || 'Unnamed') + '</b>' +
     (record.author ? ' &middot; ' + extEsc(record.author) : '') + '</p>';
@@ -15573,10 +17566,254 @@ function requestDecodeCoverage() {
 }
 
 // Migration assessment card (v2.3.1). Fetched on piston selection. Collapsed it shows a header and
-// one rating each for Rule Machine and Visual Rule Builder; a click expands the reasons and the parts
+// one rating for each engine assessed; a click expands the reasons and the parts
 // that need manual work. Silent when the assessment cannot run. Labels avoid apostrophes because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
 const MIGRATION_URL = amPickURL('${getLocalURL('webcore-migration-assessment')}', '${getCloudURL('webcore-migration-assessment')}');
+const RM_COVERAGE_URL = amPickURL('${getLocalURL('rm-coverage')}', '${getCloudURL('rm-coverage')}');
+const rmCoveragePanel = document.getElementById('rmCoverage');
+const RMC = { body: null, loading: false };
+
+// Reads from the rules on this hub, not from either engine's feature list, so
+// the answer is about the automations that actually exist here.
+function rmcOpen() {
+  bringToFront(rmCoveragePanel);
+  if (RMC.body || RMC.loading) { rmcRender(); return; }
+  RMC.loading = true;
+  rmcRender();
+  fetch(RM_COVERAGE_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
+    .then(function (body) { RMC.loading = false; RMC.body = body || {}; rmcRender(); })
+    .catch(function () { RMC.loading = false; RMC.body = { ok: false, reason: 'the report could not be read from the hub' }; rmcRender(); });
+}
+
+const RMC_VERDICT_TEXT = {
+  runs: 'Works',
+  partial: 'Not the same yet',
+  missing: 'Not built',
+  unknown: 'Not listed',
+  unmapped: 'Not matched'
+};
+
+
+function rmcConstructText(token) {
+  const colon = token.indexOf(':');
+  const kind = colon === -1 ? '' : token.slice(0, colon);
+  const value = colon === -1 ? token : token.slice(colon + 1);
+  if (kind === 'action') return 'Action: ' + value.replace(/^get/, '');
+  if (kind === 'trigger') return 'Trigger: ' + value;
+  if (kind === 'condition') return 'Condition: ' + value;
+  if (kind === 'structure') {
+    // Split camelCase by hand: a replacement reference would be read as Groovy
+    // interpolation in this template, which the build refuses outright.
+    let words = '';
+    for (let i = 0; i < value.length; i++) {
+      const ch = value.charAt(i);
+      words += (ch >= 'A' && ch <= 'Z') ? (' ' + ch.toLowerCase()) : ch;
+    }
+    return 'Rule structure: ' + words;
+  }
+  return token;
+}
+
+function rmcRender() {
+  const box = document.getElementById('rmCoverageBody');
+  if (!box) return;
+  if (RMC.loading) { box.innerHTML = '<p class="sub">Checking every rule...</p>'; return; }
+  const b = RMC.body || {};
+  if (!b.ok) {
+    box.innerHTML = '<p class="sub">' + extEsc(b.reason || 'No answer from the hub.') + '</p>';
+    return;
+  }
+  const s = b.summary || {};
+  const eng = b.engine || {};
+  const cats = b.categories || [];
+  const rmCats = cats.filter(function (c) { return !c.engineOnly; });
+  // This report ships with the app, so it states Rule Machine parity and nothing
+  // about where the other engine is going. Its beyond-RM features are counted on
+  // one row and never named: the count is a fact about scope, the list would be
+  // a roadmap. The feed still carries them; this report does not draw them.
+  const extraCats = cats.filter(function (c) { return c.engineOnly; });
+  const gapRules = (b.rules || []).filter(function (r) { return !r.covered; });
+  const gapConstructs = (b.constructs || []).filter(function (c) { return c.verdict !== 'runs'; });
+  let html = '';
+
+  // Part one: the two engines against each other, before this hub is
+  // mentioned at all. Rule Machine 5.1 sets the list; HAI-1 answers it.
+  html += '<h4>1. Rule Machine 5.1 against ' + extEsc(eng.name || 'HAI-1') + '</h4>';
+  if (b.fromPublished) {
+    html += '<p class="sub">This hub does not have that engine, so these figures were read from the list it publishes openly' +
+      (b.publishedAt ? ', generated ' + extEsc(String(b.publishedAt)) : '') + '. ' +
+      extEsc(String(b.whatThisIs || '')) + '</p>';
+  }
+  const tot = { dimensions: 0, runs: 0, format: 0, partial: 0, missing: 0, hubProven: 0, scoped: 0 };
+  rmCats.forEach(function (c) {
+    ['dimensions', 'runs', 'format', 'partial', 'missing', 'hubProven', 'scoped'].forEach(function (k) { tot[k] += (c[k] || 0); });
+  });
+  // Four states, ordered by how much of the work is actually done: Tested,
+  // Built-not-tested, Scoped, Not built. The first two are the same published
+  // status split on whether anyone has watched it run, which is the
+  // distinction carrying most of this report's value.
+  //
+  // The second column is deliberately not called Implemented. These four are
+  // exclusive and sum to the capability count, so a column headed Implemented
+  // sitting beside a larger Tested column reads as a contradiction: it implies
+  // Tested is a subset of it, when in fact both are subsets of the engine's
+  // Runs status. Naming it for what it is, built but never watched, removes
+  // the implied hierarchy without merging the two. Scoped sits on the
+  // not-working side deliberately: the engine describes it as the route being
+  // known with nothing built, and grouping it with the working side would
+  // overstate the engine in the one place it has already overstated itself.
+  // Implemented is everything built; the second column is the subset observed
+  // running on a hub, not a rival column. It was headed "tests passed", which
+  // asserted that every simulator-tested capability had no passing test - 61 of
+  // them, against suites that do pass. It measures hub observation, so it says
+  // that. The row adds up as implemented + scoped + not built, with the hub
+  // count qualifying the first.
+  const implemented = function (c) { return c.runs || 0; };
+  const testsPassed = function (c) { return c.hubProven || 0; };
+  // Partly and the format state are older values no row currently uses. A
+  // column of zeros teaches nothing, so each appears only on a hub where
+  // something is actually in that state.
+  const showFormat = tot.format > 0;
+  const showPartial = tot.partial > 0;
+  const optCell = function (show, n) { return show ? '<td>' + extEsc(String(n)) + '</td>' : ''; };
+  const showMissing = tot.missing > 0;
+  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM capabilities</th>' +
+    '<th>Implemented</th><th>Of those, hub-tested</th><th>Scoped, not built</th>' +
+    (showMissing ? '<th>Not built</th>' : '') +
+    (showPartial ? '<th>Partly</th>' : '') + (showFormat ? '<th>Writes but does not run</th>' : '') +
+    '</tr></thead><tbody>';
+  rmCats.forEach(function (c) {
+    html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.dimensions)) +
+      '</td><td>' + extEsc(String(implemented(c))) + '</td><td>' + extEsc(String(testsPassed(c))) +
+      '</td><td>' + extEsc(String(c.scoped || 0)) + '</td>' + optCell(showMissing, c.missing || 0) +
+      optCell(showPartial, c.partial || 0) + optCell(showFormat, c.format || 0) + '</tr>';
+  });
+  let extraRuns = 0, extraHub = 0, extraScoped = 0, extraMissing = 0;
+  extraCats.forEach(function (c) {
+    extraRuns += (c.runs || 0); extraHub += (c.hubProven || 0);
+    extraScoped += (c.scoped || 0); extraMissing += (c.missing || 0);
+  });
+  // The engine's own capabilities, the ones with no Rule Machine counterpart,
+  // used to be printed here as a row with 0 in the RM-5 column and then left
+  // out of the total beneath it. Every column therefore failed to add up, in
+  // one direction or the other, depending on which total you believed. This
+  // table answers one question - Rule Machine against the engine - so those
+  // rows are out of it entirely and are reported as a sentence below instead.
+  html += '<tr><td><b>Total</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td>' +
+    '<td><b>' + extEsc(String(tot.runs)) + '</b></td>' +
+    '<td><b>' + extEsc(String(tot.hubProven)) + '</b></td>' +
+    '<td><b>' + extEsc(String(tot.scoped)) + '</b></td>' +
+    (showMissing ? '<td><b>' + extEsc(String(tot.missing)) + '</b></td>' : '') +
+    (showPartial ? '<td><b>' + extEsc(String(tot.partial)) + '</b></td>' : '') +
+    (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '</tr>';
+  html += '</tbody></table>';
+
+  const engName = eng.name || 'HAI-1';
+  html += '<p class="sub"><b>' + extEsc(String(tot.runs)) + ' of ' + extEsc(String(tot.dimensions)) +
+    ' Rule Machine 5.1 capabilities are implemented in ' + extEsc(engName) + '.</b> ' +
+    extEsc(String(tot.hubProven)) + ' of them have also been observed running on a hub; the other ' +
+    extEsc(String(Math.max(0, tot.runs - tot.hubProven))) +
+    ' passed in the simulator only. ' +
+    (tot.scoped ? extEsc(String(tot.scoped)) + ' are scoped, meaning the route is known and nothing is built yet. ' : '') +
+    (tot.missing ? extEsc(String(tot.missing)) + (tot.missing === 1 ? ' is not built at all.' : ' are not built at all.') : '') +
+    (extraRuns ? ' Separately, ' + extEsc(String(extraRuns)) + ' capabilities the engine publishes have no Rule Machine counterpart at all, so they are not in this table.' : '') +
+    '</p>';
+
+  // The engine publishes what each status means, so this report quotes it
+  // rather than keeping a second copy that can drift out of step.
+  const meanings = eng.statusMeanings || {};
+  const ev = eng.evidenceMeanings || {};
+  const known = { Runs: 'Works', Format: 'Writes but does not run', Partial: 'Partly',
+                  Scoped: 'Scoped', Missing: 'Not built' };
+  const meaningRows = [['Implemented', meanings.Runs], ['Observed on a hub', ev.hub], ['Tested in the simulator', ev.simulated],
+                       ['Scoped', meanings.Scoped], ['Not built', meanings.Missing],
+                       (showPartial ? ['Partly', meanings.Partial] : ['', null]),
+                       (showFormat ? ['Writes but does not run', meanings.Format] : ['', null])]
+    .filter(function (r) { return !!r[1]; });
+  // Anything the engine defines that this build has no wording for is still
+  // shown, under its own name, rather than silently dropped. The engine has
+  // added a status before and will again.
+  Object.keys(meanings).forEach(function (k) {
+    if (!known[k] && meanings[k]) meaningRows.push([k, meanings[k]]);
+  });
+  if (meaningRows.length) {
+    // Collapsed: the definitions are long and needed once, not on every read.
+    html += '<details class="mrDefs"><summary>Definitions</summary><p class="sub">';
+    meaningRows.forEach(function (r) { html += '<b>' + extEsc(r[0]) + '</b>: ' + extEsc(r[1]) + ' '; });
+    html += 'Those are the words ' + extEsc(engName) + ' publishes about itself. This app repeats them; it does not test them, and the engine that sets them also writes the code they describe.</p></details>';
+  }
+  // A status this build does not recognise is reported rather than absorbed,
+  // so a count that no longer adds up says why.
+  const unknownTotals = {};
+  rmCats.concat(extraCats).forEach(function (c) {
+    Object.keys(c.unknownStatus || {}).forEach(function (k) {
+      unknownTotals[k] = (unknownTotals[k] || 0) + c.unknownStatus[k];
+    });
+  });
+  const unknownKeys = Object.keys(unknownTotals);
+  if (unknownKeys.length) {
+    html += '<p class="sub"><b>Not counted above:</b> ' +
+      unknownKeys.map(function (k) { return extEsc(String(unknownTotals[k])) + ' row(s) with status "' + extEsc(k) + '"'; }).join(', ') +
+      '. This build of the map does not recognise that status, so it is shown here rather than guessed into one of the columns.</p>';
+  }
+
+  // Part two: this hub's own rules, measured against the same list.
+  // Section two measures this hub against section one, so it needs the engine
+  // present. Without it the heading still appears and says what is missing,
+  // rather than the section vanishing with no explanation.
+  if (b.hubStats === false) {
+    html += '<h4>2. Your Rule Machine rules against that</h4>' +
+      '<p class="sub">Per hub statistics requires the installation of HAI.</p>';
+    box.innerHTML = html;
+    return;
+  }
+  html += '<h4>2. Requirements detected in your ' + extEsc(String(s.rules)) + ' Rule Machine rules</h4>';
+  html += '<p class="sub">This compares the requirements detected in your rules with ' + extEsc(engName) +
+    ' capabilities. It does not mean your rules have been converted or tested in HAI.</p>';
+  if (rmCats.length) {
+    const usedTotals = [0, 0, 0, 0];
+    html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>Detected capabilities</th><th>Supported by HAI</th><th>Not fully supported</th><th>Unassessed</th></tr></thead><tbody>';
+    rmCats.forEach(function (c) {
+      const counts = [c.usedHere || 0, c.usedSupported || 0, c.usedUnsupported || 0, c.usedUnassessed || 0];
+      counts.forEach(function (n, i) { usedTotals[i] += n; });
+      html += '<tr><td>' + extEsc(c.name) + '</td><td>' + (counts[0] ? extEsc(String(counts[0])) : 'None detected') +
+        '</td><td>' + (counts[0] ? extEsc(String(counts[1])) : '-') + '</td><td>' +
+        (counts[0] ? extEsc(String(counts[2])) : '-') + '</td><td>' +
+        (counts[0] ? extEsc(String(counts[3])) : '-') + '</td></tr>';
+    });
+    html += '<tr><td><b>Total detected</b></td>' + usedTotals.map(function (n) { return '<td><b>' + extEsc(String(n)) + '</b></td>'; }).join('') + '</tr></tbody></table>';
+  }
+  html += '<p class="sub">Matched on what each rule stores: its trigger and condition types, action subtypes, resolved variable reads and writes, declared variable types, and saved rule options. Actions taken in the hub UI that leave no trace in a rule are not detected. ' +
+    'Supported means listed as implemented by HAI. The three status columns add up to the detected total. ' +
+    'None detected does not mean unused: requirements missing from the analysis are not counted. HAI testing evidence is shown in table 1, not as a test result for your rules.</p>';
+  const unassessedConstructs = s.unassessedConstructs || s.unmapped || 0;
+  if (unassessedConstructs || s.unassessedRules) {
+    html += '<p class="sub"><b>Outside the table:</b> ' + extEsc(String(unassessedConstructs)) +
+      ' distinct requirement(s) could not be matched to a published capability; ' + extEsc(String(s.unassessedRules || 0)) +
+      ' rule(s) have no requirement assessment.</p>';
+  }
+  if (gapConstructs.length) {
+    html += '<table class="mrTable"><thead><tr><th>Rule Machine construct in use</th><th>Rules</th><th>Status in HAI-1</th><th>Matching capability</th></tr></thead><tbody>';
+    gapConstructs.forEach(function (c) {
+      html += '<tr><td>' + extEsc(rmcConstructText(c.token)) + '</td><td>' + extEsc(String(c.rules)) + '</td><td>' +
+        extEsc(RMC_VERDICT_TEXT[c.verdict] || c.verdict) + '</td><td>' + extEsc(c.feature || '-') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  if (gapRules.length) {
+    html += '<h4>Rules needing review</h4><table class="mrTable"><thead><tr><th>Rule</th><th>Unsupported or unassessed requirement</th></tr></thead><tbody>';
+    gapRules.forEach(function (r) {
+      const items = (r.gaps || []).map(function (g) { return g.token === 'assessmentUnavailable' ? 'No requirement assessment available' : rmcConstructText(g.token); });
+      html += '<tr><td>' + extEsc(r.name || r.id) + '</td><td>' + extEsc(items.join(', ')) + '</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+  html += '<p class="sub">Read from ' + extEsc(String(eng.capabilities || 0)) + ' capabilities published by ' +
+    extEsc(eng.version || 'HAI-1') + ', and from each rule as Rule Machine itself stores it.</p>';
+  box.innerHTML = html;
+}
 let migrationRequestSeq = 0;
 
 function migrationRowHtml(name, r) {
@@ -15613,11 +17850,18 @@ function migrationListHtml(items) {
 function migrationCardHtml(body) {
   const rm = body.ruleMachine || {};
   const vrb = body.visualRuleBuilder || {};
+  const hai = body.hai || {};
+  const haiName = hai.engineName || 'HAI-1';
   const c = rm.counts || {};
   let h = migrationRowHtml('Rule Machine', rm) + migrationComponentsHtml(rm) + migrationRowHtml('Visual Rule Builder', vrb) + migrationComponentsHtml(vrb);
+  // The assessment rates three engines and the panel shows three. This card
+  // read only two, so the same piston answered differently depending on where
+  // it was opened.
+  if (body.hai) h += migrationRowHtml(haiName, hai) + migrationComponentsHtml(hai);
   h += '<h5>Rule Machine 5.1</h5>' + migrationListHtml(rm.summary);
   h += migrationBlockersHtml(rm);
   h += '<h5>Visual Rule Builder 2.0</h5>' + migrationListHtml(vrb.summary) + migrationBlockersHtml(vrb);
+  if (body.hai) h += '<h5>' + extEsc(haiName) + '</h5>' + migrationListHtml(hai.summary) + migrationBlockersHtml(hai);
   h += '<h5>Scale</h5><div class="maScale">' +
     '<span class="maBadge maL1">1</span><span>Direct equivalent, simple</span>' +
     '<span class="maBadge maL2">2</span><span>Direct equivalent, more steps</span>' +
@@ -15724,7 +17968,7 @@ const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix'
 const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
 const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0 };
-const MR_ENGINES = [['ruleMachine', 'Rule Machine 5.1'], ['visualRuleBuilder', 'Visual Rule Builder 2.0']];
+const MR_ENGINES = [['ruleMachine', 'RM 5.1'], ['visualRuleBuilder', 'VRB 2.0'], ['hai', 'HAI-1']];
 const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'No equivalent', warning: 'Warning', unassessed: 'Not assessed' };
 
 function mrName(node) { return String(node.title || node.name || node.label || node.id); }
@@ -15736,14 +17980,68 @@ function mrPistons() {
 
 function mrOpen() {
   bringToFront(migrationReportPanel);
-  if (!MR.results && !MR.running) mrRun(); else mrRender();
-}
-
-function mrRun() {
-  const pistons = mrPistons();
-  const seq = ++MR.runSeq;
+  if (MR.results || MR.running) { mrRender(); return; }
+  // Every rating already taken is on the hub. Show those first, then rate only
+  // what is missing or stale: rating a piston costs a hub read and a decode,
+  // and re-rating twenty-five unchanged pistons to redraw the same numbers is
+  // the waste this panel used to do on every open.
   MR.running = true;
   MR.results = [];
+  mrRender();
+  fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { mrRun(mrCachedResults(d)); })
+    .catch(function () { mrRun([]); });
+}
+
+// Turns the stored ratings into the same shape a fresh assessment returns, so
+// a cached row and a freshly rated one render through one path.
+function mrCachedResults(payload) {
+  const byId = {};
+  ((payload || {}).ratings || []).forEach(function (r) {
+    // A rating stored before this panel began reading the cache holds only a
+    // level and a label, which would draw a row with no parts and an empty
+    // detail. Those are rated again rather than rendered wrong.
+    const full = r.ruleMachine && r.ruleMachine.components !== undefined && r.ruleMachine.components !== null;
+    if (r.status === 'complete' && !r.stale && full) byId[String(r.appId)] = r;
+  });
+  const out = [];
+  mrPistons().forEach(function (node) {
+    const hit = byId[coverageHubAppId(node.id)];
+    if (!hit) return;
+    out.push({ node: node, cached: true, body: {
+      status: 'complete',
+      ruleMachine: mrCachedSide(hit.ruleMachine),
+      visualRuleBuilder: mrCachedSide(hit.visualRuleBuilder),
+      hai: mrCachedSide(hit.hai)
+    } });
+  });
+  return out;
+}
+
+function mrCachedSide(side) {
+  if (!side) return { level: null, label: 'Not assessed', counts: {}, blockers: [], summary: [] };
+  return {
+    level: side.level,
+    label: side.label,
+    counts: { components: side.components, manualComponents: side.partsNeedingRework },
+    blockers: side.blockers || [],
+    summary: side.reasons || [],
+    engineName: side.engineName,
+    statusesNote: side.statusesNote,
+    automatic: side.automatic || (side.automaticConversion === null || side.automaticConversion === undefined
+      ? null : { available: side.automaticConversion })
+  };
+}
+
+// known: results already in hand, from the cache. Only the rest are rated.
+function mrRun(known) {
+  const have = {};
+  (known || []).forEach(function (r) { have[r.node.id] = true; });
+  const pistons = mrPistons().filter(function (n) { return !have[n.id]; });
+  const seq = ++MR.runSeq;
+  MR.running = true;
+  MR.results = (known || []).slice();
   mrRender();
   let i = 0;
   const next = function () {
@@ -15779,9 +18077,25 @@ function mrEngineHead(done, e, levelId) {
   const unrated = done.filter(function (r) { return r.body[e[0]].level === null || r.body[e[0]].level === undefined; }).length;
   let bar = '';
   counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
-  return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '"><option value="">Any</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option value="null">Not assessed</option></select></label></div>' +
+  // An engine with no converter is not a zero; it is a question that does not
+  // apply yet, and it says which engine it is reading to decide the rest.
+  const first = done.length ? done[0].body[e[0]] : null;
+  const noConverter = first && first.automatic && first.automatic.reason;
+  const foot = noConverter
+    ? extEsc(first.automatic.reason) + (unrated ? ', ' + unrated + ' not assessed' : '')
+    : auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '');
+  const provenance = (first && first.statusesNote) ? '<div class="sub">' + extEsc(first.statusesNote) + '</div>' : '';
+  // Only the levels this engine actually has. The fixed 1-5 list offered
+  // choices that could not match: no piston on this hub rates 2 for any engine
+  // (level 2 needs zero rework AND more than five parts), so picking it emptied
+  // the list with nothing said. The bar beside this already shows only the
+  // levels present, and the two now agree.
+  let opts = '<option value="">Any</option>';
+  counts.forEach(function (n, i) { if (n) opts += '<option>' + (i + 1) + '</option>'; });
+  if (unrated) opts += '<option value="null">Not assessed</option>';
+  return '<div class="mrEngine"><div class="mrEngineTop"><b>' + extEsc(e[1]) + '</b><label>Level <select id="' + levelId + '">' + opts + '</select></label></div>' +
     '<div class="mrBar">' + (bar || '<span class="mrEmpty">No results yet</span>') + '</div>' +
-    '<div class="sub">' + auto + ' of ' + done.length + ' with automatic conversion potential' + (unrated ? ', ' + unrated + ' not assessed' : '') + '</div></div>';
+    '<div class="sub">' + foot + '</div>' + provenance + '</div>';
 }
 
 function mrReasons(r) {
@@ -15791,7 +18105,17 @@ function mrReasons(r) {
       extEsc(b.note) + ' <span class="sub">' + extEsc(b.location) + '</span></li>';
   });
   const list = fix.map(function (s) { return '<li><span class="mrTag mr_no">Source</span>' + extEsc(s) + '</li>'; }).concat(items);
-  return list.length ? '<ul>' + list.join('') + '</ul>' : '<p class="sub">Every part has a direct equivalent.</p>';
+  if (!list.length) return '<p class="sub">Every part has a direct equivalent.</p>';
+  // One engine with a long list used to set the height of the whole row, so
+  // the other two read as short by comparison rather than by content.
+  const cap = 4;
+  const rest = list.length - cap;
+  const shown = rest > 0 ? list.slice(0, cap) : list;
+  const hidden = rest > 0 ? list.slice(cap) : [];
+  return '<div class="mrReasons"><ul>' + shown.join('') + '</ul>' +
+    (hidden.length ? '<ul class="mrRest">' + hidden.join('') + '</ul>' +
+      '<button type="button" class="rowbtn mrMore">Show all ' + extEsc(String(list.length)) + '</button>' : '') +
+    '</div>';
 }
 
 function mrCell(r) {
@@ -15806,23 +18130,50 @@ function mrRenderPistons() {
   const failed = (MR.results || []).filter(function (r) { return r.body.status !== 'complete'; });
   const levelRm = (document.getElementById('mrLevelRm') || {}).value || '';
   const levelVrb = (document.getElementById('mrLevelVrb') || {}).value || '';
+  const levelHai = (document.getElementById('mrLevelHai') || {}).value || '';
   const text = ((document.getElementById('mrText') || {}).value || '').trim().toLowerCase();
   const rows = done.filter(function (r) {
     return (!levelRm || String(r.body.ruleMachine.level) === levelRm) && (!levelVrb || String(r.body.visualRuleBuilder.level) === levelVrb) &&
-      (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers)).toLowerCase().indexOf(text) !== -1);
+      (!levelHai || String((r.body.hai || {}).level) === levelHai) &&
+      (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers) +
+        JSON.stringify((r.body.hai || {}).blockers || [])).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for both engines from one equivalence table. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
     '<button type="button" class="rowbtn" id="mrExportPistons"' + (done.length ? '' : ' disabled') + '>Export ratings CSV</button>' +
     '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Reassess</button>' +
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
-    mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') + '</div>';
+    mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
+    mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
+  // A filter that matches nothing used to render an empty box. Name what was
+  // actually asked for, because the three Level filters combine and nothing on
+  // screen says so: three engines each set to 4 asks for a piston that is 4 on
+  // all three at once, which is rarely what someone means and is often empty
+  // even when each engine has plenty at that level on its own.
+  if (done.length && !rows.length) {
+    const active = [];
+    if (levelRm) active.push('level ' + extEsc(levelRm) + ' for ' + MR_ENGINES[0][1]);
+    if (levelVrb) active.push('level ' + extEsc(levelVrb) + ' for ' + MR_ENGINES[1][1]);
+    if (levelHai) active.push('level ' + extEsc(levelHai) + ' for ' + MR_ENGINES[2][1]);
+    let why = '';
+    if (active.length > 1) {
+      why = 'No piston is ' + active.slice(0, -1).join(', ') + ' and ' + active[active.length - 1] +
+            ' at the same time. The Level filters combine, so each one you set narrows the list further.';
+    } else if (active.length === 1) {
+      why = 'No piston is ' + active[0] + '.';
+    } else {
+      why = 'No piston matches that search.';
+    }
+    if (active.length && text) why += ' The search is narrowing it too.';
+    h += '<p class="sub">' + why + ' Set every Level back to Any, and clear the search, to see all ' + done.length + '.</p>';
+  }
   h += '<div class="mrList">' + rows.map(function (r) {
-    return '<details class="mrRow"><summary><span class="mrName"><a href="#" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</a></span>' +
-      mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + '</summary>' +
-      '<div class="mrDetail"><div><h5>Rule Machine 5.1</h5>' + mrReasons(r.body.ruleMachine) + '</div><div><h5>Visual Rule Builder 2.0</h5>' + mrReasons(r.body.visualRuleBuilder) + '</div></div></details>';
+    return '<details class="mrRow"><summary><span class="mrName"><span class="mrCaret" aria-hidden="true"></span><span class="mrNameText" data-node="' + extEsc(r.node.id) + '">' + extEsc(mrName(r.node)) + '</span></span>' +
+      mrCell(r.body.ruleMachine) + mrCell(r.body.visualRuleBuilder) + mrCell(r.body.hai || {}) + '</summary>' +
+      '<div class="mrDetail"><div><h5>Rule Machine 5.1</h5>' + mrReasons(r.body.ruleMachine) + '</div><div><h5>Visual Rule Builder 2.0</h5>' + mrReasons(r.body.visualRuleBuilder) +
+      '</div><div><h5>' + extEsc(((r.body.hai || {}).engineName) || 'HAI-1') + '</h5>' + mrReasons(r.body.hai || {}) + '</div></div></details>';
   }).join('') + '</div>';
   if (failed.length) {
     h += '<p class="sub">Not assessed: ' + failed.map(function (r) { return extEsc(mrName(r.node)) + (r.body.status === 'busy' ? ' (a scan is running)' : ''); }).join(', ') + '</p>';
@@ -15849,7 +18200,7 @@ function mrRenderMatrix() {
 function mrRender() {
   if (!migrationReportBody || getComputedStyle(migrationReportPanel).display === 'none') return;
   const keep = {};
-  ['mrLevelRm', 'mrLevelVrb', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) keep[id] = el.value; });
+  ['mrLevelRm', 'mrLevelVrb', 'mrLevelHai', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) keep[id] = el.value; });
   const focused = document.activeElement ? document.activeElement.id : '';
   const open = {};
   document.querySelectorAll('#migrationReportBody details.mrRow[open] a[data-node]').forEach(function (a) { open[a.getAttribute('data-node')] = true; });
@@ -15863,19 +18214,25 @@ function mrRender() {
     el.focus();
     if (el.setSelectionRange && el.type === 'search') el.setSelectionRange(el.value.length, el.value.length);
   }
-  document.querySelectorAll('#migrationReportBody details.mrRow a[data-node]').forEach(function (a) {
+  document.querySelectorAll('#migrationReportBody details.mrRow [data-node]').forEach(function (a) {
     if (open[a.getAttribute('data-node')]) a.closest('details').open = true;
-    a.addEventListener('click', function (ev) {
+    // The name is a label, not a way out of the report: clicking it opens the
+    // row, the same as clicking anywhere else on it. Leaving for the map is the
+    // right-click menu, which is deliberate rather than a pixel away from read.
+  });
+  document.querySelectorAll('#migrationReportBody .mrMore').forEach(function (btn) {
+    btn.addEventListener('click', function (ev) {
       ev.preventDefault();
-      migrationReportPanel.style.display = 'none';
-      syncLegendVisibility();
-      focusNode(a.getAttribute('data-node'));
+      ev.stopPropagation();
+      const box = btn.closest('.mrReasons');
+      if (box) box.classList.add('mrReasonsAll');
+      btn.remove();
     });
   });
   document.querySelectorAll('#migrationReportBody .mrTabs button').forEach(function (b) {
     b.addEventListener('click', function () { MR.tab = b.getAttribute('data-tab'); mrRender(); });
   });
-  ['mrLevelRm', 'mrLevelVrb', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) el.addEventListener('input', mrRender); });
+  ['mrLevelRm', 'mrLevelVrb', 'mrLevelHai', 'mrText', 'mrMatrixText'].forEach(function (id) { const el = document.getElementById(id); if (el) el.addEventListener('input', mrRender); });
   document.querySelectorAll('#migrationReportBody [data-level-select]').forEach(function (seg) {
     seg.addEventListener('click', function () {
       const sel = document.getElementById(seg.getAttribute('data-level-select'));
@@ -15884,7 +18241,7 @@ function mrRender() {
     });
   });
   const rerun = document.getElementById('mrRerun');
-  if (rerun) rerun.addEventListener('click', mrRun);
+  if (rerun) rerun.addEventListener('click', function () { mrRun([]); });
   const exportPistons = document.getElementById('mrExportPistons');
   if (exportPistons) exportPistons.addEventListener('click', mrExportPistonsCsv);
   const exportMatrix = document.getElementById('mrExportMatrix');
@@ -15915,11 +18272,15 @@ function mrExportPistonsCsv() {
       .concat((r.blockers || []).map(function (b) { return b.part + ' (' + b.location + '): ' + b.note + (b.verdict === 'warning' ? ' [warning]' : ''); })).join(' | ');
   };
   const rows = [['Piston id', 'Piston', 'Rule Machine level', 'Rule Machine rating', 'Rule Machine components', 'Rule Machine rework', 'Rule Machine automatic conversion potential', 'Rule Machine reasons',
-    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion potential', 'Visual Rule Builder reasons']];
+    'Visual Rule Builder level', 'Visual Rule Builder rating', 'Visual Rule Builder components', 'Visual Rule Builder rework', 'Visual Rule Builder automatic conversion potential', 'Visual Rule Builder reasons',
+    'HAI-1 level', 'HAI-1 rating', 'HAI-1 components', 'HAI-1 rework', 'HAI-1 automatic conversion potential', 'HAI-1 reasons']];
   (MR.results || []).filter(function (r) { return r.body.status === 'complete'; }).forEach(function (r) {
-    const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder;
+    const rm = r.body.ruleMachine, vrb = r.body.visualRuleBuilder, hai = r.body.hai || {};
+    const haiCounts = hai.counts || {};
     rows.push([coverageHubAppId(r.node.id), mrName(r.node), rm.level, rm.label, rm.counts.components, rm.counts.manualComponents, rm.automatic.available ? 'potential' : 'not yet', reasons(rm),
-      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'potential' : 'not yet', reasons(vrb)]);
+      vrb.level, vrb.label, vrb.counts.components, vrb.counts.manualComponents, vrb.automatic.available ? 'potential' : 'not yet', reasons(vrb),
+      hai.level, hai.label, haiCounts.components, haiCounts.manualComponents,
+      (hai.automatic && hai.automatic.reason) ? hai.automatic.reason : ((hai.automatic && hai.automatic.available) ? 'potential' : 'not yet'), reasons(hai)]);
   });
   mrDownload('webcore-piston-migration-ratings-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
 }
@@ -15971,10 +18332,21 @@ function renderCommunityCard(node) {
 // Short prefix tag for an app's building engine or origin, agreed with
 // Gordon 2026-08-19 - purely a display label, sort order is untouched (the
 // list below is already sorted on the real title before this ever runs).
-// CUS is the deliberate catch-all: every app not specifically recognised
-// gets it, so nothing is ever left with no tag, and nothing here has to be
-// certain whether an unrecognised app is Gordon's own, a community app, or
-// something else - only the HUB row needs that confidence.
+// INT and CUS are no longer guessed from a hand-kept list. INT means an app
+// Hubitat ships with the platform, CUS one the user installed through HPM or by
+// hand - the same split the hub draws with its own "Add built-in app" and "Add
+// user app" buttons. The scan reads it from /hub2/userAppTypes, which lists
+// only user-installed app types, so the answer comes from the hub rather than
+// from anyone's judgement about a name.
+//
+// Corrected 2026-09-28: nine integrations were listed here as INT because the
+// tag had been read as "integration". Every one of them - LIFX Light Manager,
+// CoCoHue, Kasa, Tapo, Sensibo, Chromecast, Meross, Google Home, BOM Weather
+// Alerts - is a user-installed app, so all nine were labelled as shipping with
+// the hub when none of them do.
+//
+// The engine tags below are all built-in engines and stay explicit, because
+// they say something more useful than "built-in" does.
 const APP_TYPE_TAGS = {
   'Rule-5.1': 'RM5',
   'Visual Rule Builder 2.0': 'VRB',
@@ -15994,15 +18366,6 @@ const APP_TYPE_TAGS = {
   // nothing external.
   'webCoRE': 'WCE',
   'webCoRE Piston': 'WCP',
-  'Chromecast Integration': 'INT',
-  'CoCoHue - Hue Bridge Integration': 'INT',
-  'Google Home': 'INT',
-  'Kasa Integration': 'INT',
-  'LIFX Light Manager': 'INT',
-  'Meross MSG100 Garage Door Setup': 'INT',
-  'Sensibo Integration': 'INT',
-  'Tapo Integration': 'INT',
-  'BOM Weather Alerts': 'INT',
   'Rule Machine': 'HUB',
   'Groups and Scenes': 'HUB',
   'Maker API': 'HUB',
@@ -16016,7 +18379,20 @@ function appOptionText(n) {
     // Only when the label is exactly the type name, as in Tapo Integration (Tapo Integration).
     if (head === n.appType) title = head;
   }
-  return '[' + (APP_TYPE_TAGS[n.appType] || 'CUS') + '] ' + title;
+  // Automation Intelligence names its own type per channel (HAI Rule, HAI
+  // Rule (Dev)), so the tag is decided by the engine marker the feed sets and
+  // by the type prefix its engine and runtime apps share, not by a fixed
+  // list that a channel rename would silently drop back to CUS.
+  const isHai = n.engine === 'HAI' || (n.appType && n.appType.indexOf('HAI ') === 0);
+  // n.userApp is the hub's own answer; CUS is the fallback only when the scan
+  // could not read it, where assuming user-installed is the safer guess - a
+  // community app mislabelled as shipping with the hub is the worse error.
+  const tag = isHai ? 'HAI'
+            : (APP_TYPE_TAGS[n.appType] || (n.userApp === false ? 'INT' : 'CUS'));
+  // That engine labels its own rules "[HAI] name", so prefixing again reads
+  // "[HAI] [HAI] name". One tag is enough whoever wrote it.
+  if (title.indexOf('[' + tag + '] ') === 0) return title;
+  return '[' + tag + '] ' + title;
 }
 
 // Same purely-decorative prefix for devices, reusing n.icon - the existing
@@ -17708,6 +20084,7 @@ function extImport(evt) {
 // device. This is where that gets corrected - one override per device,
 // saved here, applied the next time the graph is built.
 const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
+const ROOMPLAN_URL = amPickURL('${getLocalURL('rooms')}', '${getCloudURL('rooms')}');
 // Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
 // published contract). A read-only iframe preview of Community Utilities'
 // releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
@@ -17799,6 +20176,499 @@ function releaseActivityLoad() {
   const cta = document.createElement('div');
   cta.innerHTML = releaseActivityLinksHtml('Open the full Update Tracker');
   releaseActivityBody.appendChild(cta);
+}
+
+const roomPlanPanel = document.getElementById('roomPlan');
+// Deliberately free of apostrophes in every string below: this page is a Groovy
+// GString, where a backslash-escaped quote is eaten by Groovy and ends the JS
+// string early, killing the whole page.
+var ROOMPLAN = { rooms: [], layout: {}, canCommit: false };
+// devId -> target room name. Empty string means the Not Allocated bucket.
+// Nothing staged here has touched the hub; that is what Apply is for.
+var roomPending = {};
+var roomLayoutTimer = null;
+var roomSearch = '';
+// Device ids the user has clicked. Dragging any one of them moves the whole
+// set, because filing 50 devices one at a time is the thing this panel exists
+// to avoid.
+var roomSelection = {};
+const RP_UNASSIGNED = '';
+// A room shows three devices before it scrolls: header + 3 chips at 21px
+// pitch + padding. Narrow and short so as many rooms as possible sit on one
+// screen, which is the point of the canvas. Not Allocated is the exception -
+// it is the pile being emptied, so it gets a full-height column of its own
+// down the left rather than competing for a slot in the grid.
+const RP_W = 178, RP_H = 104, RP_GAP = 10;
+const RP_UNALLOC_W = 215;
+
+// Same contract as the hub tip below: browser-local so each person is told
+// once rather than one dismissal silencing it for the household, keyed per
+// installed app so Dev does not mark it seen for production, and keyed on the
+// app version so it returns after an upgrade that adds gestures. Guarded
+// throughout - a private window or blocked site data throws rather than
+// returning null.
+function roomTipKey() {
+  const parts = String(location.pathname || '').split('/');
+  const at = parts.indexOf('api');
+  const id = (at !== -1 && parts.length > at + 1) ? parts[at + 1] : 'unknown';
+  return 'automationMap.roomTip.' + id + '.version';
+}
+
+function roomTipSync() {
+  const el = document.getElementById('roomTip');
+  if (!el) return;
+  let seen = null;
+  try { seen = window.localStorage.getItem(roomTipKey()); } catch (e) { seen = null; }
+  el.hidden = (seen === APP_VERSION_JS);
+}
+
+function roomTipDismiss() {
+  const el = document.getElementById('roomTip');
+  if (el) el.hidden = true;
+  try { window.localStorage.setItem(roomTipKey(), APP_VERSION_JS); } catch (e) { /* storage unavailable */ }
+}
+
+function roomPlanOpen() {
+  bringToFront(roomPlanPanel);
+  roomTipSync();
+  roomPlanLoad();
+}
+
+function roomPlanLoad() {
+  const canvas = document.getElementById('roomCanvas');
+  canvas.innerHTML = '<p class="sub">Loading...</p>';
+  Promise.all([
+    fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); })
+  ]).then(function (res) {
+    ROOMPLAN = res[0] || ROOMPLAN;
+    ICONS = res[1] || ICONS;
+    roomPending = {};
+    roomPlanRender();
+  }).catch(function (e) {
+    canvas.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
+  });
+}
+
+// Every room the planner should offer: the hub list, plus any room a device
+// claims that the list did not return, so a device can never be stranded in a
+// room with nowhere to sit.
+function roomPlanNames() {
+  const names = [];
+  (ROOMPLAN.rooms || []).forEach(function (r) {
+    const rn = r ? roomPlanNormalise(r.name) : '';
+    if (rn && names.indexOf(rn) === -1) names.push(rn);
+  });
+  (ICONS.devices || []).forEach(function (d) {
+    const rm = roomPlanNormalise(d.room);
+    if (rm && names.indexOf(rm) === -1) names.push(rm);
+  });
+  names.sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
+  return names;
+}
+
+// The same idea has three spellings. The hub's room list calls it Unassigned
+// (the synthetic room, id 999999), the hub's own device UI calls it
+// "No assigned room" (read out of its bundle: isDeviceHasRoom compares against
+// that literal), and this panel calls it Not Allocated. Any of them means the
+// device has no room, so they are folded together here rather than each
+// conjuring its own bucket on the canvas.
+const RP_NO_ROOM_NAMES = ['unassigned', 'no assigned room', 'no room assigned', 'none'];
+function roomPlanNormalise(name) {
+  const n = (name || '').trim();
+  return RP_NO_ROOM_NAMES.indexOf(n.toLowerCase()) !== -1 ? RP_UNASSIGNED : n;
+}
+
+function roomPlanMatches(d) {
+  if (!roomSearch) return true;
+  return (d.name || '').toLowerCase().indexOf(roomSearch) !== -1 ||
+         (roomPlanCurrent(d) || '').toLowerCase().indexOf(roomSearch) !== -1;
+}
+
+function roomPlanIdFor(name) {
+  const hit = (ROOMPLAN.rooms || []).filter(function (r) {
+    return r && String(r.name).toLowerCase() === String(name).toLowerCase();
+  })[0];
+  return hit ? String(hit.id) : '';
+}
+
+function roomPlanCrud(body, busy) {
+  const msg = document.getElementById('roomPlanMsg');
+  msg.textContent = busy;
+  return fetch(ROOMPLAN_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d && d.ok) { msg.textContent = ''; roomPlanLoad(); return d; }
+      msg.textContent = (d && d.reason) || 'That did not work.';
+      return d;
+    })
+    .catch(function (e) { msg.textContent = 'Failed: ' + e; });
+}
+
+function roomPlanCurrent(d) {
+  const id = String(d.id);
+  if (Object.prototype.hasOwnProperty.call(roomPending, id)) return roomPending[id];
+  return roomPlanNormalise(d.room);
+}
+
+function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
+
+// index is the position among the ordinary rooms only; Not Allocated is placed
+// separately and does not consume a grid slot.
+function roomPlanGeom(name, index, perRow, columnHeight) {
+  const saved = (ROOMPLAN.layout || {})[roomPlanLayoutKey(name)];
+  if (saved && saved.w) return { x: saved.x, y: saved.y, w: saved.w, h: saved.h };
+  if (name === RP_UNASSIGNED) return { x: 0, y: 0, w: RP_UNALLOC_W, h: columnHeight };
+  const left = RP_UNALLOC_W + RP_GAP;
+  return {
+    x: left + (index % perRow) * (RP_W + RP_GAP),
+    y: Math.floor(index / perRow) * (RP_H + RP_GAP),
+    w: RP_W, h: RP_H
+  };
+}
+
+// Selection is a class on a chip, not a change to what rooms hold, so it
+// repaints in place. Re-rendering the canvas for every click rebuilt every
+// chip and reset each room's scroll position under the pointer, which is what
+// made picking several devices feel like the list was jumping around.
+function roomPlanSyncSelection() {
+  const canvas = document.getElementById('roomCanvas');
+  canvas.querySelectorAll('.devChip').forEach(function (chip) {
+    chip.classList.toggle('rpSelected', roomSelection[chip.getAttribute('data-dev')] === true);
+  });
+  roomPlanRenderBar();
+}
+
+function roomPlanRender() {
+  const canvas = document.getElementById('roomCanvas');
+  const devices = (ICONS.devices || []).slice().sort(function (a, b) {
+    return (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+  });
+
+  // Not Allocated leads, because it is the pile the user came here to empty.
+  const buckets = [RP_UNASSIGNED].concat(roomPlanNames());
+  const byRoom = {};
+  buckets.forEach(function (n) { byRoom[roomPlanLayoutKey(n)] = []; });
+  devices.forEach(function (d) {
+    const key = roomPlanLayoutKey(roomPlanCurrent(d));
+    if (!byRoom[key]) byRoom[key] = [];
+    byRoom[key].push(d);
+  });
+
+  // Room columns are fitted to the space actually available, so the grid packs
+  // to the window rather than to a number chosen in advance.
+  const bodyEl = document.getElementById('roomPlanBody');
+  const avail = Math.max(320, (bodyEl ? bodyEl.clientWidth : 1200) - RP_UNALLOC_W - RP_GAP - 18);
+  const perRow = Math.max(1, Math.floor((avail + RP_GAP) / (RP_W + RP_GAP)));
+  const roomCount = buckets.length - 1;
+  const rows = Math.ceil(roomCount / perRow);
+  const columnHeight = Math.max(
+    rows * (RP_H + RP_GAP) - RP_GAP,
+    bodyEl ? bodyEl.clientHeight - 16 : 600
+  );
+
+  let maxBottom = 0;
+  let h = '';
+  let roomIndex = -1;
+  buckets.forEach(function (name, i) {
+    const key = roomPlanLayoutKey(name);
+    if (name !== RP_UNASSIGNED) roomIndex += 1;
+    const g = roomPlanGeom(name, roomIndex, perRow, columnHeight);
+    maxBottom = Math.max(maxBottom, g.y + g.h);
+    const all = byRoom[key] || [];
+    // Rooms always stay on screen while searching: a hidden room is a room you
+    // cannot drop into, which is the one thing a search must not take away.
+    const list = roomSearch ? all.filter(roomPlanMatches) : all;
+    const isUnassigned = name === RP_UNASSIGNED;
+    h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') + '" data-room="' + extEsc(key) + '"' +
+         ' style="left:' + g.x + 'px; top:' + g.y + 'px; width:' + g.w + 'px; height:' + g.h + 'px;">';
+    const roomId = isUnassigned ? '' : roomPlanIdFor(name);
+    h += '<div class="roomRectHead" title="Drag to move this room. Drag the corner to resize it.' +
+         (isUnassigned ? '' : ' Double-click the name to rename.') + '">' +
+         '<span class="roomRectName"' + (isUnassigned ? '' : ' data-rename="' + extEsc(roomId) + '"') + '>' +
+         extEsc(isUnassigned ? 'Not Allocated' : name) + '</span>' +
+         (isUnassigned || !roomId ? '' : '<button class="roomRectDel" type="button" data-del="' + extEsc(roomId) + '" title="Delete this room">&times;</button>') +
+         '<span class="roomRectCount">' + (roomSearch ? (list.length + ' of ' + all.length) : all.length) + '</span></div>';
+    h += '<div class="roomRectBody" data-drop="' + extEsc(name) + '">';
+    if (!list.length) h += '<div class="roomRectEmpty">' + (roomSearch && all.length ? 'no match' : 'empty') + '</div>';
+    list.forEach(function (d) {
+      const staged = Object.prototype.hasOwnProperty.call(roomPending, String(d.id));
+      const sel = roomSelection[String(d.id)] === true;
+      h += '<div class="devChip' + (staged ? ' rpStaged' : '') + (sel ? ' rpSelected' : '') + '" draggable="true" data-dev="' + extEsc(d.id) + '"' +
+           ' title="' + extEsc(d.name) + (staged ? ' (staged, not yet applied)' : '') + '">' +
+           '<span class="devIconGlyph">' + (ICON_GLYPHS[iconsEffectiveKey(d)] || ICON_GLYPHS.unknown) + '</span>' +
+           extEsc(d.name) + '</div>';
+    });
+    h += '</div><div class="roomRectGrip" title="Drag to resize"></div></div>';
+  });
+
+  // A rebuild throws away every room body and with it its scroll position, so
+  // a room scrolled halfway down snaps back to the top the moment anything is
+  // staged. Carried across by room key.
+  const scrolls = {};
+  canvas.querySelectorAll('.roomRect').forEach(function (r) {
+    const body = r.querySelector('.roomRectBody');
+    if (body && body.scrollTop) scrolls[r.getAttribute('data-room')] = body.scrollTop;
+  });
+  canvas.innerHTML = h;
+  canvas.querySelectorAll('.roomRect').forEach(function (r) {
+    const was = scrolls[r.getAttribute('data-room')];
+    if (!was) return;
+    const body = r.querySelector('.roomRectBody');
+    if (body) body.scrollTop = was;
+  });
+  canvas.style.height = (maxBottom + RP_GAP) + 'px';
+  roomPlanRenderBar();
+  roomPlanWire();
+}
+
+function roomPlanRenderBar() {
+  const n = Object.keys(roomPending).length;
+  // Updated in place, never rebuilt: the search box lives in this bar, and an
+  // innerHTML rewrite on every keystroke would take the focus and the caret
+  // with it.
+  const status = document.getElementById('roomPlanStatus');
+  const picked = Object.keys(roomSelection).length;
+  status.textContent = (n ? (n + (n === 1 ? ' staged move' : ' staged moves')) : 'No staged moves') +
+                       (picked ? ('  |  ' + picked + ' selected') : '');
+  status.className = 'rpCount' + (n ? '' : ' rpNone');
+  document.getElementById('roomPlanApply').disabled = !n;
+  document.getElementById('roomPlanDiscard').disabled = !n;
+  document.getElementById('roomPlanSub').textContent =
+    'Drag a device into a room. Drag a room by its title to move it, or its corner to resize it. ' +
+    'Nothing reaches the hub until you press Apply.' +
+    (ROOMPLAN.roomsFrom === 'devices'
+      ? ' The room list came from devices rather than from the hub, so a room with nothing in it may be missing.'
+      : '');
+}
+
+var roomPlanLastClicked = null;
+
+// defer=true when staging a whole dragged selection: render once at the end
+// rather than once per device.
+function roomPlanStage(devId, targetRoom, defer) {
+  const d = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(devId); })[0];
+  if (!d) return;
+  // Dragging a device back where it started is not a change - drop the entry
+  // rather than staging a write of the value already there.
+  if (roomPlanNormalise(d.room) === roomPlanNormalise(targetRoom)) delete roomPending[String(devId)];
+  else roomPending[String(devId)] = targetRoom;
+  if (!defer) roomPlanRender();
+}
+
+function roomPlanWire() {
+  const canvas = document.getElementById('roomCanvas');
+  canvas.querySelectorAll('.devChip').forEach(function (chip) {
+    const id = chip.getAttribute('data-dev');
+    chip.addEventListener('click', function (ev) {
+      // Plain click toggles. Shift extends from the last click within the same
+      // room, which is how a run of devices gets picked without 20 clicks.
+      if (ev.shiftKey && roomPlanLastClicked) {
+        const body = chip.closest('.roomRectBody');
+        const ids = body ? [].slice.call(body.querySelectorAll('.devChip')).map(function (c) { return c.getAttribute('data-dev'); }) : [];
+        const a = ids.indexOf(roomPlanLastClicked), b = ids.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (x) { roomSelection[x] = true; });
+          roomPlanSyncSelection();
+          return;
+        }
+      }
+      if (roomSelection[id]) delete roomSelection[id]; else roomSelection[id] = true;
+      roomPlanLastClicked = id;
+      roomPlanSyncSelection();
+    });
+    chip.addEventListener('dragstart', function (ev) {
+      // Dragging an unselected chip drags just that one, and drops the
+      // selection - otherwise a stray earlier click silently drags devices the
+      // user has forgotten they picked.
+      if (!roomSelection[id]) { roomSelection = {}; roomSelection[id] = true; }
+      const ids = Object.keys(roomSelection);
+      ev.dataTransfer.setData('text/plain', ids.join(','));
+      ev.dataTransfer.effectAllowed = 'move';
+      canvas.querySelectorAll('.devChip').forEach(function (c) {
+        if (roomSelection[c.getAttribute('data-dev')]) c.classList.add('dragging');
+      });
+    });
+    chip.addEventListener('dragend', function () {
+      canvas.querySelectorAll('.devChip').forEach(function (c) { c.classList.remove('dragging'); });
+    });
+  });
+  canvas.querySelectorAll('.roomRectBody').forEach(function (zone) {
+    zone.addEventListener('dragover', function (ev) {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      zone.classList.add('dropHot');
+    });
+    zone.addEventListener('dragleave', function () { zone.classList.remove('dropHot'); });
+    zone.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      zone.classList.remove('dropHot');
+      const payload = ev.dataTransfer.getData('text/plain');
+      if (!payload) return;
+      const target = zone.getAttribute('data-drop');
+      payload.split(',').forEach(function (devId) { roomPlanStage(devId, target, true); });
+      roomSelection = {};
+      roomPlanRender();
+    });
+  });
+  canvas.querySelectorAll('.roomRectName[data-rename]').forEach(function (el) {
+    el.addEventListener('dblclick', function (ev) {
+      ev.stopPropagation();
+      const current = el.textContent;
+      const next = window.prompt('Rename this room. Rule Machine, dashboards and Room Lighting refer to rooms by name, so anything using this one will need updating.', current);
+      if (next === null || !next.trim() || next.trim() === current) return;
+      roomPlanCrud({ renameRoom: { id: el.getAttribute('data-rename'), name: next.trim() } }, 'Renaming...');
+    });
+  });
+  canvas.querySelectorAll('.roomRectDel').forEach(function (btn) {
+    btn.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    btn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      const rect = btn.closest('.roomRect');
+      const nm = rect.querySelector('.roomRectName').textContent;
+      const n = (rect.querySelectorAll('.devChip') || []).length;
+      // Say what it costs. The hub deletes a room on a bare GET with no
+      // confirmation of its own, so this is the only one there is.
+      const warn = n
+        ? ('Delete the room ' + nm + '? Its ' + n + (n === 1 ? ' device' : ' devices') + ' will not be deleted, but they will end up in Not Allocated.')
+        : ('Delete the room ' + nm + '? It has no devices in it.');
+      if (!window.confirm(warn)) return;
+      roomPlanCrud({ deleteRoom: btn.getAttribute('data-del') }, 'Deleting...');
+    });
+  });
+  canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
+}
+
+// Move and resize share one pointer loop. Geometry is written into
+// ROOMPLAN.layout on release so the re-render that any drop causes keeps it.
+function roomPlanDraggableRect(rect) {
+  const key = rect.getAttribute('data-room');
+  const head = rect.querySelector('.roomRectHead');
+  const grip = rect.querySelector('.roomRectGrip');
+  let mode = null, startX = 0, startY = 0, base = null;
+
+  function begin(which, ev) {
+    mode = which;
+    startX = ev.clientX; startY = ev.clientY;
+    base = { x: rect.offsetLeft, y: rect.offsetTop, w: rect.offsetWidth, h: rect.offsetHeight };
+    ev.preventDefault();
+  }
+  head.addEventListener('mousedown', function (ev) { begin('move', ev); });
+  grip.addEventListener('mousedown', function (ev) { begin('size', ev); });
+
+  document.addEventListener('mousemove', function (ev) {
+    if (!mode) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (mode === 'move') {
+      rect.style.left = Math.max(0, base.x + dx) + 'px';
+      rect.style.top = Math.max(0, base.y + dy) + 'px';
+    } else {
+      rect.style.width = Math.max(120, base.w + dx) + 'px';
+      rect.style.height = Math.max(90, base.h + dy) + 'px';
+    }
+  });
+  document.addEventListener('mouseup', function () {
+    if (!mode) return;
+    mode = null;
+    if (!ROOMPLAN.layout) ROOMPLAN.layout = {};
+    ROOMPLAN.layout[key] = {
+      x: rect.offsetLeft, y: rect.offsetTop, w: rect.offsetWidth, h: rect.offsetHeight
+    };
+    const canvas = document.getElementById('roomCanvas');
+    let maxBottom = 0;
+    canvas.querySelectorAll('.roomRect').forEach(function (r) {
+      maxBottom = Math.max(maxBottom, r.offsetTop + r.offsetHeight);
+    });
+    canvas.style.height = (maxBottom + RP_GAP) + 'px';
+    roomPlanQueueLayoutSave();
+  });
+}
+
+// Debounced: a resize drag settles over many mouseups, and each save is a hub
+// state write.
+function roomPlanQueueLayoutSave() {
+  if (roomLayoutTimer) clearTimeout(roomLayoutTimer);
+  roomLayoutTimer = setTimeout(function () {
+    fetch(ROOMPLAN_URL, {
+      method: 'POST', cache: 'no-store', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layout: ROOMPLAN.layout || {} })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function () {
+      const msg = document.getElementById('roomPlanMsg');
+      if (msg && msg.textContent.indexOf('Layout') === 0) msg.textContent = '';
+    }).catch(function (e) {
+      // Previously swallowed. A layout that silently fails to save looks
+      // identical to one that saved, until the panel is reopened and the
+      // arrangement is gone.
+      const msg = document.getElementById('roomPlanMsg');
+      if (msg) msg.textContent = 'Layout not saved: ' + e;
+    });
+  }, 700);
+}
+
+function roomPlanApply() {
+  const ids = Object.keys(roomPending);
+  if (!ids.length) return;
+  const msg = document.getElementById('roomPlanMsg');
+  msg.textContent = 'Applying ' + ids.length + '...';
+  // Each device costs a read, a write and a read-back, so a batch is slow by
+  // design. A slow apply and a dead one look identical from here, so say which
+  // rather than leave the user watching "Applying..." forever. The writes carry
+  // on hub-side regardless; this only governs what the panel claims.
+  let settled = false;
+  const slowTimer = setTimeout(function () {
+    if (!settled) msg.textContent = 'Still applying ' + ids.length + '. Each device is read, written and checked, so a large batch takes a while.';
+  }, 8000);
+  const giveUpTimer = setTimeout(function () {
+    if (settled) return;
+    settled = true;
+    msg.textContent = 'No answer yet. The writes may still have landed - reopen the planner to see where these devices actually are before retrying.';
+  }, 120000);
+  const done = function () { settled = true; clearTimeout(slowTimer); clearTimeout(giveUpTimer); };
+  fetch(ROOMPLAN_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moves: roomPending })
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (settled) return;
+      done();
+      // Trust what each write read back off the device, not a re-fetch of the
+      // panel's device list: that list is built from scan state, so reloading
+      // here drew a just-moved device back in its old room and made a write
+      // that had actually landed look like it had failed.
+      const results = (d && d.results) || [];
+      let moved = 0;
+      results.forEach(function (res) {
+        if (!res || !res.ok) return;
+        moved += 1;
+        const dev = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(res.id); })[0];
+        if (dev) dev.room = res.roomName || '';
+        delete roomPending[String(res.id)];
+      });
+      roomPlanRender();
+      if (d && d.ok) {
+        msg.textContent = moved + (moved === 1 ? ' device moved.' : ' devices moved.');
+        return;
+      }
+      // Partial or refused. Whatever did not land stays staged, so a retry
+      // sends only the ones still outstanding.
+      const failed = results.filter(function (r) { return r && !r.ok; });
+      msg.textContent = failed.length
+        ? (moved + ' moved, ' + failed.length + ' failed: ' + (failed[0].reason || 'no reason given'))
+        : ((d && d.reason) || 'Could not apply.');
+    })
+    .catch(function (e) {
+      if (settled) return;
+      done();
+      msg.textContent = 'Could not apply: ' + e;
+    });
 }
 
 const iconsPanel = document.getElementById('icons');
@@ -18057,6 +20927,10 @@ function exportJSON() {
 // One call, no hub reads: the ratings the Migration Assessment panel already
 // computed are cached on the hub, so an export no longer waits on 25 decodes.
 // A piston nobody has rated yet is reported as not-rated rather than guessed at.
+// ${''} <- load bearing, not a typo. Groovy caps a single GString literal
+// segment at 65535 characters, and this page's script had grown past that
+// in one unbroken run, so the app stopped compiling. An empty
+// interpolation splits the segment and renders as nothing.
 function fetchMigrationRatings(btn, failedFetches) {
   const nameOfNode = {};
   ALL_NODES.forEach(function (n) { nameOfNode[n.id] = n.name || n.label || n.id; });
@@ -18072,7 +20946,8 @@ function fetchMigrationRatings(btn, failedFetches) {
           ratedAt: r.ratedAt ? new Date(r.ratedAt).toISOString() : null,
           stale: r.stale,
           ruleMachine: r.ruleMachine || null,
-          visualRuleBuilder: r.visualRuleBuilder || null
+          visualRuleBuilder: r.visualRuleBuilder || null,
+          hai: r.hai || null
         };
       });
     })
@@ -18458,7 +21333,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
-    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case is not decoded, a switch default branch is not drawn, and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
+    'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case value is not decoded (each case shows as case not decoded, and the default branch as else), and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
     // v2.0.14, schema 4 (parent spec 11.6) - Hub Variable specific notes.
@@ -18648,6 +21523,72 @@ document.getElementById('iconsClose').addEventListener('click', function () {
   iconsPanel.style.display = 'none';
   syncLegendVisibility();
 });
+document.getElementById('roomPlanBtn').addEventListener('click', roomPlanOpen);
+document.getElementById('roomPlanApply').addEventListener('click', roomPlanApply);
+document.getElementById('roomPlanDiscard').addEventListener('click', function () {
+  roomPending = {};
+  roomSelection = {};
+  roomPlanRender();
+});
+document.getElementById('roomTipClose').addEventListener('click', roomTipDismiss);
+// Draggable by its heading, on the same four-pixel threshold the panels use so
+// a click on the card is not read as a move. Position is not persisted: the
+// card is shown once per version, so where it was last dragged is of no use to
+// anybody the next time it appears.
+(function () {
+  const tip = document.getElementById('roomTip');
+  const grip = document.getElementById('roomTipTitle');
+  if (!tip || !grip) return;
+  let dragging = false, startX = 0, startY = 0, baseL = 0, baseT = 0, moved = false;
+  grip.addEventListener('mousedown', function (ev) {
+    const r = tip.getBoundingClientRect();
+    const parent = tip.offsetParent ? tip.offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
+    dragging = true; moved = false;
+    startX = ev.clientX; startY = ev.clientY;
+    baseL = r.left - parent.left; baseT = r.top - parent.top;
+    ev.preventDefault();
+  });
+  document.addEventListener('mousemove', function (ev) {
+    if (!dragging) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    moved = true;
+    // The centring transform has to go the moment it is positioned by hand,
+    // or every drag is offset by half the card's width.
+    tip.style.transform = 'none';
+    tip.style.left = Math.max(0, baseL + dx) + 'px';
+    tip.style.top = Math.max(0, baseT + dy) + 'px';
+  });
+  document.addEventListener('mouseup', function () { dragging = false; });
+})();
+document.getElementById('roomPlanNew').addEventListener('click', function () {
+  const name = window.prompt('Name the new room');
+  if (name === null || !name.trim()) return;
+  roomPlanCrud({ createRoom: name.trim() }, 'Creating...');
+});
+document.getElementById('roomPlanReset').addEventListener('click', function () {
+  // A room the user dragged keeps its saved geometry forever, so a change to
+  // the default layout is invisible on any room already moved. This is the way
+  // back to the defaults without hunting each room down.
+  ROOMPLAN.layout = {};
+  roomPlanRender();
+  const msg = document.getElementById('roomPlanMsg');
+  fetch(ROOMPLAN_URL, {
+    method: 'POST', cache: 'no-store', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ layout: {} })
+  }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+    .then(function () { if (msg) msg.textContent = 'Layout reset.'; })
+    .catch(function (e) { if (msg) msg.textContent = 'Layout not reset: ' + e; });
+});
+document.getElementById('roomPlanSearch').addEventListener('input', function (ev) {
+  roomSearch = (ev.target.value || '').trim().toLowerCase();
+  roomPlanRender();
+});
+document.getElementById('roomPlanClose').addEventListener('click', function () {
+  roomPlanPanel.style.display = 'none';
+  syncLegendVisibility();
+});
 document.getElementById('releaseActivityBtn').addEventListener('click', function () {
   bringToFront(releaseActivityPanel);
   releaseActivityLoad();
@@ -18669,6 +21610,11 @@ document.getElementById('pivotClose').addEventListener('click', function () {
   syncLegendVisibility();
 });
 document.getElementById('migrationReportBtn').addEventListener('click', mrOpen);
+document.getElementById('rmCoverageBtn').addEventListener('click', rmcOpen);
+document.getElementById('rmCoverageClose').addEventListener('click', function () {
+  rmCoveragePanel.style.display = 'none';
+  syncLegendVisibility();
+});
 document.getElementById('migrationReportClose').addEventListener('click', function () {
   migrationReportPanel.style.display = 'none';
   syncLegendVisibility();
@@ -18725,6 +21671,7 @@ document.getElementById('legendPanelClose').addEventListener('click', function (
 // used before its own const line further down - none of these functions runs
 // until a later click, by which point all four consts exist, same as every
 // other forward reference already in this file.
+// ${''} splits this GString constant; the JVM caps one literal at 65535 bytes.
 function onAppFocusChange(value) {
   beginSelectionGeneration();
   externalFocusId = null;
@@ -19154,11 +22101,22 @@ function hubTargets(obj) {
     return [{ label: 'Open device page', href: HUB_ORIGIN + '/device/edit/' + obj.hubId }];
   }
   const owner = obj.ownedByApp ? ' (owning app)' : '';
-  return [
+  const items = [
     { label: 'View status page' + owner, href: HUB_ORIGIN + '/installedapp/status/' + obj.hubId },
     { label: 'Open app page' + owner, href: HUB_ORIGIN + '/installedapp/configure/' + obj.hubId,
       note: 'Pressing Done there re-initialises the app.' }
   ];
+  // A rule from another engine names its own page in the feed, which forwards
+  // into that engine's editor at this rule. Listed first: it is where someone
+  // who right-clicked a rule actually wants to go.
+  // ALL_NODES, not the drawing layer's copy: vis keeps only the fields it
+  // draws with, so an extra field like this one is absent there.
+  const engineNode = ALL_NODES.filter(function (n) { return n.id === 'a' + obj.hubId; })[0];
+  if (engineNode && engineNode.engine === 'HAI' && engineNode.engineUrl) {
+    items.unshift({ label: 'Open in HAI rule editor',
+                    href: HUB_ORIGIN + engineNode.engineUrl });
+  }
+  return items;
 }
 
 // No navigator.clipboard here: this page is served over plain HTTP, which is
@@ -19448,11 +22406,6 @@ function hubTipDemo() {
 document.getElementById('hubTipClose').addEventListener('click', hubTipDismiss);
 document.getElementById('hubTipGot').addEventListener('click', hubTipDismiss);
 // Always available, so the card is never the only way to learn the gesture.
-document.getElementById('hubTipBtn').addEventListener('click', function () {
-  hideNodeMenu();
-  hubTipEl.hidden = false;
-});
-
 document.getElementById('hubTipDemo').addEventListener('click', function (e) { e.stopPropagation(); hubTipDismiss(); hubTipDemo(); });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !hubTipEl.hidden) hubTipDismiss(); });
 

@@ -1,22 +1,22 @@
 {
-    "packageName": "Automation Map (Preprod)",
-    "author": "Gordon Thelander",
-    "version": "2.3.2",
-    "minimumHEVersion": "2.5.1",
-    "dateReleased": "2026-09-14",
-    "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/preprod/README.md",
-    "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-    "releaseNotes": "v2.3.2: Automation Map visualizes how your installed Hubitat apps and devices relate to each other, showing which app owns which device, what triggers or constrains a rule, and how everything connects, as an interactive graph you can explore, search, and export.\n\nSince the last production release (2.3.1):\n\n- Right-click any device or app on the map to open its page on the hub in a second tab. Devices go to the device page; apps and rules offer the read-only status page or the app page. The same menu copies a link to it, focuses it on the map, and re-reads it from the hub. Right-clicking empty space, or holding shift, still gives you the browser's own menu.\n- Rescan this object re-reads one device or app without a full scan and updates the map in place, keeping your current view. A device is re-read through the apps that use it. Device labels, types and the Disabled flag are refreshed at the same time, so a device you disabled since the last scan now shows correctly.\n- A short card explains the right-click the first time you open an object. \"Opening objects on the hub\" in the Focus panel brings it back whenever you want it.\n- The AI friendly export gains two things (schema 14): a flag marking a condition that nothing evaluates, so a device that appears to gate a rule but does not is now visible to whatever reads the file, and a per-piston webCoRE migration rating for Rule Machine and Visual Rule Builder 2.0 with the reasons behind it. Ratings come from the Migration Assessment panel, so open it once and the export picks them up.",
-    "apps": [
-        {
-            "id": "ad31f3b0-cad1-4aaa-8f17-6215e4a3b6d0",
-            "name": "Automation Map (Preprod)",
-            "namespace": "Hubitat Integrations",
-            "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/preprod/apps/automation_map.groovy",
-            "required": true,
-            "oauth": true,
-            "primary": true,
-            "version": "2.3.2"
-        }
-    ]
+  "packageName": "Automation Map (Preprod)",
+  "author": "Gordon Thelander",
+  "version": "2.4.2",
+  "minimumHEVersion": "2.5.1",
+  "dateReleased": "2026-09-28",
+  "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/preprod/README.md",
+  "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
+  "releaseNotes": "v2.4.2: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export. It now also groups devices by room.\n\nChanges since v2.3.2:\n\n- Room Manager: Arrange rooms as movable, resizable rectangles with device icons inside them. Devices without a room appear in a \"Not Allocated\" column. Drag devices into rooms, use Ctrl-click or Shift-click to select several, and create, rename or delete rooms without leaving the page. Changes remain staged until you press Apply. Discard removes staged changes, and failed changes remain staged so you can retry only those items.\n- Hub writes are limited to room assignments: This is Automation Map's first release that writes to the hub. Room Manager does not command devices, edit rules or change other apps. Deleting a room leaves its devices intact and unallocated, with a confirmation showing how many will be affected. Before changing a device's room, Automation Map reads its current record, preserves its other fields and verifies them afterward.\n- Experimental HAI integration: Hubitat Automation Intelligence Engine can now appear on the map. Hubs without HAI continue to use Automation Map normally.\n- HAI RM5 Coverage report: Compare Rule Machine 5.1 and HAI capabilities, see which HAI capabilities have been observed running on a hub, and see which capabilities your own rules use.\n- webCoRE Migration Assessment: Adds an HAI Engine rating alongside Rule Machine and Visual Rule Builder.\n- Read-only relationship API: Other apps can retrieve Automation Map's device relationships.\n- Easier-to-read flowcharts: Diagrams open in a wider panel that adjusts when you zoom or resize the browser.\n- Faster map opening: The flowchart library now loads when you first open a flowchart, removing about 3 MB from the initial map load.\n- Better phone layout: The link to open the map now appears above the Scan button.\n\nAfter upgrading: Run a rescan to refresh app tags.",
+  "apps": [
+    {
+      "id": "ad31f3b0-cad1-4aaa-8f17-6215e4a3b6d0",
+      "name": "Automation Map (Preprod)",
+      "namespace": "Hubitat Integrations",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/preprod/apps/automation_map.groovy",
+      "required": true,
+      "oauth": true,
+      "primary": true,
+      "version": "2.4.2"
+    }
+  ]
 }
