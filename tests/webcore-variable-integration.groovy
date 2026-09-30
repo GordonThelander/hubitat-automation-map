@@ -360,7 +360,7 @@ check('usesVar remains a distinct fail-safe visual and pivot relationship') {
 }
 check('schema, scan gaps and export semantics are explicit') {
     assert source.contains("GRAPH_SCHEMA = '15'")
-    assert source.contains('exportSchemaVersion: 13')
+    assert source.contains('exportSchemaVersion: 14')
     assert source.contains('webcoreVariableDecodeIssues: webcoreVariableDecodeIssues')
     assert source.contains("direction: (e.kind === 'usesVar' || e.kind === 'deviceRead') ? 'unknown' : null")
     assert source.contains("relationships: ['read', 'write', 'usesVar']")
@@ -406,7 +406,11 @@ check('webCoRE pistons are not called inert and UI and export disclose device co
     assert source.contains("n.appType === 'webCoRE' ? 'parent-permissions-omitted'")
     assert source.contains('<b>Your map contains:</b>')
     assert source.contains('including ${inert} freestanding apps')
-    assert source.contains('webCoRE pistons (in Beta: statement order, branching, condition text and task parameters)')
+    // The Beta caveat went in c9abbb2 when webCoRE decoding left Beta, and the
+    // disclosure moved into the export limitations, where it is far more
+    // specific. Guard the disclosure, not the retired sentence.
+    assert source.contains('webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters.')
+    assert source.contains('A condition is transcribed from its own saved spelling and never interpreted')
 }
 
 println ''

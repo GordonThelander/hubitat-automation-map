@@ -41,8 +41,18 @@ check(fp.of([appSettings: []]) == null, 'a piston with no chunks has no fingerpr
 String app = new File(repoRoot, 'apps/automation_map.groovy').getText('UTF-8')
 check(!app.contains('webcoreChunkFingerprint') && !app.contains('fingerprinted'),
     'the shipped app does not compute a fingerprint on any request')
-check(!app.contains("MessageDigest.getInstance('SHA-256')"),
-    'no SHA-256 work sits in the request path')
+// A blanket ban on SHA-256 was a proxy for the line above while the app had
+// no other reason to hash. HAI capability verification gave it one, so the
+// proxy is scoped to what it actually stands for: one hashing helper, called
+// from one place that is not a webCoRE path. A new hashing site still fails.
+int sha256Sites = (app =~ /MessageDigest\.getInstance\('SHA-256'\)/).count
+check(sha256Sites <= 1, "${sha256Sites} SHA-256 sites, expected at most the one hashing helper")
+List<Integer> callers = []
+java.util.regex.Matcher mm = (app =~ /(?<!String )sha256Hex\(/)
+while (mm.find()) callers << mm.start()
+check(callers.size() <= 1, "${callers.size()} sha256Hex callers, expected at most one")
+check(callers.every { app.substring(Math.max(0, it - 2000), it).contains('haiCapabilitySource') },
+    'the only hashing caller is HAI capability verification, not a webCoRE path')
 
 int bad = results.count { !it }
 println "${results.size() - bad} passed, ${bad} failed"

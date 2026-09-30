@@ -63,32 +63,32 @@ function search(term) {
 
 check('a visible app tag is searchable: WCP finds only the piston', function () {
     const r = search('WCP');
-    assert(r.count === '1 of 4 shown', 'count was ' + r.count);
+    assert(r.count === '1 of 4 items shown', 'count was ' + r.count);
     assert(r.labels.length === 1 && r.labels[0].indexOf('[WCP]') >= 0, 'labels were ' + JSON.stringify(r.labels));
 });
 
 check('tag search ignores case', function () {
-    assert(search('wcp').count === '1 of 4 shown', 'lower-case tag did not match');
+    assert(search('wcp').count === '1 of 4 items shown', 'lower-case tag did not match');
 });
 
 check('a local variable tag is searchable', function () {
     const r = search('[LOC]');
-    assert(r.count === '1 of 4 shown' && r.labels[0].indexOf('AMShow_LocalCount') >= 0, 'labels were ' + JSON.stringify(r.labels));
+    assert(r.count === '1 of 4 items shown' && r.labels[0].indexOf('AMShow_LocalCount') >= 0, 'labels were ' + JSON.stringify(r.labels));
 });
 
 check('a name still matches, including inside a longer word', function () {
     const r = search('WC');
-    assert(r.count === '3 of 4 shown', 'count was ' + r.count + ' ' + JSON.stringify(r.labels));
+    assert(r.count === '3 of 4 items shown', 'count was ' + r.count + ' ' + JSON.stringify(r.labels));
 });
 
 check('a row without decorated text matches on its title', function () {
     const r = search('plain');
-    assert(r.count === '1 of 4 shown' && r.labels[0] === 'Plain Title Only', 'labels were ' + JSON.stringify(r.labels));
+    assert(r.count === '1 of 4 items shown' && r.labels[0] === 'Plain Title Only', 'labels were ' + JSON.stringify(r.labels));
 });
 
 check('an empty search lists the reset row and every item', function () {
     const r = search('');
-    assert(r.count === '4 of 4 shown' && r.labels.length === 5 && r.labels[0] === 'All', 'labels were ' + JSON.stringify(r.labels));
+    assert(r.count === '4 of 4 items shown' && r.labels.length === 5 && r.labels[0] === 'All', 'labels were ' + JSON.stringify(r.labels));
 });
 
 console.log(pass + ' passed, ' + fail + ' failed');
