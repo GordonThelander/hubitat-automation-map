@@ -4,9 +4,9 @@ Draws every installed app and device on your hub as an interactive graph, colour
 
 It answers questions the hub itself makes tedious: what does this rule really touch, which app keeps turning that light on, and what is this device even used for.
 
-> **Development channel:** This `dev` branch documents the current parallel test build. It installs as **Automation Map (Dev)** with separate settings and scan data. The production release remains on `main`. See the [changelog](CHANGELOG.md) for the complete development history.
+> **Pre-production channel:** This `preprod` branch carries the release candidate. It installs as **Automation Map (Preprod)** with separate settings and scan data. The production release remains on `main`. See the [changelog](CHANGELOG.md) for the complete development history.
 
-**Read-only where it matters.** It never commands a device or changes another app. The only things you can edit are its own notes about your setup - device icon corrections and external system declarations - never anything on the hub itself.
+**It never commands a device or changes an automation.** No switch is flipped, no rule is edited, no app is altered. What it can change is where things live: the Room Manager assigns devices to rooms and creates, renames and deletes rooms. The hub can already do that a room at a time, from its own Rooms page; this does it across every room at once, with everything unallocated sitting beside every destination. Nothing reaches the hub until you press Apply, and a room change only ever alters that device's room, never the rest of its settings. Everything else you can edit is the app's own notes about your setup - device icon corrections and external system declarations.
 
 ## What you get
 
@@ -55,6 +55,38 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
 **AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
+
+### Room Manager
+
+Filing devices into rooms through the hub's own pages means opening every device in turn. This
+does it on one screen.
+
+Every room is drawn as a rectangle you can move and resize, with the devices it holds shown as
+chips carrying the same icons the map uses. Devices with no room sit in a **Not Allocated**
+column down the left.
+
+| Gesture | What it does |
+| --- | --- |
+| Drag a device | moves it to another room, or out into Not Allocated |
+| Click a device, then more | selects several; shift-click takes a whole run |
+| Drag any selected device | moves the whole selection together |
+| Double-click a room name | renames the room |
+| The small x on a room | deletes the room |
+| Search box | filters devices by name or room, leaving every room on screen to drop into |
+| New room | creates a room on the hub |
+| Reset layout | puts the rectangles back to their default arrangement |
+
+**Nothing reaches the hub until you press Apply.** Moves are staged and highlighted until then,
+Discard throws them away, and anything that fails to apply stays staged so a retry sends only
+what is still outstanding.
+
+Deleting a room does not delete its devices. They become unallocated, and the confirmation says
+how many before you commit. Renaming a room changes only its name, but Rule Machine, dashboards
+and Room Lighting all refer to rooms by name, so anything pointing at the old name will need
+updating.
+
+Where the rectangles sit is remembered per install. That layout is the app's own note about your
+setup; the hub has no concept of where a room is.
 
 ## What "app" means here
 
@@ -174,7 +206,7 @@ The map page is built inside a Groovy string, so a stray backslash can be consum
 
 **Steve (oldcomputerwiz)** - for large C5 hub testing and discovery-completeness user acceptance testing as well as for new functional requirement additions.
 
-**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
+**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all). Also flagged that webCoRE's own variable ecosystem was invisible to the map, leading to the v2.2.8 webCoRE local-variable and device-relationship decoding.
 
 **Hubitrep** - the bounded-async scan rewrite is built on the fix in their `HubDiagnostics` app (`github.com/hubitrep/hubitat`): concurrent `asynchttpGet` callbacks writing to `state` are subject to last-write-wins persistence, which can silently overwrite a correct result with a stale one. Their diagnosis and fix were the origin; this app extends it further since its scan results must survive a hub reboot, unlike theirs. 
 
