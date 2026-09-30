@@ -9959,6 +9959,29 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'action:getChime'             : 'action.music-and-sounds-sound-tone-sound-chime',
     'action:getSiren'             : 'action.music-and-sounds-control-siren',
     'action:getSetVariable'       : 'action.variables-mode-files-custom-set-variable-all-ope',
+    'variable:hubMultiType'       : 'variable.hub-variables-number-decimal-string-boolean-date',
+    'variable:hubRead'            : 'variable.read-a-hub-variable-in-a-condition',
+    'variable:hubWrite'           : 'variable.write-a-hub-variable',
+    'variable:localMultiType'     : 'variable.local-rule-variables-all-five-types',
+    // Condition types Rule Machine stores by name in rCapab_/RelrDev_. Every
+    // one of these previously fell through to the single device-capability id,
+    // so this area could never report more than 1 of 16 however many kinds a
+    // hub used. A device-state name still resolves by family through the
+    // fallback below; only the non-device kinds need naming here.
+    'condition:Variable'          : 'condition.variable-hub-or-local',
+    'condition:Mode'              : 'condition.mode',
+    'condition:Time of day'       : 'condition.time-of-day',
+    'condition:Between two times' : 'condition.between-two-times-fixed-sunrise-sunset-offsets-v',
+    'condition:Between two dates' : 'condition.between-two-dates',
+    'condition:On a Day'          : 'condition.on-a-day',
+    'condition:Days of Week'      : 'condition.days-of-week-as-condition',
+    'condition:Private Boolean'   : 'condition.private-boolean',
+    'condition:Custom Attribute'  : 'condition.custom-attribute',
+    'condition:HSM Status'        : 'condition.hsm-status',
+    'option:displayCurrentValues' : 'option.display-current-values',
+    'option:logging'              : 'option.logging-events-triggers-actions',
+    'option:disableAction'        : 'option.disable-an-action',
+    'option:pauseResume'          : 'option.pause-resume',
     'action:getSetMode'           : 'action.variables-mode-files-custom-set-mode',
     'action:getDefinedAction'     : 'action.variables-mode-files-custom-run-custom-action-an',
     'action:getWriteLocalFile'    : 'action.variables-mode-files-custom-write-append-delete',
@@ -10087,12 +10110,60 @@ List extractRuleConstructs(Map data) {
         else if ((name.startsWith('rCapab_') || name.startsWith('RelrDev_')) && Character.isLetter(v.charAt(0))) {
             out << "condition:${v}".toString()
         }
+        // Rule options, from saved settings only. Most of section 7 is a hub UI
+        // affordance (copy/paste, Run Actions, Update Rule) that leaves no
+        // trace in a rule, so it is correctly never detected rather than
+        // guessed at. These three do leave one.
+        else if (name == 'dValues' && v == 'true') out << 'option:displayCurrentValues'.toString()
+        else if (name == 'logging') out << 'option:logging'.toString()
+        else if ((name.startsWith('disable') || name.startsWith('disableAct')) && v == 'true') out << 'option:disableAction'.toString()
         else if (name.startsWith('delayAct.') && v != 'none') anyDelay = true
         else if (name.startsWith('isCondTrig') && v == 'true') out << 'structure:conditionalTrigger'.toString()
         else if (name.startsWith('reqExp') && v == 'true') out << 'structure:requiredExpression'.toString()
     }
     if (anyDelay) out << 'structure:actionDelay'.toString()
     return out.sort()
+}
+
+// Variable constructs for one rule, from the Gate C decode rather than from
+// appSettings. Each token is emitted only when that exact use was resolved.
+List variableConstructsFor(Object raw) {
+    if (!(raw instanceof Map)) return []
+    Map rv = raw as Map
+    Set<String> out = new LinkedHashSet<String>()
+    Map inventory = (((state.hubVariableInventory ?: [:]) as Map).variables ?: [:]) as Map
+    Set<String> hubTypes = new LinkedHashSet<String>()
+    ((rv.variableReferences ?: []) as List).each { Object r ->
+        if (!(r instanceof Map)) return
+        Map ref = r as Map
+        String scope = "${ref.scope ?: ''}"
+        String op = "${ref.operation ?: ''}"
+        if (scope == 'hub') {
+            if (op == 'write') out << 'variable:hubWrite'
+            else out << 'variable:hubRead'
+            // The multi-type row is claimed only when this rule actually
+            // resolved more than one distinct type. Referencing one String
+            // variable requires hub variable support, not Number, Decimal,
+            // Boolean and DateTime, and the row's own wording enumerates all
+            // five. Table 1 asks what the engine supports; table 2 asks what
+            // this hub's rules require, and reading one unit across into the
+            // other is how a true number stops being true.
+            Object meta = inventory["${ref.canonicalName ?: ref.name ?: ''}"]
+            String vt = normalizeHubVariableType((meta instanceof Map) ? "${(meta as Map).type ?: ''}" : null)
+            if (vt) hubTypes << vt
+        }
+    }
+    // Identical wording, identical problem: the local row also enumerates all
+    // five types, so it is claimed only where more than one was declared.
+    Set<String> localTypes = new LinkedHashSet<String>()
+    ((rv.localVariables ?: []) as List).each { Object lv ->
+        if (!(lv instanceof Map)) return
+        String vt = normalizeHubVariableType("${(lv as Map).variableType ?: ''}")
+        if (vt) localTypes << vt
+    }
+    if (hubTypes.size() > 1) out << 'variable:hubMultiType'
+    if (localTypes.size() > 1) out << 'variable:localMultiType'
+    return out.toList()
 }
 
 // Which capability answers one construct, and how sure that is. A device
@@ -10153,14 +10224,25 @@ Map rmCoverageReport() {
             : "${feed.engine ?: 'The rule engine'} published no capability list, so there is nothing to compare Rule Machine against."]
     }
     Map appInfo = (state.appInfo ?: [:]) as Map
+    // Variable use is decoded separately from rule constructs (Gate C), and
+    // extractRuleConstructs() never emitted a token for it, so every rule that
+    // reads or writes a variable was invisible to this report and the Variables
+    // row could only ever read "None detected". Only what the decoder actually
+    // resolved is claimed here: a hub read, a hub write, and a declared local.
+    Map ruleVars = ((state.graph ?: [:]) as Map).ruleVariables as Map ?: [:]
     List rules = []
     Map constructUse = [:]
     appInfo.each { String appId, Object info ->
         if (!(info instanceof Map)) return
         Map appMap = info as Map
         if (!"${appMap.type}".startsWith('Rule-')) return
-        List tokens = (appMap.rmConstructs ?: []) as List
+        List tokens = new ArrayList((appMap.rmConstructs ?: []) as List)
+        tokens.addAll(variableConstructsFor(ruleVars["a${appId}"]))
+        // Hubitat marks a paused rule itself, so using Pause/Resume is
+        // evidenced by the rule's own state rather than by a setting.
+        if (appMap.paused) tokens << 'option:pauseResume'.toString()
         List gaps = []
+        if (tokens.isEmpty()) gaps << [token: 'assessmentUnavailable', verdict: 'unknown']
         tokens.each { Object rawToken ->
             String token = "${rawToken}"
             String capId = haiCapabilityIdFor(token)
@@ -10177,7 +10259,7 @@ Map rmCoverageReport() {
             if (verdict != 'runs') gaps << [token: token, verdict: verdict, capabilityId: capId, feature: cap?.feature]
         }
         rules << [id: "a${appId}", name: appMap.label, constructs: tokens.size(),
-                  covered: gaps.isEmpty(), gaps: gaps]
+                  assessed: !tokens.isEmpty(), covered: !tokens.isEmpty() && gaps.isEmpty(), gaps: gaps]
     }
     int covered = rules.count { (it as Map).covered == true } as Integer
     List gapRules = rules.findAll { (it as Map).covered != true }
@@ -10200,6 +10282,8 @@ Map rmCoverageReport() {
                      statusMeanings: (feed.statusMeanings ?: [:]) as Map,
                      evidenceMeanings: (feed.evidenceMeanings ?: [:]) as Map],
             summary: [rules: rules.size(), covered: covered, withGaps: gapRules.size(),
+                      unassessedRules: rules.count { (it as Map).assessed != true },
+                      unassessedConstructs: constructUse.values().count { (it as Map).verdict in ['unmapped', 'unknown'] },
                       usedDimensions: usedCapIds.size(),
                       constructs: constructUse.size(),
                       unmapped: constructUse.values().count { (it as Map).verdict == 'unmapped' }],
@@ -10353,6 +10437,10 @@ Map haiCategoryRows(Map capsById, Set usedCapIds) {
         String name = section
         int dot = name.indexOf('. ')
         if (dot > 0 && name.substring(0, dot).isInteger()) name = name.substring(dot + 2)
+        // The engine's section name is "Variables", which beside a count reads
+        // as a number of variables rather than of capabilities. A display
+        // override only: the engine's own naming is untouched.
+        if (name == 'Variables') name = 'Variable capabilities'
         // Section 8 is that engine's own extras, not a Rule Machine feature,
         // so it is kept out of the parity count and reported on its own.
         Map row = (categories[section] ?: [section: section, name: name, order: section,
@@ -10401,6 +10489,9 @@ Map haiCategoryRows(Map capsById, Set usedCapIds) {
         }
         if (usedCapIds.contains(capId)) {
             row.usedHere = ((row.usedHere ?: 0) as Integer) + 1
+            if (status == 'Runs') row.usedSupported = ((row.usedSupported ?: 0) as Integer) + 1
+            else if (status in ['Format', 'Missing', 'Partial', 'Scoped']) row.usedUnsupported = ((row.usedUnsupported ?: 0) as Integer) + 1
+            else row.usedUnassessed = ((row.usedUnassessed ?: 0) as Integer) + 1
             // Reached by a rule on this hub AND not fully working: the
             // intersection that decides whether this hub can move, rather
             // than either number on its own.
@@ -14203,6 +14294,9 @@ String buildMapHtml() {
   #rmCoverageBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
   #rmCoverageBody .mrTable th, #rmCoverageBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
   #rmCoverageBody h4 { margin:14px 0 6px 0; }
+  #rmCoverageBody .mrDefs { margin:6px 0 10px 0; }
+  #rmCoverageBody .mrDefs > summary { cursor:pointer; color:#9fd0e4; font-size:0.9em; }
+  #rmCoverageBody .mrDefs p { margin:6px 0 0 0; }
   #migrationReportBody .mrTableWrap { overflow-x:auto; }
   #migrationReportBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
   #migrationReportBody .mrTable th, #migrationReportBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
@@ -17529,11 +17623,12 @@ function rmcRender() {
   // not-working side deliberately: the engine describes it as the route being
   // known with nothing built, and grouping it with the working side would
   // overstate the engine in the one place it has already overstated itself.
-  // Implemented is everything built, and tests passed is a subset of it, not a
-  // rival column. Splitting them into exclusive buckets read as a
-  // contradiction: a Tested column larger than an Implemented one says
-  // something was tested before it was built. Nested, the row adds up as
-  // implemented + scoped + not built, with the test count qualifying the first.
+  // Implemented is everything built; the second column is the subset observed
+  // running on a hub, not a rival column. It was headed "tests passed", which
+  // asserted that every simulator-tested capability had no passing test - 61 of
+  // them, against suites that do pass. It measures hub observation, so it says
+  // that. The row adds up as implemented + scoped + not built, with the hub
+  // count qualifying the first.
   const implemented = function (c) { return c.runs || 0; };
   const testsPassed = function (c) { return c.hubProven || 0; };
   // Partly and the format state are older values no row currently uses. A
@@ -17542,14 +17637,16 @@ function rmcRender() {
   const showFormat = tot.format > 0;
   const showPartial = tot.partial > 0;
   const optCell = function (show, n) { return show ? '<td>' + extEsc(String(n)) + '</td>' : ''; };
-  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM-5 capabilities</th>' +
-    '<th>Implemented</th><th>of those, tests passed</th><th>Scoped</th><th>Not built</th>' +
+  const showMissing = tot.missing > 0;
+  html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>RM capabilities</th>' +
+    '<th>Implemented</th><th>Of those, hub-tested</th><th>Scoped, not built</th>' +
+    (showMissing ? '<th>Not built</th>' : '') +
     (showPartial ? '<th>Partly</th>' : '') + (showFormat ? '<th>Writes but does not run</th>' : '') +
     '</tr></thead><tbody>';
   rmCats.forEach(function (c) {
     html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.dimensions)) +
       '</td><td>' + extEsc(String(implemented(c))) + '</td><td>' + extEsc(String(testsPassed(c))) +
-      '</td><td>' + extEsc(String(c.scoped || 0)) + '</td><td>' + extEsc(String(c.missing || 0)) + '</td>' +
+      '</td><td>' + extEsc(String(c.scoped || 0)) + '</td>' + optCell(showMissing, c.missing || 0) +
       optCell(showPartial, c.partial || 0) + optCell(showFormat, c.format || 0) + '</tr>';
   });
   let extraRuns = 0, extraHub = 0, extraScoped = 0, extraMissing = 0;
@@ -17557,17 +17654,17 @@ function rmcRender() {
     extraRuns += (c.runs || 0); extraHub += (c.hubProven || 0);
     extraScoped += (c.scoped || 0); extraMissing += (c.missing || 0);
   });
-  if (extraRuns || extraScoped || extraMissing) {
-    html += '<tr><td>New capabilities <span style="opacity:0.7">(nothing in Rule Machine to measure against)</span></td>' +
-      '<td>0</td><td>' + extEsc(String(extraRuns)) + '</td><td>' + extEsc(String(extraHub)) +
-      '</td><td>' + extEsc(String(extraScoped)) + '</td><td>' + extEsc(String(extraMissing)) + '</td>' +
-      optCell(showPartial, 0) + optCell(showFormat, 0) + '</tr>';
-  }
-  html += '<tr><td><b>Every area</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td>' +
+  // The engine's own capabilities, the ones with no Rule Machine counterpart,
+  // used to be printed here as a row with 0 in the RM-5 column and then left
+  // out of the total beneath it. Every column therefore failed to add up, in
+  // one direction or the other, depending on which total you believed. This
+  // table answers one question - Rule Machine against the engine - so those
+  // rows are out of it entirely and are reported as a sentence below instead.
+  html += '<tr><td><b>Total</b></td><td><b>' + extEsc(String(tot.dimensions)) + '</b></td>' +
     '<td><b>' + extEsc(String(tot.runs)) + '</b></td>' +
     '<td><b>' + extEsc(String(tot.hubProven)) + '</b></td>' +
     '<td><b>' + extEsc(String(tot.scoped)) + '</b></td>' +
-    '<td><b>' + extEsc(String(tot.missing)) + '</b></td>' +
+    (showMissing ? '<td><b>' + extEsc(String(tot.missing)) + '</b></td>' : '') +
     (showPartial ? '<td><b>' + extEsc(String(tot.partial)) + '</b></td>' : '') +
     (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '</tr>';
   html += '</tbody></table>';
@@ -17575,12 +17672,12 @@ function rmcRender() {
   const engName = eng.name || 'HAI-1';
   html += '<p class="sub"><b>' + extEsc(String(tot.runs)) + ' of ' + extEsc(String(tot.dimensions)) +
     ' Rule Machine 5.1 capabilities are implemented in ' + extEsc(engName) + '.</b> ' +
-    extEsc(String(tot.hubProven)) + ' of those have passed a test on a hub; the other ' +
+    extEsc(String(tot.hubProven)) + ' of them have also been observed running on a hub; the other ' +
     extEsc(String(Math.max(0, tot.runs - tot.hubProven))) +
-    ' have never been watched running. ' +
+    ' passed in the simulator only. ' +
     (tot.scoped ? extEsc(String(tot.scoped)) + ' are scoped, meaning the route is known and nothing is built yet. ' : '') +
     (tot.missing ? extEsc(String(tot.missing)) + (tot.missing === 1 ? ' is not built at all.' : ' are not built at all.') : '') +
-    (extraRuns ? ' A further ' + extEsc(String(extraRuns)) + ' capabilities have nothing in Rule Machine to measure against.' : '') +
+    (extraRuns ? ' Separately, ' + extEsc(String(extraRuns)) + ' capabilities the engine publishes have no Rule Machine counterpart at all, so they are not in this table.' : '') +
     '</p>';
 
   // The engine publishes what each status means, so this report quotes it
@@ -17589,7 +17686,7 @@ function rmcRender() {
   const ev = eng.evidenceMeanings || {};
   const known = { Runs: 'Works', Format: 'Writes but does not run', Partial: 'Partly',
                   Scoped: 'Scoped', Missing: 'Not built' };
-  const meaningRows = [['Implemented', meanings.Runs], ['Tests passed', ev.hub], ['Not yet tested', ev.simulated],
+  const meaningRows = [['Implemented', meanings.Runs], ['Observed on a hub', ev.hub], ['Tested in the simulator', ev.simulated],
                        ['Scoped', meanings.Scoped], ['Not built', meanings.Missing],
                        (showPartial ? ['Partly', meanings.Partial] : ['', null]),
                        (showFormat ? ['Writes but does not run', meanings.Format] : ['', null])]
@@ -17601,9 +17698,10 @@ function rmcRender() {
     if (!known[k] && meanings[k]) meaningRows.push([k, meanings[k]]);
   });
   if (meaningRows.length) {
-    html += '<p class="sub">';
+    // Collapsed: the definitions are long and needed once, not on every read.
+    html += '<details class="mrDefs"><summary>Definitions</summary><p class="sub">';
     meaningRows.forEach(function (r) { html += '<b>' + extEsc(r[0]) + '</b>: ' + extEsc(r[1]) + ' '; });
-    html += 'Those are the words ' + extEsc(engName) + ' publishes about itself. This app repeats them; it does not test them, and the engine that sets them also writes the code they describe.</p>';
+    html += 'Those are the words ' + extEsc(engName) + ' publishes about itself. This app repeats them; it does not test them, and the engine that sets them also writes the code they describe.</p></details>';
   }
   // A status this build does not recognise is reported rather than absorbed,
   // so a count that no longer adds up says why.
@@ -17630,24 +17728,32 @@ function rmcRender() {
     box.innerHTML = html;
     return;
   }
-  html += '<h4>2. Your ' + extEsc(String(s.rules)) + ' Rule Machine rules against that</h4>';
-  html += '<p class="sub">' + extEsc(String(s.covered)) + ' of ' + extEsc(String(s.rules)) +
-    ' rules use only what works in ' + extEsc(engName) + '. They draw on ' + extEsc(String(s.constructs)) +
-    ' distinct Rule Machine constructs, which reach ' + extEsc(String(s.usedDimensions === undefined ? '' : s.usedDimensions)) +
-    ' of the ' + extEsc(String(tot.dimensions)) + ' capabilities above' +
-    (s.unmapped ? '. ' + extEsc(String(s.unmapped)) + ' construct(s) could not be matched to a capability and are listed as such' : '') + '.</p>';
+  html += '<h4>2. Requirements detected in your ' + extEsc(String(s.rules)) + ' Rule Machine rules</h4>';
+  html += '<p class="sub">This compares the requirements detected in your rules with ' + extEsc(engName) +
+    ' capabilities. It does not mean your rules have been converted or tested in HAI.</p>';
   if (rmCats.length) {
-    html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>Reached by your rules</th><th>Of those, seen on a hub</th><th>Of those, not fully working</th></tr></thead><tbody>';
+    const usedTotals = [0, 0, 0, 0];
+    html += '<table class="mrTable"><thead><tr><th>Capability area</th><th>Detected capabilities</th><th>Supported by HAI</th><th>Not fully supported</th><th>Unassessed</th></tr></thead><tbody>';
     rmCats.forEach(function (c) {
-      html += '<tr><td>' + extEsc(c.name) + '</td><td>' + extEsc(String(c.usedHere || 0)) +
-        ' of ' + extEsc(String(c.dimensions)) + '</td><td>' + extEsc(String(c.usedHubProven || 0)) +
-        '</td><td>' + extEsc(String(c.usedGaps || 0)) + '</td></tr>';
+      const counts = [c.usedHere || 0, c.usedSupported || 0, c.usedUnsupported || 0, c.usedUnassessed || 0];
+      counts.forEach(function (n, i) { usedTotals[i] += n; });
+      html += '<tr><td>' + extEsc(c.name) + '</td><td>' + (counts[0] ? extEsc(String(counts[0])) : 'None detected') +
+        '</td><td>' + (counts[0] ? extEsc(String(counts[1])) : '-') + '</td><td>' +
+        (counts[0] ? extEsc(String(counts[2])) : '-') + '</td><td>' +
+        (counts[0] ? extEsc(String(counts[3])) : '-') + '</td></tr>';
     });
-    html += '</tbody></table>';
+    html += '<tr><td><b>Total detected</b></td>' + usedTotals.map(function (n) { return '<td><b>' + extEsc(String(n)) + '</b></td>'; }).join('') + '</tr></tbody></table>';
   }
-  if (!gapConstructs.length) {
-    html += '<p class="sub">Nothing your rules do is out of reach of ' + extEsc(engName) + '.</p>';
-  } else {
+  html += '<p class="sub">Matched on what each rule stores: its trigger and condition types, action subtypes, resolved variable reads and writes, declared variable types, and saved rule options. Actions taken in the hub UI that leave no trace in a rule are not detected. ' +
+    'Supported means listed as implemented by HAI. The three status columns add up to the detected total. ' +
+    'None detected does not mean unused: requirements missing from the analysis are not counted. HAI testing evidence is shown in table 1, not as a test result for your rules.</p>';
+  const unassessedConstructs = s.unassessedConstructs || s.unmapped || 0;
+  if (unassessedConstructs || s.unassessedRules) {
+    html += '<p class="sub"><b>Outside the table:</b> ' + extEsc(String(unassessedConstructs)) +
+      ' distinct requirement(s) could not be matched to a published capability; ' + extEsc(String(s.unassessedRules || 0)) +
+      ' rule(s) have no requirement assessment.</p>';
+  }
+  if (gapConstructs.length) {
     html += '<table class="mrTable"><thead><tr><th>Rule Machine construct in use</th><th>Rules</th><th>Status in HAI-1</th><th>Matching capability</th></tr></thead><tbody>';
     gapConstructs.forEach(function (c) {
       html += '<tr><td>' + extEsc(rmcConstructText(c.token)) + '</td><td>' + extEsc(String(c.rules)) + '</td><td>' +
@@ -17656,9 +17762,9 @@ function rmcRender() {
     html += '</tbody></table>';
   }
   if (gapRules.length) {
-    html += '<h4>Rules that would not move as they are</h4><table class="mrTable"><thead><tr><th>Rule</th><th>What is in the way</th></tr></thead><tbody>';
+    html += '<h4>Rules needing review</h4><table class="mrTable"><thead><tr><th>Rule</th><th>Unsupported or unassessed requirement</th></tr></thead><tbody>';
     gapRules.forEach(function (r) {
-      const items = (r.gaps || []).map(function (g) { return rmcConstructText(g.token); });
+      const items = (r.gaps || []).map(function (g) { return g.token === 'assessmentUnavailable' ? 'No requirement assessment available' : rmcConstructText(g.token); });
       html += '<tr><td>' + extEsc(r.name || r.id) + '</td><td>' + extEsc(items.join(', ')) + '</td></tr>';
     });
     html += '</tbody></table>';
@@ -21517,6 +21623,7 @@ document.getElementById('legendPanelClose').addEventListener('click', function (
 // used before its own const line further down - none of these functions runs
 // until a later click, by which point all four consts exist, same as every
 // other forward reference already in this file.
+// ${''} splits this GString constant; the JVM caps one literal at 65535 bytes.
 function onAppFocusChange(value) {
   beginSelectionGeneration();
   externalFocusId = null;
