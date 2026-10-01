@@ -4,7 +4,8 @@ Draws every installed app and device on your hub as an interactive graph, colour
 
 It answers questions the hub itself makes tedious: what does this rule really touch, which app keeps turning that light on, and what is this device even used for.
 
-**Read-only where it matters.** It never commands a device or changes another app. The only things you can edit are its own notes about your setup - device icon corrections and external system declarations - never anything on the hub itself.
+
+**It never commands a device or changes an automation.** No switch is flipped, no rule is edited, no app is altered. What it can change is where things live: the Room Manager assigns devices to rooms and creates, renames and deletes rooms. The hub can already do that a room at a time, from its own Rooms page; this does it across every room at once, with everything unallocated sitting beside every destination. Nothing reaches the hub until you press Apply, and a room change only ever alters that device's room, never the rest of its settings. Everything else you can edit is the app's own notes about your setup - device icon corrections and external system declarations.
 
 ## What you get
 
@@ -33,7 +34,7 @@ Pick **Rule to rule only** in the Show filter to see the automation chains on th
 
 A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped. If a rule still names another rule that has since been deleted, that is shown too - labelled `deleted`, so the action silently doing nothing is something you can actually see rather than only discover the hard way.
 
-**Hub Variables.** An authoritative inventory straight from the hub, not just what decoded rules happen to mention. Drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them, and linked to their Variable Connector device where one exists.
+**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them.
 
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
@@ -41,27 +42,50 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 
 **Device icons.** Every device is drawn with an icon representing what it actually is - a light looks like a light, a door like a door, a water sensor like a water sensor - guessed automatically from the device's own capabilities and, where that alone is not specific enough, its name. Wrong for a particular device? The Device icons panel lists every device with its guessed icon, lets you pick the right one by hand, and lets you leave yourself a short note on anything left unrecognised. Overrides and notes survive future rescans, and can be backed up to a file and restored later.
 
-**Insights.** Findings the hub cannot give you directly, presented as plain-language explanations rather than bare counts - what a finding means, when it is normal, and what to check next:
+**Insights.** Findings the hub cannot give you directly:
 
 - **Contested devices** - more than one app can leave the device in a lasting state, the usual cause of automations fighting each other. Notifications and chimes are excluded, since repeating those is not a conflict.
 - **Devices nothing references** - no app owns, watches or drives them.
 - **Apps with no device or rule relationship** - installed and readable, but touch nothing, grouped by why (holds other apps, runs on a schedule, references nothing at all).
 - **Broken rule references** - a rule still names another rule, action, pause target or Private Boolean that no longer exists.
-- **Hub Variable findings** - variables nothing decoded reads or writes, and reads or writes without a matching counterpart, shown as review prompts rather than automatic fault claims.
 
-The same guidance is included in the AI-friendly export, so an AI reading the file gets the same explanations you see on screen.
-
-**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Reviewed defaults pre-fill common integrations (Hue, LIFX, Sensibo, Tapo, Meross, Chromecast, Google Home and others), and a [shared community registry](https://github.com/GordonThelander/HPM_Manifest_Crawl/blob/main/AUTOMATION_MAP_CONTRACT.md) covers more; your own declarations in the External systems panel always win over both. Declared or matched dependencies are drawn as their own diamond-shaped node, dashed edge back to the app that depends on it, so you can see what breaks if that outside service goes down.
-
-**Community information.** Focus an app and, where the Community Utilities registry has a matching package, a card shows its name, author, review status and links to its documentation, source and support thread - a quick way to check whether an integration is a known, reviewed package before trusting it. Click through for the full detail in the Package Explorer.
+**External systems.** The hub cannot see outside itself, so it cannot tell you that an integration needs a cloud bridge or an outside API to work. Declare it yourself in the External systems panel and it is drawn as its own diamond-shaped node, dashed edge back to the app that depends on it - so you can see what breaks if that outside service goes down. A [shared community registry](https://github.com/GordonThelander/HPM_Manifest_Crawl/blob/main/AUTOMATION_MAP_CONTRACT.md) pre-fills the common ones; your own declarations always win over it.
 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
-**Baseline Comparison.** Compare two of your own AI-friendly exports side by side to see exactly which apps and devices were added, removed or changed between them.
-
-**Hubitat release activity.** A compact preview of Hubitat's own release history, pulled from the Community Utilities Update Tracker, with a link through to the full tracker.
-
 **AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
+
+### Room Manager
+
+Filing devices into rooms through the hub's own pages means opening every device in turn. This
+does it on one screen.
+
+Every room is drawn as a rectangle you can move and resize, with the devices it holds shown as
+chips carrying the same icons the map uses. Devices with no room sit in a **Not Allocated**
+column down the left.
+
+| Gesture | What it does |
+| --- | --- |
+| Drag a device | moves it to another room, or out into Not Allocated |
+| Click a device, then more | selects several; shift-click takes a whole run |
+| Drag any selected device | moves the whole selection together |
+| Double-click a room name | renames the room |
+| The small x on a room | deletes the room |
+| Search box | filters devices by name or room, leaving every room on screen to drop into |
+| New room | creates a room on the hub |
+| Reset layout | puts the rectangles back to their default arrangement |
+
+**Nothing reaches the hub until you press Apply.** Moves are staged and highlighted until then,
+Discard throws them away, and anything that fails to apply stays staged so a retry sends only
+what is still outstanding.
+
+Deleting a room does not delete its devices. They become unallocated, and the confirmation says
+how many before you commit. Renaming a room changes only its name, but Rule Machine, dashboards
+and Room Lighting all refer to rooms by name, so anything pointing at the old name will need
+updating.
+
+Where the rectangles sit is remembered per install. That layout is the app's own note about your
+setup; the hub has no concept of where a room is.
 
 ## What "app" means here
 
@@ -104,22 +128,28 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 
 - **OAuth must be enabled on the app**, since the map is served as a web page from your hub. See Install below.
 - **Desktop browser.** The graph, filters and flowcharts need room and a pointer. Small screens are shown a notice instead of an unusable version.
-- **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN, the device icon font loads from cdnjs, and the watermark and click sound effects load from GitHub. The hub itself does not need internet.
+- **The viewing browser needs internet.** The graph and flowchart libraries load from a CDN, the device icon font loads from cdnjs, and the watermark, click sound effect, and UI typeface (Mulish, self-hosted rather than fetched from Google Fonts) load from GitHub. The hub itself does not need internet.
 - **Undocumented endpoints.** A future platform update could change them. If they stop answering, the app says so rather than showing an empty map.
-- **Tested on Hubitat platform 2.5.1**, including builds 2.5.1.152 and 2.5.1.172. `minimumHEVersion` in the manifest matches 2.5.1; HPM will not offer this app on an earlier build.
+- **Tested only on platform 2.5.1.152.** `minimumHEVersion` in the manifest matches; HPM will not offer this app on an earlier build.
 - **Hub Login Security is untested.** If it prevents the hub reading its own endpoints, the app detects that and names it as the likely cause.
-- **Every installed app is discovered, whether or not it touches a device.** The complete app list comes from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
+- **Every installed app is discovered, whether or not it touches a device.** Device-led discovery is unioned with the complete app list from `/hub2/appsList`, so a Rule Function, a schedule-only app, or a container with no devices of its own still appears - dimmed, and labelled with why it has nothing else mapped.
 - **Hub Variable read/write edges are read from any Rule Machine engine, not only 5.1.** Rule-to-rule link detection runs against every app's settings regardless of engine, so it depends on Rule Machine's own settings shape being present rather than an explicit type check. Room Lighting, Basic Rules, Simple Automation and webCoRE do not store rules that way, so they show no links rather than showing that they have none.
 - **Device icons are a best guess, not a certainty.** Capability and name-based detection cover most devices well, but a handful of categories (appliances, robot vacuums, and a few others) have no reliable Hubitat signal to detect from at all - see the Device icons panel to correct any of these by hand.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
-- A scan of roughly 200 devices and 100 apps typically completes in well under a minute. Hub load and app count affect this.
+- On the current Dev build, a scan of roughly 200 devices normally completes well under a minute. The production v2.0.4 serial scanner can take about two minutes on a similarly sized hub. Hub load and app count still affect both figures.
+
+## Diagnostic logging
+
+Automation Map logs quietly by default. A settings-page toggle enables detailed diagnostic logging for troubleshooting - off by default, and it auto-disables itself after an hour so it can't be left running by accident. Nothing here is transmitted anywhere; it only writes to your own hub's log.
+
+As of v2.1.8, Automation Map no longer reports anonymous telemetry to a remote service. Earlier versions (2.1.2-2.1.7) did, via a bundled telemetry driver; that driver and everything that fed it are removed. An instance upgrading from one of those versions removes its own leftover telemetry device automatically.
 
 ## Install
 
 **OAuth must be enabled.** The map is a web page the app serves from your hub, which needs an OAuth access token. Without it there is no map link. Installing through Hubitat Package Manager enables OAuth for you; installing by hand does not, so step 2 below is not optional.
 
-### Via Hubitat Package Manager
+### Production release via Hubitat Package Manager
 
 **Install** -> **From a URL**, then:
 
@@ -129,11 +159,21 @@ https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/main/pa
 
 Then continue from step 3.
 
+### Development channel via Hubitat Package Manager
+
+Add the following URL as a custom repository in HPM, then install **Automation Map (Dev)**:
+
+```
+https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/repository.json
+```
+
+The Dev package installs alongside production and keeps its own settings, scan data and schedule.
+
 ### By hand
 
 1. **Apps Code** -> **New App** -> paste in `apps/automation_map.groovy` -> **Save**.
 2. Still in Apps Code, click **OAuth** -> **Enable OAuth in App** -> **Update**.
-3. **Apps** -> **Add User App** -> **Automation Map**.
+3. **Apps** -> **Add User App** -> **Automation Map**, or **Automation Map (Dev)** when using the Dev source.
 4. Press **Done**. The first scan starts by itself; there is nothing to configure.
 5. The scan runs in two passes, devices then apps. The page updates itself, so there is no need to reload it.
 6. **View Automation Map**.
@@ -142,7 +182,7 @@ The map link contains an access token unique to your installation. Open the map 
 
 Every device on the hub is scanned. There is no device picker: Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.
 
-A daily scan runs automatically by default at 00:30, changeable in the app's own settings page, or turn it off entirely to only ever scan by hand.
+A daily scan runs automatically by default. Production uses 00:30 and Dev uses 01:00 so parallel installations do not scan at the same moment. The time is changeable in the app's settings page, and automatic scanning can be disabled entirely.
 
 ## Re-scanning
 
@@ -157,15 +197,18 @@ The app exposes two endpoints, using the same access token as the map link, usef
 - `.../scan-status` - progress, counts, and any recorded error
 - `.../scan` - starts a scan without opening the app
 
-`check_template.sh` is a maintainer tool. The map page is built inside a Groovy string, so a stray backslash is consumed before the browser sees it and silently breaks the page script. Run it before committing changes to the page.
+The map page is built inside a Groovy string, so a stray backslash can be consumed before the browser sees it and silently break the page script. Maintainers should run `powershell -File validate.ps1` before committing. The validator checks manifest and source version alignment, branch-specific URLs, JSON validity, tracked compiler artefacts and the embedded-template backslash guard. `check_template.sh` remains available on systems with Bash and `grep`, and now fails clearly if that dependency is unavailable.
 
 ## Credits
 
 **Jim Becker (JimB)** - primary tester and functional requirements contributor. Reported the scan-start failure that led to the Remote Admin routing fix, and tested through every diagnostic build until it was found.
 
-**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all).
+**Steve (oldcomputerwiz)** - for large C5 hub testing and discovery-completeness user acceptance testing as well as for new functional requirement additions.
 
-**Hubitrep** - the bounded-async scan rewrite is built on the fix in their `HubDiagnostics` app (`github.com/hubitrep/hubitat`): concurrent `asynchttpGet` callbacks writing to `state` are subject to last-write-wins persistence, which can silently overwrite a correct result with a stale one. Their diagnosis and fix were the origin; this app extends it further since its scan results must survive a hub reboot, unlike theirs.
+**Jean P. May Jr. (TheBearMay)** - bulk application discovery. His *Rule References Rule Table* documented `/hub2/appsList`, the endpoint that closed Automation Map's device-less-app blind spot (Rule Functions and other apps that touch no devices at all). Also flagged that webCoRE's own variable ecosystem was invisible to the map, leading to the v2.2.8 webCoRE local-variable and device-relationship decoding.
+
+**Hubitrep** - the bounded-async scan rewrite is built on the fix in their `HubDiagnostics` app (`github.com/hubitrep/hubitat`): concurrent `asynchttpGet` callbacks writing to `state` are subject to last-write-wins persistence, which can silently overwrite a correct result with a stale one. Their diagnosis and fix were the origin; this app extends it further since its scan results must survive a hub reboot, unlike theirs. 
+
 
 ## Branches
 
