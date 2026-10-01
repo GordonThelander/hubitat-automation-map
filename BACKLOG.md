@@ -787,6 +787,8 @@ would empty the room, so a rename reads the current members, refuses rather than
 cannot, and checks the count afterwards. Delete is a bare GET with no confirmation of the hub's
 own, so the only one that exists is the one this app shows.
 
+**Superseded 2026-10-01.** The endpoint research above still describes the hub accurately and is kept for that reason, but it no longer describes what this app does. Room moves were moved off `/device/update` entirely and onto `/room/save` `{roomId, name, deviceIds}`, which writes room membership and never transmits a device field at all. The hub removes a device from its old room by itself, so no second write is needed. The 24-field carry-across described below is therefore no longer performed, and the whole class of field-preservation risk it existed to manage cannot arise. Cost fell from three calls per device to roughly one call per room touched.
+
 **Verified on the hub.** A POST from inside an app sandbox is accepted - no browser session
 cookie, no CSRF token, which was the unknown that could have killed the design. Notes and tags
 survived the 24-field round trip on a device carrying both. 50 devices were filed in about 25
