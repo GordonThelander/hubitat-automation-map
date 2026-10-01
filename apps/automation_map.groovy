@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit e3af569ad7b5bbb1a1139cd484a503c50b06b43e; developer
+ * builder from the annotated Dev source at commit daab6ec465ec6b70519a3ec859627c6d97cde1c6; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/e3af569ad7b5bbb1a1139cd484a503c50b06b43e/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/daab6ec465ec6b70519a3ec859627c6d97cde1c6/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -204,7 +204,7 @@ void installed() {
     
     
     if (diagOn()) log.info "${app.label}: starting first scan"
-    startScan()
+    startScan('installed')
     scheduleAutoScan()
     scheduleUpdateCheck()
     
@@ -568,7 +568,7 @@ void scheduledScanHandler() {
     if (diagOn()) log.info "${app.label}: starting scheduled overnight scan"
     
     
-    Map result = startScan()
+    Map result = startScan('scheduled')
     if (!result.acquired) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, another start already owns this instance"
     }
@@ -621,6 +621,9 @@ Map main() {
     
     
     boolean scanActive = scanEffectivelyActive()
+    
+    
+    boolean autoStarting = !scanActive && shouldAutoScan()
 
     
     
@@ -675,7 +678,11 @@ Map main() {
                 
                 
                 
-                boolean graphStale = graphIsStale()
+                
+                
+                
+                
+                boolean graphStale = graphIsStale() && !scanActive && !scanProgressIsLive()
                 if (state.graph && !scanActive && !graphStale) {
                     paragraph '''<style type="text/css">
 a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
@@ -688,7 +695,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                         style: 'embedded', state: 'complete', required: false,
                    )
                 }
-                paragraph scanButtonHtml(scanActive)
+                paragraph scanButtonHtml(scanActive, autoStarting)
                 Map pageProg = scanProgress()
                 String pagePhase = "${pageProg.phase ?: ''}"
                 Integer pageTotal = (pageProg.total ?: 0) as Integer
@@ -762,7 +769,9 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                         
                         
                         
-                        paragraph "<b style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
+                        
+                        
+                        paragraph "<b id='amStaleWarning' style='color:#c0392b'>This map was saved in a format this release no longer reads. Run the scan again to rebuild it.</b>"
                     } else {
                         
                         
@@ -896,7 +905,7 @@ button[name^="_action_href_baselineComparisonBack|"] span { color:#121214 !impor
 
 
 void appButtonHandler(String btn) {
-    if (btn == 'runScan') startScan()
+    if (btn == 'runScan') startScan('button')
 }
 
 
@@ -1003,11 +1012,30 @@ boolean shouldAutoScan() {
 
 
 
+
+
+
+String currentGenerationToken() {
+    String live = SCAN_LOCKS.get("${app.id}") as String
+    return live ?: (state.activeGenerationToken as String)
+}
+
 void setScanProgress(String phase, Integer total, Integer done) {
-    SCAN_PROGRESS.put("${app.id}".toString(), [phase: phase, total: total, done: done])
+    SCAN_PROGRESS.put("${app.id}".toString(),
+                      [phase: phase, total: total, done: done, gen: currentGenerationToken()])
     state.scanPhase = phase
     state.scanTotal = total
     state.scanDone = done
+}
+
+
+
+
+
+void clearScanProgressFor(String token) {
+    if (!token) return
+    Map live = SCAN_PROGRESS.get("${app.id}".toString()) as Map
+    if (live && "${live.gen ?: ''}" == token) SCAN_PROGRESS.remove("${app.id}".toString())
 }
 
 
@@ -1018,10 +1046,23 @@ void setScanDone(Integer done) {
     else state.scanDone = done
 }
 
-Map scanProgress() {
+
+
+
+
+
+boolean scanProgressIsLive() {
     Map live = SCAN_PROGRESS.get("${app.id}".toString()) as Map
-    if (live) return live
+    if (!live) return false
+    String owner = "${live.gen ?: ''}"
+    return owner != '' && owner == (SCAN_LOCKS.get("${app.id}") as String)
+}
+
+Map scanProgress() {
     
+    
+    
+    if (scanProgressIsLive()) return SCAN_PROGRESS.get("${app.id}".toString()) as Map
     return [phase: "${state.scanPhase ?: ''}", total: (state.scanTotal ?: 0) as Integer,
             done: (state.scanDone ?: 0) as Integer]
 }
@@ -1037,8 +1078,12 @@ boolean scanEffectivelyActive() {
 
 
 
-String scanButtonHtml(boolean scanActive) {
-    String label = scanActive ? 'Scanning...' : (shouldAutoScan() ? 'Starting first scan...' : 'Scan relationships now')
+String scanButtonHtml(boolean scanActive, boolean autoStarting) {
+    
+    
+    
+    
+    String label = scanActive ? 'Scanning...' : (autoStarting ? 'Starting first scan...' : 'Scan relationships now')
     String disabled = scanActive ? ' disabled' : ''
     
     
@@ -1173,6 +1218,21 @@ function amStartScan() {
 // shipped past dev.
 var amPolling = false;
 var amSawRunning = false;
+// Narrow by design: the button label and the stale-format warning only. No
+// other element is touched, and nothing here runs unless /scan-status says a
+// generation is running.
+function amReconcileRunning() {
+  var btn = document.getElementById('amScanBtn');
+  if (btn && btn.textContent !== 'Scanning...') {
+    btn.textContent = 'Scanning...';
+    btn.setAttribute('aria-label', 'Scanning...');
+    btn.setAttribute('disabled', 'disabled');
+    btn.className = 'p-button p-component p-disabled mr-2 mb-2';
+  }
+  var warn = document.getElementById('amStaleWarning');
+  if (warn) warn.hidden = true;
+}
+
 function amProgressPoll() {
   if (amPolling) return;
   amPolling = true;
@@ -1189,6 +1249,13 @@ function amProgressPoll() {
       if (!el) return;
       if (d.running) {
         amSawRunning = true;
+        // The poll used to update this one span and nothing else, so a page
+        // rendered before a generation started kept a Starting first scan
+        // button and an obsolete-format warning beside live progress. Queue
+        // 889 observation 2 is exactly that page. Reconciling both here, and
+        // only while a generation is genuinely running, keeps one story on
+        // screen without reloading mid-scan.
+        amReconcileRunning();
         var isDevicePhase = d.phase !== 'apps';
         if (!isDevicePhase && d.total > 0 && d.done >= d.total) {
           // Every app is read, but scanRunning is still true - fetchRegistry
@@ -1753,6 +1820,27 @@ String genKey(String token) { return "${app.id}:${token}" }
 
 
 
+@Field static final int GEN_TRACE_MAX = 60
+
+void genTrace(String event, Map fields = [:]) {
+    try {
+        String gen = "${currentGenerationToken() ?: 'none'}"
+        String detail = (fields ?: [:]).collect { k, v -> "${k}=${v}" }.join(' ')
+        List trail = (state.genTrace ?: []) as List
+        trail << "${now()}|${gen}|${event}${detail ? ' ' + detail : ''}".toString()
+        if (trail.size() > GEN_TRACE_MAX) trail = trail.takeRight(GEN_TRACE_MAX)
+        state.genTrace = trail
+    } catch (Exception ignored) {
+        
+    }
+}
+
+
+
+
+
+
+
 
 
 
@@ -1846,8 +1934,13 @@ boolean finishGeneration(String token, String error = null, String logicalGen = 
         log.warn "${app.label}: scan termination failed: ${ex.message}"
         state.scanError = "${ex.message}"
     } finally {
+        genTrace('generation-terminated', [claimant: finishingValue, logical: (logicalGen ?: token)])
         TERMINAL_TOMBSTONES.put(tombstoneKey, now())
         state.scanRunning = false
+        
+        
+        clearScanProgressFor(finishingValue)
+        clearScanProgressFor(token)
         SCAN_LOCKS.remove("${app.id}", finishingValue)
     }
     return true
@@ -1878,7 +1971,7 @@ boolean ownsLock(String token) {
 
 
 
-Map startScan() {
+Map startScan(String entry = 'unknown') {
     
     
     
@@ -1889,7 +1982,11 @@ Map startScan() {
     
     
     String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
-    if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) return [acquired: false]
+    if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) {
+        genTrace('lock-refused', [entry: entry, wanted: lockToken])
+        return [acquired: false]
+    }
+    genTrace('lock-acquired', [entry: entry, gen: lockToken])
     
     
     
@@ -2496,6 +2593,7 @@ void startAppPhase(String lockToken) {
         return
     }
     state.appIds = appIds as List
+    genTrace('apps-enumerated', [total: appIds.size()])
 
     
     
@@ -2843,6 +2941,12 @@ void finalizeAppPhase(String scanId) {
 
     try {
         state.appInfo = new LinkedHashMap(scan.appInfo as Map)
+        
+        
+        
+        
+        genTrace('app-phase-finalized', [collected: ((state.appInfo ?: [:]) as Map).size(),
+                                         enumerated: ((state.appIds ?: []) as List).size()])
         state.deviceLabels = new LinkedHashMap(scan.labels as Map)
 
         
@@ -3068,6 +3172,39 @@ void finishScan(data = null) {
             state.registryMeta = regMeta
         }
 
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        Integer enumeratedApps = ((state.appIds ?: []) as List).size()
+        Integer collectedApps = ((state.appInfo ?: [:]) as Map).size()
+        if (enumeratedApps > 0 && collectedApps != enumeratedApps) {
+            String why = "this scan found ${enumeratedApps} apps but finished holding ${collectedApps}, so no map was saved"
+            log.warn "${app.label}: refusing to publish - ${why}"
+            genTrace('publish-refused', [enumerated: enumeratedApps, collected: collectedApps])
+            state.scanError = why
+            state.scanHeartbeat = now()
+            return
+        }
+        genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps])
         Map graph = buildGraph()
         state.scanHeartbeat = now()
         state.graph = graph
@@ -12767,217 +12904,235 @@ List hubRoomList() {
 
 
 
-@Field static final String ROOM_CLEARED_ID = '0'
-
-String roomPlanFormValue(Object v) { return v == null ? '' : "${v}" }
-
-
-
-Map roomPlanDeviceForm(Map full, String roomId) {
-    Map d = (full?.device instanceof Map) ? full.device as Map : [:]
-    if (!d) return null
-    
-    
-    
-    
-    
-    
-    List dashIds = []
-    Object dashboards = full?.dashboards
-    if (dashboards instanceof List) {
-        (dashboards as List).each { Object x ->
-            if (!(x instanceof Map)) return
-            Map dash = x as Map
-            if (dash.id == null) return
-            if (dash.selected == true) dashIds << "${dash.id}"
-        }
-    }
-    Object rawTags = d.tags
-    String tags = (rawTags instanceof List) ? (rawTags as List).collect { "${it}" }.join(',') : roomPlanFormValue(rawTags)
-    return [
-        name                  : roomPlanFormValue(d.name),
-        label                 : roomPlanFormValue(d.label),
-        zigbeeId              : roomPlanFormValue(d.zigbeeId),
-        maxEvents             : roomPlanFormValue(d.maxEvents),
-        maxStates             : roomPlanFormValue(d.maxStates),
-        spammyThreshold       : roomPlanFormValue(d.spammyThreshold),
-        deviceNetworkId       : roomPlanFormValue(d.deviceNetworkId),
-        deviceTypeId          : roomPlanFormValue(d.deviceTypeId),
-        deviceTypeReadableType: roomPlanFormValue(d.deviceTypeReadableType),
-        roomId                : roomId,
-        meshEnabled           : roomPlanFormValue(d.meshEnabled),
-        retryEnabled          : roomPlanFormValue(d.retryEnabled),
-        meshFullSync          : roomPlanFormValue(d.meshFullSync),
-        homeKitEnabled        : roomPlanFormValue(full?.homeKitEnabled),
-        locationId            : roomPlanFormValue(d.locationId),
-        hubId                 : roomPlanFormValue(d.hubId),
-        groupId               : roomPlanFormValue(d.groupId),
-        dashboardIds          : dashIds.join(','),
-        tags                  : tags,
-        defaultIcon           : roomPlanFormValue(d.defaultIcon),
-        notes                 : roomPlanFormValue(d.notes),
-        id                    : roomPlanFormValue(d.id),
-        version               : roomPlanFormValue(d.version),
-        controllerType        : roomPlanFormValue(d.controllerType),
-    ]
-}
 
 
 
 
-Map roomPlanWriteDeviceRoom(String devId, String roomId) {
-    Map before = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
-    if (!before.ok || !(before.data instanceof Map)) {
-        return [id: devId, ok: false, reason: 'could not read this device, so nothing was written']
-    }
-    Map form = roomPlanDeviceForm(before.data as Map, roomId)
-    if (form == null) {
-        return [id: devId, ok: false, reason: 'device record had no device object, so nothing was written']
-    }
-    Integer status = null
-    String failure = null
-    try {
-        httpPost([uri    : LOOPBACK_BASE,
-                  path   : '/device/update',
-                  requestContentType: 'application/x-www-form-urlencoded',
-                  body   : form,
-                  timeout: 15]) { resp -> status = resp?.status as Integer }
-    } catch (Exception e) {
-        failure = "${e.message}"
-    }
-    if (failure) return [id: devId, ok: false, reason: failure]
-    
-    
-    if (status == null || status < 200 || status >= 300) {
-        return [id: devId, ok: false, status: status,
-                reason: "the hub answered ${status ?: 'nothing'} to the update, so it was not accepted"]
-    }
-
-    Map after = httpFetch("${LOOPBACK_BASE}/device/fullJson/${devId}", 12)
-    if (!after.ok || !(after.data instanceof Map)) {
-        return [id: devId, ok: false, status: status,
-                reason: 'the device could not be read back, so the change could not be confirmed']
-    }
-    String landed = ''
-    Object devAfter = (after.data as Map).device
-    if (devAfter instanceof Map) landed = "${(devAfter as Map).roomId ?: ''}"
-    boolean roomOk = (landed == roomId) || (roomId == ROOM_CLEARED_ID && (landed == '' || landed == '0'))
-    if (!roomOk) {
-        return [id: devId, ok: false, status: status, roomId: landed,
-                reason: "posted roomId ${roomId} but the device reads back ${landed ?: 'nothing'}"]
-    }
-    
-    
-    
-    List drift = roomPlanPreservationDrift(before.data as Map, after.data as Map)
-    if (drift) {
-        return [id: devId, ok: false, status: status, roomId: landed, changed: drift,
-                reason: "the room moved but ${drift.join(', ')} changed too, which this app promises not to do"]
-    }
-    return [id: devId, ok: true, status: status, roomId: landed, reason: '']
-}
 
 
 
 
-@Field static final List<String> ROOM_PRESERVED_FIELDS = [
-    'name', 'label', 'zigbeeId', 'maxEvents', 'maxStates', 'spammyThreshold',
-    'deviceNetworkId', 'deviceTypeId', 'deviceTypeReadableType', 'meshEnabled',
-    'retryEnabled', 'meshFullSync', 'locationId', 'hubId', 'groupId', 'tags',
-    'defaultIcon', 'notes', 'id', 'controllerType']
-
-
-
-
-String roomPlanNormalise(Object v) {
-    String t = (v == null) ? '' : "${v}".trim()
-    return t.equalsIgnoreCase('null') ? '' : t
-}
-
-
-
-String roomPlanNormaliseTags(Object v) {
-    List parts = (v instanceof List) ? (v as List).collect { "${it}" }
-                                     : roomPlanNormalise(v).tokenize(',')
-    return parts.collect { it.trim() }.findAll { it }.join(',')
-}
-
-List roomPlanPreservationDrift(Map before, Map after) {
-    Map b = (before?.device instanceof Map) ? before.device as Map : [:]
-    Map a = (after?.device instanceof Map) ? after.device as Map : [:]
-    List changed = []
-    ROOM_PRESERVED_FIELDS.each { String f ->
-        boolean same = (f == 'tags') ? roomPlanNormaliseTags(b[f]) == roomPlanNormaliseTags(a[f])
-                                     : roomPlanNormalise(b[f]) == roomPlanNormalise(a[f])
-        if (!same) changed << f
-    }
-    
-    
-    
-    if (roomPlanSelectedDashboards(before) != roomPlanSelectedDashboards(after)) changed << 'dashboards'
-    if (roomPlanNormalise(before?.homeKitEnabled) != roomPlanNormalise(after?.homeKitEnabled)) changed << 'homeKitEnabled'
-    return changed
-}
-
-List roomPlanSelectedDashboards(Map full) {
-    List out = []
-    Object dashboards = full?.dashboards
-    if (dashboards instanceof List) {
-        (dashboards as List).each { Object x ->
-            if (x instanceof Map && (x as Map).selected == true && (x as Map).id != null) out << "${(x as Map).id}"
-        }
-    }
-    return out.sort()
-}
 
 Map roomPlanApplyMoves(Map moves) {
     
     
     
-    Map roomIdByName = (state.roomIdCache ?: [:]) as Map
-    boolean needed = moves.any { Object k, Object v ->
-        String t = "${v ?: ''}".trim()
-        return t && !roomIdByName["${t.toLowerCase()}"]
+    Long tStart = now()
+    Map timings = [:]
+    List writeTimings = []
+    Map tree = roomPlanMembershipSnapshot()
+    timings.snapshotMs = now() - tStart
+    if (!tree.ok) {
+        return [ok: false, requested: moves.size(), changed: 0, alreadyCorrect: 0, failed: moves.size(),
+                reason: 'the hub room list could not be read, so nothing was written', writes: 0, mismatched: []]
     }
-    if (needed) {
-        hubRoomList().each { Object r ->
-            Map m = r as Map
-            if (m.name && m.id) roomIdByName["${m.name}".toLowerCase()] = "${m.id}"
+    Long tPlan = now()
+    Map plan = roomPlanBuildWriteSet(moves, tree)
+    timings.planMs = now() - tPlan
+    if (plan.unknownRooms) {
+        return [ok: false, requested: moves.size(), changed: 0, alreadyCorrect: 0,
+                failed: (plan.unknownRooms as List).size(), writes: 0, mismatched: [],
+                reason: "this hub has no room named ${(plan.unknownRooms as List).join(', ')}"]
+    }
+
+    List failures = []
+    Integer writes = 0
+    for (Object w in (plan.writes as List)) {
+        Map write = w as Map
+        Long tWrite = now()
+        Map res = roomPlanPostRoom([roomId: write.roomId, name: write.name, deviceIds: write.deviceIds])
+        writeTimings << [roomId: write.roomId, members: (write.deviceIds as List).size(), ms: now() - tWrite]
+        writes = writes + 1
+        
+        
+        if (res.failure) { failures << "${write.name}: ${res.failure}"; break }
+    }
+
+    
+    
+    
+    Long tVerify = now()
+    Map after = roomPlanMembershipSnapshot()
+    timings.verifyReadMs = now() - tVerify
+    Long tCompare = now()
+    Map actual = (after.ok ? after.deviceRoom : [:]) as Map
+    Map intended = plan.intended as Map
+    List mismatched = []
+    intended.each { Object devId, Object wantRoom ->
+        String key = devId.toString()
+        String got = (actual[key] ?: '').toString()
+        if (got != (wantRoom ?: '').toString()) mismatched << key
+    }
+
+    Integer alreadyCorrect = (plan.alreadyCorrect ?: 0) as Integer
+    Integer changed = ((plan.toChange ?: 0) as Integer) - mismatched.size()
+    if (changed < 0) changed = 0
+
+    
+    
+    if (after.ok) {
+        Map rooms = (state.deviceRooms ?: [:]) as Map
+        Map nameById = tree.roomNames as Map
+        intended.each { Object devId, Object wantRoom ->
+            String key = devId.toString()
+            if (mismatched.contains(key)) return
+            rooms[key] = wantRoom ? (nameById[wantRoom.toString()] ?: '').toString() : ''
         }
-        state.roomIdCache = roomIdByName
+        state.deviceRooms = rooms
+        state.roomIdCache = [:]
     }
-    List results = []
+
+    timings.compareMs = now() - tCompare
+    timings.writeMs = writeTimings.sum { (it as Map).ms } ?: 0
+    timings.totalMs = now() - tStart
+    timings.writes = writeTimings
+    boolean ok = !failures && !mismatched && after.ok
+    return [ok: ok, requested: moves.size(), changed: changed, alreadyCorrect: alreadyCorrect,
+            failed: mismatched.size() + failures.size(), writes: writes, mismatched: mismatched,
+            timings: timings,
+            reason: failures ? failures.join('; ')
+                             : (mismatched ? "the rooms were written but ${mismatched.size()} device(s) did not land" : '')]
+}
+
+
+
+Map roomPlanMembershipSnapshot() {
+    Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/roomsList", 20)
+    Object data = fetched.ok ? fetched.data : null
+    Object nodes = (data instanceof Map) ? (data as Map).roomNodes : data
+    if (!(nodes instanceof List)) return [ok: false]
+    Map members = [:]
+    Map names = [:]
+    Map idByName = [:]
+    Map deviceRoom = [:]
+    Map deviceLabel = [:]
+    
+    
+    
+    
+    
+    
+    (nodes as List).each { Object n ->
+        if (!(n instanceof Map)) return
+        Object raw = (n as Map).data
+        if (!(raw instanceof Map)) return
+        String rid = "${(raw as Map).id ?: ''}"
+        String rname = "${(raw as Map).name ?: ''}"
+        if (!rid) return
+        members[rid] = []
+        names[rid] = rname
+        if (rname) idByName["${rname.toLowerCase()}"] = rid
+    }
+
+    Set<String> seenDevices = [] as Set<String>
+    Closure walkDevice
+    walkDevice = { Object node, String enclosingRoomId ->
+        if (!(node instanceof Map)) return
+        Map nm = node as Map
+        Object kd = nm.data
+        if (kd instanceof Map) {
+            Map kdm = kd as Map
+            String devId = "${kdm.id ?: ''}".trim()
+            if (devId && !seenDevices.contains(devId)) {
+                seenDevices << devId
+                boolean hasRoomIdField = kdm.containsKey('roomId')
+                String ownRoomId = kdm.roomId == null ? '' : "${kdm.roomId}".trim()
+                String ownRoomName = "${kdm.roomName ?: ''}".trim()
+                boolean unassigned = !ownRoomId || ownRoomId == '0' || ownRoomId == '999999' ||
+                    ROOM_NO_ROOM_NAMES.any { ownRoomName.equalsIgnoreCase(it as String) }
+                String actualRoomId = unassigned ? '' : ownRoomId
+                
+                
+                
+                if (!actualRoomId && !hasRoomIdField && enclosingRoomId != '999999') {
+                    actualRoomId = enclosingRoomId ?: ''
+                }
+                deviceRoom[devId] = actualRoomId
+                deviceLabel[devId] = "${kdm.label ?: kdm.name ?: ''}".trim()
+                if (actualRoomId && members.containsKey(actualRoomId)) {
+                    (members[actualRoomId] as List) << devId
+                }
+            }
+        }
+        Object kids = nm.children
+        if (kids instanceof List) {
+            (kids as List).each { Object child -> walkDevice(child, enclosingRoomId) }
+        }
+    }
+    (nodes as List).each { Object n ->
+        if (!(n instanceof Map)) return
+        Object raw = (n as Map).data
+        if (!(raw instanceof Map)) return
+        String rid = "${(raw as Map).id ?: ''}".trim()
+        Object kids = (n as Map).children
+        if (kids instanceof List) (kids as List).each { Object child -> walkDevice(child, rid) }
+    }
+    return [ok: true, members: members, roomNames: names, idByName: idByName,
+            deviceRoom: deviceRoom, deviceLabel: deviceLabel]
+}
+
+
+
+
+
+
+
+Map roomPlanBuildWriteSet(Map moves, Map tree) {
+    Map idByName = tree.idByName as Map
+    Map members = tree.members as Map
+    Map deviceRoom = tree.deviceRoom as Map
+
+    Map intended = [:]
+    List unknownRooms = []
+    Integer alreadyCorrect = 0
     moves.each { Object k, Object v ->
         String devId = "${k}".trim()
         String target = "${v ?: ''}".trim()
-        String roomId
-        if (!target) {
-            roomId = ROOM_CLEARED_ID
-        } else {
-            roomId = roomIdByName["${target.toLowerCase()}"]
-            if (!roomId) {
-                results << [id: devId, ok: false, reason: "this hub has no room named ${target}"]
-                return
-            }
+        if (!devId) return
+        String roomId = ''
+        if (target) {
+            roomId = "${idByName["${target.toLowerCase()}"] ?: ''}"
+            if (!roomId) { if (!unknownRooms.contains(target)) unknownRooms << target; return }
         }
-        Map res = roomPlanWriteDeviceRoom(devId, roomId)
         
-        
-        
-        
-        
-        
-        if (res.ok) {
-            Map rooms = (state.deviceRooms ?: [:]) as Map
-            rooms[devId] = target
-            state.deviceRooms = rooms
-            res.roomName = target
-        }
-        results << res
+        if ((deviceRoom[devId] ?: '').toString() == roomId) { alreadyCorrect = alreadyCorrect + 1; return }
+        intended[devId] = roomId
     }
-    Integer applied = results.count { (it as Map).ok } as Integer
-    return [ok: applied == results.size() && applied > 0, applied: applied,
-            requested: results.size(), results: results]
+    if (unknownRooms) return [unknownRooms: unknownRooms]
+
+    Set gaining = new LinkedHashSet()
+    Set losingToUnallocated = new LinkedHashSet()
+    intended.each { Object devId, Object roomId ->
+        if (roomId) { gaining << roomId.toString() }
+        else {
+            String from = (deviceRoom[devId.toString()] ?: '').toString()
+            if (from) losingToUnallocated << from
+        }
+    }
+    
+    
+    Set writeSet = new LinkedHashSet()
+    writeSet.addAll(gaining)
+    losingToUnallocated.each { Object r -> if (!gaining.contains(r.toString())) writeSet << r.toString() }
+
+    List writes = []
+    writeSet.each { Object r ->
+        String rid = r.toString()
+        List current = (members[rid] ?: []) as List
+        
+        
+        List staying = current.findAll { Object d ->
+            String key = d.toString()
+            return !intended.containsKey(key) || intended[key].toString() == rid
+        }
+        List arriving = []
+        intended.each { Object devId, Object roomId ->
+            String key = devId.toString()
+            if (roomId.toString() == rid && !staying.contains(key)) arriving << key
+        }
+        writes << [roomId: rid, name: "${(tree.roomNames as Map)[rid] ?: ''}", deviceIds: staying + arriving]
+    }
+    return [writes: writes, intended: intended, alreadyCorrect: alreadyCorrect, toChange: intended.size()]
 }
 
 
@@ -12996,30 +13151,10 @@ Map roomPlanApplyMoves(Map moves) {
 
 
 Map roomPlanRoomMembers(String roomId) {
-    Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/roomsList", 15)
-    Object data = fetched.ok ? fetched.data : null
-    Object nodes = (data instanceof Map) ? (data as Map).roomNodes : data
-    if (!(nodes instanceof List)) return [ok: false, ids: []]
-    for (Object n in (nodes as List)) {
-        if (!(n instanceof Map)) continue
-        Object raw = (n as Map).data
-        if (!(raw instanceof Map)) continue
-        if ("${(raw as Map).id ?: ''}" != roomId) continue
-        List ids = []
-        Object kids = (n as Map).children
-        if (kids instanceof List) {
-            (kids as List).each { Object k ->
-                if (!(k instanceof Map)) return
-                Object kd = (k as Map).data
-                if (kd instanceof Map) {
-                    String devId = "${(kd as Map).id ?: (kd as Map).deviceId ?: ''}".trim()
-                    if (devId) ids << devId
-                }
-            }
-        }
-        return [ok: true, ids: ids, name: "${(raw as Map).name ?: ''}"]
-    }
-    return [ok: false, ids: []]
+    Map snap = roomPlanMembershipSnapshot()
+    if (!snap.ok || !(snap.roomNames as Map).containsKey(roomId)) return [ok: false, ids: []]
+    return [ok: true, ids: (((snap.members as Map)[roomId] ?: []) as List),
+            name: "${(snap.roomNames as Map)[roomId] ?: ''}"]
 }
 
 Map roomPlanPostRoom(Map payload) {
@@ -13111,20 +13246,51 @@ Map roomPlanGetMapping() {
     return render(status: 200, contentType: 'application/json', data: roomPlanJson(null))
 }
 
+
+
+
+
+
+
+
 String roomPlanJson(String message) {
-    List rooms = hubRoomList()
-    
-    
-    
-    
-    Map idByName = [:]
-    rooms.each { Object r -> Map m = r as Map; if (m.name && m.id) idByName["${m.name}".toLowerCase()] = "${m.id}" }
-    state.roomIdCache = idByName
+    Map snap = roomPlanMembershipSnapshot()
+    List rooms = []
+    Map deviceRooms = [:]
+    List hubOnlyDevices = []
+    if (snap.ok) {
+        Map names = snap.roomNames as Map
+        (snap.idByName as Map).each { Object lower, Object rid ->
+            rooms << [id: "${rid}", name: "${names[rid.toString()] ?: ''}"]
+        }
+        rooms = rooms.sort { "${(it as Map).name}".toLowerCase() }
+        (snap.deviceRoom as Map).each { Object devId, Object rid ->
+            deviceRooms["${devId}"] = "${names[rid.toString()] ?: ''}"
+        }
+        
+        
+        
+        Map labels = snap.deviceLabel as Map
+        deviceRooms.each { Object devId, Object roomName ->
+            if (!((state.deviceRooms ?: [:]) as Map).containsKey("${devId}")) {
+                hubOnlyDevices << [id: "${devId}", name: "${labels["${devId}"] ?: "Device ${devId}"}",
+                                   room: "${roomName}"]
+            }
+        }
+        state.roomIdCache = snap.idByName
+    } else {
+        
+        
+        rooms = hubRoomList()
+    }
     Map layout = (state.roomLayout ?: [:]) as Map
     return JsonOutput.toJson([
         ok          : true,
         rooms       : rooms,
-        roomsFrom   : rooms.any { (it as Map).id } ? 'hub' : 'devices',
+        roomsFrom   : snap.ok ? 'hub' : 'devices',
+        live        : snap.ok as Boolean,
+        deviceRooms : deviceRooms,
+        hubOnlyDevices: hubOnlyDevices,
         layout      : layout,
         canCommit   : true,
         message     : message ?: '',
@@ -13484,7 +13650,7 @@ Map scanMapping() {
         if (state.scanRunning) {
             if (diagOn()) log.info "${app.label}: /scan reached while a scan is already running, not restarting"
         } else {
-            Map result = startScan()
+            Map result = startScan('endpoint')
             if (!result.acquired) {
                 casLost = true
                 if (diagOn()) log.info "${app.label}: /scan reached but another start already owns this instance, not restarting"
@@ -18398,12 +18564,10 @@ function appOptionText(n) {
 // Same purely-decorative prefix for devices, reusing n.icon - the existing
 // auto-detected/user-overridden classification the Device icons panel
 // already maintains, not a new scheme invented for this picklist. Started as
-// 17 categories mapped to a fixed three-letter code, agreed with Gordon
-// 2026-08-19; 'scene' added 2026-08-21. Six more of ICON_KEYS (locks, safety,
-// cameras, shades, sensor, ai) still have no entry here and fall through to
-// UNK same as genuine 'unknown' does - not an oversight in this pass, just
-// not the one Gordon asked about; worth a follow-up if any of those turn out
-// to matter here the way scene did.
+// Every ICON_KEYS category except 'unknown' mapped to a short code, agreed
+// with Gordon 2026-08-19; 'scene' added 2026-08-21, and the last six added
+// 2026-10-01 because falling through to UNK told the user "unknown" about a
+// device this app had in fact classified.
 const DEVICE_ICON_TAGS = {
   lighting: 'LGT',
   switches: 'SWT',
@@ -18423,7 +18587,13 @@ const DEVICE_ICON_TAGS = {
   hub: 'HUB',
   network: 'NET',
   scene: 'SCN',
-  connector: 'CON'
+  connector: 'CON',
+  locks: 'LCK',
+  safety: 'SAF',
+  cameras: 'CAM',
+  shades: 'SHD',
+  sensor: 'SEN',
+  ai: 'AI'
 };
 function deviceOptionText(n) {
   return '[' + (DEVICE_ICON_TAGS[n.icon] || 'UNK') + '] ' + n.title;
@@ -20237,17 +20407,52 @@ function roomPlanOpen() {
 function roomPlanLoad() {
   const canvas = document.getElementById('roomCanvas');
   canvas.innerHTML = '<p class="sub">Loading...</p>';
-  Promise.all([
+  return Promise.all([
     fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }),
     fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); })
   ]).then(function (res) {
     ROOMPLAN = res[0] || ROOMPLAN;
     ICONS = res[1] || ICONS;
+    // Merge in devices the hub has that the last scan never saw, so the panel
+    // cannot silently omit a device that is sitting in a room right now.
+    const known = {};
+    (ICONS.devices || []).forEach(function (d) { known[String(d.id)] = true; });
+    (ROOMPLAN.hubOnlyDevices || []).forEach(function (d) {
+      if (known[String(d.id)]) return;
+      ICONS.devices = (ICONS.devices || []).concat([{ id: String(d.id), name: d.name, room: d.room, hubOnly: true }]);
+    });
     roomPending = {};
     roomPlanRender();
   }).catch(function (e) {
     canvas.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
   });
+}
+
+// Applying moves only changes live room membership. Refresh that one payload
+// without running the initial-load path, which clears the canvas, refetches all
+// icons and renders twice. Keep failed moves staged while the successful moves
+// settle into their authoritative live rooms.
+function roomPlanRefreshLive(keep) {
+  return fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (next) {
+      ROOMPLAN = next || ROOMPLAN;
+      roomPending = {};
+      const validRooms = {};
+      (ROOMPLAN.rooms || []).forEach(function (r) {
+        const name = roomPlanNormalise(r && r.name);
+        if (name) validRooms[name.toLowerCase()] = true;
+      });
+      Object.keys(keep || {}).forEach(function (k) {
+        const target = roomPlanNormalise(keep[k]);
+        if (!target || validRooms[target.toLowerCase()]) roomPending[k] = keep[k];
+      });
+      roomPlanRender();
+    })
+    .catch(function () {
+      const msg = document.getElementById('roomPlanMsg');
+      msg.textContent += ' The live room list could not be refreshed; close and reopen Room Manager to check the result.';
+    });
 }
 
 // Every room the planner should offer: the hub list, plus any room a device
@@ -20259,10 +20464,16 @@ function roomPlanNames() {
     const rn = r ? roomPlanNormalise(r.name) : '';
     if (rn && names.indexOf(rn) === -1) names.push(rn);
   });
-  (ICONS.devices || []).forEach(function (d) {
-    const rm = roomPlanNormalise(d.room);
-    if (rm && names.indexOf(rm) === -1) names.push(rm);
-  });
+  // A successful live read is authoritative. Adding rooms from d.room here
+  // reintroduced deleted or renamed rooms from the older scan even though the
+  // rest of the panel was drawing live membership. Scan rooms are useful only
+  // when the live read failed and the whole panel is explicitly in fallback.
+  if (!ROOMPLAN.live) {
+    (ICONS.devices || []).forEach(function (d) {
+      const rm = roomPlanNormalise(d.room);
+      if (rm && names.indexOf(rm) === -1) names.push(rm);
+    });
+  }
   names.sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
   return names;
 }
@@ -20294,6 +20505,8 @@ function roomPlanIdFor(name) {
 
 function roomPlanCrud(body, busy) {
   const msg = document.getElementById('roomPlanMsg');
+  const keep = {};
+  Object.keys(roomPending).forEach(function (k) { keep[k] = roomPending[k]; });
   msg.textContent = busy;
   return fetch(ROOMPLAN_URL, {
     method: 'POST', cache: 'no-store', credentials: 'omit',
@@ -20301,17 +20514,29 @@ function roomPlanCrud(body, busy) {
     body: JSON.stringify(body)
   }).then(function (r) { return r.json(); })
     .then(function (d) {
-      if (d && d.ok) { msg.textContent = ''; roomPlanLoad(); return d; }
+      if (d && d.ok) { msg.textContent = ''; roomPlanRefreshLive(keep); return d; }
       msg.textContent = (d && d.reason) || 'That did not work.';
       return d;
     })
     .catch(function (e) { msg.textContent = 'Failed: ' + e; });
 }
 
+// The live hub answer wins. d.room is scan state and can be a scan old, which
+// is how a device showed as unallocated here while the hub already had it in a
+// room, and an honest "already there" from an apply read as a contradiction.
+// Scan state is only a fallback for when the live read itself failed.
+function roomPlanActual(d) {
+  const id = String(d.id);
+  const live = ROOMPLAN.deviceRooms || {};
+  if (ROOMPLAN.live && Object.prototype.hasOwnProperty.call(live, id)) return roomPlanNormalise(live[id]);
+  if (ROOMPLAN.live) return RP_UNASSIGNED;
+  return roomPlanNormalise(d.room);
+}
+
 function roomPlanCurrent(d) {
   const id = String(d.id);
   if (Object.prototype.hasOwnProperty.call(roomPending, id)) return roomPending[id];
-  return roomPlanNormalise(d.room);
+  return roomPlanActual(d);
 }
 
 function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
@@ -20454,7 +20679,7 @@ function roomPlanStage(devId, targetRoom, defer) {
   if (!d) return;
   // Dragging a device back where it started is not a change - drop the entry
   // rather than staging a write of the value already there.
-  if (roomPlanNormalise(d.room) === roomPlanNormalise(targetRoom)) delete roomPending[String(devId)];
+  if (roomPlanActual(d) === roomPlanNormalise(targetRoom)) delete roomPending[String(devId)];
   else roomPending[String(devId)] = targetRoom;
   if (!defer) roomPlanRender();
 }
@@ -20616,21 +20841,52 @@ function roomPlanApply() {
   const ids = Object.keys(roomPending);
   if (!ids.length) return;
   const msg = document.getElementById('roomPlanMsg');
-  msg.textContent = 'Applying ' + ids.length + '...';
-  // Each device costs a read, a write and a read-back, so a batch is slow by
-  // design. A slow apply and a dead one look identical from here, so say which
-  // rather than leave the user watching "Applying..." forever. The writes carry
-  // on hub-side regardless; this only governs what the panel claims.
+
+  // The bounded cost is rooms written, not devices. One room write carries
+  // every device arriving there, so say that up front rather than implying
+  // per-device work the backend no longer does.
+  const targets = {};
+  let toUnallocated = 0;
+  ids.forEach(function (id) {
+    const want = roomPlanNormalise(roomPending[id]);
+    if (want) targets[want] = true;
+    else toUnallocated += 1;
+  });
+  let writes = Object.keys(targets).length;
+  if (toUnallocated) {
+    // A room losing devices to Not Allocated has to be written itself, since
+    // there is no target room write to carry the removal.
+    const sources = {};
+    ids.forEach(function (id) {
+      if (roomPlanNormalise(roomPending[id])) return;
+      const dev = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(id); })[0];
+      const from = dev ? roomPlanActual(dev) : '';
+      if (from && !targets[from]) sources[from] = true;
+    });
+    writes += Object.keys(sources).length;
+  }
+  const plural = function (n, one, many) { return n + ' ' + (n === 1 ? one : many); };
+  msg.textContent = 'Applying ' + plural(ids.length, 'device', 'devices') +
+                    ' in ' + plural(writes, 'room write', 'room writes') + '...';
+
   let settled = false;
-  const slowTimer = setTimeout(function () {
-    if (!settled) msg.textContent = 'Still applying ' + ids.length + '. Each device is read, written and checked, so a large batch takes a while.';
-  }, 8000);
+  const started = Date.now();
+  // A slow apply and a dead one look identical from here, so say which. The
+  // writes carry on hub-side regardless; this only governs what the panel says.
+  const pendingTimer = setTimeout(function () {
+    // Neutral and accurate: measured 2026-10-01, reads are the majority but the
+    // first write alone costs about 2.5s, so naming either as "the slow part"
+    // would be wrong.
+    if (!settled) msg.textContent = 'Applying and verifying ' + plural(writes, 'room write', 'room writes') +
+                                    '. Reading and updating hub rooms can take several seconds.';
+  }, 2500);
   const giveUpTimer = setTimeout(function () {
     if (settled) return;
     settled = true;
     msg.textContent = 'No answer yet. The writes may still have landed - reopen the planner to see where these devices actually are before retrying.';
   }, 120000);
-  const done = function () { settled = true; clearTimeout(slowTimer); clearTimeout(giveUpTimer); };
+  const done = function () { settled = true; clearTimeout(pendingTimer); clearTimeout(giveUpTimer); };
+
   fetch(ROOMPLAN_URL, {
     method: 'POST', cache: 'no-store', credentials: 'omit',
     headers: { 'Content-Type': 'application/json' },
@@ -20639,30 +20895,39 @@ function roomPlanApply() {
     .then(function (d) {
       if (settled) return;
       done();
-      // Trust what each write read back off the device, not a re-fetch of the
-      // panel's device list: that list is built from scan state, so reloading
-      // here drew a just-moved device back in its old room and made a write
-      // that had actually landed look like it had failed.
-      const results = (d && d.results) || [];
-      let moved = 0;
-      results.forEach(function (res) {
-        if (!res || !res.ok) return;
-        moved += 1;
-        const dev = (ICONS.devices || []).filter(function (x) { return String(x.id) === String(res.id); })[0];
-        if (dev) dev.room = res.roomName || '';
-        delete roomPending[String(res.id)];
-      });
-      roomPlanRender();
-      if (d && d.ok) {
-        msg.textContent = moved + (moved === 1 ? ' device moved.' : ' devices moved.');
-        return;
+      // Client-observed wall time, which is what the user actually waited.
+      // The server phase total is lower - 9.2s against 13.3s when measured -
+      // so reporting the server figure would understate the wait.
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      // Phase breakdown kept for evidence, in the console rather than in the
+      // user-facing line, so diagnostics do not become production prose.
+      if (d && d.timings) {
+        try { console.log('Automation Map room apply phases (ms):', JSON.stringify(d.timings)); } catch (ignore) {}
       }
-      // Partial or refused. Whatever did not land stays staged, so a retry
-      // sends only the ones still outstanding.
-      const failed = results.filter(function (r) { return r && !r.ok; });
-      msg.textContent = failed.length
-        ? (moved + ' moved, ' + failed.length + ' failed: ' + (failed[0].reason || 'no reason given'))
-        : ((d && d.reason) || 'Could not apply.');
+      const mismatched = (d && d.mismatched) || [];
+      // No per-device result rows any more: the backend writes rooms, not
+      // devices, so anything not named as mismatched landed. Updating the
+      // panel's own list rather than re-fetching, which is built from scan
+      // state and would draw a just-moved device back in its old room.
+      ids.forEach(function (id) {
+        if (mismatched.indexOf(String(id)) >= 0) return;
+        delete roomPending[String(id)];
+      });
+      // Re-read rather than patch the in-memory list. Patching made a move look
+      // applied until the next reload rebuilt from scan state and put the device
+      // back where it started. Anything still staged is carried across.
+      const keep = {};
+      Object.keys(roomPending).forEach(function (k) { keep[k] = roomPending[k]; });
+      roomPlanRefreshLive(keep);
+
+      const bits = [];
+      if (d && d.changed) bits.push(plural(d.changed, 'device moved', 'devices moved'));
+      if (d && d.alreadyCorrect) bits.push(d.alreadyCorrect + ' already there');
+      if (d && d.failed) bits.push(d.failed + ' failed');
+      let text = bits.length ? bits.join(', ') : 'Nothing to change';
+      text += ' in ' + plural(writes, 'room write', 'room writes') + ', ' + secs + 's.';
+      if (d && !d.ok && d.reason) text += ' ' + d.reason;
+      msg.textContent = text;
     })
     .catch(function (e) {
       if (settled) return;
