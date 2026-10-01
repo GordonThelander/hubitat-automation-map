@@ -9,16 +9,31 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $expectedAppName = 'Automation Map (Dev)'
+$utf8NoBomStrict = New-Object System.Text.UTF8Encoding($false, $true)
 
-function Get-Sha256([string]$Text) {
-    $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+function Get-BytesSha256([byte[]]$Bytes) {
     $sha256 = [Security.Cryptography.SHA256]::Create()
     try {
-        $hash = $sha256.ComputeHash($bytes)
+        $hash = $sha256.ComputeHash($Bytes)
         return ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
     } finally {
         $sha256.Dispose()
     }
+}
+
+function Get-Sha256([string]$Text) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
+    return Get-BytesSha256 $bytes
+}
+
+function Get-Utf8Text([string]$Path) {
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    return [IO.File]::ReadAllText($resolvedPath, $utf8NoBomStrict)
+}
+
+function Get-FileSha256([string]$Path) {
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    return Get-BytesSha256 ([IO.File]::ReadAllBytes($resolvedPath))
 }
 
 Push-Location $repoRoot
@@ -53,7 +68,12 @@ try {
         }
     }
 
-    $source = Get-Content -LiteralPath $AppFile -Raw
+    $source = Get-Utf8Text $AppFile
+    $fileHash = Get-FileSha256 $AppFile
+    $sourceHash = Get-Sha256 $source
+    if ($fileHash -ne $sourceHash) {
+        throw 'App source must be valid BOM-less UTF-8. Refusing to deploy bytes that do not round-trip exactly.'
+    }
     if ($source -notmatch "APP_NAME\s*=\s*'$([regex]::Escape($expectedAppName))'") {
         throw "Refusing deployment: source is not $expectedAppName."
     }
@@ -83,7 +103,7 @@ try {
         throw "Apps Code entry $appId returned empty source. Refusing deployment."
     }
 
-    $localHash = Get-Sha256 $source
+    $localHash = $sourceHash
     $currentHash = Get-Sha256 ([string]$current.source)
     Write-Host "Target: $expectedAppName, Apps Code ID $appId, revision $($current.version)"
     Write-Host "Local SHA-256:  $localHash"
@@ -102,28 +122,51 @@ try {
     New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backupPath = Join-Path $backupDir "automation-map-dev-app-$appId-rev-$($current.version)-$stamp.groovy"
-    Set-Content -LiteralPath $backupPath -Value ([string]$current.source) -NoNewline
+    [IO.File]::WriteAllText($backupPath, [string]$current.source, $utf8NoBomStrict)
 
-    $body = @{
-        id = $appId
-        version = [int]$current.version
-        source = $source
-    }
-    $result = Invoke-RestMethod -Uri "$hubBase/app/ajax/update" -Method Post -Body $body -TimeoutSec 60
-    if ($result.status -and $result.status -ne 'success') {
-        throw "Hub rejected the update: $($result | ConvertTo-Json -Compress -Depth 5)"
+    $body = 'id={0}&version={1}&source={2}' -f @(
+        [Net.WebUtility]::UrlEncode([string]$appId)
+        [Net.WebUtility]::UrlEncode([string][int]$current.version)
+        [Net.WebUtility]::UrlEncode($source)
+    )
+    $updateError = $null
+    try {
+        $result = Invoke-RestMethod -Uri "$hubBase/app/ajax/update" -Method Post -Body $body `
+            -ContentType 'application/x-www-form-urlencoded; charset=utf-8' -TimeoutSec 60
+        if ($result.status -and $result.status -ne 'success') {
+            $updateError = "Hub rejected the update: $($result | ConvertTo-Json -Compress -Depth 5)"
+        }
+    } catch {
+        $updateError = "Hub update request did not return cleanly: $($_.Exception.Message)"
     }
 
-    $saved = Invoke-RestMethod -Uri "$hubBase/app/ajax/code?id=$appId" -Method Get -TimeoutSec 20
-    $savedHash = Get-Sha256 ([string]$saved.source)
-    if ($savedHash -ne $localHash) {
-        throw "Post-deployment verification failed. Backup: $backupPath"
+    $saved = $null
+    $savedHash = $null
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        try {
+            $saved = Invoke-RestMethod -Uri "$hubBase/app/ajax/code?id=$appId" -Method Get -TimeoutSec 20
+            $savedHash = Get-Sha256 ([string]$saved.source)
+            if ($savedHash -eq $localHash -and [int]$saved.version -gt [int]$current.version) {
+                break
+            }
+        } catch {
+            $messages = @($updateError, "Readback attempt $attempt failed: $($_.Exception.Message)") |
+                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+            $updateError = $messages -join ' '
+        }
+        if ($attempt -lt 6) {
+            Start-Sleep -Seconds 2
+        }
     }
-    if ([int]$saved.version -le [int]$current.version) {
-        throw "Source matches, but the hub revision did not increase. Backup: $backupPath"
+    if ($null -eq $saved -or $savedHash -ne $localHash -or [int]$saved.version -le [int]$current.version) {
+        $detail = if ($updateError) { " $updateError" } else { '' }
+        throw "Post-deployment verification failed after exact readback.$detail Backup: $backupPath"
     }
 
     Write-Host "Deployed and verified revision $($current.version) -> $($saved.version)."
+    if ($updateError) {
+        Write-Warning "$updateError Exact readback nevertheless proved the requested source was saved once."
+    }
     Write-Host "Backup: $backupPath"
 } finally {
     Pop-Location
