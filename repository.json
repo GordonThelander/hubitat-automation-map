@@ -4,14 +4,14 @@
   "payPalUrl": "",
   "packages": [
     {
-      "name": "Automation Map (Dev)",
+      "name": "Automation Map (Preprod)",
       "category": "Utility",
-      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/dev/packageManifest.json",
-      "description": "Private test channel tracking the dev branch. Installs alongside the release version under a separate name. Not for general installation.",
+      "location": "https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/preprod/packageManifest.json",
+      "description": "Release candidate channel for Automation Map. Installs alongside the release version under a separate name. Not for general installation.",
       "tags": [
         "Tools & Utilities"
       ],
-      "id": "42cf37df-8a8d-4041-a235-d76c9610e57e"
+      "id": "40d5215d-1b2f-4280-aa00-6bef0c3e4c5a"
     }
   ]
 }
