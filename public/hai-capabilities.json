@@ -1,24 +1,25 @@
 {
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
- "capabilitiesHash": "625ddb1a26c20a7313ae6058b6d12f440480e27fe11b05e6d5218024781582f6",
- "generatedAt": "2026-09-23T18:38:43+08:00",
- "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means someone watched it work on a hub on that date, \"simulated\" means nobody has. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
+ "capabilitiesHash": "d85fe8ad1074599dbf212b8177f5817dc7add5625c2566ed7cbd9a01f9927ebf",
+ "generatedAt": "2026-10-02T14:16:50+08:00",
+ "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means observed HAI runtime execution using virtual or physical hub devices; \"simulated\" means modelled execution only for that row. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
-  "Runs": "Built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run on a hub.",
+  "Runs": "Implementation status, not a claim that this row has been watched on a hub: built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run. Rows share mechanisms - several features run through one command, subscription or evaluation path - so the number of hub-observed rows is not a completeness score.",
   "Format": "Can be written, will not act. A rule can use it and HAI checks and simulates it, but the runtime deliberately refuses to carry it out yet; the note says why.",
   "Partial": "Some of it works. The note says what is missing.",
-  "Missing": "Not built. HAI has no equivalent; the note says why."
+  "Missing": "Not built. HAI has no equivalent; the note says why.",
+  "Scoped": "Not built, and the route is known. The parts already exist and the note says what it would be assembled from. Nothing here works yet."
  },
  "evidenceMeanings": {
-  "hub": "Seen working on a hub on the date given.",
-  "simulated": "Built and simulated, but nobody has watched it run. It may still be wrong on a hub."
+  "hub": "HAI executed on the hub and the expected result was observed on the date given. Virtual and physical hub devices count equally. This establishes the observed mechanism, not every parameter variant or device model.",
+  "simulated": "Checked using modelled state or command effects, without observed HAI runtime execution for this row. Actual execution against a virtual hub device is hub-tested, not simulation."
  },
  "counts": {
-  "total": 156,
+  "total": 158,
   "byEvidence": {
-   "simulated": 91,
-   "hub": 61,
+   "hub": 140,
+   "simulated": 14,
    "none": 4
   }
  },
@@ -29,8 +30,8 @@
    "feature": "Trigger events, OR between them",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "2. Rule structure and gating: Trigger events, OR between them",
@@ -42,8 +43,8 @@
    "feature": "Required expression",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "2. Rule structure and gating: Required expression",
@@ -55,8 +56,8 @@
    "feature": "Cancel pending actions when required expression becomes false",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "2. Rule structure and gating: Cancel pending actions when required expression becomes false",
@@ -94,8 +95,8 @@
    "feature": "\"And stays\" (sticky) trigger",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "2. Rule structure and gating: \"And stays\" (sticky) trigger",
@@ -109,8 +110,8 @@
    "feature": "Rule with no triggers, run from elsewhere",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-21"
    },
    "note": null,
    "rm51": "2. Rule structure and gating: Rule with no triggers, run from elsewhere",
@@ -200,8 +201,8 @@
    "feature": "Certain Time with a date",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "3. Triggers: Certain Time with a date",
@@ -215,8 +216,8 @@
    "feature": "Time of day (as trigger)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "3. Triggers: Time of day (as trigger)",
@@ -230,8 +231,8 @@
    "feature": "Days of Week (days, or days plus time)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "3. Triggers: Days of Week (days, or days plus time)",
@@ -261,8 +262,8 @@
    "feature": "On a day (date or variable)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "3. Triggers: On a day (date or variable)",
@@ -276,8 +277,8 @@
    "feature": "Mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "3. Triggers: Mode",
@@ -286,34 +287,22 @@
    ]
   },
   {
-   "id": "trigger.location-event-sunrise-sunset-sunrisetime-sunset",
+   "id": "trigger.location-event",
    "area": "trigger",
-   "feature": "Location event: sunrise, sunset, sunriseTime, sunsetTime",
+   "feature": "Location event: any event the hub sends, named in the rule (sunrise, sunset, sunriseTime, sunsetTime, systemStart, severeLoad, zigbeeOff/On, zwaveCrashed, lowMemory)",
    "status": "Runs",
    "evidence": {
     "level": "hub",
     "date": "2026-09-23"
    },
    "note": null,
-   "rm51": "3. Triggers: Location event: sunrise, sunset, sunriseTime, sunsetTime",
-   "hai": [
-    "trigger:locationEvent",
-    "trigger:schedule"
-   ]
-  },
-  {
-   "id": "trigger.location-event-systemstart-severeload-zigbeeoff",
-   "area": "trigger",
-   "feature": "Location event: systemStart, severeLoad, zigbeeOff/On, zwaveCrashed",
-   "status": "Runs",
-   "evidence": {
-    "level": "hub",
-    "date": "2026-09-20"
-   },
-   "note": null,
-   "rm51": "3. Triggers: Location event: systemStart, severeLoad, zigbeeOff/On, zwaveCrashed",
+   "rm51": "3. Triggers: Location event: any event the hub sends, named in the rule (sunrise, sunset, sunriseTime, sunsetTime, systemStart, severeLoad, zigbeeOff/On, zwaveCrashed, lowMemory)",
    "hai": [
     "trigger:locationEvent"
+   ],
+   "formerIds": [
+    "trigger.location-event-sunrise-sunset-sunrisetime-sunset",
+    "trigger.location-event-systemstart-severeload-zigbeeoff"
    ]
   },
   {
@@ -322,8 +311,8 @@
    "feature": "HSM status (armed away/home/night, delayed arming, disarmed, all disarmed)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "3. Triggers: HSM status (armed away/home/night, delayed arming, disarmed, all disarmed)",
@@ -353,7 +342,7 @@
    "status": "Runs",
    "evidence": {
     "level": "hub",
-    "date": "2026-09-20"
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "3. Triggers: Security keypads (armed / disarmed / changed)",
@@ -412,8 +401,8 @@
    "feature": "Time since event (attribute or any, minimum time)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "3. Triggers: Time since event (attribute or any, minimum time)",
@@ -442,8 +431,8 @@
    "feature": "Private Boolean",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "3. Triggers: Private Boolean",
@@ -473,8 +462,8 @@
    "feature": "Local End Point / Cloud End Point (HTTP GET or POST runs the rule)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "3. Triggers: Local End Point / Cloud End Point (HTTP GET or POST runs the rule)",
@@ -488,8 +477,8 @@
    "feature": "Music player playing / paused / stopped",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "3. Triggers: Music player playing / paused / stopped",
@@ -503,8 +492,8 @@
    "feature": "\"And stays?\" on a trigger",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "3. Triggers: \"And stays?\" on a trigger",
@@ -531,8 +520,8 @@
    "feature": "Multiple \"stays\" triggers on the same attribute with different values",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "3. Triggers: Multiple \"stays\" triggers on the same attribute with different values",
@@ -576,8 +565,8 @@
    "feature": "Between two times (fixed, sunrise, sunset, offsets, variables)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Between two times (fixed, sunrise, sunset, offsets, variables)",
@@ -591,8 +580,8 @@
    "feature": "Time of day",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Time of day",
@@ -606,8 +595,8 @@
    "feature": "Between two dates",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Between two dates",
@@ -621,8 +610,8 @@
    "feature": "On a day",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: On a day",
@@ -636,8 +625,8 @@
    "feature": "Days of week (as condition)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Days of week (as condition)",
@@ -651,8 +640,8 @@
    "feature": "Mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Mode",
@@ -681,8 +670,8 @@
    "feature": "Private Boolean",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Private Boolean",
@@ -711,8 +700,8 @@
    "feature": "AND, OR, NOT",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: AND, OR, NOT",
@@ -728,8 +717,8 @@
    "feature": "XOR",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: XOR",
@@ -743,8 +732,8 @@
    "feature": "Parentheses (sub-expressions)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Parentheses (sub-expressions)",
@@ -754,12 +743,9 @@
    "id": "condition.display-current-values-t-f-shown-per-condition",
    "area": "condition",
    "feature": "\"Display current values\" (T/F shown per condition)",
-   "status": "Runs",
-   "evidence": {
-    "level": "simulated",
-    "date": null
-   },
-   "note": null,
+   "status": "Scoped",
+   "evidence": null,
+   "note": "route known, parts exist, the view does not. Demoted from Runs 2026-10-01 after Codex traced it (HAI-1190, HAI-1192) and I checked the same source. The data is there - rtShrink retains each condition node's path with T, F or U in the trace's c. What is missing is any view that shows it: tlFailedConditions (hai_timeline.groovy:59) filters to F and U only, skips group nodes, and is called only for rejected runs (:148, :195); the editor's Current values pane renders raw device and variable readings with no per-condition truth. So this was claiming implementation it does not have, which is worse than claiming a test it has not had. Not Tested, and not altered on source review alone - the Tested count is untouched by this. Building the view is a small job on top of data already retained, and then it needs a real hub condition run.",
    "rm51": "4. Conditions and operators: \"Display current values\" (T/F shown per condition)",
    "hai": []
   },
@@ -769,8 +755,8 @@
    "feature": "Separate condition banks for required expression and actions",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "4. Conditions and operators: Separate condition banks for required expression and actions",
@@ -800,8 +786,8 @@
    "feature": "Conditional: Simple conditional action (one action with a condition)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "5. Actions: Conditional: Simple conditional action (one action with a condition)",
@@ -830,8 +816,8 @@
    "feature": "Switches: Toggle switches",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "5. Actions: Switches: Toggle switches",
@@ -862,8 +848,8 @@
    "feature": "Switches: Set switches per mode, choose switches per mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "5. Actions: Switches: Set switches per mode, choose switches per mode",
@@ -893,8 +879,8 @@
    "feature": "Dimmers: Set dimmer (level, fade time, variable level)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-21"
    },
    "note": null,
    "rm51": "5. Actions: Dimmers: Set dimmer (level, fade time, variable level)",
@@ -923,8 +909,8 @@
    "feature": "Dimmers: Set dimmer per mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Dimmers: Set dimmer per mode",
@@ -939,8 +925,8 @@
    "feature": "Dimmers: Fade dimmer over time, stop fade, start raising/lowering, stop changing",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Dimmers: Fade dimmer over time, stop fade, start raising/lowering, stop changing",
@@ -987,8 +973,8 @@
    "feature": "Dimmers: Change color temperature over time, stop changing",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Dimmers: Change color temperature over time, stop changing",
@@ -1004,8 +990,8 @@
    "feature": "Dimmers: Track event dimmer / track event switch",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Dimmers: Track event dimmer / track event switch",
@@ -1049,8 +1035,8 @@
    "feature": "Scenes: Activate scenes, activate scenes per mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Scenes: Activate scenes, activate scenes per mode",
@@ -1065,7 +1051,7 @@
    "status": "Runs",
    "evidence": {
     "level": "hub",
-    "date": "2026-09-20"
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "5. Actions: HSM, doors, locks, valves: Arm / disarm HSM (all 9 variants)",
@@ -1094,8 +1080,8 @@
    "feature": "HSM, doors, locks, valves: Lock/unlock locks",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: HSM, doors, locks, valves: Lock/unlock locks",
@@ -1122,9 +1108,12 @@
    "id": "action.thermostats-set-thermostats-thermostat-scheduler",
    "area": "action",
    "feature": "Thermostats: Set thermostats, Thermostat Scheduler, Thermostat Controller sensors",
-   "status": "Partial",
-   "evidence": null,
-   "note": "setting thermostats runs simulated; no virtual test device has it, so not yet seen on a device). Thermostat Controller presents its own virtual thermostat device, which takes these commands like any thermostat. no app API reaches it, so HAI sets the thermostat directly instead (checked 2026-09-19). A device that declares only the setpoint capabilities, not Thermostat, is not offered these.",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-26"
+   },
+   "note": null,
    "rm51": "5. Actions: Thermostats: Set thermostats, Thermostat Scheduler, Thermostat Controller sensors",
    "hai": [
     "action:command"
@@ -1196,8 +1185,8 @@
    "feature": "Messages: Ping IP address",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Messages: Ping IP address",
@@ -1241,8 +1230,8 @@
    "feature": "Music and sounds: Control siren",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Music and sounds: Control siren",
@@ -1289,7 +1278,7 @@
    "status": "Runs",
    "evidence": {
     "level": "hub",
-    "date": "2026-09-20"
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "5. Actions: Variables, mode, files, custom: Run Custom Action (any device command with parameters)",
@@ -1303,8 +1292,8 @@
    "feature": "Variables, mode, files, custom: Write, append, delete local file",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "5. Actions: Variables, mode, files, custom: Write, append, delete local file",
@@ -1378,9 +1367,9 @@
    "id": "action.rules-activate-room-lights-for-mode-period-turn",
    "area": "action",
    "feature": "Rules: Activate Room Lights for mode/period, turn off Room Lights",
-   "status": "Partial",
+   "status": "Scoped",
    "evidence": null,
-   "note": "activating and turning off work through the activator, which HAI already commands. Checked 2026-09-19.",
+   "note": "activating and turning off already work through the activator, which HAI already commands. Route known, parts exist, nothing built or watched. Checked 2026-09-19, rescoped 2026-09-28.",
    "rm51": "5. Actions: Rules: Activate Room Lights for mode/period, turn off Room Lights",
    "hai": [
     "action:command",
@@ -1437,9 +1426,9 @@
    "id": "action.devices-disable-enable-devices",
    "area": "action",
    "feature": "Devices: Disable/Enable devices",
-   "status": "Missing",
+   "status": "Scoped",
    "evidence": null,
-   "note": null,
+   "note": "route known, parts exist, nothing built or watched. both halves were wrong. The hub own UI does it with a plain JSON call, POST /device/disable with {\"id\": <deviceId>, \"disable\": true.",
    "rm51": "5. Actions: Devices: Disable/Enable devices",
    "hai": []
   },
@@ -1447,9 +1436,9 @@
    "id": "action.devices-start-stop-z-wave-polling",
    "area": "action",
    "feature": "Devices: Start/Stop Z-Wave polling",
-   "status": "Missing",
+   "status": "Scoped",
    "evidence": null,
-   "note": null,
+   "note": "the route is in this row own HAI column - a repeat of refresh or poll on HAI own timers does the same work for a device. Nothing is built or watched, so this is not a working capability, but it needs no mechanism HAI lacks. The earlier note claimed apps cannot reach the hub built-in poller through the app API. That was asserted from documentation on 2026-09-19 and never tested, and the neighbouring claim about device disabling turned out to be false, so this one is not trustworthy either. A search of /ui2/js/vue-hub2.min.js on 2026-09-28 found no radio or polling endpoint, which is evidence of absence from that bundle and nothing more. Treat as unknown rather than blocked until someone reads the page that carries the control.",
    "rm51": "5. Actions: Devices: Start/Stop Z-Wave polling",
    "hai": [
     "action:repeat",
@@ -1462,8 +1451,8 @@
    "feature": "Repeat: Repeat actions (every N, n times, stoppable)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "5. Actions: Repeat: Repeat actions (every N, n times, stoppable)",
@@ -1477,8 +1466,8 @@
    "feature": "Repeat: Repeat while expression, repeat until expression, END-REP",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "5. Actions: Repeat: Repeat while expression, repeat until expression, END-REP",
@@ -1492,8 +1481,8 @@
    "feature": "Repeat: Stop repeating actions",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "5. Actions: Repeat: Stop repeating actions",
@@ -1537,8 +1526,8 @@
    "feature": "Delay, wait, exit: Delay actions per mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "5. Actions: Delay, wait, exit: Delay actions per mode",
@@ -1552,8 +1541,8 @@
    "feature": "Delay, wait, exit: Delay from a variable",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "5. Actions: Delay, wait, exit: Delay from a variable",
@@ -1613,8 +1602,8 @@
    "feature": "Delay, wait, exit: Exit rule",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-28"
    },
    "note": null,
    "rm51": "5. Actions: Delay, wait, exit: Exit rule",
@@ -1643,8 +1632,8 @@
    "feature": "Every action: Disable an individual action",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "5. Actions: Every action: Disable an individual action",
@@ -1656,8 +1645,8 @@
    "feature": "Hub variables: Number, Decimal, String, Boolean, DateTime",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "6. Variables: Hub variables: Number, Decimal, String, Boolean, DateTime",
@@ -1714,8 +1703,8 @@
    "feature": "Register variables as in use (addInUseGlobalVar) so the Hub Variables page shows the app and warns before deletion",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "6. Variables: Register variables as in use (addInUseGlobalVar) so the Hub Variables page shows the app and warns before deletion",
@@ -1727,8 +1716,8 @@
    "feature": "Follow a renamed hub variable (renameVariable)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "6. Variables: Follow a renamed hub variable (renameVariable)",
@@ -1740,8 +1729,8 @@
    "feature": "Variable connectors (a device standing in for a variable)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "6. Variables: Variable connectors (a device standing in for a variable)",
@@ -1753,8 +1742,8 @@
    "feature": "Local (rule) variables, all five types",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "6. Variables: Local (rule) variables, all five types",
@@ -1766,8 +1755,8 @@
    "feature": "Set variable: literal value",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "6. Variables: Set variable: literal value",
@@ -1781,8 +1770,8 @@
    "feature": "Set variable: copy from another variable",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "6. Variables: Set variable: copy from another variable",
@@ -1820,8 +1809,8 @@
    "feature": "Set variable: add a number",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "6. Variables: Set variable: add a number",
@@ -1833,8 +1822,8 @@
    "feature": "Set variable: string operations (remove, replace, token, URL encode/decode, lower case, format DateTime, from HTTP response, from file)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "6. Variables: Set variable: string operations (remove, replace, token, URL encode/decode, lower case, format DateTime, from HTTP response, from file)",
@@ -1861,8 +1850,8 @@
    "feature": "Built-in %device%, %value%, %text%, %date%, %time%, %now%",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "6. Variables: Built-in %device%, %value%, %text%, %date%, %time%, %now%",
@@ -1874,8 +1863,8 @@
    "feature": "Private Boolean (built in, set from other rules, usable in required expressions)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "6. Variables: Private Boolean (built in, set from other rules, usable in required expressions)",
@@ -1887,8 +1876,8 @@
    "feature": "Pause / Resume",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Pause / Resume",
@@ -1900,8 +1889,8 @@
    "feature": "Stop / Start",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Stop / Start",
@@ -1913,8 +1902,8 @@
    "feature": "Run Actions button (run now, no trigger)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Run Actions button (run now, no trigger)",
@@ -1926,8 +1915,8 @@
    "feature": "Update Rule / Done",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Update Rule / Done",
@@ -1939,8 +1928,8 @@
    "feature": "Logging: events, triggers, actions",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Logging: events, triggers, actions",
@@ -1952,8 +1941,8 @@
    "feature": "Display current values",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Display current values",
@@ -1978,8 +1967,8 @@
    "feature": "Copy, cut and paste actions, within and between rules",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Copy, cut and paste actions, within and between rules",
@@ -1991,8 +1980,8 @@
    "feature": "Disable an action",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Disable an action",
@@ -2021,8 +2010,8 @@
    "feature": "RMUtils: list rules, set Private Boolean, run actions, stop actions, pause, resume (from other apps)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: RMUtils: list rules, set Private Boolean, run actions, stop actions, pause, resume (from other apps)",
@@ -2034,8 +2023,8 @@
    "feature": "HTTP endpoint: run, stop, pause, resume, set Private Boolean, get rule list",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: HTTP endpoint: run, stop, pause, resume, set Private Boolean, get rule list",
@@ -2049,8 +2038,8 @@
    "feature": "HTTP endpoint: set a hub variable",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-01"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: HTTP endpoint: set a hub variable",
@@ -2062,8 +2051,8 @@
    "feature": "HTTP endpoint: pass a value into %value%",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: HTTP endpoint: pass a value into %value%",
@@ -2077,15 +2066,12 @@
    "feature": "Button Controller 5 shares these actions",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-30"
    },
    "note": null,
    "rm51": "7. Rule control, options and the Rule Machine API: Button Controller 5 shares these actions",
-   "hai": [
-    "trigger:button",
-    "condition:triggeredBy"
-   ]
+   "hai": []
   },
   {
    "id": "beyond.typed-variables",
@@ -2093,8 +2079,8 @@
    "feature": "Typed variables: string, number, boolean, date, time and datetime, converted only without loss",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2109,8 +2095,8 @@
    "feature": "Several wait kinds: a delay, for an event, or until a condition holds, each with a timeout and what to do then",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2139,8 +2125,8 @@
    "feature": "Logic trees: a real AND, OR, NOT and XOR tree with no left-to-right early stop",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2157,8 +2143,8 @@
    "feature": "Freshness: a condition can require a reading no older than a set time",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-27"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2258,21 +2244,6 @@
    "hai": []
   },
   {
-   "id": "beyond.approvals",
-   "area": "action",
-   "feature": "Approvals for locks, doors and sirens, by commissioned purpose",
-   "status": "Runs",
-   "evidence": {
-    "level": "simulated",
-    "date": null
-   },
-   "note": null,
-   "rm51": "8. HAI only features",
-   "hai": [
-    "action:command"
-   ]
-  },
-  {
    "id": "beyond.ai-drafting",
    "area": "option",
    "feature": "AI drafting and MCP tools on the same checked format",
@@ -2291,13 +2262,73 @@
    "feature": "A condition on which trigger started the run, instead of copying the steps per trigger",
    "status": "Runs",
    "evidence": {
+    "level": "hub",
+    "date": "2026-09-27"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "condition:triggeredBy"
+   ]
+  },
+  {
+   "id": "beyond.wait-outcome",
+   "area": "condition",
+   "feature": "A condition on how the last wait ended, so a rule can take one path when the thing it waited for happened and another when it gave up",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-28"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "condition:waitOutcome"
+   ]
+  },
+  {
+   "id": "beyond.cancellation-steps",
+   "area": "option",
+   "feature": "Cancellation steps: what to put right when a run is cancelled mid-flight, separately from what to do when a step fails",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-28"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "rule:onCancel"
+   ]
+  },
+  {
+   "id": "beyond.pattern-match",
+   "area": "condition",
+   "feature": "Match text against a pattern, in any condition or trigger that compares a value",
+   "status": "Runs",
+   "evidence": {
     "level": "simulated",
     "date": null
    },
    "note": null,
    "rm51": "8. HAI only features",
    "hai": [
-    "condition:triggeredBy"
+    "condition:deviceAttribute"
+   ]
+  },
+  {
+   "id": "beyond.pattern-extract",
+   "area": "variable",
+   "feature": "Pull a value out of text with a pattern, into a variable - the missing half of an HTTP response",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "action:setVariable"
    ]
   }
  ]
