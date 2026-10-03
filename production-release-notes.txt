@@ -1,4 +1,4 @@
-v2.4.2: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export. It now also groups devices by room.
+v2.4.3: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export. It now also groups devices by room.
 
 Changes since v2.3.2:
 

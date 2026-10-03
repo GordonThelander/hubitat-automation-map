@@ -4,7 +4,7 @@
 **Export schema:** 13 (see sections 18-28 for the schema 4/5/6/7/8/9/10/11/12/13 deltas; sections 1-17
 describe schema 3, the original baseline)  
 **First conforming app version:** Automation Map 1.9.6  
-**Default filename:** `automation-map-export-YYYY-MM-DD.json`
+**Default filename:** `HAM Export for <hub name> on DD-MMM-YYYY at HH-MM-SS.txt`. The filename uses only Windows-safe characters; the file contents remain JSON.
 
 This document specifies the JSON file produced by **AI friendly export**. The file is intended for
 an AI assistant, analysis program, documentation generator, or future MCP server. It is a
@@ -74,7 +74,9 @@ A breaking change requires a new `exportSchemaVersion`.
 | `about` | string | yes | Plain-language orientation for the consumer. |
 | `generatedAt` | ISO-8601 string | yes | When the browser generated this file. |
 | `generatedBy` | string | yes | Automation Map version that generated it. |
-| `exportSchemaVersion` | integer | yes | External export contract version; `13` as of v2.3.0 (see sections 18-28). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `exportSchemaVersion` | integer | yes | External export contract version; `14` as of v2.3.2 (see sections 18-28). Schema-3 files remain valid under section 4's compatibility rule; this app no longer generates them. |
+| `rmConstructVocabularyVersion` | integer | yes | Version of Rule Machine construct token spelling and meaning; `1` as of v2.4.3. |
+| `rmConstructVocabulary` | object | yes | Definitions for opaque Rule Machine construct tokens; see section 30.4. |
 | `graphSchemaVersion` | integer | yes | Internal graph version used for the snapshot. |
 | `scan` | object | yes | Provenance and completeness of the underlying scan. |
 | `summary` | object | yes | Convenience counts; arrays remain authoritative. |
@@ -84,7 +86,7 @@ A breaking change requires a new `exportSchemaVersion`.
 | `privacyNote` | string | yes | Reminder that the file contains household data. |
 | `schema` | object | yes | Self-contained field explanations for an AI. |
 | `devices` | object[] | yes | Known device nodes. |
-| `apps` | object[] | yes | Known app/rule nodes. |
+| `apps` | object[] | yes | Known app/rule nodes; Rule Machine entries whose extraction ran also carry `rmConstructs`, even when no decoded flow exists. |
 | `externalSystems` | object[] | yes | External dependency nodes drawn on the map. |
 | `hubVariables` | object[] | yes | As of schema 4 (v2.0.14): the hub's own authoritative Hub Variable inventory, reconciled with decoded rule references. Under schema 3 this held only variables found via decoded rule references (see section 18). |
 | `edges` | object[] | yes | Relationships between nodes. |
@@ -1108,3 +1110,80 @@ piston should be migrated at all.
 the hub, and the export reads that cache in one call. It performs no hub reads of its own, so
 export speed is unchanged from earlier schemas. The trade-off is freshness, which is what
 `ratedAt` and `stale` are for.
+
+## 30. v2.4.3 additive fields: Rule Machine construct inventory
+
+No `exportSchemaVersion` bump. These fields are additive, which section 2 already allows
+within a schema version, and no existing field changes meaning.
+
+### 30.1 `apps[].rmConstructs` and `ruleFlows[].rmConstructs`
+
+| field | type | required | meaning |
+| --- | --- | --- | --- |
+| `rmConstructs` | string[] | no | Sorted, unique Rule Machine construct tokens observed in the recognized saved setting families for this rule |
+
+Tokens are `action:<actSubType>`, `trigger:<capability>`, `condition:<type>`, `option:<name>` and
+`structure:<name>`. They are the same extraction the RM 5.1 coverage report is built on, published
+rather than recomputed, and they carry no device, value or message content. `apps[]` is the complete
+publication point for every scanned Rule Machine app whose extraction ran. When a decoded flow
+exists, its `ruleFlows[]` entry repeats the same array as a consumer convenience. A valid inert or
+no-action Rule Machine rule can therefore have `apps[].rmConstructs` while having no `ruleFlows[]`
+entry at all.
+
+The inventory remains rule-scoped. Proven action and trigger associations are also published on the
+matching `steps[].constructs` entry described below. Condition, option and structure tokens are not
+step-associated. These arrays describe observed saved settings, not proof that every stored setting
+is reachable in the rule's current live action path. They do not say which value was configured or
+whether anything ran. They cannot reconstruct the rule, and never repair, qualify or supersede an
+unresolved or ambiguous `steps[].references` record: a consumer must surface that caveat first.
+
+**Absent is not empty.** The field appears only on app entries whose engine extraction ran, which
+today means Rule Machine 5.1 and Button Rule 5.1. An absent field means not applicable to that engine. An empty array means
+extraction ran and found none. A `ruleFlows[]` copy exists only when the app also has decoded flow
+steps. Do not read these states as the same, and do not synthesize an empty array for an engine that
+has no extraction.
+
+The extractor recognises a fixed set of Rule Machine setting families. A feature stored under an
+unrecognised family is invisible rather than reported as unknown, so the absence of a token is not
+proof the rule lacks that feature.
+
+### 30.2 `ruleFlows[].steps[].constructs`
+
+| field | type | required | meaning |
+| --- | --- | --- | --- |
+| `constructs` | string[] | no | Exact normalized construct token proven for this Rule Machine trigger or action row |
+
+This field is emitted only where the association is direct: a positive saved `tCapab<n>` trigger row
+or an `actSubType.<n>` action row. It is not inferred from the rendered label. Conditions are omitted
+because no per-step association has yet been proven. Other engines and Rule Machine steps without a
+saved subtype omit the field rather than manufacturing one.
+
+### 30.3 `rmConstructVocabularyVersion` (root)
+
+| field | type | required | meaning |
+| --- | --- | --- | --- |
+| `rmConstructVocabularyVersion` | integer | yes | Version of the token spelling and meaning; `1` as of v2.4.3 |
+
+Versioned separately from `exportSchemaVersion` because token values can change without the JSON
+shape changing, and consumers will join on them. Treat an unrecognised token as an opaque,
+forward-compatible value. Never infer from a token's absence that a Rule Machine feature is absent
+unless the vocabulary version and extraction coverage support that claim.
+
+### 30.4 `rmConstructVocabulary` (root)
+
+| field | type | required | meaning |
+| --- | --- | --- | --- |
+| `rmConstructVocabulary` | object | yes | Definitions for opaque construct tokens, keyed by the exact token |
+
+Each definition contains `category`, `meaning`, and `haiCapabilityId` where the HAI capability
+catalogue has an explicit mapping. The dictionary intentionally omits self-describing condition and
+trigger tokens and `option:logging`; absence from the dictionary therefore does not mean a token is
+unknown or unsupported. Version 1 defines the 32 opaque `action:getXxx` values observed in the
+v2.4.3 assessment corpus, plus `structure:actionDelay`, `structure:conditionalTrigger`, and
+`option:displayCurrentValues`.
+
+### 30.5 What did not change
+
+References, local and hub variable handling, edges and insights are untouched. No parameter values,
+raw Rule Machine setting keys or runtime evidence are added. Step associations project saved values
+already used by the rule-level extraction; they add no label matching or inferred decoding.

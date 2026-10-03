@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.2'
+@Field static final String APP_VERSION = '2.4.3'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -4280,6 +4280,14 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 // so a rule with only Local definitions and no Hub-shaped
                 // reference at all still gets its definitions published.
                 out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
+            }
+            // Button Rule-5.1 uses the same saved trigger/action families and
+            // is already decoded into flow steps carrying constructs. It does
+            // not begin with "Rule-", so tying this inventory to the variable
+            // decoder gate above left those steps without their required
+            // app-level inventory. Keep the construct-engine decision explicit
+            // and independently testable.
+            if (supportsRmConstructExtraction("${out.type}")) {
                 out.rmConstructs = extractRuleConstructs(data)
             }
             if ("${out.type}" == 'webCoRE Piston') {
@@ -8790,6 +8798,27 @@ List extractHubVariableReads(Map data) {
     return found
 }
 
+// The exact rule-level trigger token for one saved positive tCapab row. Kept
+// in one function so rmConstructs and a flow step can never spell the same
+// proven construct differently.
+String triggerConstructToken(String capability, String num, Map settingValues) {
+    if (capability == 'Location Event') {
+        String event = "${settingValues["tstate${num}"] ?: ''}".trim()
+        return "${RM_LOCATION_EVENT_PREFIX}${event}"
+    }
+    return "trigger:${capability}"
+}
+
+// Label for a saved trigger Rule Machine itself did not render into capabs.
+// Deliberately bounded: the saved capability plus only its one known companion
+// field, never invented schedule detail.
+String triggerFallbackLabel(String capability, String num, Map settingValues) {
+    String companion = "${settingValues["tstate${num}"] ?: ''}".trim()
+    String varName = "${settingValues["xVar${num}"] ?: ''}".trim()
+    if (varName) return companion ? "${capability} ${varName} ${companion}" : "${capability} ${varName}"
+    return companion ? "${capability}: ${companion}" : capability
+}
+
 List buildRuleFlow(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -8830,12 +8859,21 @@ List buildRuleFlow(Map data) {
 
     List steps = []
 
-    // Triggers: any condition that has a tDev setting behind it. tDev-<n> is
-    // excluded deliberately - see roleForSetting: those are Wait for Events
-    // targets, and they rendered as a "Trigger -4" step with no capability text.
-    settingDevices.keySet().findAll { it.startsWith('tDev') && !it.startsWith('tDev-') }.sort().each { String n ->
-        String num = n.replaceAll('^tDev_?', '')
-        steps << [kind: 'trigger', label: (capabs[num] ?: "Trigger ${num}"), devices: settingDevices[n]]
+    // Triggers: one step per saved trigger row, whether or not a device list
+    // sits behind it. This walked tDev* until 2026-10-03, so a trigger with no
+    // device - Certain Time, Periodic Schedule, Variable, Location Event,
+    // Custom Attribute - could never be emitted and the rule read as though
+    // nothing started it. Negative suffixes stay excluded: those are Wait for
+    // Events targets, which is why the old tDev- exclusion existed.
+    List triggerNums = settingValues.keySet().findAll { it.matches('^tCapab[0-9]+$') }
+        .collect { it.substring('tCapab'.length()) }
+        .sort { String a, String b -> (a as Integer) <=> (b as Integer) }
+    triggerNums.each { String num ->
+        String cap = "${settingValues["tCapab${num}"] ?: ''}".trim()
+        if (!cap) return
+        List devs = (settingDevices["tDev${num}"] ?: settingDevices["tDev_${num}"] ?: []) as List
+        steps << [kind: 'trigger', label: (capabs[num] ?: triggerFallbackLabel(cap, num, settingValues)),
+                  devices: devs, constructs: [triggerConstructToken(cap, num, settingValues)]]
     }
 
     // Required expression: branch 0 of eval, present only when the rule has one.
@@ -9139,6 +9177,7 @@ List requiredDevices(List expr, Map settingDevices) {
 
 Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
     String method = (act.method ?: settingValues["actSubType.${num}"] ?: 'Action') as String
+    String savedSubtype = "${settingValues["actSubType.${num}"] ?: ''}".trim()
 
     List devices = []
     settingDevices.each { String n, List d ->
@@ -9191,7 +9230,7 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         }
     }
 
-    return [
+    Map step = [
         kind: 'action',
         ctrl: ctrl,
         cond: cond,
@@ -9208,6 +9247,12 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         // other action kind - nothing else is joined post-classification.
         variableField: (method == 'getSetVariable') ? "xVarV.${num}" : null,
     ]
+    // Only the saved actSubType is proof of the same action token emitted by
+    // extractRuleConstructs(). act.method remains useful for rendering older
+    // rows, but must not manufacture a construct absent from the rule-level
+    // inventory or an empty field that looks like a completed extraction.
+    if (savedSubtype) step.constructs = ["action:${savedSubtype}"]
+    return step
 }
 
 String actionLabel(String method, String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
@@ -10206,11 +10251,56 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 // the trigger rather than being lost at extraction.
 @Field static final String RM_LOCATION_EVENT_PREFIX = 'trigger:Location Event:'
 
+// Definitions only for construct tokens whose saved Rule Machine names are
+// not already plain language. The AI export publishes this dictionary once at
+// the root rather than repeating prose on every rule or step.
+@Field static final Map<String, String> RM_CONSTRUCT_DEFINITIONS = [
+    'action:getAdjustDimmer'     : 'Adjust a dimmer level relative to its current level.',
+    'action:getCapture'          : 'Capture the current state of selected devices for a later restore action.',
+    'action:getChime'            : 'Play a chime on selected devices.',
+    'action:getComment'          : 'Add a non-executing comment to the rule flow.',
+    'action:getDefinedAction'    : 'Run a named custom or defined action.',
+    'action:getDelay'            : 'Delay subsequent rule actions.',
+    'action:getElse'             : 'Begin the ELSE branch of an IF block.',
+    'action:getElseIf'           : 'Begin an ELSE IF branch of an IF block.',
+    'action:getEndIf'            : 'End an IF block.',
+    'action:getFlashSwitch'      : 'Flash selected switches.',
+    'action:getHTTPPost'         : 'Send an HTTP request.',
+    'action:getIfThen'           : 'Begin an IF THEN conditional block.',
+    'action:getLogMsg'           : 'Write a message to the hub log.',
+    'action:getMsg'              : 'Send or speak a message.',
+    'action:getMuteUnmute'       : 'Mute or unmute selected audio devices.',
+    'action:getOCGarage'         : 'Open or close selected garage doors.',
+    'action:getOnOffSwitch'      : 'Turn selected switches on or off.',
+    'action:getPauseResumeRules' : 'Pause or resume selected rules.',
+    'action:getPollSwitch'       : 'Poll selected devices for their current state.',
+    'action:getRefreshSwitch'    : 'Refresh selected devices.',
+    'action:getRestore'          : 'Restore device state saved by an earlier capture action.',
+    'action:getRuleActions'      : 'Run the actions of selected Rule Machine rules.',
+    'action:getSetColor'         : 'Set the colour of selected colour-capable devices.',
+    'action:getSetColorTemp'     : 'Set the colour temperature of selected devices.',
+    'action:getSetDimmer'        : 'Set the level of selected dimmers.',
+    'action:getSetMode'          : 'Set the hub mode.',
+    'action:getSetPrivateBoolean': 'Set the Private Boolean of this rule or selected rules.',
+    'action:getSetVariable'      : 'Set a Rule Machine Hub or Local Variable.',
+    'action:getSetVolume'        : 'Set the volume of selected audio devices.',
+    'action:getStopActions'      : 'Cancel pending timed actions.',
+    'action:getWaitEvents'       : 'Wait for one of the configured events, optionally with a timeout.',
+    'action:getWaitRule'         : 'Wait for a configured expression, optionally with a timeout.',
+    'structure:actionDelay'      : 'The rule contains at least one individually delayed action.',
+    'structure:conditionalTrigger': 'The rule uses a conditional trigger.',
+    'option:displayCurrentValues': 'The rule is configured to display current values on its Rule Machine page.',
+]
+
 // The Rule Machine constructs one rule actually uses, read from its own stored
 // settings: action subtypes, trigger capabilities, condition capabilities, and
 // a few structural choices. Tokens only - no device, value or message is read.
 // This is what the coverage report measures another engine against, so it is
 // deliberately taken from the rule rather than from any feature list.
+boolean supportsRmConstructExtraction(String appType) {
+    return appType?.startsWith('Rule-') || appType?.startsWith('Button Rule-')
+}
+
 List extractRuleConstructs(Map data) {
     Set<String> out = new LinkedHashSet<String>()
     boolean anyDelay = false
@@ -10230,16 +10320,14 @@ List extractRuleConstructs(Map data) {
         String v = (value instanceof String || value instanceof Number || value instanceof Boolean) ? "${value}".trim() : ''
         if (!name || !v) return
         if (name.startsWith('actSubType.')) out << "action:${v}".toString()
-        else if (name.startsWith('tCapab')) {
+        // Positive suffix only. tCapab-<n> is a Wait for Events capability,
+        // not a trigger, and counting it here inflated the trigger families
+        // this rule claims to use (found 2026-10-03 against saved rules).
+        else if (name.matches('^tCapab[0-9]+$')) {
             // Which capability answers a hub event depends on the event, not on
             // the trigger type, so the event name travels with the token.
-            if (v == 'Location Event') {
-                String idx = name.substring('tCapab'.length())
-                String event = "${settingsByName["tstate${idx}"] ?: ''}".trim()
-                out << "${RM_LOCATION_EVENT_PREFIX}${event}".toString()
-            } else {
-                out << "trigger:${v}".toString()
-            }
+            String idx = name.substring('tCapab'.length())
+            out << triggerConstructToken(v, idx, settingsByName)
         }
         // A comparison operator ("<", "!=") is part of the condition it sits
         // in, not a construct of its own, and Rule Machine stores both under
@@ -11665,6 +11753,10 @@ Map buildGraph() {
         // rule reached only as another rule's target counted the same as
         // LIFX Light Manager.
         nodes[appNodeId].appType = "${appMap.type}"
+        // Rule Machine construct tokens, already extracted at scan time and
+        // until now read only by the coverage report. Carried here so the
+        // export can publish per rule what this app has always decoded.
+        if (appMap.containsKey('rmConstructs')) nodes[appNodeId].rmConstructs = (appMap.rmConstructs as List)
         // Browser-local Community Context Card matching only (spec section
         // 4.1) - deliberately absent from buildExportPayload()'s apps[]
         // mapping, so it never reaches the AI-friendly export.
@@ -13917,6 +14009,10 @@ String buildMapHtml() {
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
         exportSchemaVersion: 14,
+        // Versions the rmConstructs token spelling and meaning only, separately
+        // from the JSON structure above: a consumer joining on token values
+        // needs to know when those values change without the shape changing.
+        rmConstructVocabularyVersion: 1,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -13931,6 +14027,14 @@ String buildMapHtml() {
         hubVariableInventorySource: hubVarInventoryMeta.source,
     ]
     String scanMetaJsonStr = jsonForScriptEmbed(scanMeta)
+    Map rmConstructVocabulary = RM_CONSTRUCT_DEFINITIONS.collectEntries { String token, String meaning ->
+        Map definition = [category: token.substring(0, token.indexOf(':')), meaning: meaning]
+        String haiCapabilityId = RM_CONSTRUCT_TO_HAI[token]
+        if (haiCapabilityId) definition.haiCapabilityId = haiCapabilityId
+        [(token): definition]
+    }
+    String rmConstructVocabularyJsonStr = jsonForScriptEmbed(rmConstructVocabulary)
+    String hubNameJsonStr = jsonForScriptEmbed("${location.name ?: 'Hubitat'}")
     return """\
 <!doctype html>
 <html>
@@ -14963,6 +15067,8 @@ try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) {
 
 const GRAPH = ${jsonStr};
 const SCAN_META = ${scanMetaJsonStr};
+const RM_CONSTRUCT_VOCABULARY = ${rmConstructVocabularyJsonStr};
+const HUB_NAME = ${hubNameJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0', synchronizedWith: '#999' };
@@ -21199,6 +21305,25 @@ function iconsImportFile(evt) {
 // are fetched fresh here (cheap GETs, the same endpoints those panels
 // already use) rather than relying on whichever panel the user happens to
 // have already opened this session.
+function exportFilenameHubName(name) {
+  // Windows forbids several punctuation marks, including backslash, and
+  // control characters in a filename.
+  // Replace rather than drop them so words on either side do not run together.
+  const forbidden = '<>:"/|?*' + String.fromCharCode(92);
+  let clean = Array.from(String(name || 'Hubitat')).map(function (ch) {
+    return forbidden.indexOf(ch) !== -1 || ch.charCodeAt(0) < 32 ? ' ' : ch;
+  }).join('').trim();
+  while (clean.indexOf('  ') !== -1) clean = clean.replace('  ', ' ');
+  return clean || 'Hubitat';
+}
+
+function exportFilenameTimestamp(date) {
+  function pad(value) { return String(value).padStart(2, '0'); }
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return pad(date.getDate()) + '-' + months[date.getMonth()] + '-' + date.getFullYear() + ' at ' +
+    pad(date.getHours()) + '-' + pad(date.getMinutes()) + '-' + pad(date.getSeconds());
+}
+
 function exportJSON() {
   const btn = document.getElementById('exportBtn');
   const original = btn.textContent;
@@ -21219,7 +21344,7 @@ function exportJSON() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'automation-map-export-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.download = 'HAM Export for ' + exportFilenameHubName(HUB_NAME) + ' on ' + exportFilenameTimestamp(new Date()) + '.txt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -21396,7 +21521,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     };
   });
   const apps = ALL_NODES.filter(function (n) { return n.group === 'app'; }).map(function (n) {
-    return {
+    const out = {
       id: n.id, name: nameOf[n.id], appType: n.appType || null,
       // v2.1.7, schema 8: 'disabled' and 'paused' replace the collapsed
       // 'paused-or-disabled' value - the hub reports these as two distinct
@@ -21422,6 +21547,14 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       deviceRelationshipCoverage: n.appType === 'webCoRE Piston' ? (n.webcoreDeviceRelationshipCoverage || 'none') :
         (n.appType === 'webCoRE' ? 'parent-permissions-omitted' : null)
     };
+    // rmConstructs belongs to the scanned app, not to the existence of a
+    // decoded flow. A valid inert/no-action Rule Machine rule can have no
+    // GRAPH.flows entry at all, but extraction still ran and its explicit []
+    // is meaningful. Keep the ruleFlows copy below as a convenience for
+    // consumers already walking decoded steps; apps[] is the complete
+    // per-scanned-app publication point.
+    if (Array.isArray(n.rmConstructs)) out.rmConstructs = n.rmConstructs.slice().sort();
+    return out;
   });
   const externalSystems = ALL_NODES.filter(function (n) { return n.group === 'external'; }).map(function (n) {
     return { id: n.id, name: nameOf[n.id], kind: n.kindKey || null };
@@ -21583,12 +21716,17 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
         reason: r.reason || null
       };
     });
-    return {
+    const out = {
       appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps,
       localVariables: localVariables,
       variableReferences: variableReferences,
       nonResolvedVariableReferences: nonResolvedVariableReferences
     };
+    // Only where extraction actually ran. An absent field means not
+    // applicable to this engine; an empty array would mean extraction ran and
+    // found nothing, which is a different claim and must not be synthesized.
+    if (n && Array.isArray(n.rmConstructs)) out.rmConstructs = n.rmConstructs.slice().sort();
+    return out;
   });
 
   // Was a plain boolean, !scanError - technically correct but misleadingly
@@ -21641,6 +21779,10 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
+    // v2.4.3 - ruleFlows[].rmConstructs is rule-scoped, not step-scoped. Said
+    // here as well as in the schema prose because this is where an AI is
+    // already told to look before drawing a conclusion.
+    'apps[].rmConstructs is the complete rule-level inventory produced by the fixed setting families this extractor recognises, including for a recognized Rule Machine app that has no decoded flow. ruleFlows[].rmConstructs repeats it as a convenience only when a decoded flow exists. It may silently omit a construct stored under a Rule Machine setting family this release does not recognise, so absence is not proof that a feature is absent. Proven trigger and action associations also appear on the matching ruleFlows[].steps[].constructs entry; condition, option and structure tokens remain rule-scoped only. These fields report observed saved settings, not proof that every setting is reachable in the current live action path. They do not say which value was configured or whether a construct ever ran - nothing in this export is runtime evidence. Do not use these tokens to reconstruct a rule or to override an unresolved or ambiguous steps[].references record. rmConstructs is present only where extraction ran, so an absent field means the engine is not covered rather than that the rule is empty.',
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case value is not decoded (each case shows as case not decoded, and the default branch as else), and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
@@ -21702,6 +21844,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     generatedAt: new Date().toISOString(),
     generatedBy: 'Automation Map v${APP_VERSION}',
     exportSchemaVersion: SCAN_META.exportSchemaVersion,
+    rmConstructVocabularyVersion: SCAN_META.rmConstructVocabularyVersion,
+    rmConstructVocabulary: RM_CONSTRUCT_VOCABULARY,
     graphSchemaVersion: SCAN_META.graphSchemaVersion,
     scan: {
       lastScanCompletedAt: SCAN_META.scanHeartbeatMs ? new Date(SCAN_META.scanHeartbeatMs).toISOString() : null,
@@ -21736,12 +21880,13 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
-      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation). webCoRE pistons carry a decoded flow (v2.3.0). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true, matching the map label precedence. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service), is an inert/no-action recognized rule, or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation). rmConstructs is present on every Rule Machine app for which extraction ran, even when hasDecodedFlow is false; [] means extraction ran and found no recognized saved construct, while absence means this engine was not covered. A matching ruleFlows entry repeats the same array for consumer convenience. webCoRE pistons carry a decoded flow (v2.3.0). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
       edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
-      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
+      rmConstructVocabulary: 'Dictionary keyed by the opaque Rule Machine construct tokens that need translation. Each value has category, a plain-language meaning, and haiCapabilityId where the HAI capability catalogue has an explicit mapping. Self-describing condition and trigger tokens are intentionally absent, so absence from this dictionary does not mean a token is unknown or unsupported. rmConstructVocabularyVersion versions token spelling and meaning separately from the export JSON shape.',
+      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. A recognized inert/no-action Rule Machine app may correctly have no entry here; inspect apps[].rmConstructs for the complete per-scanned-app construct publication. steps is the decoded trigger/condition/action sequence for that rule. A Rule Machine trigger or action step may carry constructs, a sorted array containing the exact normalized token proven for that saved row; other engines and unproven associations omit it. Conditions are not step-associated. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored Rule Machine configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry. rmConstructs (v2.4.3) repeats the matching apps[] rule-level inventory for convenience when a decoded flow exists. It may omit a construct stored under an unrecognised setting family, so absence is not proof that a feature is absent. Trigger and action tokens can be joined to their matching steps[].constructs record; condition, option and structure tokens remain rule-level only. These fields describe observed saved settings, not proven reachability or runtime behavior, do not contain configured values, do not reconstruct the rule, and do not repair an unresolved or ambiguous steps[].references record. Token spelling and meaning are versioned by rmConstructVocabularyVersion. The root rmConstructVocabulary defines only opaque tokens; a token absent from that dictionary may already be plain language and must not be treated as unknown for that reason.',
       migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
       insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',
