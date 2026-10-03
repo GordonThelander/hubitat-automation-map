@@ -4,6 +4,20 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.3
+
+Dev channel. The AI-friendly export now publishes the Rule Machine construct inventory it has always decoded. Each scanned Rule Machine entry in `apps` carries `rmConstructs`, a sorted list of the construct tokens observed in the recognized saved setting families: action subtypes, trigger capabilities, condition types, rule options and structural features. A matching `ruleFlows` entry repeats the array when decoded steps exist, while an inert or no-action rule remains represented correctly in `apps` with no synthetic flow. This is the same extraction the RM 5.1 coverage report is built on, so nothing new is decoded and no device, value or message content is added. An AI reading the export no longer has to infer what a rule does from the English step labels alone.
+
+The same inventory is emitted for Button Rule 5.1 children. Their flows already exposed proven trigger and action construct associations, but their app type begins `Button Rule-` rather than `Rule-`, so the first Dev candidate omitted the matching app-level inventory. Live-export validation found the mismatch; the construct-specific engine gate and regression coverage now include both families without broadening Hub Variable or Local Variable decoding.
+
+The inventory remains the complete rule-scoped view produced by the setting families this release recognises. Trigger and action steps now also carry the exact normalized token proven by their own saved row, so an AI can associate those constructs with the correct position and branch without matching English labels. Conditions, options and structure tokens remain rule-scoped because their per-step association has not been proven. The tokens describe observed saved settings, not guaranteed reachability in the current action path. Neither form contains configured values or runtime evidence, and neither overrides an unresolved device reference. The export states that an unrecognised Rule Machine setting family is invisible rather than reported as unknown, so token absence is not proof that a feature is absent.
+
+Token spelling and meaning are versioned separately from the export structure by a new root `rmConstructVocabularyVersion`, because the values can change without the shape changing and consumers will join on them.
+
+A root `rmConstructVocabulary` dictionary explains the 35 tokens whose saved names are not already plain language: 32 internal `action:getXxx` names, two structure tokens and the display-current-values option. Each definition gives a category, plain-language meaning and an HAI capability ID where an explicit mapping exists. Self-describing trigger and condition tokens are deliberately omitted rather than repeated.
+
+The export specification's root table said schema 13 while the app emits 14. Corrected.
+
 ## 2.4.2
 
 Dev channel. **Room Manager**, a new panel that files devices into rooms from one screen. Every room is a rectangle you can move and resize, with its devices shown as chips carrying the same icons the map draws. Anything with no room sits in a Not Allocated column down the left, beside every possible destination rather than behind a separate page. Drag a device to move it, ctrl-click to pick several and drag them together, shift-click to take a whole run. Rooms can be created, renamed and deleted without leaving the page, and the rectangle layout is remembered. Nothing reaches the hub until Apply is pressed: moves are staged and highlighted until then, Discard throws them away, and anything that fails to apply stays staged so a retry sends only what is outstanding.

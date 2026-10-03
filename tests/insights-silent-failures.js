@@ -54,6 +54,8 @@ const NODES = [
     { id: 'a6', group: 'app', title: 'Broken Rule', broken: true },
     { id: 'a7', group: 'app', title: 'webCoRE Consumer', appType: 'webCoRE Piston' },
     { id: 'a8', group: 'app', title: 'Unreadable webCoRE Variables', appType: 'webCoRE Piston', webcoreVariableDecodeStatus: 'error', webcoreVariableDecodeError: 'invalid-json' },
+    { id: 'a9', group: 'app', title: 'Inert RM Rule', appType: 'Rule-5.1', rmConstructs: [] },
+    { id: 'a10', group: 'app', title: 'No-flow RM With Saved Option', appType: 'Rule-5.1', rmConstructs: ['option:displayCurrentValues'] },
     { id: 'd1', group: 'device', title: 'Disabled Commanded Light', disabled: true },
     { id: 'd2', group: 'device', title: 'Disabled Only Read', disabled: true },
     { id: 'd3', group: 'device', title: 'Disabled And Unused', disabled: true },
@@ -77,6 +79,7 @@ const EDGES = [
 global.ALL_NODES = NODES;
 global.ALL_EDGES = EDGES;
 global.SCAN_META = { appsUnreadable: 0, devicesUnreadable: 0, scanError: null };
+global.RM_CONSTRUCT_VOCABULARY = {};
 global.GRAPH = {
     hubVariableUnresolvedReferences: [],
     webcoreVariableDecodeIssues: [{ appId: 'a8', error: 'invalid-json' }]
@@ -190,6 +193,19 @@ check('export reports webCoRE app decoder state without adding a rule flow', fun
     }
     if (payload.ruleFlows.some(function (f) { return f.appId === 'a7' || f.appId === 'a8'; })) {
         throw new Error('webCoRE gained a synthetic decoded flow');
+    }
+});
+check('export keeps constructs on recognized RM apps that have no decoded flow', function () {
+    const empty = payload.apps.find(function (a) { return a.id === 'a9'; });
+    const saved = payload.apps.find(function (a) { return a.id === 'a10'; });
+    if (!empty || !Array.isArray(empty.rmConstructs) || empty.rmConstructs.length !== 0) {
+        throw new Error('explicit empty extraction was lost from the inert RM app');
+    }
+    if (!saved || saved.rmConstructs.length !== 1 || saved.rmConstructs[0] !== 'option:displayCurrentValues') {
+        throw new Error('saved construct was lost from the no-flow RM app');
+    }
+    if (payload.ruleFlows.some(function (f) { return f.appId === 'a9' || f.appId === 'a10'; })) {
+        throw new Error('no-flow RM app gained a synthetic decoded flow');
     }
 });
 check('export summary, scan gap and neutral insight match the relationship data', function () {
