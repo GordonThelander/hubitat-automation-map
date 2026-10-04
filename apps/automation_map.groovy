@@ -3257,6 +3257,7 @@ void finishScan(data = null) {
         atomicState.graphVersion = GRAPH_SCHEMA
         // Sibling decode contract, written from the graph just committed.
         hamDecodeWriteFile()
+        hamDecodeWriteDetailFile()
         // Paired marker, same value to both halves: a later execution comparing
         // them can prove whether its own snapshot predates this commit. See
         // snapshotPredatesGraphCommit().
@@ -4294,6 +4295,12 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             // and independently testable.
             if (supportsRmConstructExtraction("${out.type}")) {
                 out.rmConstructs = extractRuleConstructs(data)
+                // Resolved conditions and the raw expression token order, for
+                // the sibling decode contract. Extracted here because this is
+                // the only place the rule's settings are in hand; appInfo
+                // keeps decoded results, not the settings they came from.
+                out.conditions = extractRuleConditions(data)
+                out.expressions = extractRuleExpressions(data)
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 // Decoded once (v2.2.8), not per classifier - chunk
@@ -10533,6 +10540,169 @@ Map rmCoverageReport() {
 // false means it does not, and null means this app could not tell - a webCoRE
 // piston proves a command was sent without proving it sticks. A caller that
 // reads null as false will miss real clashes.
+// --- HAI decode detail: start ---
+// Resolved Rule Machine condition operands for the sibling decode contract.
+// Resolution belongs here rather than in the consumer because it needs the
+// storage format: which of several sibling settings actually won. Rule 1775
+// holds startingA5 '06:00', ending5 'Sunrise' and a stale endingA5 '22:00'
+// left over from an edit; RM renders it as 06:00 to sunrise+10. A consumer
+// pairing the obvious fields reads 22:00 - plausible, stable, and not that
+// rule. Reading the selector puts the stale sibling out of reach.
+//
+// Every condition also carries raw: the stored strings its operands came
+// from. Not for the consumer's logic - so a disagreement can be settled
+// without another hub read.
+
+// The selector names the form, the operand follows from it. Offsets are
+// numbers; 'at' is the stored string, deliberately unnormalised, because the
+// two time encodings are a known trap and normalising would hide which one
+// this rule holds.
+Map hamDetailTimeOperand(String which, String num, Map settingValues) {
+    String kindWord = "${settingValues[which + num] ?: ''}".trim()
+    String prefix = (which == 'starting') ? 'start' : 'end'
+    if (kindWord == 'Sunrise') {
+        return [kind: 'sunrise', offsetMinutes: hamDetailInt(settingValues["${prefix}SunriseOffset${num}"])]
+    }
+    if (kindWord == 'Sunset') {
+        return [kind: 'sunset', offsetMinutes: hamDetailInt(settingValues["${prefix}SunsetOffset${num}"])]
+    }
+    if (!kindWord) return null
+    return [kind: 'clock', at: "${settingValues[which + 'A' + num] ?: ''}" ?: null]
+}
+
+Integer hamDetailInt(Object v) {
+    String s = "${v ?: ''}".trim()
+    if (!s) return 0
+    try { return s as Integer } catch (Exception ignored) { return 0 }
+}
+
+// Rule Machine stores false as an empty string on these, so a bare truthiness
+// test would read every absent flag as false correctly but every stored
+// 'false' string as true. Compare the word.
+boolean hamDetailBool(Object v) {
+    return "${v ?: ''}".trim().equalsIgnoreCase('true')
+}
+
+// modes<n> holds mode IDs, not names: rule 2325 stores ["5","6"] and renders
+// as 'Mode in [Home, Visitor]'. A consumer passed the raw list would build a
+// condition testing for modes literally named 5 and 6, which never match, so
+// the rule never fires and nothing says why. An id with no matching mode
+// resolves to null rather than to itself.
+List hamDetailModeNames(List ids) {
+    List modes = (location?.modes ?: []) as List
+    return (ids ?: []).collect { Object id ->
+        Map hit = modes.find { Object m -> "${(m as Map)?.id}" == "${id}" } as Map
+        return hit ? "${hit.name}" : null
+    }
+}
+
+List hamDetailJsonList(Object raw) {
+    String s = "${raw ?: ''}".trim()
+    if (!s) return []
+    try {
+        Object parsed = new groovy.json.JsonSlurper().parseText(s)
+        return (parsed instanceof List) ? (parsed as List).collect { "${it}" } : ["${parsed}"]
+    } catch (Exception ignored) { return [s] }
+}
+
+Map hamDetailCondition(String num, String capability, Map settingValues) {
+    Map operands = [:]
+    Map raw = [:]
+    settingValues.each { Object k, Object v ->
+        String name = "${k}"
+        if (name.endsWith(num) || name.endsWith("_${num}")) raw[name] = "${v ?: ''}"
+    }
+    String comparator = "${settingValues["RelrDev_${num}"] ?: ''}".trim()
+
+    if (capability == 'Between two times' || capability == 'Time of day') {
+        operands.from = hamDetailTimeOperand('starting', num, settingValues)
+        operands.to = hamDetailTimeOperand('ending', num, settingValues)
+        operands.atOrBetween = hamDetailBool(settingValues["atOrBetween${num}"])
+    } else if (capability == 'Mode') {
+        List ids = hamDetailJsonList(settingValues["modes${num}"])
+        operands.modes = hamDetailModeNames(ids)
+        operands.ids = ids
+    } else if (capability == 'Private Boolean') {
+        // No rule reference exists on a condition: every Private Boolean
+        // condition on this hub carries only state_<n> and not<n>, and RM
+        // renders it as the rule's own. Cross-rule boolean writes are an
+        // ACTION (setspb), not a condition.
+        operands.value = hamDetailBool(settingValues["state_${num}"])
+        operands.source = 'private'
+    } else if (capability == 'Variable') {
+        operands.name = "${settingValues["xVar${num}"] ?: ''}" ?: null
+        if (comparator) operands.comparator = comparator
+        operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
+    } else {
+        // Device-shaped conditions. The comparator travels exactly as stored:
+        // an unread one flattened 'illuminance above 200' into 'exactly 200'
+        // in a sibling project, so an unrecognised operator must arrive raw
+        // rather than defaulting to equality.
+        if (comparator) operands.comparator = comparator
+        String state = "${settingValues["state_${num}"] ?: ''}"
+        if (state) operands.value = [literal: state]
+    }
+
+    return [index: num,
+            capability: capability,
+            negated: hamDetailBool(settingValues["not${num}"]),
+            operands: operands,
+            raw: raw]
+}
+
+// A token sequence, never a tree. Rule Machine walks left to right and stops
+// early, by the author's own description, so a term to the right of an OR is
+// never read when the terms before it evaluate true - diagnosed on a live
+// rule as a lamp that never turned off. Any tree, including the obvious
+// left-associative one, encodes a grouping RM does not use and would let a
+// consumer emit correct boolean logic that is not what the rule does.
+Map hamDetailExpression(List tokens) {
+    List out = (tokens ?: []).collect { "${it}" }
+    if (!out) return null
+    return [tokens: out, evaluation: 'left-to-right-short-circuit']
+}
+
+// One resolved record per saved condition. Enumerated from rCapab_<n>,
+// which is the only setting every condition family has.
+List extractRuleConditions(Map data) {
+    Map settingValues = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        if (s.value != null) settingValues["${s.name}"] = "${s.value}"
+    }
+    List out = []
+    settingValues.each { Object k, Object v ->
+        String name = "${k}"
+        if (!name.startsWith('rCapab_')) return
+        String num = name.substring('rCapab_'.length())
+        if (!num.isInteger()) return
+        String capability = "${v ?: ''}".trim()
+        if (!capability) return
+        out << hamDetailCondition(num, capability, settingValues)
+    }
+    return out.sort { Map c -> (c.index as String) as Integer }
+}
+
+// Every expression this rule holds, keyed as Rule Machine keys them: '0' is
+// the Required Expression and any other key is that numbered action's IF.
+// They are never merged - they gate different things.
+Map extractRuleExpressions(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { Object e ->
+        if (e instanceof Map && (e as Map).name != null) st["${(e as Map).name}"] = (e as Map).value
+    }
+    Map evalMap = (st.eval ?: [:]) as Map
+    Map out = [:]
+    evalMap.each { Object k, Object v ->
+        Map expr = hamDetailExpression((v ?: []) as List)
+        if (expr) out["${k}"] = expr
+    }
+    return out
+}
+
+// --- HAI decode detail: end ---
+
 // --- HAI decode contract: start ---
 // A read-only, on-hub contract for a sibling app that needs Rule Machine
 // decode without shipping a second decoder. Two calls: a whole-estate summary
@@ -10664,6 +10834,54 @@ void hamDecodeWriteFile() {
         // file and its own freshness check catches it, which is the behaviour
         // the contract already requires of it.
         log.warn "${app.label}: could not write ${hamDecodeFileName()} for the sibling decode contract (${ex.message})."
+    }
+}
+
+
+String hamDecodeDetailFileName() {
+    return isDevBuild() ? 'ham-decode-detail-dev.json' : 'ham-decode-detail.json'
+}
+
+// The second half of the contract: everything the summary deliberately omits.
+// Keyed the same way the summary keys rules ('a<appId>') so the two files join
+// without a rule.
+Map hamDecodeDetail() {
+    if (state.graph == null) return hamDecodeFailure('no-scan',
+        'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
+    Map graph = (state.graph ?: [:]) as Map
+    Map flows = (graph.flows ?: [:]) as Map
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    List rules = hamDecodeRuleNodes().collect { Object rawNode ->
+        Map n = rawNode as Map
+        String id = "${n.id}"
+        Map info = (appInfo[id.startsWith('a') ? id.substring(1) : id] ?: [:]) as Map
+        return [id: id,
+                name: "${n.name ?: n.label ?: id}",
+                engine: "${n.appType}",
+                status: hamDecodeStatus(n),
+                hasDecodedFlow: flows.containsKey(id),
+                conditions: ((info.conditions ?: []) as List),
+                // '0' is the Required Expression; any other key is that
+                // numbered action's IF. Structurally separate, never merged.
+                expressions: ((info.expressions ?: [:]) as Map),
+                // Actions, triggers and flow as buildRuleFlow() already
+                // produces them: resolved device references, control nesting
+                // derived with a stack rather than from Rule Machine's own
+                // indent field (wrong on rule 2816), and actionList order.
+                // A richer action shape is a separate agreement, not invented
+                // here.
+                steps: ((flows[id] ?: []) as List)]
+    }
+    return hamDecodeEnvelope() + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
+}
+
+void hamDecodeWriteDetailFile() {
+    try {
+        String body = JsonOutput.toJson(hamDecodeDetail())
+        uploadHubFile(hamDecodeDetailFileName(), body.getBytes('UTF-8'))
+        if (diagOn()) log.info "${app.label}: wrote ${hamDecodeDetailFileName()} (${body.length()} bytes)"
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not write ${hamDecodeDetailFileName()} for the sibling decode contract (${ex.message})."
     }
 }
 
