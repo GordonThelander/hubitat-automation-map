@@ -10607,7 +10607,24 @@ List hamDetailJsonList(Object raw) {
     } catch (Exception ignored) { return [s] }
 }
 
-Map hamDetailCondition(String num, String capability, Map settingValues) {
+// Rule Machine stores a date as a month and day plus a time of day, with a
+// type naming the form. The type travels because more than one exists and a
+// consumer must not assume mm-dd.
+Map hamDetailDateOperand(String side, String num, Map settingValues) {
+    String month = "${settingValues["month${side}${num}"] ?: ''}".trim()
+    String day = "${settingValues["day${side}${num}"] ?: ''}".trim()
+    String at = "${settingValues["time${side}${num}"] ?: ''}".trim()
+    String dateType = "${settingValues["${side.toLowerCase()}DateType${num}"] ?: ''}".trim()
+    if (!month && !day && !at) return null
+    Map out = [:]
+    if (dateType) out.dateType = dateType
+    if (month) out.month = month
+    if (day) out.day = day
+    if (at) out.at = at
+    return out
+}
+
+Map hamDetailCondition(Map settingDevices, String num, String capability, Map settingValues) {
     Map operands = [:]
     Map raw = [:]
     settingValues.each { Object k, Object v ->
@@ -10617,9 +10634,24 @@ Map hamDetailCondition(String num, String capability, Map settingValues) {
     String comparator = "${settingValues["RelrDev_${num}"] ?: ''}".trim()
 
     if (capability == 'Between two times' || capability == 'Time of day') {
+        // atOrBetween true means AT a single time, not a range, and Rule
+        // Machine marks it by storing ending<n> as 'atTime'. Rule 1230
+        // condition 32 renders as 'Time is 02:00' and has no end value at
+        // all, so emitting a to with a null time would invite a consumer to
+        // read a range that does not exist.
+        boolean single = hamDetailBool(settingValues["atOrBetween${num}"]) ||
+                         "${settingValues["ending${num}"] ?: ''}".trim() == 'atTime'
+        operands.mode = single ? 'at' : 'between'
         operands.from = hamDetailTimeOperand('starting', num, settingValues)
-        operands.to = hamDetailTimeOperand('ending', num, settingValues)
-        operands.atOrBetween = hamDetailBool(settingValues["atOrBetween${num}"])
+        if (!single) operands.to = hamDetailTimeOperand('ending', num, settingValues)
+    } else if (capability == 'Between two dates') {
+        operands.from = hamDetailDateOperand('Start', num, settingValues)
+        operands.to = hamDetailDateOperand('End', num, settingValues)
+    } else if (capability == 'On a Day') {
+        // No rule on this hub has one configured, so the stored shape is
+        // unobserved. Resolving nothing is honest; inventing a day list from
+        // a guessed setting name would not be.
+        operands.days = hamDetailJsonList(settingValues["days${num}"])
     } else if (capability == 'Mode') {
         List ids = hamDetailJsonList(settingValues["modes${num}"])
         operands.modes = hamDetailModeNames(ids)
@@ -10632,7 +10664,9 @@ Map hamDetailCondition(String num, String capability, Map settingValues) {
         operands.value = hamDetailBool(settingValues["state_${num}"])
         operands.source = 'private'
     } else if (capability == 'Variable') {
-        operands.name = "${settingValues["xVar${num}"] ?: ''}" ?: null
+        // Rule Machine stores this with an underscore: xVar_<n>. The
+        // non-underscore form is accepted too rather than assuming one.
+        operands.name = "${settingValues["xVar_${num}"] ?: settingValues["xVar${num}"] ?: ''}" ?: null
         if (comparator) operands.comparator = comparator
         operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
     } else {
@@ -10644,6 +10678,14 @@ Map hamDetailCondition(String num, String capability, Map settingValues) {
         String state = "${settingValues["state_${num}"] ?: ''}"
         if (state) operands.value = [literal: state]
     }
+
+    // Devices live in a setting's deviceList, never in its value, so they are
+    // invisible to a value-only read. Without them a device condition says
+    // what to compare and never what to compare it against.
+    List devices = (settingDevices["rDev_${num}"] ?: settingDevices["rDev${num}"] ?: []) as List
+    if (devices) operands.devices = devices
+    String anyAll = "${settingValues["AllrDev${num}"] ?: ''}".trim()
+    if (anyAll) operands.anyAll = anyAll
 
     return [index: num,
             capability: capability,
@@ -10668,10 +10710,13 @@ Map hamDetailExpression(List tokens) {
 // which is the only setting every condition family has.
 List extractRuleConditions(Map data) {
     Map settingValues = [:]
+    Map settingDevices = [:]
     (data.appSettings ?: []).each { Object raw ->
         if (!(raw instanceof Map)) return
         Map s = raw as Map
         if (s.value != null) settingValues["${s.name}"] = "${s.value}"
+        Map dl = s.deviceList as Map
+        if (dl) settingDevices["${s.name}"] = dl.values().collect { stripTags("${it}") }
     }
     List out = []
     settingValues.each { Object k, Object v ->
@@ -10681,7 +10726,7 @@ List extractRuleConditions(Map data) {
         if (!num.isInteger()) return
         String capability = "${v ?: ''}".trim()
         if (!capability) return
-        out << hamDetailCondition(num, capability, settingValues)
+        out << hamDetailCondition(settingDevices, num, capability, settingValues)
     }
     return out.sort { Map c -> (c.index as String) as Integer }
 }

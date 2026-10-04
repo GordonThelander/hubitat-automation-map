@@ -16,9 +16,9 @@ history, not in this delivery list.
 
 ## Now
 
-### 51. The first scan after a code deploy collects zero apps
+### 51. A scan intermittently collects zero apps, usually just after a code deploy
 
-Reproduced twice on Dev install 3547, 2026-10-04 and 2026-10-05, both times immediately after
+Observed twice on Dev install 3547, 2026-10-04 and 2026-10-05, both times immediately after
 `deploy-hub.ps1` wrote new Apps Code. The scan enumerates every app and holds none:
 
 ```
@@ -33,6 +33,10 @@ survives rather than being replaced by an empty one. Nothing is lost and nothing
 **What is unexplained is why the collection returns nothing.** Running a second scan immediately
 afterwards succeeds every time, 178 of 178, with no other change. So the first scan after a code
 update fails and the next one works.
+
+**Not deterministic.** A third deploy on 2026-10-05 was followed by a first scan that succeeded
+178 of 178. So it is intermittent and the original heading, which said every first scan after a
+deploy, overstated two observations. Corrected here rather than left standing.
 
 Ruled out: the condition and expression extractors added for the sibling decode contract. Both were
 run offline against all 71 saved Rule Machine rules, 71 clean, no throw. The behaviour also predates
