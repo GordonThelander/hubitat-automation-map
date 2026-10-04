@@ -182,6 +182,8 @@ boolean showSanta() {
 // The decode contract's own shape, versioned independently of the construct
 // vocabulary and of the engine pin above. See the HAI decode contract block.
 @Field static final int HAM_DECODE_CONTRACT_VERSION = 1
+@Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
+@Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 // Named once here, not repeated as a literal in compatibilitySummary(),
 // so a future engine addition needs one edit rather than finding every
 // place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
@@ -10721,8 +10723,12 @@ Map extractRuleExpressions(Map data) {
 // Who answered. A Dev install and a production install both serve this, so a
 // consumer must be able to refuse a cross-channel reply rather than silently
 // read the wrong hub's neighbour.
-Map hamDecodeEnvelope() {
-    return [contract: 'ham.decode/1',
+// The contract name is the consumer's guard against reading one file as the
+// other. A detail file accepted as a summary would present rules with no
+// construct tokens, and every verdict built on it would be wrong rather
+// than refused, so the two names must differ.
+Map hamDecodeEnvelope(String contract) {
+    return [contract: contract,
             contractSchemaVersion: HAM_DECODE_CONTRACT_VERSION,
             rmConstructVocabularyVersion: 1,
             supportedEngine: SUPPORTED_RULE_ENGINE,
@@ -10730,8 +10736,8 @@ Map hamDecodeEnvelope() {
                        buildChannel: BUILD_CHANNEL]]
 }
 
-Map hamDecodeFailure(String issue, String message) {
-    return hamDecodeEnvelope() + [ok: false, issue: issue, message: message]
+Map hamDecodeFailure(String contract, String issue, String message) {
+    return hamDecodeEnvelope(contract) + [ok: false, issue: issue, message: message]
 }
 
 // The same vocabulary apps[].status publishes, derived from the same node flags
@@ -10793,7 +10799,7 @@ Map hamDecodeSummary() {
     // Presence of the graph, not of any nodes in it: a hub with no Rule
     // Machine rules has scanned successfully and must answer with an empty
     // list, not with a failure that reads as 'this instance is broken'.
-    if (state.graph == null) return hamDecodeFailure('no-scan',
+    if (state.graph == null) return hamDecodeFailure(HAM_SUMMARY_CONTRACT, 'no-scan',
         'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
     Map graph = (state.graph ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
@@ -10809,7 +10815,7 @@ Map hamDecodeSummary() {
                 constructs: ((n.rmConstructs ?: []) as List),
                 stepCount: hamDecodeStepCount(steps)]
     }
-    return hamDecodeEnvelope() + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
+    return hamDecodeEnvelope(HAM_SUMMARY_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
 }
 
 // Published as a hub file rather than an endpoint: a sibling app reads
@@ -10846,7 +10852,7 @@ String hamDecodeDetailFileName() {
 // Keyed the same way the summary keys rules ('a<appId>') so the two files join
 // without a rule.
 Map hamDecodeDetail() {
-    if (state.graph == null) return hamDecodeFailure('no-scan',
+    if (state.graph == null) return hamDecodeFailure(HAM_DETAIL_CONTRACT, 'no-scan',
         'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
     Map graph = (state.graph ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
@@ -10872,7 +10878,7 @@ Map hamDecodeDetail() {
                 // here.
                 steps: ((flows[id] ?: []) as List)]
     }
-    return hamDecodeEnvelope() + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
+    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
 }
 
 void hamDecodeWriteDetailFile() {
