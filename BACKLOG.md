@@ -16,6 +16,40 @@ history, not in this delivery list.
 
 ## Now
 
+### 51. The first scan after a code deploy collects zero apps
+
+Reproduced twice on Dev install 3547, 2026-10-04 and 2026-10-05, both times immediately after
+`deploy-hub.ps1` wrote new Apps Code. The scan enumerates every app and holds none:
+
+```
+scanRunning false  scanDone 0/178
+scanError  'this scan found 178 apps but finished holding 0, so no map was saved'
+```
+
+**The guard is working.** That message is the fail-closed publication check added in 2.4.2: it
+refuses to publish a graph when collected apps do not match enumerated apps, so the previous map
+survives rather than being replaced by an empty one. Nothing is lost and nothing is wrong on screen.
+
+**What is unexplained is why the collection returns nothing.** Running a second scan immediately
+afterwards succeeds every time, 178 of 178, with no other change. So the first scan after a code
+update fails and the next one works.
+
+Ruled out: the condition and expression extractors added for the sibling decode contract. Both were
+run offline against all 71 saved Rule Machine rules, 71 clean, no throw. The behaviour also predates
+them in at least one observed case.
+
+**Not established:** the cause. The likely shape is that Hubitat reinitialises the app on a code
+save and an in-flight or immediately following scan loses its collection, but that was not
+reproduced deliberately or traced.
+
+**Why it matters beyond development.** A user updating through HPM is in exactly this position. If
+their first scan after an update always fails, the app tells them a scan found nothing and they have
+to run it again with no indication that is expected. Worth either fixing or, if it is a platform
+behaviour, detecting and saying so rather than reporting it as a failed scan.
+
+I twice dismissed this as a post-deploy artefact rather than a defect, including in writing to a
+sibling app. It is reproducible and it has an error message of its own.
+
 ### 50. The auto-scan setting and the scheduled job can disagree
 
 Observed on Dev install 3547, 2026-10-04, while adding the sibling decode contract's freshness

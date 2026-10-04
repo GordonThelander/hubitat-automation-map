@@ -22,6 +22,8 @@ import groovy.transform.Field
 @Field static final String BUILD_CHANNEL = 'dev'
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
 @Field static final int HAM_DECODE_CONTRACT_VERSION = 1
+@Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
+@Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 @Field Map state = [:]
 @Field Map app = [id: 3547]
 @Field Map settings = [:]
@@ -179,6 +181,16 @@ check(block.contains('catch (Exception'), 'a file-write failure never fails the 
 int publishCalls = source.count('hamDecodeWriteFile()')
 check(publishCalls >= 2, 'the writer is both defined and invoked')
 check(!source.contains("path('/decode/"), 'no OAuth decode endpoint is exposed')
+
+// The two files must not be mistakable for each other. A detail file read as
+// a summary would present rules with no constructs and every verdict would
+// come back wrong rather than refused, which is the whole point of naming the
+// contract.
+check(source.contains("'ham.decode/1'") && source.contains("'ham.decode.detail/1'"),
+      'the summary and the detail declare different contract names')
+int summaryName = source.count("'ham.decode/1'")
+int detailName = source.count("'ham.decode.detail/1'")
+check(summaryName >= 1 && detailName >= 1, 'both contract names are present')
 check(source.contains('state.graph = graph') && source.indexOf('hamDecodeWriteFile()', source.indexOf('state.graph = graph')) - source.indexOf('state.graph = graph') < 400,
       'the writer runs on scan completion, beside the graph commit')
 
