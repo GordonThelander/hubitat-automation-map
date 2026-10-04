@@ -16,7 +16,7 @@ history, not in this delivery list.
 
 ## Now
 
-### 51. A scan intermittently collects zero apps, usually just after a code deploy
+### 51. A scan collects zero apps after a version upgrade, so users scan twice
 
 Observed twice on Dev install 3547, 2026-10-04 and 2026-10-05, both times immediately after
 `deploy-hub.ps1` wrote new Apps Code. The scan enumerates every app and holds none:
@@ -34,7 +34,17 @@ survives rather than being replaced by an empty one. Nothing is lost and nothing
 afterwards succeeds every time, 178 of 178, with no other change. So the first scan after a code
 update fails and the next one works.
 
-**Not deterministic.** A third deploy on 2026-10-05 was followed by a first scan that succeeded
+**Gordon has seen this many times on version upgrades.** That is the observation that sets its
+priority: not two incidents in a development loop, but a recurring behaviour the hub owner has met
+repeatedly across upgrades, and has been working around by scanning twice.
+
+**A distinction worth testing before fixing.** My own counter-example was a plain `deploy-hub.ps1`
+code write, not a package upgrade. A Hubitat Package Manager upgrade does more than replace source:
+it reinstalls and calls `updated()`. So "every version upgrade" and "some code deploys" may be two
+different frequencies of the same underlying cause, or two causes. Nothing here establishes which,
+and the upgrade path is the one that matters because it is the one users meet.
+
+**Not deterministic for a code deploy.** A third deploy on 2026-10-05 was followed by a first scan that succeeded
 178 of 178. So it is intermittent and the original heading, which said every first scan after a
 deploy, overstated two observations. Corrected here rather than left standing.
 
@@ -46,10 +56,10 @@ them in at least one observed case.
 save and an in-flight or immediately following scan loses its collection, but that was not
 reproduced deliberately or traced.
 
-**Why it matters beyond development.** A user updating through HPM is in exactly this position. If
-their first scan after an update always fails, the app tells them a scan found nothing and they have
-to run it again with no indication that is expected. Worth either fixing or, if it is a platform
-behaviour, detecting and saying so rather than reporting it as a failed scan.
+**Why it matters.** Every user upgrading through HPM meets this. The app tells them the scan found
+nothing, and the only way to know a second run fixes it is to have learned that by experience, which
+is what the hub owner has done. Either fix it, or detect the case and say "this can happen right
+after an upgrade, run the scan again" rather than reporting a failure that reads as data loss.
 
 I twice dismissed this as a post-deploy artefact rather than a defect, including in writing to a
 sibling app. It is reproducible and it has an error message of its own.
