@@ -16,6 +16,52 @@ history, not in this delivery list.
 
 ## Now
 
+### 50. The auto-scan setting and the scheduled job can disagree
+
+Observed on Dev install 3547, 2026-10-04, while adding the sibling decode contract's freshness
+policy. The setting and the hub's own job list contradict each other:
+
+```
+appSettings  autoScanEnabled = 'false'
+scheduledJobs  scheduledScanHandler  PENDING  2026-10-04T17:00:00+0000  (01:00 local)
+```
+
+So automatic scanning reports as off while a daily scan is still scheduled and will run.
+
+**The code looks correct.** `scheduleAutoScan()` unschedules first and returns early when
+`autoScanEffectivelyEnabled()` is false, and its own comment says it reschedules every time
+precisely so turning the toggle off cancels a running schedule. It is only called from `updated()`,
+so the likely cause is a path that changed the setting without `updated()` running afterwards.
+**Not established** - the cause was not reproduced, only the end state observed.
+
+**Why it matters beyond tidiness.** The decode contract published for HAI derives its
+`scan.staleAfterSeconds` from this setting, so on this install it currently states "no schedule,
+therefore no freshness policy" while a scan is in fact scheduled. A consumer is told less than the
+truth. The alternative, reading the hub's actual job list, has no clean app-facing API, which is why
+the setting is used and why the contract names `autoScanEnabled` beside the policy so a reader can
+see what it was derived from.
+
+Also worth checking whichever way this is fixed: whether the settings page itself reads the setting
+or the schedule, since the same disagreement would make it display the wrong state.
+
+### 49. "All apps" names less than the Focus App list holds
+
+Raised by Gordon 2026-10-04 from the rendered panel. The control reads **FOCUS APP** / **All apps**,
+but the list spans Rule Machine rules, Visual Rule Builder, Basic Rules, Button Controllers, webCoRE
+pistons and Notifiers alongside integrations and built-ins. Hubitat's own sidebar separates Apps,
+Integrations and Automations, so "apps" in the hub's vocabulary is narrower than what this holds, and
+someone hunting a rule has no reason to look under it.
+
+**Not simply "Apps & Automations".** That still does not name integrations, which are a large part of
+the list. Candidates worth weighing: "All apps and automations", or something that stops enumerating
+categories altogether.
+
+**Four labels, not one:** the `FOCUS APP` heading and the `All apps` placeholder, in both the standard
+and narrow layouts. Changing one and not the others reproduces the button-and-panel-name mismatch the
+walkthrough checklist exists to catch.
+
+Cosmetic, no functional effect.
+
 ### 33. Remote access: the page stays on "Remote scanning" after the scan finishes
 
 Seen on the 2.3.0 preprod install (2026-09-13) through remoteaccess.aws.hubitat.com: the scan completed

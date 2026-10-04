@@ -1722,6 +1722,12 @@ where to look, not as findings of this document.
   `<name>.multiple=true` sidecar flips it false, after which every page render throws
   `Command 'size' is not supported by device '<label>'`, `eventSubscriptions` stays at zero,
   and the rule is inert until the whole three-field group is re-posted.
+  **Corroborated on a specimen, 2026-10-04, so this item is no longer purely [external].** A native
+  Rule Machine export of rule 3448 taken from this hub on 2026-09-21 carries 167 `appSettings`
+  records and **every one of them has a `multiple` field**: 19 `true`, 148 `false`. Example:
+  `{"deviceList": null, "multiple": true, "name": "modesX9", "type": "enum", "value": "[\"2\"]"}`.
+  The flag is therefore part of RM's own serialisation, not an artefact of the wizard path, and any
+  writer that drops it on those 19 reproduces the failure above.
 - Rule Machine never renumbers after a delete. Indices keep their gaps, the next add takes
   `max + 1`, and an emptied row persists as a present key with a blank value. This hub shows
   the same pattern (four `actSubType.<n>` rows with an empty value).
@@ -1773,3 +1779,138 @@ stored as a plain device reference and reads as one.
 - Rule-local variables are deleted through a two-step button flow on `/installedapp/btn`:
   `name=<varName>` with `stateAttribute=deleteGV`, then `name=delConfirm` with
   `stateAttribute=deleteConfirm`.
+
+## 15. Native export and import (the reverse direction)
+
+Rule Machine rules can be exported and re-imported through Hubitat's own **Settings > Restore Apps**
+user workflow. This is a supported path for a person, not an API: nothing here is callable, and this
+document still writes nothing. Recorded because it is the inverse of everything above and is the
+lowest-risk reverse direction known to us.
+
+Observed on the 2026-09-21 specimen of rule 3448. Envelope:
+
+```
+{ deviceReplacements, appReplacements, appData: { "<appId>": { state, appSettings, subscriptions } } }
+```
+
+- `deviceReplacements` is a **map keyed by the source hub's device id**, not a list. Six entries on
+  this specimen, each `{deviceName, deviceLabel, deviceTypeName, deviceTypeNamespace}`.
+- `appReplacements` is the same shape keyed by app id, carrying `appTypeName`, `appTypeNamespace`,
+  `appType`, `appName`, `appLabel`.
+- `appData.<id>` carries the same `state` and `appSettings` this document decodes, plus
+  `subscriptions`.
+
+**The binding hazard.** Because the replacement maps are keyed by the *source* device and app ids,
+an import onto a hub where those ids mean something else re-points the rule by whatever the import
+UI resolves the name, label and type to. On the same hub the ids should match, but "should" is not
+an acceptance criterion: anything generating an export for re-import must assert the resulting
+device bindings explicitly rather than assume them.
+
+### 15.1 Import and Restore are different actions
+
+**[external]** Per Hubitat staff, Settings > Restore Apps offers two distinct actions. **Import**
+creates a new app id. **Restore** may replace the app matching the **source** id recorded in the
+file. Reference: `https://community.hubitat.com/t/restoring-backups-of-individual-rules/90548`.
+
+The specimen file carries `appData` and `appReplacements` both keyed `3448`, and app 3448 is a live
+rule on this hub (`_HAI Complex Regression Gauntlet (RM Export Source)`). **A Restore performed where
+an Import was intended therefore overwrites a working rule with the file's contents.** This is the
+highest-severity hazard in the reverse direction, above the device-binding hazard in section 15.
+
+### 15.2 `type=time` settings do not survive the round trip, and the export is where it breaks
+
+Observed 2026-10-04. Two stress rules built from the native export of 3448 were imported on this hub.
+Both arrived paused and both then threw from `mainPage` and the `updated` handler:
+
+```
+Unparseable date: "2000-01-01T22:00:00+08:00"
+```
+
+**Attributed, not merely observed.** The same setting read live from app 3448 and read from the
+export of that same app do not match:
+
+| source | `startingA13` |
+| --- | --- |
+| live hub (`/installedapp/statusJson/3448`) | `2000-01-01T22:00:00.000+0800` |
+| native export file | `2000-01-01T22:00:00+08:00` |
+
+The export drops the milliseconds and rewrites the zone offset from `+0800` to `+08:00`. Rule
+Machine stores the first form and cannot parse the second, and the thrown message quotes the
+**export's** form. So the loss is in the export serialisation, not in the import and not in a
+newly created app's parse context.
+
+Rule 3448 itself runs with the live form in place, which is what makes this a defect in the
+round trip rather than a bad fixture.
+
+**Established 2026-10-04 by importing the pair.** Two files differing in exactly two leaves,
+opposite outcomes:
+
+| `type=time` value | resulting page |
+| --- | --- |
+| `2000-01-01T22:00:00+08:00` (export form) | no title, no sections, throws |
+| `2000-01-01T22:00:00.000+0800` (stored form) | title, three sections, clean |
+
+So the stored form imports cleanly and the export form does not. Both imports were deleted.
+
+**A free diagnostic.** The broken import never acquired Rule Machine's `(Paused)` label suffix,
+because the render that would have added it is the render that failed. Absence of that suffix on a
+rule that should carry it is therefore a symptom visible in an app list without opening anything.
+
+**Does not generalise past `type=time`.** See section 16: `atTime1` stores a bare `HH:MM` under the
+same declared type. The encoding belongs to the setting name, so a generator must emit per name and
+refuse any name whose encoding it has not observed in live storage.
+
+**Consequence for anything generating an RM export:** a generated file containing a time-of-day
+condition produces a rule that breaks on its own page. Emit `type=time` values in RM's own stored
+form, and verify against a live rule rather than against an exported one.
+
+#### Reproduction pair
+
+Two files in `hubitat-automation-intelligence`, under
+`examples/rm-migration-stress/evidence/`:
+
+- `known-failing-time-between.json` - the export's form
+- `candidate-stored-format-time-between.json` - RM's stored form
+
+Verified leaf by leaf: **exactly two leaves differ**, both time values
+(`appSettings[10].value` and `appSettings[57].value`). Everything else is identical, so an import
+result is attributable to the encoding alone.
+
+Both are keyed to source id `999999`, which does not exist on this hub, so Import and Restore
+converge on harmless behaviour (see 15.1). The safety is in the file, not in the instructions.
+
+**Method note.** Both derive from the complex export of 3448 rather than being hand-built minimal
+rules. A hand-written RM export has never been shown to be a valid RM export, so a failure could not
+have separated "the time encoding is wrong" from "we cannot author an RM file at all". Changing two
+leaves of a known-good export removes that confound.
+
+**Neither file has been imported.** Whether the stored form loads cleanly is untested.
+
+## 16. `type` is not a format discriminator
+
+Observed 2026-10-04 on two live rules. The same declared `type=time` carries two incompatible
+value formats:
+
+| rule | setting | type | stored value |
+| --- | --- | --- | --- |
+| 3572 | `atTime1` | `time` | `13:12` |
+| 3572 | `atDate1` | `date` | `2027-01-01` |
+| 3448 | `startingA13` | `time` | `2000-01-01T22:00:00.000+0800` |
+| 3448 | `endingA13` | `time` | `2000-01-01T06:00:00.000+0800` |
+
+A specific-time trigger stores bare `HH:MM`. A between-times condition stores a full ISO timestamp
+with a year-2000 anchor, milliseconds and a colon-free offset. Both are valid strings in a
+`type=time` slot, and **nothing in the data distinguishes them except the setting name**, which
+identifies the control that wrote it.
+
+**For a reader:** derive the format from the setting name family (`atTime*` versus
+`startingA*`/`endingA*`), never from `type`.
+
+**Why this made 15.2 hard to see.** A serialiser that normalises anything resembling a timestamp
+reshapes the ISO form and leaves `13:12` untouched, so the export defect appears on some rules and
+not others with no visible pattern. That is the shape diagnosed as "one broken rule" rather than
+"a lossy exporter".
+
+**Scope.** Two rules, two control families, both read from live storage. Nobody has enumerated the
+families, so this is demonstrated rather than general: treat an unobserved setting name as unknown
+format rather than assuming either form.
