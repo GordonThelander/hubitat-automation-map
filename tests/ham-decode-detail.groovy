@@ -17,10 +17,25 @@ String block = source.substring(start, end)
 
 def script = new GroovyShell().parse('''
 import groovy.transform.Field
-@Field Map location = [modes: [[id: 5, name: 'Home'], [id: 6, name: 'Visitor'], [id: 2, name: 'Night']]]
+@Field Map location = [modes: []]
 ''' + block + '''
 void noop() { }
 ''')
+
+// Shaped like com.hubitat.hub.domain.Mode rather than a plain Map, so the
+// block is exercised against objects as the hub supplies them. This does NOT
+// reproduce the hub's failure: local Groovy coerces a Groovy object to a
+// property map happily, while the hub's Mode is a compiled Java class where
+// `as Map` builds a delegating proxy and calls get('id'). The static
+// assertion on the source below is what actually guards that.
+class FakeMode {
+    Integer id
+    String name
+}
+
+script.location = [modes: [new FakeMode(id: 5, name: 'Home'),
+                           new FakeMode(id: 6, name: 'Visitor'),
+                           new FakeMode(id: 2, name: 'Night')]]
 
 @groovy.transform.Field int passed = 0
 @groovy.transform.Field Closure check = { boolean cond, String what ->
@@ -118,13 +133,19 @@ check(script.hamDetailExpression([]) == null, 'an empty expression is absent rat
 
 // --- devices: the largest gap in the first pass ------------------------
 
-DEV.clear(); DEV['rDev_3'] = ['Kitchen Lamp', 'Hall Lamp']
+DEV.clear(); DEV['rDev_3'] = [[id: '2450', name: 'Kitchen Lamp'], [id: '2453', name: 'Hall Lamp']]
 Map dev = script.hamDetailCondition(DEV, '3', 'Switch', S(['state_3': 'off', 'RelrDev_3': '=']))
 check(((dev.operands as Map).devices as List) == ['Kitchen Lamp', 'Hall Lamp'],
       'a device condition carries its devices, which live in deviceList not value')
+// A name cannot bind: two devices can share a label and a rename would break
+// every rule that named one, silently. The id is what a consumer binds to.
+check(((dev.operands as Map).deviceIds as List) == ['2450', '2453'],
+      'device ids travel beside the names, in the same order')
 DEV.clear()
 check(!(script.hamDetailCondition(DEV, '3', 'Switch', S(['state_3': 'off'])).operands as Map).containsKey('devices'),
       'a device condition with no devices omits the key rather than sending an empty list')
+check(!(script.hamDetailCondition(DEV, '3', 'Switch', S(['state_3': 'off'])).operands as Map).containsKey('deviceIds'),
+      'the id list is omitted too rather than sent empty')
 
 // --- Variable: the setting carries an underscore -----------------------
 
@@ -173,5 +194,8 @@ check(!block.contains('capabstrue') && !block.contains('capabsfalse'),
       'resolution reads the stored settings, never Rule Machine\'s rendered prose')
 check(!block.contains('httpGet') && !block.contains('httpPost'),
       'the detail block performs no hub I/O of its own')
+
+check(!block.contains('(m as Map)'),
+      'a hub Mode is read by property, never coerced to a Map, which calls get(String) and throws')
 
 println "${passed} HAM decode detail assertions passed"

@@ -48,6 +48,47 @@ and the upgrade path is the one that matters because it is the one users meet.
 178 of 178. So it is intermittent and the original heading, which said every first scan after a
 deploy, overstated two observations. Corrected here rather than left standing.
 
+**What the durable generation trace shows.** Every one of the 11 published generations in
+`state.genTrace` carries an `app-phase-finalized` entry; both refused generations carry none. The
+failing run of 2026-10-05 07:07:57 went `lock-acquired entry=endpoint` to `apps-enumerated
+total=178` to `publish-refused enumerated=178 collected=0`, with no finalize line between them.
+
+**That does not mean finalize never ran, and the guard's own comment is wrong about it.** The
+comment at the guard asserts that "anything reaching this line with an unequal pair has lost
+records between finalize and here" and that "the watchdog path fails closed without publishing".
+Neither holds for this run:
+
+- `finishScan` runs inside `finishGeneration`'s closure, so the generation owned the lock. A
+  superseded generation never reaches the guard.
+- The app watchdog is 130s and this failed 45s after enumeration, so it did not fire.
+- The run logged no "registry fetch did not complete" warning, so `REGISTRY_RESULTS` held an entry,
+  so `fetchRegistry` completed and scheduled `finishScan` on its normal +1s chain. That chain
+  starts only at `beginRegistryAndFinish`, which is reached only from `finalizeAppPhase` or the
+  empty-app branch. 178 apps were enumerated, so the empty branch is excluded.
+- `finalizeAppPhase` logged no "app-phase finalization failed", so its try block did not throw.
+
+So finalize ran and returned normally, yet neither its `state.appInfo` write nor its `genTrace`
+line survived to the later execution. Both were written in the same execution, so both losses are
+one loss: that execution's state commit did not reach the next reader. `genTrace` is itself a
+read-modify-write on `state`, and late app callbacks were still committing within seconds of
+finalize, which is the concurrent-snapshot clobber already recorded against `state.graph` on
+2026-08-30. **This is consistent with the evidence, not proven by it** - the residue cannot
+distinguish a lost commit from a clobbered one after the fact.
+
+**Ruled out: the `Mode.get()` defect found while investigating.** The same failing scan logged 13
+`app <id> processing failed: No signature of method: com.hubitat.hub.domain.Mode.get()` warnings,
+from `(m as Map)?.id` in `hamDetailModeNames` coercing a `com.hubitat.hub.domain.Mode` to a Map.
+That is a real defect and is fixed, but it is not this one: 13 is not 178, and the successful scans
+on either side of the failure logged the same 13 errors and still published. It was costing 13 apps
+their records on every scan since the detail block was deployed. After the fix a scan reports 178
+of 178 with 0 unreadable, and the detail contract went from 64 rules and 103 conditions to 71 rules
+and 169 conditions, 70 of them carrying devices.
+
+**Next step to settle it.** Nothing in the residue can separate the remaining hypotheses, so the
+next occurrence needs the finalize execution to prove its own commit landed - for example writing
+the finalize marker to `atomicState` (which commits immediately) alongside the `state` copy, then
+comparing the two at the guard. That is an instrumentation change, not a fix, and is not made here.
+
 Ruled out: the condition and expression extractors added for the sibling decode contract. Both were
 run offline against all 71 saved Rule Machine rules, 71 clean, no throw. The behaviour also predates
 them in at least one observed case.
