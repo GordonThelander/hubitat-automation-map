@@ -10591,10 +10591,13 @@ boolean hamDetailBool(Object v) {
 // the rule never fires and nothing says why. An id with no matching mode
 // resolves to null rather than to itself.
 List hamDetailModeNames(List ids) {
+    // Property access, never `as Map`: location.modes holds
+    // com.hubitat.hub.domain.Mode objects, and coercing one to a Map makes
+    // Groovy call Mode.get('id'), which it has no signature for.
     List modes = (location?.modes ?: []) as List
     return (ids ?: []).collect { Object id ->
-        Map hit = modes.find { Object m -> "${(m as Map)?.id}" == "${id}" } as Map
-        return hit ? "${hit.name}" : null
+        Object hit = modes.find { Object m -> "${m?.id}" == "${id}" }
+        return hit != null ? "${hit.name}" : null
     }
 }
 
@@ -10683,7 +10686,10 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
     // invisible to a value-only read. Without them a device condition says
     // what to compare and never what to compare it against.
     List devices = (settingDevices["rDev_${num}"] ?: settingDevices["rDev${num}"] ?: []) as List
-    if (devices) operands.devices = devices
+    if (devices) {
+        operands.devices = devices.collect { "${(it as Map).name}" }
+        operands.deviceIds = devices.collect { "${(it as Map).id}" }
+    }
     String anyAll = "${settingValues["AllrDev${num}"] ?: ''}".trim()
     if (anyAll) operands.anyAll = anyAll
 
@@ -10716,7 +10722,12 @@ List extractRuleConditions(Map data) {
         Map s = raw as Map
         if (s.value != null) settingValues["${s.name}"] = "${s.value}"
         Map dl = s.deviceList as Map
-        if (dl) settingDevices["${s.name}"] = dl.values().collect { stripTags("${it}") }
+        // Both halves: deviceList is {deviceId: label}, and the id is the only
+        // stable handle. Labels collide and carry stray whitespace ("TV Room
+        // Motion Sensor "), so a consumer binding on a name binds on nothing.
+        if (dl) settingDevices["${s.name}"] = dl.collect { Object k, Object v ->
+            [id: "${k}", name: stripTags("${v}")]
+        }
     }
     List out = []
     settingValues.each { Object k, Object v ->
