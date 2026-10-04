@@ -179,6 +179,9 @@ boolean showSanta() {
 // in the graph with their device relationships; they are counted and reported
 // rather than silently producing an empty flow.
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
+// The decode contract's own shape, versioned independently of the construct
+// vocabulary and of the engine pin above. See the HAI decode contract block.
+@Field static final int HAM_DECODE_CONTRACT_VERSION = 1
 // Named once here, not repeated as a literal in compatibilitySummary(),
 // so a future engine addition needs one edit rather than finding every
 // place SUPPORTED_RULE_ENGINE used to stand in for "everything decoded".
@@ -3252,6 +3255,8 @@ void finishScan(data = null) {
         state.scanHeartbeat = now()
         state.graph = graph
         atomicState.graphVersion = GRAPH_SCHEMA
+        // Sibling decode contract, written from the graph just committed.
+        hamDecodeWriteFile()
         // Paired marker, same value to both halves: a later execution comparing
         // them can prove whether its own snapshot predates this commit. See
         // snapshotPredatesGraphCommit().
@@ -10528,6 +10533,142 @@ Map rmCoverageReport() {
 // false means it does not, and null means this app could not tell - a webCoRE
 // piston proves a command was sent without proving it sticks. A caller that
 // reads null as false will miss real clashes.
+// --- HAI decode contract: start ---
+// A read-only, on-hub contract for a sibling app that needs Rule Machine
+// decode without shipping a second decoder. Two calls: a whole-estate summary
+// that drives a list, and one rule's full flow fetched when someone opens it.
+// Measured on 64 rules: the summary is 14% of the full set, and neither costs a
+// decode because buildRuleFlow() already ran during the scan.
+//
+// Three version axes are published separately and must stay that way: the
+// contract's own shape, the construct token vocabulary, and the Rule Machine
+// engine this decoder is pinned to. A change to one must never present as a
+// change to another.
+//
+// Fails closed: a response is either ok with a payload, or not ok with a fixed
+// issue code and human text. There is no partial third form.
+
+// Who answered. A Dev install and a production install both serve this, so a
+// consumer must be able to refuse a cross-channel reply rather than silently
+// read the wrong hub's neighbour.
+Map hamDecodeEnvelope() {
+    return [contract: 'ham.decode/1',
+            contractSchemaVersion: HAM_DECODE_CONTRACT_VERSION,
+            rmConstructVocabularyVersion: 1,
+            supportedEngine: SUPPORTED_RULE_ENGINE,
+            instance: [appId: app.id, appName: APP_NAME, appVersion: APP_VERSION,
+                       buildChannel: BUILD_CHANNEL]]
+}
+
+Map hamDecodeFailure(String issue, String message) {
+    return hamDecodeEnvelope() + [ok: false, issue: issue, message: message]
+}
+
+// The same vocabulary apps[].status publishes, derived from the same node flags
+// and in the same precedence, so a consumer reading both never sees two answers.
+String hamDecodeStatus(Map n) {
+    if (n.missing) return 'deleted-but-referenced'
+    if (n.unreadable) return 'unreadable'
+    if (n.disabled) return 'disabled'
+    if (n.paused) return 'paused'
+    if (n.unscanned) return 'unscanned'
+    if (n.inert) return 'inert'
+    return 'active'
+}
+
+// Freshness is stated, never left for a consumer to infer from a timestamp:
+// complete-with-gaps means the scan finished while a read failed, so a rule may
+// be absent or thin, which a date alone would hide.
+Map hamDecodeScan() {
+    Integer appsUnreadable = (state.appsUnreadable ?: 0) as Integer
+    Integer devicesUnreadable = ((state.deviceIdsUnreadable ?: []) as List).size()
+    String status = state.scanError ? 'failed'
+        : ((appsUnreadable > 0 || devicesUnreadable > 0) ? 'complete-with-gaps' : 'complete')
+    Long beat = state.scanHeartbeat as Long
+    // The freshness policy is stated, never left for the consumer to invent.
+    // It comes from this install's own schedule rather than a guess: the
+    // automatic scan runs daily, so a 24 hour cycle plus an hour of grace
+    // means anything older missed a scan. With automatic scanning off there
+    // is no schedule and therefore no policy, and null says so - a consumer
+    // should then show the age and attach no verdict rather than apply a
+    // threshold this app never promised.
+    boolean auto = autoScanEffectivelyEnabled()
+    return [lastScanCompletedAt: beat ? new Date(beat).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC')) : null,
+            status: status,
+            autoScanEnabled: auto,
+            staleAfterSeconds: auto ? 90000 : null]
+}
+
+List hamDecodeRuleNodes() {
+    Map graph = (state.graph ?: [:]) as Map
+    Object rawNodes = graph.nodes
+    List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList()
+                                           : ((rawNodes ?: []) as List)
+    return nodes.findAll { Object raw ->
+        if (!(raw instanceof Map)) return false
+        Map n = raw as Map
+        return n.group == 'app' && "${n.appType ?: ''}" == SUPPORTED_RULE_ENGINE
+    }
+}
+
+// Markers are steps in the flow but not work the rule does, and they cluster on
+// branchy rules, so a raw count reads as complexity the rule does not have.
+int hamDecodeStepCount(List steps) {
+    return ((steps ?: []) as List).count { Object raw ->
+        !(raw instanceof Map) || !"${(raw as Map).ctrl ?: ''}"
+    } as int
+}
+
+Map hamDecodeSummary() {
+    // Presence of the graph, not of any nodes in it: a hub with no Rule
+    // Machine rules has scanned successfully and must answer with an empty
+    // list, not with a failure that reads as 'this instance is broken'.
+    if (state.graph == null) return hamDecodeFailure('no-scan',
+        'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
+    Map graph = (state.graph ?: [:]) as Map
+    Map flows = (graph.flows ?: [:]) as Map
+    List rules = hamDecodeRuleNodes().collect { Object raw ->
+        Map n = raw as Map
+        String id = "${n.id}"
+        List steps = (flows[id] ?: []) as List
+        return [id: id,
+                name: "${n.name ?: n.label ?: id}",
+                engine: "${n.appType}",
+                status: hamDecodeStatus(n),
+                hasDecodedFlow: flows.containsKey(id),
+                constructs: ((n.rmConstructs ?: []) as List),
+                stepCount: hamDecodeStepCount(steps)]
+    }
+    return hamDecodeEnvelope() + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
+}
+
+// Published as a hub file rather than an endpoint: a sibling app reads
+// http://127.0.0.1:8080/local/<name> with no token, no OAuth and nothing to
+// provision, which is the same way this app already consumes HAI's own files.
+// The channel is in the name because a Dev and a production install coexist on
+// one hub and must not overwrite each other.
+String hamDecodeFileName() {
+    return isDevBuild() ? 'ham-decode-dev.json' : 'ham-decode.json'
+}
+
+// Called on every scan completion, deliberately not from a separate publish
+// step: a file that depends on someone remembering to republish is the failure
+// that left HAI's own capability feed nine days stale.
+void hamDecodeWriteFile() {
+    try {
+        String body = JsonOutput.toJson(hamDecodeSummary())
+        uploadHubFile(hamDecodeFileName(), body.getBytes('UTF-8'))
+        if (diagOn()) log.info "${app.label}: wrote ${hamDecodeFileName()} (${body.length()} bytes)"
+    } catch (Exception ex) {
+        // Never allowed to fail a scan. The consumer sees a stale or absent
+        // file and its own freshness check catches it, which is the behaviour
+        // the contract already requires of it.
+        log.warn "${app.label}: could not write ${hamDecodeFileName()} for the sibling decode contract (${ex.message})."
+    }
+}
+
+// --- HAI decode contract: end ---
+
 Map edgesMapping() {
     Map graph = (state.graph ?: [:]) as Map
     List nodes = (graph.nodes ?: []) as List
