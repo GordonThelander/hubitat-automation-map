@@ -12699,6 +12699,27 @@ Map buildGraph() {
         edges << hc
     }
 
+    // A rule whose every trigger is the hub's own start event only ever acts at
+    // boot, so what it does to other rules is housekeeping rather than control
+    // flow. On this hub one such rule contributes 43 of the 70 cross-rule
+    // links, all resetting Private Booleans, which buries the 27 that change
+    // what another rule actually does. Marked rather than given its own kind:
+    // the flag follows the constraint edge's own `unused` precedent, so the
+    // four rule-link kinds stay exactly four for every consumer.
+    //
+    // Keyed on the trigger construct, never on the rule's name. `every` and
+    // not `any`: a rule that also triggers on something else does real work at
+    // other times, and its links are not startup housekeeping.
+    Set<String> startupRules = [] as Set
+    flows.each { String flowId, Object rawFlow ->
+        List trig = ((rawFlow ?: []) as List).findAll { (it instanceof Map) && (it as Map).kind == 'trigger' }
+        if (!trig) return
+        boolean allStartup = trig.every { Object st ->
+            (((st as Map).constructs ?: []) as List).any { "${it}".contains('systemStart') }
+        }
+        if (allStartup) startupRules << flowId
+    }
+
     // App-to-app edges are emitted in a second pass, so a link is still drawn
     // when it points at a rule that came later in the scan than the rule
     // pointing at it.
@@ -12744,7 +12765,9 @@ Map buildGraph() {
             String key = "${fromId}|${toId}|${kind}"
             if (seen.contains(key)) return
             seen << key
-            edges << [from: fromId, to: toId, kind: kind]
+            Map edge = [from: fromId, to: toId, kind: kind]
+            if (startupRules.contains(fromId)) edge.startup = true
+            edges << edge
         }
     }
 
@@ -15451,6 +15474,8 @@ String buildMapHtml() {
       <option value="owns">Ownership only</option>
       <option value="hasComponent">Has component only</option>
       <option value="rulelinks">Rule to rule only</option>
+      <option value="rulelinkslive">Rule to rule, except startup resets</option>
+      <option value="rulelinksstartup">Startup resets only</option>
       <option value="depends">External systems only</option>
       <option value="variables">Variable use only</option>
       <option value="synchronizedWith">Variable connectors only</option>
@@ -15570,6 +15595,7 @@ const LEGEND_EDGE_ROWS = [
   { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs another rule' + "'" + 's actions' },
   { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule' + "'" + 's pending Wait/Delay' },
   { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets another rule' + "'" + 's Private Boolean' },
+  { key: 'startupReset', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted; opacity:0.55"></span>Startup reset - a rule that only runs at hub start, acting on another rule' },
   { key: 'pauseResume', html: '<span class="line ln-pat ln-dashdot" style="color:' + roleColors.pauseResume + '"></span>Pause / resume - rule pauses or resumes another rule' },
   { key: 'depends:RUNTIME', html: '<span class="line ln-pat ln-thick" style="border-color:' + roleColors.depends + '; background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time' },
   { key: 'depends:SETUP', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up, manage or find devices' }
@@ -15596,6 +15622,9 @@ function updateCompactLegend(nodeList) {
   edges.get().forEach(function (e) {
     kindsShown[e.kind] = true;
     if (e.kind === 'depends') kindsShown['depends:' + (e.crit === 'RUNTIME' ? 'RUNTIME' : 'SETUP')] = true;
+    // Same split-key trick as depends: a startup reset is a rule link by kind
+    // and its own row in the legend, because it is drawn differently.
+    if (e.startup === true) kindsShown['startupReset'] = true;
   });
   let html = '';
   LEGEND_GROUP_ROWS.forEach(function (r) { if (groupsShown[r.group]) html += '<div class="legend-row">' + r.html + '</div>'; });
@@ -15874,6 +15903,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'owns') dashes = true;
   else if (e.kind === 'exposed') dashes = [2, 4];
   else if (e.kind === 'cancelTimedActions') dashes = [8, 4];
+  else if (e.startup === true) dashes = [1, 6];
   else if (e.kind === 'setspb') dashes = [2, 3];
   else if (e.kind === 'pauseResume') dashes = [12, 4, 2, 4];
   else if (e.kind === 'usesVar') dashes = [5, 4];
@@ -15882,7 +15912,10 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   // operationally: whether losing it stops the automation or merely stops you
   // reconfiguring it.
   else if (e.kind === 'depends') dashes = (e.crit === 'RUNTIME') ? [6, 3] : [2, 5];
-  let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
+  // A rule link is drawn heavier than a device relationship, except a startup
+  // reset: it is a rule link by kind but housekeeping by effect, so it reads
+  // as present without competing with the links that change behaviour.
+  let width = (isRuleLink && e.startup !== true) ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed' || e.startup === true) ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
   if (deadConstraint) width = 1;
   const edge = {
@@ -15890,6 +15923,10 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     // action, where the command is proven but its lasting state is not. Every
     // consumer tests `=== true` or truthiness, so null still reads as false.
     id: i, from: e.from, to: e.to, kind: e.kind,
+    // Carried explicitly, like every other field here: this object is a fresh
+    // literal, so a flag left out is dropped and the Show filter and legend
+    // both read it off the live edge set.
+    startup: e.startup === true,
     stateful: e.stateful === null ? null : (e.stateful === true),
     crit: e.crit || null,
     // v2.2.8 decode evidence: a deviceRead's attribute, an action's command
@@ -16607,6 +16644,11 @@ function releaseShelfPins(styled) {
 function edgesForKindFilter(kindVal, edges) {
   if (kindVal === 'all') return edges;
   if (kindVal === 'rulelinks') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
+  // A rule that only fires at boot buries the links that change what another
+  // rule does: on this hub it is 43 of 70. These two filters are the way to
+  // read either half on its own.
+  if (kindVal === 'rulelinkslive') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1 && e.startup !== true; });
+  if (kindVal === 'rulelinksstartup') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1 && e.startup === true; });
   if (kindVal === 'variables') return edges.filter(function (e) { return VARIABLE_KINDS.indexOf(e.kind) !== -1; });
   return edges.filter(function (e) { return e.kind === kindVal; });
 }
