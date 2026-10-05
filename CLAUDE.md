@@ -2,6 +2,9 @@
 
 ## Read before planning work
 
+- `docs/2026-10-05-handover-from-cloud-session.md` - **do this first.** Steps left from the cloud session
+  of 2026-10-05: deploy and verify the volume fix, capture the decode files again, then merge. Delete this
+  line and that file once done.
 - `docs/2026-10-05-ham-hai-architecture-review.md` - an architecture, usability and enhancement review of
   Automation Map and HAI, with 20 ranked recommendations weighed against the hub's measured limits and a
   suggested order. Written 2026-10-05 at Gordon's request. Recommendations, not decisions: check with
