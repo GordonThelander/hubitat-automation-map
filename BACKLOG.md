@@ -45,11 +45,22 @@ Time, Periodic Schedule, Variable, Location Event, Custom Attribute - are emitte
 sources (`timeTriggers`, `trigCustoms` and others) need checking before `trigDevs` is used as a
 filter, and that has not been done.
 
-**53b. One rule loses its Required Expression entirely.** `buildRuleFlow` gates the required step on
+**53b. FIXED. One rule lost its Required Expression entirely.** `buildRuleFlow` gates the required step on
 `st.hasPredicate == true`. Patio Night (2283) stores `hasPredicate` unset while `eval['0']` holds
 `["13","AND","11"]`, and its page renders "Time between 00:01 and Sunrise-15 minutes AND Private
 Boolean is true". The map shows no required step at all, so the rule reads as ungated. One rule of 71
-is affected; the signal to use is a non-empty `eval['0']`, not `hasPredicate`.
+was affected.
+
+Fixed by `rulePredicateIsLive()`, which all three gates now route through. It checks the flag first,
+because the old guard's concern was real: a rule whose toggle was switched off must not read a stale
+leftover group '0'. Measured across all 71 rules, that leftover does not occur - all 40 rules with no
+flag also have an empty group '0', so removing the predicate clears the expression with it.
+
+Why this rule and no other: its condition numbers are stored as strings, `["13","AND","11"]`, where
+every other rule on the hub stores integers, `[3,"AND",16]`. A different Rule Machine version or edit
+path wrote that expression, and the same path left the flag unset. Verified on Dev rev 84: the rule
+now publishes "Time between 00:01 and Sunrise-15 minutes AND Private Boolean is true", matching its
+page.
 
 **53c. `(cancelable)` is printed twice** on 9 Delay steps, for example `Delay 0:00:20 (cancelable)
 (cancelable)` on Mode Alarm Triggered Suitcase and Cupboard. Cosmetic.

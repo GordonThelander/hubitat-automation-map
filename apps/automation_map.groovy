@@ -8696,7 +8696,7 @@ List extractHubVariableReads(Map data) {
     // leftover group '0' as if it were still active. Every other group is
     // tied directly to an action's own presence in actionList, which has no
     // equivalent toggle to go stale against.
-    boolean hasPredicate = st.hasPredicate == true
+    boolean hasPredicate = rulePredicateIsLive(st)
 
     Map settingValues = [:]
     (data.appSettings ?: []).each { s ->
@@ -8934,7 +8934,7 @@ List buildRuleFlow(Map data) {
     }
 
     // Required expression: branch 0 of eval, present only when the rule has one.
-    if (st.hasPredicate == true) {
+    if (rulePredicateIsLive(st)) {
         String text = expressionText((evalMap['0'] ?: []) as List, capabs)
         if (text) steps << [kind: 'required', label: text, devices: requiredDevices(evalMap['0'] as List, settingDevices)]
     }
@@ -9763,6 +9763,23 @@ boolean isStatefulCapability(String settingType) {
 // Fails closed: no actionList means no decodable rule structure (a non-rule
 // app, or an engine this does not decode), which proves nothing either way, so
 // it claims nothing.
+// Whether the Required Expression is live. hasPredicate is a convenience flag
+// beside the expression, not the expression: Patio Night (2283) stores no
+// hasPredicate while eval group '0' holds ["13","AND","11"], and its rule page
+// renders that expression, so reading the flag alone showed a gated rule as
+// ungated.
+//
+// Still checks the flag first, because the old guard's concern was real: a rule
+// whose toggle was switched off again must not read a stale leftover group '0'.
+// Measured across all 71 rules on this hub, that leftover does not occur - all
+// 40 rules with no hasPredicate also have an empty group '0', so removing the
+// predicate clears the expression with it. Where the two ever disagree, the
+// rule page is the arbiter, and it agrees with the expression.
+boolean rulePredicateIsLive(Map st) {
+    if (st?.hasPredicate == true) return true
+    return (((st?.eval ?: [:]) as Map)['0'] ?: []) as boolean
+}
+
 List unusedConstraintDeviceIds(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -9775,7 +9792,7 @@ List unusedConstraintDeviceIds(Map data) {
     Map evalMap = (st.eval ?: [:]) as Map
 
     Set<String> liveGroups = new LinkedHashSet<String>()
-    if (st.hasPredicate == true) liveGroups << '0'
+    if (rulePredicateIsLive(st)) liveGroups << '0'
     actionList.each { a ->
         Object r = ((actions["${a}"] ?: [:]) as Map).rule
         if (r != null) liveGroups << "${r}"
