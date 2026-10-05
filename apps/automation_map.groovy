@@ -18755,7 +18755,10 @@ function mrOpen() {
       // piston to redraw the same numbers is what this panel used to do on
       // every open.
       MR.versionMoved = ((d || {}).ratings || []).some(function (r) { return r.appVersionMoved === true; });
-      mrRun(MR.versionMoved ? [] : mrCachedResults(d));
+      // Whole-hub or one piston, the rule is the same: rate what needs rating
+      // and nothing else. mrCachedResults drops exactly the ratings an upgrade
+      // invalidated, so mrRun rates those and leaves the rest alone.
+      mrRun(mrCachedResults(d));
     })
     .catch(function () { MR.running = false; MR.results = []; mrRender(); });
 }
@@ -18771,8 +18774,10 @@ function mrCachedResults(payload) {
     const full = r.ruleMachine && r.ruleMachine.components !== undefined && r.ruleMachine.components !== null;
     // Stale is no longer a reason to re-rate. It means the graph moved after
     // the rating, which usually leaves the rating correct, and the Refresh
-    // Scan button is there for when it does not.
-    if (r.status === 'complete' && full) byId[String(r.appId)] = r;
+    // Scan button is there for when it does not. A rating taken under an
+    // earlier version of this app is a different matter: the table it was
+    // rated against has changed, so it is withheld and rated again.
+    if (r.status === 'complete' && full && !r.appVersionMoved) byId[String(r.appId)] = r;
   });
   const out = [];
   mrPistons().forEach(function (node) {

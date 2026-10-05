@@ -66,6 +66,14 @@ const complete = (appId, extra) => Object.assign(
   check(r.rated.length === 2, 'an upgrade of this app re-rates every piston');
   check(r.MR.versionMoved === true, 'the upgrade is recorded rather than inferred twice');
 
+  // One rating left behind by an upgrade does not drag the other 24 with it.
+  r = await run([complete('1', {stale: false, appVersionMoved: true}),
+                 complete('2', {stale: false, appVersionMoved: false}),
+                 complete('3', {stale: false, appVersionMoved: false})],
+                [{id: '1'}, {id: '2'}, {id: '3'}]);
+  check(r.rated.length === 1 && r.rated[0].indexOf('1') !== -1,
+        'only the piston whose rating the upgrade invalidated is rated again');
+
   // Nothing to do at all.
   r = await run([complete('1', {stale: false, appVersionMoved: false})], [{id: '1'}]);
   check(r.rated.length === 0, 'opening a panel with current ratings costs no hub reads');
