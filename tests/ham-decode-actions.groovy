@@ -182,6 +182,17 @@ Map waity = [
 List ws = script.extractRuleActions(waity)
 check(!ws[0].containsKey('delay'),
       'a wait carries no delay: its delayAct describes the wait, not a pause before it')
+
+// Control flow was claimed done because the display steps carry `ctrl`. The
+// actions array is what a rebuild reads, and there every marker was
+// supported:false - 83 records across 25 rules refusing on a structure this
+// app had already decoded. Claiming it done and publishing it are not the
+// same thing.
+check((ops('4', 'getIfThen', [:]) as Map).branch == 'if', 'an IF resolves as a branch')
+check((ops('8', 'getElseIf', [:]) as Map).branch == 'elseif', 'an ELSE-IF is distinct from an IF')
+check((ops('11', 'getElse', [:]) as Map).branch == 'else', 'an ELSE resolves')
+check((ops('13', 'getEndIf', [:]) as Map).branch == 'endif', 'an END IF resolves')
+check((ops('4', 'getIfThen', [:]) as Map).type == 'branch', 'all four share one type')
 check(ws[1].delay?.seconds == 4,
       'an ordinary action still carries its own delay')
 
