@@ -8882,6 +8882,32 @@ List buildRuleFlow(Map data) {
         if (s.value != null && "${s.value}") settingValues[n] = "${s.value}"
     }
 
+    // Rule Machine writes that condition text once, when the condition is saved,
+    // and never rewrites it. Its own rule page rebuilds the text on view, so the
+    // page is right while the stored copy drifts: mode 6 was renamed from
+    // Visitor to Guest and two rules still store "Mode in [Home, Visitor]".
+    // The mode clause is the one part that can be rebuilt exactly, from the ids
+    // against the live list, so it is. RM's wording is kept rather than
+    // invented: "Mode is X" for one, "Mode in [X, Y]" for several, both read off
+    // this hub. Device names in the same sentence have the same problem and are
+    // not fixable this way, because nothing records what the name used to be.
+    settingValues.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        String num = key.startsWith('rCapab_') ? key.substring('rCapab_'.length())
+                   : (key.startsWith('tCapab') ? key.substring('tCapab'.length()) : null)
+        // Digits only: isInteger() accepts "-4", and a negative suffix is a
+        // Wait-for-Events target, which the trigger walk excludes for the same reason.
+        if (num == null || !num.matches('^[0-9]+$')) return
+        if ("${settingValues[key] ?: ''}".trim() != 'Mode') return
+        List ids = hamDetailJsonList(settingValues["modes${num}"])
+        if (!ids) return
+        List names = hamDetailModeNames(ids)
+        // A deleted mode resolves to nothing, and the stored text is then the
+        // only record of what it was called. Leave it rather than lose it.
+        if (names.any { it == null }) return
+        capabs[num] = names.size() == 1 ? "Mode is ${names[0]}" : "Mode in [${names.join(', ')}]"
+    }
+
     List steps = []
 
     // Triggers: one step per saved trigger row, whether or not a device list
