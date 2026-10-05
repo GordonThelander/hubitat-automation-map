@@ -16,6 +16,50 @@ history, not in this delivery list.
 
 ## Now
 
+### 53. Three defects from the full rule-page audit, all still open
+
+Every one of the 71 Rule Machine rules on this hub was compared against its own Rule Machine page,
+which regenerates its text on view and is therefore the authority. Triggers, required expressions
+including AND/OR/NOT, branch structure and nesting, action order and branch conditions all matched.
+Three things did not.
+
+**53a. Phantom triggers, two rules.** The trigger walk emits a step for every `tCapab<n>` setting.
+Two of those are leftovers that Rule Machine does not treat as triggers:
+
+| Rule | Setting | Rule Machine shows | The map shows |
+|---|---|---|---|
+| Guest mode adjustment (2865) | `tCapab13 = 'Switch'` | 1 trigger | 2, the second labelled "Switch" |
+| Mode Alarm Status Adjustment (2816) | `tCapab13 = 'Switch'` | 1 trigger | 2, the second labelled "Kitchen Motion Sensor, Dining Room Sensor, Entrance Hall Motion Sensor, Lounge Motion Sensor any motion is active" |
+
+2816 is the worse of the two and the reason the first search for these under-reported. That label is
+real text, but it belongs to **condition** 13, which the Wait for Expression in the actions uses.
+Triggers and conditions share one numbering space, so a leftover trigger setting can collect a
+condition's rendering and read as a perfectly plausible trigger that does not exist. A search for
+`tCapab` settings with no rendering finds 2865 and misses 2816 entirely.
+
+**The authoritative source is `state.trigDevs`**, which maps `"<deviceId>:<Capability>"` to the
+trigger numbers that actually use it: `{"3543:Presence": ["9"]}` on 2816 and `{"3544:Switch":
+["40"]}` on 2865. In both cases the phantom number is absent from it. A fix must not simply require
+devices, because the 2026-10-03 trigger fix exists precisely so that device-less triggers - Certain
+Time, Periodic Schedule, Variable, Location Event, Custom Attribute - are emitted at all. Those
+sources (`timeTriggers`, `trigCustoms` and others) need checking before `trigDevs` is used as a
+filter, and that has not been done.
+
+**53b. One rule loses its Required Expression entirely.** `buildRuleFlow` gates the required step on
+`st.hasPredicate == true`. Patio Night (2283) stores `hasPredicate` unset while `eval['0']` holds
+`["13","AND","11"]`, and its page renders "Time between 00:01 and Sunrise-15 minutes AND Private
+Boolean is true". The map shows no required step at all, so the rule reads as ungated. One rule of 71
+is affected; the signal to use is a non-empty `eval['0']`, not `hasPredicate`.
+
+**53c. `(cancelable)` is printed twice** on 9 Delay steps, for example `Delay 0:00:20 (cancelable)
+(cancelable)` on Mode Alarm Triggered Suitcase and Cupboard. Cosmetic.
+
+**Not defects, recorded so they are not re-investigated.** A rule with no actions is deliberately
+given no flow and marked inert, which is why Time (3572), _Variable Test (2995) and _HAI Decoder
+Stress 04 (3586) draw nothing. A hub-disabled rule renders nothing on its own Rule Machine page
+while the map still decodes it from stored state and marks it disabled, which is more than the page
+gives, not less.
+
 ### 52. Flow labels show the old DEVICE name after a rename (modes fixed)
 
 Rule Machine stores a rendered sentence per condition in `capabstrue` and `capabsfalse`, and
