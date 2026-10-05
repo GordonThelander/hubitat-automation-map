@@ -43,7 +43,13 @@ function extractAnonymous(anchor, signature) {
 
 const functionNames = ['beginSelectionGeneration', 'showFlow', 'focusNode', 'exitToWholeMap',
     'onAppFocusChange', 'onDeviceFocusChange', 'onHubVarFocusChange', 'onLocalVarFocusChange',
-    'bringToFront', 'secondaryPanels', 'allPanels'];
+    'bringToFront', 'secondaryPanels', 'allPanels',
+    // beginSelectionGeneration now hides the migration card, so its real helper is extracted too; without
+    // it this suite threw "hideMigrationCard is not defined" on its first selection (2026-10-05).
+    'hideMigrationCard',
+    // showFlow gained these since this suite was written; extracted rather than stubbed, so a change to
+    // what they do on a stale render is exercised here too.
+    'renderEngineLink', 'renderMigrationCard', 'loadMermaid'];
 const listeners = {
     searchChange: ['const searchAllSelect = createCombobox({', 'function (value, item)'],
     resetClick: ["document.getElementById('resetBtn').addEventListener('click', ", 'function ()'],
@@ -115,6 +121,14 @@ function makeSandbox() {
     SECONDARY.forEach(function (entry) {
         sandbox[entry[1]] = { style: { display: 'none' }, classList: { contains: function () { return false; } } };
     });
+    // Every panel the app's own secondaryPanels() names exists here too, read from that function rather
+    // than listed by hand: the app gained three (migrationReportPanel, rmCoveragePanel, roomPlanPanel)
+    // that a hand list missed, and bringToFront threw on the first of them.
+    (extractFunction('secondaryPanels').match(/\[([^\]]*)\]/)[1].split(',')).map(function (n) { return n.trim(); })
+        .filter(function (n) { return n && !sandbox[n]; })
+        .forEach(function (n) {
+            sandbox[n] = { style: { display: 'none' }, classList: { contains: function () { return false; } } };
+        });
     function note(label) { return function (arg) { log.push(label + (arg === undefined ? '' : ':' + (arg && arg.id !== undefined ? arg.id : arg))); }; }
     Object.assign(sandbox, {
         renderRuleVariablesCard: note('vars'), noteFlowItem: note('item'), renderDecodeCoverageCard: note('coverage'),
@@ -135,7 +149,10 @@ function makeSandbox() {
         fitCurrentView: function () { }, renderBackLink: function () { }, currentFocus: function () { return null; }
     });
     const script =
-        'let focusGenerationSeq = 0;\nlet poppingHistory = false;\nlet panelTopZ = 0;\n' +
+        'let focusGenerationSeq = 0;\nlet poppingHistory = false;\nlet panelTopZ = 0;\nlet migrationRequestSeq = 0;\n' +
+        // loadMermaid's own cache, as it stands once the library has loaded: the CDN script tag is the
+        // browser boundary, and the harness's mermaid.render is what each test drives.
+        'var mermaidReady = Promise.resolve();\n' +
         functionNames.map(extractFunction).join('\n') + '\n' +
         Object.keys(listeners).map(function (name) {
             return 'var ' + name + ' = ' + extractAnonymous(listeners[name][0], listeners[name][1]) + ';';
@@ -157,6 +174,9 @@ function snapshot(sb) {
 async function staleCase(name, interrupt, settle, extra) {
     const sb = makeSandbox();
     sb.onAppFocusChange('a1');
+    // showFlow starts the render after loadMermaid() settles, so let that happen before interrupting:
+    // the case is a render already in flight, not one that never began.
+    await tick();
     assert(sb.renders.length === 1, 'rule A did not start a render');
     const stale = sb.renders[0];
     interrupt(sb);
@@ -183,6 +203,7 @@ async function main() {
     await (async function () {
         const sb = makeSandbox();
         sb.onAppFocusChange('a1');
+        await tick();
         sb.renders[0].resolve({ svg: '<svg>A</svg>' });
         await tick();
         check('a render with no later selection writes the chart and opens the panel', function () {
@@ -195,6 +216,7 @@ async function main() {
     await (async function () {
         const sb = makeSandbox();
         sb.focusNode('a1');
+        await tick();
         sb.renders[0].resolve({ svg: '<svg>A</svg>' });
         await tick();
         check('a render opened from the canvas still lands', function () {
@@ -267,6 +289,7 @@ async function main() {
         const sb = makeSandbox();
         sb.extClick();
         sb.onAppFocusChange('a2');
+        await tick();
         sb.renders[0].resolve({ svg: '<svg>B</svg>' });
         await tick();
         check('a rule picked after a secondary panel opened still renders and replaces that panel', function () {

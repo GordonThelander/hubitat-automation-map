@@ -5,19 +5,12 @@
 // with no change to any other relationship kind.
 // Run with: groovy tests/has-component-edges.groovy
 //
-// buildHasComponentEdges() below is copied verbatim from
-// apps/automation_map.groovy - keep the two in sync by hand.
-
-List buildHasComponentEdges(Set nodeIds, Map deviceParents) {
-    List result = []
-    deviceParents.each { childId, parentId ->
-        String childNodeId = "d${childId}"
-        String parentNodeId = "d${parentId}"
-        if (!nodeIds.contains(childNodeId) || !nodeIds.contains(parentNodeId)) return
-        result << [from: parentNodeId, to: childNodeId, kind: 'hasComponent']
-    }
-    return result
-}
+// buildHasComponentEdges() is the app's own, sliced from apps/automation_map.groovy at run time. It used to be
+// copied here and "kept in sync by hand", which nothing enforced: by 2026-10-05 the copy had already
+// lost the app's comments, and the next change to the code would have gone unseen by this suite.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+def appFns = new GroovyShell().parse(AppSource.function(AppSource.read(), 'buildHasComponentEdges'))
+binding.setVariable('buildHasComponentEdges', appFns.&buildHasComponentEdges)
 
 int pass = 0, fail = 0
 def check = { String name, Closure body ->

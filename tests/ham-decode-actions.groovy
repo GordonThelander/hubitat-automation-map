@@ -12,22 +12,18 @@ assert start >= 0 : 'action resolver not found'
 assert end > start : 'action resolver not terminated'
 String block = source.substring(start, end)
 
-String stubs = '''
-import groovy.transform.Field
-String stripTags(String s) { return s.replaceAll('<[^>]*>', '') }
-Integer hamDetailInt(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s || !s.isInteger()) return null
-    return s as Integer
-}
-boolean hamDetailBool(Object raw) { return "${raw ?: ''}".trim() == 'true' }
-List hamDetailJsonList(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s) return []
-    try { return new groovy.json.JsonSlurper().parseText(s) as List } catch (Exception ignored) { return [] }
-}
-'''
+// The helpers the resolver calls, sliced from the app rather than stubbed. The stubs these replace
+// disagreed with the app: hamDetailInt returned null where the app returns 0, hamDetailBool was
+// case-sensitive where the app is not, and hamDetailJsonList returned [] for text the app keeps as [s].
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+String stubs = 'import groovy.transform.Field\n' +
+    AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
+
+// The slices are the app's, not a stub's: each returns what only the real one returns.
+assert script.hamDetailInt('') == 0 : 'hamDetailInt is a stub: the app returns 0 for an empty value'
+assert script.hamDetailBool('TRUE') == true : 'hamDetailBool is a stub: the app ignores case'
+assert script.hamDetailJsonList('not json') == ['not json'] : 'hamDetailJsonList is a stub: the app keeps unparseable text'
 
 int passed = 0
 Closure check = { boolean cond, String what ->
