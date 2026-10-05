@@ -4314,6 +4314,7 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 out.conditions = extractRuleConditions(data)
                 out.expressions = extractRuleExpressions(data)
                 out.actions = extractRuleActions(data)
+                out.triggers = extractRuleTriggers(data)
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 // Decoded once (v2.2.8), not per classifier - chunk
@@ -10935,6 +10936,40 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
                     branch: ['getIfThen': 'if', 'getElseIf': 'elseif',
                              'getElse': 'else', 'getEndIf': 'endif'][method]]
 
+        case 'getDefinedAction':
+            // A custom command. cCmd is the method, myCapab the capability it
+            // belongs to. Parameters live in cpVal<i>.<n> with their declared
+            // type in cpType<i>.<n>, and i is NOT contiguous and does not
+            // start at 1: this hub uses 1 to 9 with 8 absent. They are sorted
+            // by index and the index travels, because the order is the call's
+            // argument order and a gap must not shift it.
+            //
+            // Values stay as stored. 'breathe' takes '20', '90' and '5' all
+            // declared string on this hub; coercing a numeric-looking string
+            // to a number changes the call being made.
+            Map o = [type: 'command', command: "${v["cCmd.${num}"] ?: ''}"]
+            String capab = "${v["myCapab.${num}"] ?: ''}".trim()
+            if (capab) o.capability = capab
+            List d = hamDetailDeviceRefs(dev["devices.${num}"])
+            if (d) o.devices = d
+            // RM can target the device that fired the trigger instead of a
+            // fixed list, in which case there is no device to bind at all.
+            if (hamDetailBool(v["useLastDev.${num}"])) o.useLastDevice = true
+            List params = []
+            v.keySet().toList().each { Object rawK ->
+                String k = "${rawK}"
+                if (!k.startsWith('cpVal') || !k.endsWith(".${num}")) return
+                String idx = k.substring('cpVal'.length(), k.length() - num.length() - 1)
+                if (!idx.matches('^[0-9]+$')) return
+                params << [index: idx as Integer,
+                           value: "${v[k]}",
+                           type: "${v["cpType${idx}.${num}"] ?: ''}"]
+            }
+            if (params) o.parameters = params.sort { Map pm -> pm.index as Integer }
+            Integer meter = hamDetailInt(v["meterMillis.${num}"])
+            if (meter != null && hamDetailBool(v["meter.${num}"])) o.meterMillis = meter
+            return o
+
         case 'getLogMsg':
             // No level is stored. All 23 uses on this hub carry logmsg and
             // nothing else, so no level field is emitted rather than one
@@ -11010,6 +11045,113 @@ List extractRuleActions(Map data) {
         out << step
     }
     return out
+}
+
+// Trigger families that legitimately carry no device. Anything NOT in this
+// list that has no device is a leftover tCapab setting Rule Machine does not
+// treat as a trigger: 2865 and 2816 both store tCapab13='Switch' with no
+// tDev13, and 2816's even collects condition 13's rendering so it reads as a
+// plausible trigger that does not exist. trigDevs is the compiled proof, but
+// this test needs no second fetch.
+@Field static final List<String> DEVICELESS_TRIGGERS = [
+    'Certain Time (and optional date)', 'Periodic Schedule', 'Variable',
+    'Location Event', 'Mode', 'Hub Variable'
+]
+
+// Trigger settings carry NO dot - tCapab1, tDev1, ReltDev1 - where action
+// settings do: actType.1. Reading one spelling for the other misses silently.
+Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
+    Map o = [:]
+
+    // A conditional trigger stores itself in the CONDITION namespace instead:
+    // rule 814's Presence trigger 27 has rCapab_27/state_27/rDev_27 and no
+    // tDev27 at all. Devices are taken from whichever namespace holds them.
+    List d = hamDetailDeviceRefs(dev["tDev${num}"] ?: dev["rDev_${num}"])
+    if (d) o.devices = d
+
+    String state = "${v["tstate${num}"] ?: v["state_${num}"] ?: ''}".trim()
+    if (state) o.value = state
+    String rel = "${v["ReltDev${num}"] ?: v["RelrDev_${num}"] ?: ''}".trim()
+    if (rel) o.comparator = rel
+    String all = "${v["AlltDev${num}"] ?: v["AllrDev_${num}"] ?: ''}".trim()
+    if (all) o.allDevices = (all == 'true')
+
+    // "and stays that way for" - a duration the trigger waits out before it
+    // fires. Absent is not zero: a trigger with no stays clause fires at once.
+    if (hamDetailBool(v["stays${num}"])) {
+        Integer h = hamDetailInt(v["SHours${num}"])
+        Integer m = hamDetailInt(v["SMins${num}"])
+        Integer sec = hamDetailInt(v["SSecs${num}"])
+        o.staysForSeconds = ((h ?: 0) * 3600) + ((m ?: 0) * 60) + (sec ?: 0)
+    }
+
+    switch (cap) {
+        case 'Button':
+            Integer btn = hamDetailInt(v["ButtontDev${num}"])
+            if (btn != null) o.button = btn
+            break
+        case 'Variable':
+            String name = "${v["xVar${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            break
+        case 'Custom Attribute':
+            String attr = "${v["tCustomAttr${num}"] ?: ''}".trim()
+            if (attr) o.attribute = attr
+            break
+        case 'Mode':
+            // modesX on a trigger, modes on a condition. Read the condition
+            // spelling here and every mode trigger resolves to nothing.
+            List ids = hamDetailJsonList(v["modesX${num}"])
+            o.ids = ids.collect { "${it}" }
+            o.modes = hamDetailModeNames(ids)
+            break
+        case 'Periodic Schedule':
+            String period = "${v["whichPeriod${num}"] ?: ''}".trim()
+            if (period) o.period = period
+            Integer every = hamDetailInt(v["everyNSecs${num}"])
+            if (every != null) o.every = every
+            break
+        case 'Location Event':
+            // tstate holds the event name, already captured as value above.
+            break
+        case 'Certain Time (and optional date)':
+            o.at = hamDetailTimeOperand(num, v, 'at')
+            String date = "${v["atDate${num}"] ?: ''}".trim()
+            if (date) o.date = date
+            break
+    }
+    return o
+}
+
+// One record per trigger Rule Machine actually has, enumerated from tCapab
+// because a trigger with no device - Certain Time, Periodic Schedule,
+// Variable, Location Event, Mode - has no tDev row to be found by.
+List extractRuleTriggers(Map data) {
+    Map values = [:]
+    Map devices = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        if (s.value != null) values["${s.name}"] = "${s.value}"
+        Map dl = s.deviceList as Map
+        if (dl) devices["${s.name}"] = dl.collect { Object k, Object val -> [id: "${k}", name: stripTags("${val}")] }
+    }
+    List out = []
+    values.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        if (!key.startsWith('tCapab')) return
+        String num = key.substring('tCapab'.length())
+        // Digits only: a negative suffix is a Wait-for-Events target, not a
+        // trigger, which is why the flow walk excludes it too.
+        if (!num.matches('^[0-9]+$')) return
+        String cap = "${values[key] ?: ''}".trim()
+        if (!cap) return
+        Map ops = hamDetailTriggerOperands(num, cap, values, devices)
+        // A device family with no devices is a leftover setting, not a trigger.
+        if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        out << [index: num, capability: cap, operands: ops]
+    }
+    return out.sort { Map t -> (t.index as String) as Integer }
 }
 
 // --- HAI decode detail: end ---
@@ -11184,6 +11326,11 @@ Map hamDecodeDetail() {
                 // Anything else carries supported:false and its method name,
                 // to be refused by name rather than converted on a guess.
                 actions: ((info.actions ?: []) as List),
+                // Resolved triggers, operands not labels: device ids, the
+                // compared value, the comparator and the stays-for duration.
+                // A rule rebuilt without its trigger is inert while looking
+                // complete, which is the worst shape of all.
+                triggers: ((info.triggers ?: []) as List),
                 // Triggers and flow as buildRuleFlow() already produces them:
                 // display labels, control nesting derived with a stack rather
                 // than from Rule Machine's own indent field (wrong on rule

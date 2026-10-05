@@ -193,6 +193,34 @@ check((ops('8', 'getElseIf', [:]) as Map).branch == 'elseif', 'an ELSE-IF is dis
 check((ops('11', 'getElse', [:]) as Map).branch == 'else', 'an ELSE resolves')
 check((ops('13', 'getEndIf', [:]) as Map).branch == 'endif', 'an END IF resolves')
 check((ops('4', 'getIfThen', [:]) as Map).type == 'branch', 'all four share one type')
+
+// --- getDefinedAction: a custom command with ordered parameters -----------
+// Rule 1230 renders breathe('blue', 'Yellow', '20', '90', '5'). The values
+// live in cpVal<i> with their type in cpType<i>, and i is neither contiguous
+// nor 1-based across this hub: 1 to 9 with 8 absent.
+Map da = ops('29', 'getDefinedAction',
+    [cCmd: 'breathe', myCapab: 'Actuator',
+     cpVal2: 'blue', cpType2: 'string', cpVal3: 'Yellow', cpType3: 'string',
+     cpVal4: '20', cpType4: 'string', cpVal6: '5', cpType6: 'string'],
+    ['devices.29': [[id: '3002', name: 'Entrance Hall Light 1']]])
+check(da.command == 'breathe', 'the command name travels, where the label said only Run defined actions')
+check(da.capability == 'Actuator', 'the capability it belongs to travels')
+check(((da.devices as List)[0] as Map).id == '3002', 'the target device is an id')
+check((da.parameters as List).size() == 4, 'every stored parameter travels')
+check((da.parameters as List)*.value == ['blue', 'Yellow', '20', '5'],
+      'parameters are ordered by index, and a gap does not shift the order')
+check(((da.parameters as List)[2] as Map).value == '20',
+      'a numeric-looking value stays a string: its declared type says string and coercing changes the call')
+check(((da.parameters as List)[3] as Map).index == 6,
+      'the stored index travels, because the sequence is not contiguous')
+
+Map noParams = ops('9', 'getDefinedAction', [cCmd: 'applyDefault', myCapab: 'Actuator'])
+check(!noParams.containsKey('parameters'), 'a command with no parameters sends none rather than an empty list')
+check(!noParams.containsKey('devices'), 'and no devices key when it targets none')
+
+Map lastDev = ops('9', 'getDefinedAction', [cCmd: 'flashOff', myCapab: 'Switch', useLastDev: 'true'])
+check(lastDev.useLastDevice == true,
+      'targeting the triggering device is stated: there is no device to bind')
 check(ws[1].delay?.seconds == 4,
       'an ordinary action still carries its own delay')
 
