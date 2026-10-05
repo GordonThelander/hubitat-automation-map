@@ -27,17 +27,23 @@ int end = source.indexOf(endMarker)
 assert begin >= 0 && end > begin: 'scan diagnostics block not found in app source'
 String block = source.substring(begin + beginMarker.length(), end)
 
-// state, atomicState, SCAN_LOCKS, app and now() are the only things the block
-// touches, so the stub supplies exactly those and nothing is mocked away.
+// state, atomicState, SCAN_LOCKS, SCAN_PROGRESS, app and now() are the hub's
+// surfaces, so the harness supplies exactly those. The block now also calls
+// scanProgress() - which lives outside it - and that is sliced from the app
+// with what it calls, rather than stubbed: until 2026-10-05 this suite crashed
+// with "No signature of method: scanProgress()" because nothing supplied it.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File(repoRoot, 'tests/support/AppSource.groovy'))
+String progress = AppSource.functions(source, ['scanProgress', 'scanProgressIsLive'])
 String harness = '''
 class ScanDiagnosticsUnderTest {
     Map state = [:]
     Map atomicState = [:]
     Map SCAN_LOCKS = [:]
+    Map SCAN_PROGRESS = [:]
     Map app = [id: '3083']
     long stubNow = 1_000_000L
     long now() { return stubNow }
-''' + block + '''
+''' + progress + '\n' + block + '''
 }
 '''
 def diag = new GroovyClassLoader(this.class.classLoader).parseClass(harness).newInstance()

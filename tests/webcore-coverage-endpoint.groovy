@@ -29,6 +29,13 @@ String between(String text, String from, String to) {
 // The decoder and its helpers, the walker, the shipped registry projection and
 // the endpoint, all taken from the app so nothing here can pass against a copy
 // that has drifted.
+// scanEffectivelyActive is the app's, driven by the scan state it reads rather than by a stubbed boolean.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File(repoRoot, 'tests/support/AppSource.groovy'))
+String scanActive = AppSource.function(source, 'scanEffectivelyActive')
+assert AppSource.function(source, 'clearAbandonedScan').readLines()[0] == 'void clearAbandonedScan() {' :
+    'clearAbandonedScan changed signature in the app; update the recorder in the harness'
+assert AppSource.function(source, 'httpFetch').readLines()[0] == 'Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {' :
+    'httpFetch changed signature in the app; update the stub in the harness'
 String decoder = 'Map decodeWebcorePistonDocument(Map data) {' +
     between(source, 'Map decodeWebcorePistonDocument(Map data) {',
                     '// Pure processing, split out of fetchAppRelationships')
@@ -56,7 +63,8 @@ class CoverageUnderTest {
     static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
     Map state = [:]
     Map params = [:]
-    boolean stubScanActive = false
+    Map SCAN_LOCKS = [:]
+    Map app = [id: '3083']
     Map stubFetch = [ok: false, data: null, error: 'not configured', timedOut: false]
     List<String> fetchedUris = []
     int clearAbandonedScanCalls = 0
@@ -68,8 +76,10 @@ class CoverageUnderTest {
     List<Long> nowScript = null
     int nowIndex = 0
 
+    // A call recorder, not the app's recovery: that walks scan locks, tombstones and the scheduler, none of
+    // which this endpoint test is about. Its signature is guarded against the app's below.
     void clearAbandonedScan() { clearAbandonedScanCalls++ }
-    boolean scanEffectivelyActive() { return stubScanActive }
+${scanActive}
     Long now() {
         if (nowScript != null) {
             Long v = nowScript[Math.min(nowIndex, nowScript.size() - 1)]
@@ -121,12 +131,12 @@ Map piston = [
 // ---- authorization ---------------------------------------------------------
 
 arm(app, piston)
-app.stubScanActive = true
+app.state.scanRunning = true
 Map busy = app.webcoreDecodeCoverageResult('77') as Map
 assertThat(busy.http == 409 && (busy.body as Map).status == 'busy' && (busy.body as Map).error == 'scan-active',
     'an active scan returns busy without reading anything')
 assertThat(app.fetchedUris.isEmpty(), 'an active scan performs no loopback request')
-app.stubScanActive = false
+app.state.scanRunning = false
 
 ['', ' ', 'abc', '77x', '-1', '1234567890123', '77; DROP', '../77'].each { String bad ->
     app.fetchedUris = []

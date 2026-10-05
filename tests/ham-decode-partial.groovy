@@ -14,14 +14,21 @@ assert start >= 0 : 'hamDetailSafely not found'
 int end = source.indexOf('// --- HAI decode detail: end ---')
 String block = source.substring(start, end)
 
+// diagOn is the app's, switched on the way a person switches it on - the setting, with an expiry in the
+// future - rather than stubbed to return true.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 def script = new GroovyShell().parse('''
 @groovy.transform.Field Map app = [label: 'Automation Map (Dev)']
 @groovy.transform.Field List warnings = []
-boolean diagOn() { return true }
+@groovy.transform.Field Map settings = [diagnosticLoggingEnabled: true]
+@groovy.transform.Field Map state = [diagnosticLoggingExpiresAt: System.currentTimeMillis() + 3600000L]
+long now() { return System.currentTimeMillis() }
 @groovy.transform.Field def log = [warn: { String m -> warnings << m }]
-''' + block + '''
+''' + AppSource.function(source, 'diagOn') + '\n' + block + '''
 void noop() { }
 ''')
+
+assert script.diagOn() == true : 'diagnostics should be on: the setting is on and has not expired'
 
 int passed = 0
 Closure check = { boolean cond, String what ->

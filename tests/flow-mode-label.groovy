@@ -14,25 +14,17 @@ int end = source.indexOf('    List steps = []', start)
 assert end > start : 'mode label rebuild not terminated'
 String block = source.substring(start, end)
 
+// The two mode helpers are the app's, and modes are objects with properties as the hub supplies them -
+// the map-shaped mode the stub used is the exact shape that hid a real defect on 2026-10-05.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 def script = new GroovyShell().parse('''
 import groovy.transform.Field
-@Field Map location = [modes: [[id: 5, name: 'Home'], [id: 6, name: 'Guest'], [id: 2, name: 'Away']]]
+class HubMode { Integer id; String name }
+@Field Map location = [modes: [new HubMode(id: 5, name: 'Home'), new HubMode(id: 6, name: 'Guest'), new HubMode(id: 2, name: 'Away')]]
 @Field Map capabs = [:]
 @Field Map settingValues = [:]
 
-List hamDetailJsonList(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s) return []
-    try { return new groovy.json.JsonSlurper().parseText(s) as List } catch (Exception ignored) { return [] }
-}
-
-List hamDetailModeNames(List ids) {
-    List modes = (location?.modes ?: []) as List
-    return (ids ?: []).collect { Object id ->
-        Object hit = modes.find { Object m -> "${m?.id}" == "${id}" }
-        return hit != null ? "${hit.name}" : null
-    }
-}
+''' + AppSource.functions(source, ['hamDetailJsonList', 'hamDetailModeNames']) + '''
 
 Map rebuild(Map values, Map stored) {
     settingValues.clear(); settingValues.putAll(values)
@@ -41,6 +33,8 @@ Map rebuild(Map values, Map stored) {
     return capabs
 }
 ''')
+
+assert script.hamDetailJsonList('not json') == ['not json'] : 'hamDetailJsonList is a stub: the app keeps unparseable text'
 
 int passed = 0
 Closure check = { boolean cond, String what ->
