@@ -19,7 +19,8 @@ const check = (cond, what) => {
   passed++; console.log('PASS  ' + what);
 };
 
-function run(ratings, pistons) {
+function run(ratings, pistons, lastRatedAt) {
+  if (lastRatedAt === undefined) lastRatedAt = 1760000000000;
   const rated = [];
   const context = {
     ALL_NODES: pistons.map(p => ({id: p.id, appType: 'webCoRE Piston', title: p.id})),
@@ -31,7 +32,7 @@ function run(ratings, pistons) {
     extEsc: s => String(s),
     Date: Date, JSON: JSON, isNaN: isNaN, Number: Number, setTimeout: setTimeout,
     fetch: (url) => {
-      if (url === 'ratings') return Promise.resolve({json: () => Promise.resolve({ratings, lastRatedAt: 1760000000000})});
+      if (url === 'ratings') return Promise.resolve({json: () => Promise.resolve({ratings, lastRatedAt: lastRatedAt})});
       rated.push(url);
       return Promise.resolve({json: () => Promise.resolve({status: 'complete'})});
     }
@@ -74,6 +75,19 @@ const complete = (appId, extra) => Object.assign(
   check(r.rated.length === 1 && r.rated[0].indexOf('1') !== -1,
         'only the piston whose rating the upgrade invalidated is rated again');
 
+  // The upgrade case must not report the assessment it is discarding. Gordon
+  // caught this live: mid-re-rate the panel read "Previous scan was on
+  // 05 Oct 2026", naming ratings that were being thrown away as he watched.
+  // The guarantee is server-side, because the panel only renders what it is
+  // given: lastRatedAt counts ratings that still stand, never the ones an
+  // upgrade has just invalidated.
+  check(/lastRatedAt:[\s\S]{0,260}appVersionMoved != true/.test(source),
+        'lastRatedAt excludes the ratings an upgrade invalidated');
+  check(source.includes("'Not assessed since this app was upgraded'"),
+        'and the panel says why there is no date, rather than claiming none was ever taken');
+  check(source.indexOf("'No pistons have been assessed on this hub yet'") !== -1,
+        'a genuinely unrated hub still says so');
+
   // Nothing to do at all.
   r = await run([complete('1', {stale: false, appVersionMoved: false})], [{id: '1'}]);
   check(r.rated.length === 0, 'opening a panel with current ratings costs no hub reads');
@@ -81,8 +95,8 @@ const complete = (appId, extra) => Object.assign(
   const ctx = {Date: Date, isNaN: isNaN, Number: Number};
   vm.createContext(ctx);
   vm.runInContext(code + '\nglobalThis.out = mrDateLabel(Date.UTC(2026, 9, 5, 4, 0));', ctx);
-  check(ctx.out === '05 Oct 2026' || ctx.out === '04 Oct 2026',
-        'the date renders as dd mmm yyyy');
+  check(/^(04|05) Oct 2026 at [0-9]{2}:[0-9]{2}$/.test(ctx.out),
+        'the date renders as dd mmm yyyy at hh:mm');
   vm.runInContext('globalThis.empty = mrDateLabel(null);', ctx);
   check(ctx.empty === '', 'no date renders as nothing rather than as Invalid Date');
 
