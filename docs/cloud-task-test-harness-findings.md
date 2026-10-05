@@ -9,7 +9,7 @@ Toolchain: Groovy 2.4.21 (the hub's version) on OpenJDK 8, Node 22, PowerShell 7
 
 ## Result
 
-`pwsh tests/run-all.ps1` runs **56 suites: 54 pass, 2 fail**. Both failures are the app, not the tests.
+`pwsh tests/run-all.ps1` runs **56 suites: 54 pass, 2 fail**. (After Gordon's decisions of 2026-10-05: the document suite has 28 passing and 2 failing - finding 1 until a fresh capture after the volume fix on `cloud/fix-message-volume`, and finding 2 by agreement until the next contract version.) Both failures are the app, not the tests.
 They are the assertions below that failed against the captured documents, kept as they are: the brief
 says a failing assertion is a finding to report, not a thing to weaken.
 
@@ -51,12 +51,20 @@ are `{id, name}` pairs: 258 and 110 of them, all well formed.
 The companion check passes: every condition that names devices carries a `deviceIds` list of the same
 length with no empty id. So a consumer can bind, and HAI does, by reading `deviceIds`. But the pairing is
 by position, and nothing in the document enforces it. **Implication:** one shape for conditions and
-another for everything else, joined by an index nobody checks. Worth making it `{id, name}` when the
-contract next changes version, not before. Changing it is a contract change for HAI.
+another for everything else, joined by an index nobody checks.
 
-### 3. Step devices are names only, with no ids anywhere (667 references)
+**Decided by Gordon 2026-10-05:** change it at the next contract version, with HAI, not before.
+Recorded as BACKLOG.md entry 55 here and HAI-D56 in the HAI repository. The assertion stays red until
+then.
 
-*every step device reference is {id, name}* fails. `steps[].devices` is names only. `steps` is the
+### 3. Step devices are names only, with no ids anywhere (667 references) - DECIDED
+
+**Decided by Gordon 2026-10-05: `steps` is the display and rule-link layer.** Nothing binds a device
+from it, so the {id, name} assertion was retargeted rather than loosened: the suite now asserts that
+every `steps[].ruleTargets` entry, which HAI does consume, is a bare rule id naming a rule in the same
+document (69 of 69 pass). The HAI contract, `ideation/ham_decode_detail_contract.md`, says so.
+
+As first found: *every step device reference is {id, name}* failed. `steps[].devices` is names only. `steps` is the
 display layer, and the HAI side already treats it as such: its migration code keys step devices by name
 "until Automation Map publishes ids there too". **Implication:** nothing should bind from `steps`.
 If that is intended, the contract should say `steps` is display-only, and this assertion should be

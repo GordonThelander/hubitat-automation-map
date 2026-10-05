@@ -311,6 +311,26 @@ This works whichever hypothesis is true.
 
 ## Next
 
+### 55. Condition device references as `{id, name}`, at the next detail contract version
+
+Conditions publish devices as two parallel lists - `devices` (names) and `deviceIds` (ids) - where
+actions and triggers publish `{id, name}` pairs. Found by `tests/ham-published-documents.groovy` on
+2026-10-05 against the captured detail document: 104 condition references. Nothing is broken today:
+every condition has a `deviceIds` list of matching length with no empty id, and HAI binds from it. But
+the two lists pair by position and nothing in the document enforces that.
+
+Agreed with Gordon 2026-10-05: change it once, with a contract version bump, when both apps are
+changing anyway - not as a standalone change, because HAI's converter (`rmDeviceRefs`) reads
+`deviceIds` and would break if this side moved alone. Mirrored as HAI-D56 in the HAI repository's
+`DEV_HANDOVER_ISSUES.md`.
+
+The assertion *every condition device reference is {id, name}* stays red until this ships; it is not
+to be loosened in the meantime.
+
+**Next action:** at the next `ham.decode.detail` version, publish condition devices as `{id, name}`
+(keeping `deviceIds` for one version if HAI needs the overlap), and update HAI's reader in the same
+release.
+
 ### 35. HAI as a third engine: map decoding and piston migration target
 
 Hubitat Automation Intelligence (HAI) is Gordon's Rule Machine replacement. It will publish its rules

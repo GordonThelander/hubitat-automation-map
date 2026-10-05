@@ -139,13 +139,19 @@ Map actRefs = refsIn(actions, { it.a.operands }, ['devices', 'notify', 'speak'])
 check(actRefs.n > 0 && actRefs.bad.isEmpty(), "every action device reference is {id, name} (${actRefs.n} of them)", actRefs.bad.take(5))
 Map trigRefs = refsIn(triggers, { it.t.operands }, ['devices'])
 check(trigRefs.n > 0 && trigRefs.bad.isEmpty(), "every trigger device reference is {id, name} (${trigRefs.n} of them)", trigRefs.bad.take(5))
+// Red by agreement until the next detail contract version: BACKLOG.md entry 55, HAI-D56.
 Map condRefs = refsIn(conditions, { it.c.operands }, ['devices'])
 check(condRefs.n > 0 && condRefs.bad.isEmpty(), "every condition device reference is {id, name} (${condRefs.n} of them)",
       "${condRefs.bad.size()} are bare names, e.g. ${condRefs.bad.take(3)}")
-Map stepRefs = refsIn(rules.collectMany { Map r -> ((List<Map>) r.steps).collect { [rule: r.id, s: it] } },
-                      { it.s }, ['devices'])
-check(stepRefs.n > 0 && stepRefs.bad.isEmpty(), "every step device reference is {id, name} (${stepRefs.n} of them)",
-      "${stepRefs.bad.size()} are bare names, e.g. ${stepRefs.bad.take(3)}")
+// `steps` is the display and rule-link layer, decided by Gordon 2026-10-05: its devices are names for
+// people to read and nothing binds a device from it, so it is not held to {id, name}. What a consumer
+// does take from it is `ruleTargets` - HAI orders a migration and warns about coupled rules from them -
+// so those must be rule ids, and each must be a rule this document holds.
+Set ruleIds = rules.collect { "${it.id}".replaceFirst(/^a/, '') } as Set
+List targets = rules.collectMany { Map r -> ((List<Map>) r.steps).collectMany { Map st -> ((List) (st.ruleTargets ?: [])).collect { [rule: r.id, t: it] } } }
+check(targets.size() == 69, 'the capture holds 69 rule links in steps', targets.size())
+List badTargets = targets.findAll { !("${it.t}" ==~ /\d+/) || !ruleIds.contains(it.t.toString()) }.collect { "${it.rule} -> ${it.t}" }
+check(badTargets.isEmpty(), 'every step ruleTarget is a bare rule id naming a rule in this document', badTargets)
 
 // What a consumer binds a condition to today: the parallel deviceIds list. Not a substitute for the
 // assertion above - a parallel list pairs by position, which nothing in the document enforces - but it
