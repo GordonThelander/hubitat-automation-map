@@ -13,6 +13,7 @@ assert end > start : 'action resolver not terminated'
 String block = source.substring(start, end)
 
 String stubs = '''
+import groovy.transform.Field
 String stripTags(String s) { return s.replaceAll('<[^>]*>', '') }
 Integer hamDetailInt(Object raw) {
     String s = "${raw ?: ''}".trim()
@@ -145,5 +146,43 @@ check(steps[1].supported == true && steps[1].type == 'log',
       'and is still resolved, so a consumer can see what it would have done')
 check(steps[2].supported == false && steps[2].method == 'getSetColorTemp',
       'an unsupported construct carries its method name to be refused by')
+
+// A branch carries the eval group its condition lives in, which keys the
+// expressions map already published, so control flow joins to its conditions
+// without a second decoder. Measured on rule 3577: getIfThen 4 -> group 1,
+// the nested getIfThen 19 -> group 3, getElseIf 8 -> group 2.
+Map branchy = [
+  appSettings: [[name: 'actSubType.4', value: 'getIfThen'],
+                [name: 'actSubType.8', value: 'getElseIf'],
+                [name: 'actSubType.13', value: 'getEndIf'],
+                [name: 'actSubType.1', value: 'getLogMsg'],
+                [name: 'logmsg.1', value: 'x']],
+  appState: [[name: 'actionList', value: ['4', '8', '13', '1']],
+             [name: 'actions', value: ['4': [rule: 1], '8': [rule: 2], '13': [:], '1': [:]]]]
+]
+List bs = script.extractRuleActions(branchy)
+check(bs[0].expressionGroup == '1', 'an IF carries the eval group its condition lives in')
+check(bs[1].expressionGroup == '2', 'an ELSE-IF carries its own group, not the IF one')
+check(!bs[2].containsKey('expressionGroup'), 'an END IF has no condition and carries no group')
+check(!bs[3].containsKey('expressionGroup'), 'an ordinary action carries no group')
+
+// A wait's duration is not a delay before the action. Rule 2279 action 6
+// stores delayAct 'hrs:min:sec' with no delaySec, and the real 0:05:00 lives
+// in the compiled actions entry. Emitted as `delay`, a consumer that turns
+// per-action delays into waits makes a rebuilt rule wait twice.
+Map waity = [
+  appSettings: [[name: 'actSubType.6', value: 'getWaitRule'],
+                [name: 'delayAct.6', value: 'hrs:min:sec'],
+                [name: 'actSubType.7', value: 'getOnOffSwitch'],
+                [name: 'onOff.7', value: 'true'],
+                [name: 'delayAct.7', value: 'hrs:min:sec'],
+                [name: 'delaySec.7', value: '4']],
+  appState: [[name: 'actionList', value: ['6', '7']]]
+]
+List ws = script.extractRuleActions(waity)
+check(!ws[0].containsKey('delay'),
+      'a wait carries no delay: its delayAct describes the wait, not a pause before it')
+check(ws[1].delay?.seconds == 4,
+      'an ordinary action still carries its own delay')
 
 println "${passed} HAM decode action assertions passed"

@@ -10872,6 +10872,10 @@ List hamDetailDeviceRefs(Object raw) {
     return ((raw ?: []) as List).collect { Object d -> [id: "${(d as Map).id}", name: "${(d as Map).name}"] }
 }
 
+// A wait's own duration is not a per-action delay. Kept as a named list so the
+// two concepts cannot be conflated by a later edit.
+@Field static final List<String> WAIT_METHODS = ['getWaitRule', 'getWaitEvents']
+
 Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
     switch (method) {
         case 'getOnOffSwitch':
@@ -10952,6 +10956,7 @@ List extractRuleActions(Map data) {
     // returned false for every disabled action. The same trap is documented on
     // extractRuleLinks' own settings map a few hundred lines above.
     List disabledList = ((st.disabledActions ?: []) as List).collect { "${it}".toString() }
+    Map storedActions = (st.actions ?: [:]) as Map
     List out = []
     ((st.actionList ?: []) as List).each { Object rawNum ->
         String num = "${rawNum}"
@@ -10959,6 +10964,14 @@ List extractRuleActions(Map data) {
         if (!method) return
         Map step = [index: num, method: method]
         if (disabledList.contains(num)) step.disabled = true
+        // An IF or ELSE-IF stores the eval group its condition lives in, and
+        // those group numbers key the expressions map this file already
+        // publishes, so a consumer joins branch to condition without decoding
+        // anything itself. Group '0' is the Required Expression and is never
+        // an action's own branch.
+        Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
+        if (evalGroup != null) step.expressionGroup = "${evalGroup}"
+
         Map ops = hamDetailActionOperands(num, method, values, devices)
         if (ops == null) {
             step.supported = false
@@ -10967,8 +10980,17 @@ List extractRuleActions(Map data) {
             step.type = ops.remove('type')
             step.operands = ops
         }
-        Map d = hamDetailActionDelay(num, values)
-        if (d) step.delay = d
+        // Not on a wait construct. For getWaitRule and getWaitEvents, delayAct
+        // is the WAIT's own duration format, not a delay before the action,
+        // and the duration is not in delaySec at all: rule 2279 action 6
+        // stores delayAct 'hrs:min:sec' with no delaySec, and the real 0:05:00
+        // lives in the compiled actions entry. Emitting that as `delay` tells a
+        // consumer to prepend a wait that does not exist, on top of the wait
+        // itself, so a rebuilt rule waits twice.
+        if (!WAIT_METHODS.contains(method)) {
+            Map d = hamDetailActionDelay(num, values)
+            if (d) step.delay = d
+        }
         out << step
     }
     return out
