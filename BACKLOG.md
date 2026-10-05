@@ -16,6 +16,45 @@ history, not in this delivery list.
 
 ## Now
 
+### 52. Flow labels show the old DEVICE name after a rename (modes fixed)
+
+Rule Machine stores a rendered sentence per condition in `capabstrue` and `capabsfalse`, and
+`buildRuleFlow` uses it directly as the step label. That string is written when the condition is
+saved and is never rewritten afterwards. The rule page regenerates its text on view, so Rule
+Machine's own page is right while its stored copy drifts.
+
+Measured on this hub, 2026-10-05. Mode id 6 was renamed from Visitor to Guest. The live mode list
+and the resolved `modes` operand in the decode detail both say Guest. Rule 2325 still stores:
+
+```
+capabsfalse['5'] = 'Mode in [Home, Visitor]'
+```
+
+so the map labels that step `Mode in Home, Visitor`, a mode that no longer exists. Two rules carry
+this pair today.
+
+**It is not limited to modes.** Any renamed device has the same problem, because the whole label is
+one frozen sentence with the name embedded in it. A rename is the common case: the name on the map
+is the name the condition had when it was last edited, which may be years old.
+
+**The mode half is fixed.** `buildRuleFlow` now rebuilds the mode clause from `modes<n>` against the
+live mode list, keeping Rule Machine's own wording, both forms read off this hub rather than
+invented: `Mode is Away` for one mode and `Mode in [Home, Guest]` for several. A mode that no longer
+resolves keeps the stored text, because then that text is the only record of what it was called.
+Mode triggers are keyed the same way and are corrected too.
+
+**The device half is not fixed and cannot be fixed the same way.** The device name is embedded in
+the middle of the same sentence and nothing records what it used to be called, so there is no way to
+locate the stale name in order to replace it. Rebuilding those labels means generating the whole
+sentence from the resolved operands for every condition family, which is a change to the flow
+builder that every rule renders through. That wants its own pass. Until then a renamed device still
+shows its old name in the map, while the mode beside it is correct.
+
+**Do not treat the stored rendering as ground truth anywhere.** It was briefly proposed as an
+oracle for checking decoded conditions against Rule Machine, which would have been checking live
+data against a stale cache. Agreement means something; disagreement only means one of the two is
+out of date.
+
 ### 51. A scan collects zero apps after a version upgrade, so users scan twice
 
 Observed twice on Dev install 3547, 2026-10-04 and 2026-10-05, both times immediately after
