@@ -4311,10 +4311,24 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 // the sibling decode contract. Extracted here because this is
                 // the only place the rule's settings are in hand; appInfo
                 // keeps decoded results, not the settings they came from.
-                out.conditions = extractRuleConditions(data)
-                out.expressions = extractRuleExpressions(data)
-                out.actions = extractRuleActions(data)
-                out.triggers = extractRuleTriggers(data)
+                // Each half extracted under its own guard. Until now one
+                // throw here propagated to the per-app catch, which discards
+                // the ENTIRE app record: a wrong argument order in the trigger
+                // resolver cost six readable rules everything they had, and
+                // the published status said only "unreadable" without saying
+                // which part failed, so a consumer could not tell a rule it
+                // should refuse from a rule it should refuse a piece of.
+                //
+                // A failed half is now empty and NAMED. Empty alone is not
+                // enough: a rule with no triggers and a rule whose triggers
+                // could not be read look identical, and the second is the one
+                // where inventing a trigger does real harm.
+                Map decodeFailures = [:]
+                out.conditions = hamDetailSafely('conditions', decodeFailures) { extractRuleConditions(data) } ?: []
+                out.expressions = hamDetailSafely('expressions', decodeFailures) { extractRuleExpressions(data) } ?: [:]
+                out.actions = hamDetailSafely('actions', decodeFailures) { extractRuleActions(data) } ?: []
+                out.triggers = hamDetailSafely('triggers', decodeFailures) { extractRuleTriggers(data) } ?: []
+                if (decodeFailures) out.decodeFailures = decodeFailures
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 // Decoded once (v2.2.8), not per classifier - chunk
@@ -11181,6 +11195,20 @@ List extractRuleTriggers(Map data) {
     return out.sort { Map t -> (t.index as String) as Integer }
 }
 
+// Runs one half of the rule decode under its own guard. A throw costs that
+// half and names it, instead of propagating to the per-app catch and
+// discarding the whole record. The message is kept because "triggers failed"
+// without a reason sends the next person back to the hub to find out why.
+Object hamDetailSafely(String part, Map failures, Closure work) {
+    try {
+        return work()
+    } catch (Exception ex) {
+        failures[part] = "${ex.message}"
+        if (diagOn()) log.warn "${app.label}: rule decode part '${part}' failed: ${ex.message}"
+        return null
+    }
+}
+
 // --- HAI decode detail: end ---
 
 // --- HAI decode contract: start ---
@@ -11358,6 +11386,11 @@ Map hamDecodeDetail() {
                 // A rule rebuilt without its trigger is inert while looking
                 // complete, which is the worst shape of all.
                 triggers: ((info.triggers ?: []) as List),
+                // Present only when a half failed, naming which and why. An
+                // empty triggers array with no entry here means the rule
+                // genuinely has none; with an entry it means they could not
+                // be read, and nothing downstream should fill the gap.
+                decodeFailures: ((info.decodeFailures ?: [:]) as Map),
                 // Triggers and flow as buildRuleFlow() already produces them:
                 // display labels, control nesting derived with a stack rather
                 // than from Rule Machine's own indent field (wrong on rule
