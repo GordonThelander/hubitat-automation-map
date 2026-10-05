@@ -149,7 +149,12 @@ oracle for checking decoded conditions against Rule Machine, which would have be
 data against a stale cache. Agreement means something; disagreement only means one of the two is
 out of date.
 
-### 51. A scan collects zero apps after a version upgrade, so users scan twice
+### 51. DEFERRED to Wednesday 2026-10-08. A scan collects zero apps after a version upgrade
+
+Parked on Gordon's instruction, 2026-10-05. Not abandoned and not fixed: the guard holds, so the
+worst outcome remains an error message and a rescan, never a wrong map. Pick it up from the
+"What the durable generation trace shows" section below, which has the evidence and the two
+hypotheses the residue cannot separate.
 
 Observed twice on Dev install 3547, 2026-10-04 and 2026-10-05, both times immediately after
 `deploy-hub.ps1` wrote new Apps Code. The scan enumerates every app and holds none:

@@ -10984,6 +10984,50 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (meter != null && hamDetailBool(v["meter.${num}"])) o.meterMillis = meter
             return o
 
+        case 'getSetVariable':
+            // xVarV names the variable being SET. What it is set TO depends on
+            // the variable's type, and the three forms share no fields:
+            //   boolean  valBool
+            //   number   numOp 'number'/'add number' with valNumber, or
+            //            'variable math' with xVar3 <valMathOp> xVar4
+            //   string   valStringOp 'Set string' with valString, or
+            //            'Device attribute' with tCustomAttr + customDev
+            Map o = [type: 'setVariable', name: "${v["xVarV.${num}"] ?: ''}"]
+            String numOp = "${v["numOp.${num}"] ?: ''}".trim()
+            String strOp = "${v["valStringOp.${num}"] ?: ''}".trim()
+            String boolRaw = "${v["valBool.${num}"] ?: ''}".trim()
+
+            if (numOp == 'variable math') {
+                // xVar4 is the RIGHT operand and holds the literal string
+                // '(constant)' when that operand is a number rather than a
+                // variable, in which case the number is in valConst2. Passing
+                // '(constant)' through as a variable name invents a variable
+                // that does not exist.
+                String right = "${v["xVar4.${num}"] ?: ''}".trim()
+                Map rightOperand = (right == '(constant)' || !right) ?
+                    [constant: "${v["valConst2.${num}"] ?: ''}"] : [variable: right]
+                o.value = [kind: 'math',
+                           left: "${v["xVar3.${num}"] ?: ''}",
+                           operator: "${v["valMathOp.${num}"] ?: ''}",
+                           right: rightOperand]
+            } else if (numOp) {
+                // 'add number' adds to the current value; 'number' replaces it.
+                // Different operations, so the distinction is kept rather than
+                // both becoming a plain assignment.
+                o.value = [kind: (numOp == 'add number') ? 'addNumber' : 'number',
+                           value: "${v["valNumber.${num}"] ?: ''}"]
+            } else if (strOp == 'Device attribute') {
+                Map av = [kind: 'deviceAttribute', attribute: "${v["tCustomAttr.${num}"] ?: ''}"]
+                List d = hamDetailDeviceRefs(dev["customDev.${num}"])
+                if (d) av.devices = d
+                o.value = av
+            } else if (strOp) {
+                o.value = [kind: 'string', value: "${v["valString.${num}"] ?: ''}"]
+            } else if (boolRaw) {
+                o.value = [kind: 'boolean', value: (boolRaw == 'true')]
+            }
+            return o
+
         case 'getLogMsg':
             // No level is stored. All 23 uses on this hub carry logmsg and
             // nothing else, so no level field is emitted rather than one
