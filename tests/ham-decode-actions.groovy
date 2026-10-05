@@ -218,6 +218,47 @@ Map noParams = ops('9', 'getDefinedAction', [cCmd: 'applyDefault', myCapab: 'Act
 check(!noParams.containsKey('parameters'), 'a command with no parameters sends none rather than an empty list')
 check(!noParams.containsKey('devices'), 'and no devices key when it targets none')
 
+// --- getSetVariable: three forms sharing no fields -----------------------
+// xVarV names the variable set; the value shape depends on its type.
+Map vb = ops('6', 'getSetVariable', [xVarV: 'Front Walkway Limiter', valBool: 'true'])
+check(vb.name == 'Front Walkway Limiter', 'the variable being set is named')
+check((vb.value as Map).kind == 'boolean' && (vb.value as Map).value == true,
+      'a boolean variable resolves to a real boolean')
+
+Map vn = ops('19', 'getSetVariable', [xVarV: 'Overloadcount', numOp: 'number', valNumber: '0'])
+check((vn.value as Map).kind == 'number' && (vn.value as Map).value == '0',
+      'a number assignment carries its literal')
+Map va = ops('17', 'getSetVariable', [xVarV: 'Overloadcount', numOp: 'add number', valNumber: '1'])
+check((va.value as Map).kind == 'addNumber',
+      'adding to a variable is NOT an assignment: the distinction is kept')
+
+// counter = counter + 1, which RM renders "Set counter to (counter + 1)".
+Map vm = ops('2', 'getSetVariable',
+    [xVarV: 'counter', numOp: 'variable math', xVar3: 'counter',
+     valMathOp: '+', xVar4: '(constant)', valConst2: '1'])
+Map mv = vm.value as Map
+check(mv.kind == 'math' && mv.left == 'counter' && mv.operator == '+',
+      'variable math resolves its left operand and operator')
+check((mv.right as Map).constant == '1',
+      'and a constant right operand is a constant, not a variable called "(constant)"')
+Map vm2 = ops('2', 'getSetVariable',
+    [xVarV: 'counter', numOp: 'variable math', xVar3: 'counter',
+     valMathOp: '+', xVar4: 'TestNumber'])
+check(((vm2.value as Map).right as Map).variable == 'TestNumber',
+      'a variable right operand is named as a variable')
+
+Map vs = ops('3', 'getSetVariable', [xVarV: 'outcome', valStringOp: 'Set string', valString: 'Working'])
+check((vs.value as Map).kind == 'string' && (vs.value as Map).value == 'Working',
+      'a string assignment carries its text')
+
+Map vd = ops('2', 'getSetVariable',
+    [xVarV: 'TestHubUptime.', valStringOp: 'Device attribute', tCustomAttr: 'formattedUptime'],
+    ['customDev.2': [[id: '3574', name: 'Hub Information Driver']]])
+Map dv = vd.value as Map
+check(dv.kind == 'deviceAttribute' && dv.attribute == 'formattedUptime',
+      'a variable set from a device attribute names the attribute')
+check(((dv.devices as List)[0] as Map).id == '3574', 'and the source device as an id')
+
 Map lastDev = ops('9', 'getDefinedAction', [cCmd: 'flashOff', myCapab: 'Switch', useLastDev: 'true'])
 check(lastDev.useLastDevice == true,
       'targeting the triggering device is stated: there is no device to bind')
