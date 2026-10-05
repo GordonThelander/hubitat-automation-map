@@ -16,11 +16,18 @@ String flowSource = source.substring(flowStart, flowEnd)
 String actionSource = source.substring(actionStart, actionEnd)
 String constructsSource = source.substring(constructEngineStart, constructsEnd)
 
+// buildRuleFlow gates its required step through rulePredicateIsLive(), which
+// lives outside every slice above. Sliced in from the real source rather than
+// stubbed, so this harness cannot pass against a helper that has drifted.
+int predStart = source.indexOf('boolean rulePredicateIsLive(Map st) {')
+int predEnd = source.indexOf('List unusedConstraintDeviceIds(Map data) {', predStart)
+assert predStart >= 0 && predEnd > predStart
+String predSource = source.substring(predStart, predEnd)
 def script = new GroovyShell().parse('''
 import groovy.transform.Field
 @Field static final String RM_LOCATION_EVENT_PREFIX = 'trigger:Location Event:'
 @Field static final Map RULE_LINK_ACTIONS = [:]
-''' + flowSource + '\n' + actionSource + '\n' + constructsSource + '''
+''' + predSource + '\n' + flowSource + '\n' + actionSource + '\n' + constructsSource + '''
 String cleanCondition(String value) { value }
 String stripTags(String value) { value }
 List buildVisualRuleBuilderFlow(Map state) { [] }

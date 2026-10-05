@@ -16,6 +16,39 @@ history, not in this delivery list.
 
 ## Now
 
+### 54. Rule Machine stores a convenience field beside the fact, and the field drifts
+
+Five defects on this hub share one cause: this app read a value Rule Machine keeps **about** the
+data instead of the data. Recorded as its own entry because the pattern predicts where the next one
+will be, which the individual entries do not.
+
+| Field read | What it actually is | How it failed |
+|---|---|---|
+| `capabstrue` / `capabsfalse` | a rendering cached when the condition was saved | names a mode renamed since; entry 52 |
+| `indent` | a per-action depth hint | a marker sits at its body's depth, so every ENDIF is one level deeper than the IF it closes |
+| `pvTF` | "set private boolean" flag | inverted: `'true'` stores False |
+| `hasPredicate` | "this rule has a Required Expression" | not set on one rule that has one; entry 53b |
+| `actions[n].delay` | a rendered delay string | Rule Machine stores `(cancelable)` twice; its own page regenerates and shows one; entry 53c |
+
+In every case the underlying storage was correct: `modes<n>`, the action method with a stack,
+`privateT`, `eval['0']`, the duration fields. Rule Machine's own rule page is reliable because it
+**regenerates** from that storage on view; the stored summaries are written once and drift.
+
+**Fixed while auditing for a fifth.** Broken-rule detection matched `*BROKEN*` inside the app label,
+under a comment asserting that no structured flag existed. `appState.broken` is a real boolean in the
+payload the scan already fetches. On this hub both agree today, one rule of 71, so it was latent
+rather than wrong; it fails the moment a rule is named after the marker or Hubitat changes it.
+
+**Checked and cleared, so they are not re-investigated.** Paren grouping in Required Expressions
+(`parens` in `/app/ruleBuilderJson/<appId>`) is zero on all 71 rules, so the flat token list the
+decode contract publishes is adequate here and no tree is needed. `isPredicate` in that same endpoint
+is a different field from `hasPredicate` and agrees with neither it nor the data.
+
+**A trap in the obvious remedy.** That endpoint also exposes `inUseConds` and `unusedConds`, which
+read as the authoritative answer to which conditions are live - something this app derives itself.
+They **overlap** on 22 of 23 rules that have both, identically on several, so `unusedConds` cannot
+mean "conditions not in use". Adopting it would have been a fresh instance of this very entry.
+
 ### 53. Three defects from the full rule-page audit, all still open
 
 Every one of the 71 Rule Machine rules on this hub was compared against its own Rule Machine page,
@@ -63,7 +96,13 @@ now publishes "Time between 00:01 and Sunrise-15 minutes AND Private Boolean is 
 page.
 
 **53c. `(cancelable)` is printed twice** on 9 Delay steps, for example `Delay 0:00:20 (cancelable)
-(cancelable)` on Mode Alarm Triggered Suitcase and Cupboard. Cosmetic.
+(cancelable)` on Mode Alarm Triggered Suitcase and Cupboard.
+
+**The duplication is Rule Machine's own stored string**, not this app's rendering: `actions['2'].delay`
+on that rule is literally `'0:00:20 (cancelable) (cancelable)'`. Rule Machine's page regenerates the
+text and shows it once; the map reads the stored copy and shows what was stored. So this is the same
+root cause as the rest of this list, not a formatting slip, and the fix is to build the delay text
+from the duration fields rather than to strip a duplicate out of a string.
 
 **Not defects, recorded so they are not re-investigated.** A rule with no actions is deliberately
 given no flow and marked inert, which is why Time (3572), _Variable Test (2995) and _HAI Decoder
