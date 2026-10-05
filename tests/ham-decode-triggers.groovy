@@ -43,7 +43,6 @@ List hamDetailModeNames(List ids) {
 List hamDetailDeviceRefs(Object raw) {
     return ((raw ?: []) as List).collect { Object d -> [id: "${(d as Map).id}", name: "${(d as Map).name}"] }
 }
-Map hamDetailTimeOperand(String num, Map v, String prefix) { return [kind: 'clock', at: v["${prefix}Time${num}"]] }
 '''
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
 
@@ -155,6 +154,38 @@ List ordered = script.extractRuleTriggers([appSettings: [
     [name: 'tDev2', value: null, deviceList: ['2': 'B']]
 ]])
 check(ordered*.index == ['2', '10'], 'triggers are emitted in numeric order')
+
+// --- Certain Time: the trigger's own fields, not the condition ones -------
+// This is the regression that cost six rules EVERYTHING. The block called
+// hamDetailTimeOperand(num, v, 'at') against a real signature of
+// (which, num, settingValues), which throws, and a throw in this extractor
+// loses the whole app record rather than just the trigger. The suite passed
+// because the harness stubbed that function with the invented signature.
+// Nothing stubs it now, so a wrong call cannot compile past here.
+check(!block.contains('hamDetailTimeOperand'),
+      'the trigger block does not reuse the condition time resolver: different fields entirely')
+
+Map clock = ops('7', 'Certain Time (and optional date)', [time: 'A specific time', atTime: '23:59'])
+check((clock.at as Map).at == '23:59', 'a specific time resolves from atTime')
+check((clock.at as Map).kind == 'clock', 'and is named a clock time')
+Map sunset = ops('7', 'Certain Time (and optional date)', [time: 'Sunset', atSunsetOffset: '-15'])
+check((sunset.at as Map).kind == 'sunset' && (sunset.at as Map).offsetMinutes == -15,
+      'a sunset trigger resolves with its signed offset')
+Map sunrise = ops('7', 'Certain Time (and optional date)', [time: 'Sunrise'])
+check((sunrise.at as Map).kind == 'sunrise', 'a sunrise trigger resolves with no offset stored')
+Map dated = ops('7', 'Certain Time (and optional date)',
+    [time: 'A specific time', atTime: '13:12', date: 'true', atDate: '2027-01-01'])
+check(dated.date == '2027-01-01', 'the optional date travels when its toggle is on')
+check(!ops('7', 'Certain Time (and optional date)',
+    [time: 'A specific time', atTime: '13:12', atDate: '2027-01-01']).containsKey('date'),
+      'and is ignored when the toggle is off, rather than scheduling a one-off')
+
+// --- Periodic Schedule: startingTime is where an Hourly minute lives ------
+Map hourly = ops('11', 'Periodic Schedule', [whichPeriod: 'Hourly', startingTime: '00:25'])
+check(hourly.startingTime == '00:25',
+      'an hourly schedule publishes its starting time: absent invites a consumer to assume the top of the hour')
+check(!ops('11', 'Periodic Schedule', [whichPeriod: 'Hourly']).containsKey('startingTime'),
+      'and absent stays absent rather than becoming a zero minute')
 
 check(!block.contains('httpGet') && !block.contains('httpPost'),
       'the trigger block performs no hub I/O of its own')
