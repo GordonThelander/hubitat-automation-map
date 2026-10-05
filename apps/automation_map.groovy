@@ -7152,7 +7152,12 @@ Map migrationRatingsMapping() {
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
                                  appVersion: APP_VERSION,
-                                 lastRatedAt: (out.collect { (it.ratedAt ?: 0) as Long }.max() ?: 0) ?: null,
+                                 // Only ratings that still count. A rating an upgrade
+                                 // invalidated is about to be taken again, so reporting
+                                 // it as the previous assessment describes a result the
+                                 // panel is in the middle of discarding.
+                                 lastRatedAt: (out.findAll { it.appVersionMoved != true }
+                                                  .collect { (it.ratedAt ?: 0) as Long }.max() ?: 0) ?: null,
                                  rated: out.count { it.status == 'complete' }, total: out.size()]))
 }
 
@@ -18789,13 +18794,16 @@ const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'No equivalent', war
 
 function mrName(node) { return String(node.title || node.name || node.label || node.id); }
 
-// dd mmm yyyy, spelled out rather than locale-formatted so it reads the same
-// on every browser that opens this panel.
+// dd mmm yyyy at hh:mm, spelled out rather than locale-formatted so it reads
+// the same on every browser that opens this panel. The time is part of it: on
+// a hub that scans daily, the date alone cannot tell this morning's assessment
+// from one taken before the overnight scan.
 function mrDateLabel(ms) {
   const d = new Date(Number(ms));
   if (!ms || isNaN(d.getTime())) return '';
+  const two = function (n) { return ('0' + n).slice(-2); };
   const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
-  return ('0' + d.getDate()).slice(-2) + ' ' + mon + ' ' + d.getFullYear();
+  return two(d.getDate()) + ' ' + mon + ' ' + d.getFullYear() + ' at ' + two(d.getHours()) + ':' + two(d.getMinutes());
 }
 
 function mrPistons() {
@@ -18993,7 +19001,8 @@ function mrRenderPistons() {
   h += '<div class="mrRefresh">' +
     '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Refresh Scan</button>' +
     '<span class="sub">' + (MR.ratedAt ? 'Previous scan was on ' + extEsc(mrDateLabel(MR.ratedAt))
-      : 'No pistons have been assessed on this hub yet') + '</span></div>';
+      : (MR.versionMoved ? 'Not assessed since this app was upgraded'
+                         : 'No pistons have been assessed on this hub yet')) + '</span></div>';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
     '<button type="button" class="rowbtn" id="mrExportPistons"' + (done.length ? '' : ' disabled') + '>Export ratings CSV</button>' +
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
