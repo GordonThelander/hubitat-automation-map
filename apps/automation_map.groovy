@@ -7075,9 +7075,13 @@ void cacheMigrationRating(String appId, Map rating) {
     // The other engine's statuses move week to week, so a rating is only good
     // for the version it was taken against. Stored with the rating rather than
     // inferred later, so a stale one can be spotted without re-rating it.
+    // appVersion too: the equivalence table lives in this app, so an upgrade can
+    // change a rating even when nothing on the hub moved. It is the one event
+    // that re-rates everything without being asked.
     cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
                     hai: side(rating.hai),
-                    engineVersion: ((rating.hai ?: [:]) as Map).version]
+                    engineVersion: ((rating.hai ?: [:]) as Map).version,
+                    appVersion: APP_VERSION]
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -7132,9 +7136,14 @@ Map migrationRatingsMapping() {
         // engine has published a different version since. Either way the rating
         // may no longer describe what it claims to.
         boolean engineMoved = ratedAt && engineVersion && hit.engineVersion && "${hit.engineVersion}" != engineVersion
+        // Separate from stale on purpose. A graph rebuild makes a rating old,
+        // which is worth saying; an app upgrade makes it possibly wrong, which
+        // is the only one worth re-rating a whole hub over.
+        boolean appMoved = ratedAt && "${hit.appVersion ?: ''}" != APP_VERSION
         out << [appId: appId,
                 status: ratedAt ? 'complete' : 'not-rated',
                 ratedAt: ratedAt ?: null,
+                appVersionMoved: ratedAt ? appMoved : null,
                 stale: ratedAt ? ((ratedAt < graphAt) || engineMoved) : null,
                 staleReason: ratedAt ? (engineMoved ? 'engine-version' : ((ratedAt < graphAt) ? 'graph-rebuilt' : null)) : null,
                 ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder,
@@ -7142,6 +7151,8 @@ Map migrationRatingsMapping() {
     }
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
+                                 appVersion: APP_VERSION,
+                                 lastRatedAt: (out.collect { (it.ratedAt ?: 0) as Long }.max() ?: 0) ?: null,
                                  rated: out.count { it.status == 'complete' }, total: out.size()]))
 }
 
@@ -15066,6 +15077,7 @@ String buildMapHtml() {
   #migrationReportBody .mrTag { font-size:0.72em; text-transform:uppercase; letter-spacing:0.05em; padding:1px 5px; border-radius:4px; background:rgba(255,255,255,0.08); margin-right:5px; }
   #migrationReportBody .mr_no { color:#ff8a80; } #migrationReportBody .mr_partial { color:#e8d15a; } #migrationReportBody .mr_warning { color:#f06292; } #migrationReportBody .mr_yes { color:#8fd694; }
   #migrationReportBody .mrProgress { color:#f06292; }
+  #migrationReportBody .mrRefresh { display:flex; flex-direction:column; align-items:flex-start; gap:4px; margin:10px 0 0; padding:0 13px; }
   #rmCoverageBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
   #rmCoverageBody .mrTable th, #rmCoverageBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
   #rmCoverageBody h4 { margin:14px 0 6px 0; }
@@ -18698,16 +18710,25 @@ function renderMigrationCard(node) {
 
 // Migration report panel (v2.3.1). Rates every webCoRE piston on this hub for Rule Machine and Visual Rule Builder,
 // one piston at a time through the same endpoint the floating panel uses, and shows the construct matrix. Results are
-// kept for this page view; Reassess runs them again. Labels avoid apostrophes and template literals because this
+// kept on the hub and shown without re-rating; Refresh Scan runs them again. Labels avoid apostrophes and template literals because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
 const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix')}', '${getCloudURL('webcore-migration-matrix')}');
 const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
-const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0 };
+const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0, ratedAt: null, versionMoved: false };
 const MR_ENGINES = [['ruleMachine', 'RM 5.1'], ['visualRuleBuilder', 'VRB 2.0'], ['hai', 'HAI-1']];
 const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'No equivalent', warning: 'Warning', unassessed: 'Not assessed' };
 
 function mrName(node) { return String(node.title || node.name || node.label || node.id); }
+
+// dd mmm yyyy, spelled out rather than locale-formatted so it reads the same
+// on every browser that opens this panel.
+function mrDateLabel(ms) {
+  const d = new Date(Number(ms));
+  if (!ms || isNaN(d.getTime())) return '';
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return ('0' + d.getDate()).slice(-2) + ' ' + mon + ' ' + d.getFullYear();
+}
 
 function mrPistons() {
   return ALL_NODES.filter(function (n) { return n.appType === 'webCoRE Piston'; })
@@ -18726,8 +18747,17 @@ function mrOpen() {
   mrRender();
   fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
-    .then(function (d) { mrRun(mrCachedResults(d)); })
-    .catch(function () { mrRun([]); });
+    .then(function (d) {
+      MR.ratedAt = (d || {}).lastRatedAt || null;
+      // An upgrade to this app can change the equivalence table under a rating
+      // that still looks current, so that one case re-rates everything. A graph
+      // rebuild does not: it only makes a rating older, and re-rating every
+      // piston to redraw the same numbers is what this panel used to do on
+      // every open.
+      MR.versionMoved = ((d || {}).ratings || []).some(function (r) { return r.appVersionMoved === true; });
+      mrRun(MR.versionMoved ? [] : mrCachedResults(d));
+    })
+    .catch(function () { MR.running = false; MR.results = []; mrRender(); });
 }
 
 // Turns the stored ratings into the same shape a fresh assessment returns, so
@@ -18739,7 +18769,10 @@ function mrCachedResults(payload) {
     // level and a label, which would draw a row with no parts and an empty
     // detail. Those are rated again rather than rendered wrong.
     const full = r.ruleMachine && r.ruleMachine.components !== undefined && r.ruleMachine.components !== null;
-    if (r.status === 'complete' && !r.stale && full) byId[String(r.appId)] = r;
+    // Stale is no longer a reason to re-rate. It means the graph moved after
+    // the rating, which usually leaves the rating correct, and the Refresh
+    // Scan button is there for when it does not.
+    if (r.status === 'complete' && full) byId[String(r.appId)] = r;
   });
   const out = [];
   mrPistons().forEach(function (node) {
@@ -18782,7 +18815,14 @@ function mrRun(known) {
   let i = 0;
   const next = function () {
     if (seq !== MR.runSeq) return;
-    if (i >= pistons.length) { MR.running = false; mrRender(); return; }
+    if (i >= pistons.length) {
+      MR.running = false;
+      // Only when this run actually rated something, so merely opening the
+      // panel never moves the date it reports.
+      if (pistons.length) MR.ratedAt = Date.now();
+      mrRender();
+      return;
+    }
     const node = pistons[i++];
     fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
       .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
@@ -18877,9 +18917,12 @@ function mrRenderPistons() {
   let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
+  h += '<div class="mrRefresh">' +
+    '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Refresh Scan</button>' +
+    '<span class="sub">' + (MR.ratedAt ? 'Previous scan was on ' + extEsc(mrDateLabel(MR.ratedAt))
+      : 'No pistons have been assessed on this hub yet') + '</span></div>';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
     '<button type="button" class="rowbtn" id="mrExportPistons"' + (done.length ? '' : ' disabled') + '>Export ratings CSV</button>' +
-    '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Reassess</button>' +
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
     mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
     mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
@@ -18977,7 +19020,7 @@ function mrRender() {
     });
   });
   const rerun = document.getElementById('mrRerun');
-  if (rerun) rerun.addEventListener('click', function () { mrRun([]); });
+  if (rerun) rerun.addEventListener('click', function () { MR.ratedAt = Date.now(); MR.versionMoved = false; mrRun([]); });
   const exportPistons = document.getElementById('mrExportPistons');
   if (exportPistons) exportPistons.addEventListener('click', mrExportPistonsCsv);
   const exportMatrix = document.getElementById('mrExportMatrix');
