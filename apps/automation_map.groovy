@@ -4303,6 +4303,7 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 // keeps decoded results, not the settings they came from.
                 out.conditions = extractRuleConditions(data)
                 out.expressions = extractRuleExpressions(data)
+                out.actions = extractRuleActions(data)
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 // Decoded once (v2.2.8), not per classifier - chunk
@@ -10801,6 +10802,151 @@ Map extractRuleExpressions(Map data) {
     return out
 }
 
+// Six constructs are half of every action on this hub and ten are three
+// quarters, so this resolves those six properly rather than thirty shallowly.
+// Everything else is emitted with supported:false and its method name, which a
+// consumer refuses by name instead of converting on a guess.
+//
+// Shapes measured against this hub's own storage, not taken from the proposal:
+// four of the sketched shapes were wrong and are corrected below, each at its
+// own site.
+
+// Seconds from Rule Machine's three separate fields. A delay driven by a
+// variable has no number at all, so seconds stays null rather than becoming a
+// zero that reads as "no delay".
+Map hamDetailDuration(String num, Map v) {
+    String var = "${v["xVar.${num}"] ?: ''}".trim()
+    Integer h = hamDetailInt(v["delayHour.${num}"])
+    Integer m = hamDetailInt(v["delayMinute.${num}"])
+    Integer sec = hamDetailInt(v["delaySecond.${num}"])
+    Map out = [cancelable: hamDetailBool(v["cancelAct.${num}"]),
+               random: hamDetailBool(v["randomAct.${num}"])]
+    if (var) {
+        out.seconds = null
+        out.variable = var
+        return out
+    }
+    if (h == null && m == null && sec == null) return null
+    out.seconds = ((h ?: 0) * 3600) + ((m ?: 0) * 60) + (sec ?: 0)
+    return out
+}
+
+// A delay attached to an action, which is not the same thing as a Delay step:
+// Rule Machine renders it "--> delayed: 0:00:04(cancelable)" under the action
+// it belongs to. Stored only when delayAct names a format.
+Map hamDetailActionDelay(String num, Map v) {
+    String mode = "${v["delayAct.${num}"] ?: ''}".trim()
+    if (!mode || mode == 'none') return null
+    Integer sec = hamDetailInt(v["delaySec.${num}"])
+    return [seconds: sec, cancelable: hamDetailBool(v["cancelAct.${num}"]), mode: mode]
+}
+
+List hamDetailDeviceRefs(Object raw) {
+    return ((raw ?: []) as List).collect { Object d -> [id: "${(d as Map).id}", name: "${(d as Map).name}"] }
+}
+
+Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
+    switch (method) {
+        case 'getOnOffSwitch':
+            // onOff carries the command: true is on, false is off. No toggle
+            // exists in this family on this hub, so none is invented.
+            List d = hamDetailDeviceRefs(dev["onOffSwitch.${num}"])
+            Map o = [type: 'command', command: hamDetailBool(v["onOff.${num}"]) ? 'on' : 'off']
+            if (d) o.devices = d
+            return o
+
+        case 'getDelay':
+            Map dur = hamDetailDuration(num, v)
+            return dur == null ? [type: 'wait'] : ([type: 'wait'] + dur)
+
+        case 'getSetPrivateBoolean':
+            // pvTF is INVERTED, and this is the trap in the whole family.
+            // Measured on rules 2325, 2031 and 2283, whose pages all render
+            // their first Set Private Boolean as False and their last as True:
+            // pvTF 'true' stores False, and an absent pvTF stores True. Read
+            // the obvious way round, every migrated rule would set every
+            // Private Boolean backwards, across 38 uses and 50 cross-rule
+            // writes on this hub.
+            List targets = hamDetailJsonList(v["privateT.${num}"])
+            List ruleIds = targets.findAll { "${it}" != '*' }.collect { "${it}" }
+            Map o = [type: 'setRuleBoolean', value: !hamDetailBool(v["pvTF.${num}"]),
+                     self: targets.any { "${it}" == '*' }]
+            if (ruleIds) o.rules = ruleIds
+            return o
+
+        case 'getMsg':
+            // Not one kind. The devices live in two separate settings and a
+            // single step can carry both: rule 2112 renders "Notify Mobile
+            // Proxy and Speak on Security Speaker". A single kind field cannot
+            // describe that step, so both lists travel.
+            Map o = [type: 'message', text: "${v["msg.${num}"] ?: ''}"]
+            List notify = hamDetailDeviceRefs(dev["note.${num}"])
+            List speak = hamDetailDeviceRefs(dev["speakDevice.${num}"])
+            if (notify) o.notify = notify
+            if (speak) o.speak = speak
+            Integer vol = hamDetailInt(v["speakVolume.${num}"])
+            if (vol != null) o.volume = vol
+            return o
+
+        case 'getLogMsg':
+            // No level is stored. All 23 uses on this hub carry logmsg and
+            // nothing else, so no level field is emitted rather than one
+            // invented at info.
+            return [type: 'log', text: "${v["logmsg.${num}"] ?: ''}"]
+
+        default:
+            return null
+    }
+}
+
+// One record per action, in actionList order, which is Rule Machine's stored
+// order. The number is identity, not sequence: reordering rewrites actionList
+// while the numbers keep their original values and deletes leave gaps, so both
+// travel.
+List extractRuleActions(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { Object e ->
+        if (e instanceof Map && (e as Map).name != null) st["${(e as Map).name}"] = (e as Map).value
+    }
+    Map values = [:]
+    Map devices = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        if (s.value != null) values["${s.name}"] = "${s.value}"
+        Map dl = s.deviceList as Map
+        if (dl) devices["${s.name}"] = dl.collect { Object k, Object val -> [id: "${k}", name: stripTags("${val}")] }
+    }
+    // Rule Machine keeps disabled actions in actionList and renders them
+    // "Disabled:". An action that does not run must never convert as one that
+    // does, so it is marked rather than dropped.
+    // .toString() matters: "${it}" yields a GString, and a GString never
+    // equals the String this loop compares it against, so contains() silently
+    // returned false for every disabled action. The same trap is documented on
+    // extractRuleLinks' own settings map a few hundred lines above.
+    List disabledList = ((st.disabledActions ?: []) as List).collect { "${it}".toString() }
+    List out = []
+    ((st.actionList ?: []) as List).each { Object rawNum ->
+        String num = "${rawNum}"
+        String method = "${values["actSubType.${num}"] ?: ''}".trim()
+        if (!method) return
+        Map step = [index: num, method: method]
+        if (disabledList.contains(num)) step.disabled = true
+        Map ops = hamDetailActionOperands(num, method, values, devices)
+        if (ops == null) {
+            step.supported = false
+        } else {
+            step.supported = true
+            step.type = ops.remove('type')
+            step.operands = ops
+        }
+        Map d = hamDetailActionDelay(num, values)
+        if (d) step.delay = d
+        out << step
+    }
+    return out
+}
+
 // --- HAI decode detail: end ---
 
 // --- HAI decode contract: start ---
@@ -10968,12 +11114,16 @@ Map hamDecodeDetail() {
                 // '0' is the Required Expression; any other key is that
                 // numbered action's IF. Structurally separate, never merged.
                 expressions: ((info.expressions ?: [:]) as Map),
-                // Actions, triggers and flow as buildRuleFlow() already
-                // produces them: resolved device references, control nesting
-                // derived with a stack rather than from Rule Machine's own
-                // indent field (wrong on rule 2816), and actionList order.
-                // A richer action shape is a separate agreement, not invented
-                // here.
+                // Resolved actions in actionList order, for the six
+                // constructs that are half of every action on this hub.
+                // Anything else carries supported:false and its method name,
+                // to be refused by name rather than converted on a guess.
+                actions: ((info.actions ?: []) as List),
+                // Triggers and flow as buildRuleFlow() already produces them:
+                // display labels, control nesting derived with a stack rather
+                // than from Rule Machine's own indent field (wrong on rule
+                // 2816), and actionList order. Kept beside the resolved
+                // actions rather than replaced by them: this is what draws.
                 steps: ((flows[id] ?: []) as List)]
     }
     return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]

@@ -1,0 +1,149 @@
+// The action half of the HAI decode contract: the six constructs that are half
+// of every action on this hub, resolved so a rebuild can bind to them.
+//
+// Every shape here was measured against this hub before it was written, and
+// four of the proposed shapes turned out to be wrong. Those four are the
+// assertions that matter; the rest is bookkeeping.
+String source = new File('apps/automation_map.groovy').getText('UTF-8')
+
+int start = source.indexOf('Map hamDetailDuration(')
+int end = source.indexOf('// --- HAI decode detail: end ---')
+assert start >= 0 : 'action resolver not found'
+assert end > start : 'action resolver not terminated'
+String block = source.substring(start, end)
+
+String stubs = '''
+String stripTags(String s) { return s.replaceAll('<[^>]*>', '') }
+Integer hamDetailInt(Object raw) {
+    String s = "${raw ?: ''}".trim()
+    if (!s || !s.isInteger()) return null
+    return s as Integer
+}
+boolean hamDetailBool(Object raw) { return "${raw ?: ''}".trim() == 'true' }
+List hamDetailJsonList(Object raw) {
+    String s = "${raw ?: ''}".trim()
+    if (!s) return []
+    try { return new groovy.json.JsonSlurper().parseText(s) as List } catch (Exception ignored) { return [] }
+}
+'''
+def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
+
+int passed = 0
+Closure check = { boolean cond, String what ->
+    if (cond) { passed++; println "PASS  ${what}" }
+    else { println "FAIL  ${what}"; System.exit(1) }
+}
+
+// Rule Machine keys every action setting as name.<number>, so the harness
+// suffixes them rather than letting a bare key silently miss every lookup and
+// make the resolver look like it returns defaults.
+Closure V = { Map m -> m.collectEntries { k, v -> [(k as String), v == null ? null : "${v}"] } }
+Closure S = { String num, Map m -> m.collectEntries { k, v -> ["${k}.${num}".toString(), v == null ? null : "${v}"] } }
+Closure ops = { String num, String method, Map v, Map d = [:] ->
+    return script.hamDetailActionOperands(num, method, S(num, v), d)
+}
+
+// --- getSetPrivateBoolean: the inversion, measured on three rules ---------
+// Rules 2325, 2031 and 2283 all render their first Set Private Boolean as
+// False and their last as True. The first stores pvTF 'true'; the last stores
+// nothing. Read the obvious way round, every migrated rule sets every Private
+// Boolean backwards.
+Map pbFalse = ops('7', 'getSetPrivateBoolean', [privateT: '["*"]', pvTF: 'true'])
+check(pbFalse.value == false, 'pvTF true stores False, the opposite of how it reads')
+Map pbTrue = ops('8', 'getSetPrivateBoolean', [privateT: '["*"]', pvTF: ''])
+check(pbTrue.value == true, 'an absent pvTF stores True')
+check(pbTrue.self == true, 'a star target means the rule own Private Boolean')
+check(!pbTrue.containsKey('rules'), 'and carries no cross-rule target')
+
+Map pbBoth = ops('9', 'getSetPrivateBoolean', [privateT: '["*","1809"]', pvTF: ''])
+check(pbBoth.self == true && (pbBoth.rules as List) == ['1809'],
+      'a step can set its own boolean and another rule in the same action')
+Map pbOther = ops('9', 'getSetPrivateBoolean', [privateT: '["2351"]', pvTF: 'true'])
+check(pbOther.self == false && (pbOther.rules as List) == ['2351'],
+      'a cross-rule write names the target rule by id')
+
+// --- getMsg: not one kind -------------------------------------------------
+// Rule 2112 renders: Notify Mobile Proxy and Speak on Security Speaker.
+Map msg = ops('5', 'getMsg', [msg: 'Standing down.', speakVolume: '30'],
+    ['note.5': [[id: '101', name: 'Mobile Proxy']],
+     'speakDevice.5': [[id: '202', name: 'Security Speaker']]])
+check(msg.text == 'Standing down.', 'the message text travels')
+check(((msg.notify as List)[0] as Map).id == '101', 'notify devices carry ids')
+check(((msg.speak as List)[0] as Map).id == '202', 'speak devices carry ids')
+check(msg.volume == 30, 'the speak volume travels as a number')
+check(!msg.containsKey('kind'),
+      'no single kind is emitted: one step can both notify and speak')
+
+Map notifyOnly = ops('6', 'getMsg', [msg: 'Hello'], ['note.6': [[id: '101', name: 'Mobile Proxy']]])
+check(!notifyOnly.containsKey('speak'), 'a notify-only step carries no speak list')
+check(!notifyOnly.containsKey('volume'), 'no volume is invented when none is stored')
+
+// --- getLogMsg: no level is stored ----------------------------------------
+Map log = ops('3', 'getLogMsg', [logmsg: 'gauntlet start'])
+check(log.text == 'gauntlet start', 'the log text travels')
+check(!log.containsKey('level'),
+      'no level is emitted: all 23 uses on this hub store only the message')
+
+// --- getOnOffSwitch -------------------------------------------------------
+Map on = ops('1', 'getOnOffSwitch', [onOff: 'true'],
+    ['onOffSwitch.1': [[id: '2450', name: 'Fireplace']]])
+check(on.command == 'on', 'onOff true is the on command')
+check(((on.devices as List)[0] as Map).id == '2450', 'and the device travels as an id')
+check(ops('3', 'getOnOffSwitch', [onOff: 'false']).command == 'off', 'onOff false is off')
+check(!ops('3', 'getOnOffSwitch', [onOff: 'false']).containsKey('devices'),
+      'a switch action with no devices omits the key rather than sending an empty list')
+
+// --- getDelay: three fields, and sometimes no number at all ---------------
+Map d1 = ops('2', 'getDelay', [delayMinute: '30'])
+check(d1.seconds == 1800, 'minutes convert to seconds')
+Map d2 = ops('2', 'getDelay', [delayHour: '1', delayMinute: '5', delaySecond: '4'])
+check(d2.seconds == 3904, 'hours, minutes and seconds combine')
+Map d3 = ops('2', 'getDelay', [delaySecond: '2', cancelAct: 'true', randomAct: 'true'])
+check(d3.seconds == 2 && d3.cancelable == true && d3.random == true,
+      'cancelable and random travel as booleans beside the duration')
+Map d4 = ops('2', 'getDelay', [xVar: 'AMShow_LocalCount', uVar: 'true'])
+check(d4.seconds == null && d4.variable == 'AMShow_LocalCount',
+      'a delay driven by a variable has no number: seconds stays null, never zero')
+
+// --- an action can carry its own delay, separately from a Delay step ------
+Map ad = script.hamDetailActionDelay('3', S('3', [delayAct: 'hrs:min:sec', delaySec: '4', cancelAct: 'true']))
+check(ad != null && ad.seconds == 4 && ad.cancelable == true,
+      'an action delay is read from delayAct, rendered by RM as a delayed suffix')
+check(script.hamDetailActionDelay('3', S('3', [delayAct: 'none'])) == null,
+      'delayAct none is no delay, not a zero-second one')
+
+// --- everything else refuses by name -------------------------------------
+check(ops('4', 'getSetColorTemp', [:]) == null, 'an unsupported construct resolves to nothing')
+check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
+
+check(!block.contains('httpGet') && !block.contains('httpPost'),
+      'the action block performs no hub I/O of its own')
+check(!block.contains("'toggle'"),
+      'no toggle command is invented: this family does not store one on this hub')
+
+// --- the whole extractor, where the real trap was --------------------------
+// The operand resolvers above all passed while disabled actions were silently
+// never marked, because the disabled list was built as GStrings and a GString
+// never equals the String it is compared against. Only a test that runs the
+// extractor end to end sees that.
+Map data = [
+  appSettings: [[name: 'actSubType.7', value: 'getOnOffSwitch'],
+                [name: 'onOff.7', value: 'true'],
+                [name: 'actSubType.8', value: 'getLogMsg'],
+                [name: 'logmsg.8', value: 'disabled step'],
+                [name: 'actSubType.9', value: 'getSetColorTemp']],
+  appState: [[name: 'actionList', value: ['7', '8', '9']],
+             [name: 'disabledActions', value: ['8']]]
+]
+List steps = script.extractRuleActions(data)
+check(steps.size() == 3, 'one record per action in actionList')
+check(steps.collect { it.index } == ['7', '8', '9'], 'emitted in actionList order, which is the stored order')
+check(steps[0].disabled == null, 'a live action is not marked disabled')
+check(steps[1].disabled == true,
+      'a disabled action IS marked: Rule Machine keeps it in actionList and renders it Disabled')
+check(steps[1].supported == true && steps[1].type == 'log',
+      'and is still resolved, so a consumer can see what it would have done')
+check(steps[2].supported == false && steps[2].method == 'getSetColorTemp',
+      'an unsupported construct carries its method name to be refused by')
+
+println "${passed} HAM decode action assertions passed"
