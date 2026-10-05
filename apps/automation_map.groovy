@@ -11110,14 +11110,41 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
             if (period) o.period = period
             Integer every = hamDetailInt(v["everyNSecs${num}"])
             if (every != null) o.every = every
+            // startingTime is what an Hourly schedule's minute lives in, and
+            // publishing period without it invites a consumer to assume the
+            // top of the hour. Absent is not zero. The rest are carried raw
+            // because they are stored and this app does not interpret them.
+            ['startingTime', 'selectedHours', 'selectedMinutes', 'weekdaysOnly',
+             'daysOfWeek', 'dayOfMonth', 'weekOfMonth', 'everyNMonths', 'months',
+             'cronString'].each { String f ->
+                String raw = "${v["${f}${num}"] ?: ''}".trim()
+                if (raw) o[f] = raw
+            }
             break
         case 'Location Event':
             // tstate holds the event name, already captured as value above.
             break
         case 'Certain Time (and optional date)':
-            o.at = hamDetailTimeOperand(num, v, 'at')
-            String date = "${v["atDate${num}"] ?: ''}".trim()
-            if (date) o.date = date
+            // A trigger's own fields, NOT the condition ones. A condition uses
+            // starting<n>/startingA<n>; a trigger uses time<n> as the selector
+            // with atTime<n>, atSunriseOffset<n>, atSunsetOffset<n>. Calling
+            // the condition resolver here threw, and an exception in this
+            // extractor loses the whole app record, which cost six rules
+            // everything rather than costing them their trigger.
+            String kind = "${v["time${num}"] ?: ''}".trim()
+            if (kind == 'Sunrise') {
+                o.at = [kind: 'sunrise', offsetMinutes: hamDetailInt(v["atSunriseOffset${num}"])]
+            } else if (kind == 'Sunset') {
+                o.at = [kind: 'sunset', offsetMinutes: hamDetailInt(v["atSunsetOffset${num}"])]
+            } else {
+                String at = "${v["atTime${num}"] ?: ''}".trim()
+                if (at) o.at = [kind: 'clock', at: at]
+            }
+            // The optional date half, present only when the date toggle is on.
+            if (hamDetailBool(v["date${num}"])) {
+                String onDate = "${v["atDate${num}"] ?: ''}".trim()
+                if (onDate) o.date = onDate
+            }
             break
     }
     return o
