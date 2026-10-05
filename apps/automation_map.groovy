@@ -10919,6 +10919,22 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (vol != null) o.volume = vol
             return o
 
+        case 'getIfThen':
+        case 'getElseIf':
+        case 'getElse':
+        case 'getEndIf':
+            // Control flow IS resolved, and claiming otherwise was wrong. The
+            // nesting is derived with a stack from the method name, never from
+            // Rule Machine's `indent`, which places a marker at the depth of
+            // its own body so every END IF sits one level deeper than the IF it
+            // closes. Published here as well as on the display steps because a
+            // consumer reading `actions` and finding supported:false refuses
+            // the whole rule: 83 records across 25 rules were refusing on a
+            // structure this app had already decoded.
+            return [type: 'branch',
+                    branch: ['getIfThen': 'if', 'getElseIf': 'elseif',
+                             'getElse': 'else', 'getEndIf': 'endif'][method]]
+
         case 'getLogMsg':
             // No level is stored. All 23 uses on this hub carry logmsg and
             // nothing else, so no level field is emitted rather than one
