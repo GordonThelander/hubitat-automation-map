@@ -4089,12 +4089,22 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             // status is real information, it just does not belong painted
             // across the canvas. See nodeEntry for which form goes where.
             out.drawLabel = stripStatusMarkup(rawLabel)
-            // Hubitat marks an app it considers broken by injecting *BROKEN*
-            // into the label itself; there is no separate structured flag for
-            // it. Read before the markup is stripped, and kept out of
-            // statusWord below so the title cannot show a duplicate of what
-            // Hubitat already renders.
-            out.broken = rawLabel.contains('*BROKEN*')
+            // Hubitat injects *BROKEN* into the label, and ALSO publishes the
+            // fact as a real boolean in this same payload's appState. The
+            // boolean is the fact; the label marker is a rendering of it. This
+            // file has already been caught four times reading a rendering
+            // instead of the thing rendered - a cached condition sentence, an
+            // indent that disagrees with the real nesting, an inverted private
+            // boolean flag, a predicate flag that is not always set - so the
+            // boolean wins and the marker stays only as the fallback for an app
+            // type that publishes no flag. Read before the markup is stripped,
+            // and kept out of statusWord below so the title cannot show a
+            // duplicate of what Hubitat already renders.
+            Object brokenFlag = null
+            (data.appState ?: []).each { Object e ->
+                if (e instanceof Map && "${(e as Map).name}" == 'broken') brokenFlag = (e as Map).value
+            }
+            out.broken = (brokenFlag == null) ? rawLabel.contains('*BROKEN*') : (brokenFlag == true)
             out.type = stripReplacementChar(installedApp?.name as String)
             // definitionName's namespace, for the Community Context Card match
             // only (spec section 4.1) - never added to the AI-friendly export.
