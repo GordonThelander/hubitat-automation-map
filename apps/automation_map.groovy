@@ -10930,8 +10930,14 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             List speak = hamDetailDeviceRefs(dev["speakDevice.${num}"])
             if (notify) o.notify = notify
             if (speak) o.speak = speak
-            Integer vol = hamDetailInt(v["speakVolume.${num}"])
-            if (vol != null) o.volume = vol
+            // Volume only where something speaks and a volume is stored.
+            // hamDetailInt returns 0 for an empty value, never null, so the
+            // old `vol != null` guard published a volume on every message:
+            // 15 notify-only messages on this hub got a volume of 0 nobody
+            // set, and 8 got a leftover speakVolume from a speaker since
+            // removed - the same stale-sibling trap as rule 1775's 22:00.
+            String storedVol = "${v["speakVolume.${num}"] ?: ''}".trim()
+            if (speak && storedVol) o.volume = hamDetailInt(storedVol)
             return o
 
         case 'getIfThen':
