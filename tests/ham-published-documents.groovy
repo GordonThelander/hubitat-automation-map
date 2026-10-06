@@ -52,10 +52,10 @@ check(rules*.id.sort() == ((List<Map>) summary.rules)*.id.sort(),
 // hub state, which is exactly what this suite exists to notice.
 
 check(rules.size() == 71, 'the capture holds 71 rules', rules.size())
-check(actions.size() == 510, 'the rules publish 510 actions', actions.size())
-check(actions.count { it.a.supported == true } == 375, '375 actions are supported', actions.count { it.a.supported == true })
+check(actions.size() == 507, 'the rules publish 507 actions', actions.size())
+check(actions.count { it.a.supported == true } == 467, '467 actions are supported', actions.count { it.a.supported == true })
 check(triggers.size() == 104, 'the rules publish 104 triggers', triggers.size())
-check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
+check(conditions.size() == 166, 'the rules publish 166 conditions', conditions.size())
 
 // ---- every rule ----------------------------------------------------------------------------------
 
@@ -95,7 +95,7 @@ List supportedNotBool = actions.findAll { !(it.a.supported instanceof Boolean) }
 check(supportedNotBool.isEmpty(), 'supported is a boolean on every action', supportedNotBool)
 
 List pb = actions.findAll { it.a.method == 'getSetPrivateBoolean' && it.a.supported == true }
-check(pb.size() == 38, 'the capture holds 38 Set Private Boolean actions', pb.size())
+check(pb.size() == 36, 'the capture holds 36 Set Private Boolean actions', pb.size())
 List pbNotBool = pb.findAll { !(((it.a.operands ?: [:]) as Map).value instanceof Boolean) }.collect { where(it, it.a) }
 check(pbNotBool.isEmpty(),
       'every Set Private Boolean carries a boolean value (pvTF is stored inverted, so this catches a regression)',
@@ -141,6 +141,9 @@ Map trigRefs = refsIn(triggers, { it.t.operands }, ['devices'])
 check(trigRefs.n > 0 && trigRefs.bad.isEmpty(), "every trigger device reference is {id, name} (${trigRefs.n} of them)", trigRefs.bad.take(5))
 // Red by agreement until the next detail contract version: BACKLOG.md entry 55, HAI-D56.
 Map condRefs = refsIn(conditions, { it.c.operands }, ['devices'])
+// RED, and left red deliberately: backlog 55. Conditions still publish operands.devices as names with a
+// parallel operands.deviceIds beside them. The pairing is positional and nothing enforces it, so this
+// goes green only when the contract version bumps and conditions carry {id, name} like everything else.
 check(condRefs.n > 0 && condRefs.bad.isEmpty(), "every condition device reference is {id, name} (${condRefs.n} of them)",
       "${condRefs.bad.size()} are bare names, e.g. ${condRefs.bad.take(3)}")
 // `steps` is the display and rule-link layer, decided by Gordon 2026-10-05: its devices are names for
@@ -151,6 +154,9 @@ Set ruleIds = rules.collect { "${it.id}".replaceFirst(/^a/, '') } as Set
 List targets = rules.collectMany { Map r -> ((List<Map>) r.steps).collectMany { Map st -> ((List) (st.ruleTargets ?: [])).collect { [rule: r.id, t: it] } } }
 check(targets.size() == 69, 'the capture holds 69 rule links in steps', targets.size())
 List badTargets = targets.findAll { !("${it.t}" ==~ /\d+/) || !ruleIds.contains(it.t.toString()) }.collect { "${it.rule} -> ${it.t}" }
+// RED, and the document is what is wrong: backlog 56. 2096 lists 2354 among 42 targets and
+// /installedapp/statusJson/2354 returns {} - the rule was deleted and Rule Machine kept the reference.
+// HAM passes it through faithfully, which hands a consumer an id it cannot resolve.
 check(badTargets.isEmpty(), 'every step ruleTarget is a bare rule id naming a rule in this document', badTargets)
 
 // What a consumer binds a condition to today: the parallel deviceIds list. Not a substitute for the
