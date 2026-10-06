@@ -10891,6 +10891,28 @@ List hamDetailDeviceRefs(Object raw) {
 // two concepts cannot be conflated by a later edit.
 @Field static final List<String> WAIT_METHODS = ['getWaitRule', 'getWaitEvents']
 
+// What Rule Machine sends for each colour name, on Hubitat's 0-100 hue scale.
+// Measured, not looked up: one action per name on a virtual RGBW light, read
+// from the device's own command events (storage format 7.5). The whites are
+// hue 11 at low saturation, not colour temperatures.
+@Field static final Map RM_NAMED_COLOURS = [
+    'Soft White': [hue: 11, saturation: 30], 'White': [hue: 11, saturation: 0],
+    'Daylight': [hue: 11, saturation: 10], 'Warm White': [hue: 11, saturation: 20],
+    'Red': [hue: 100, saturation: 100], 'Green': [hue: 33, saturation: 100],
+    'Blue': [hue: 66, saturation: 100], 'Yellow': [hue: 16, saturation: 100],
+    'Orange': [hue: 11, saturation: 100], 'Purple': [hue: 83, saturation: 100],
+    'Pink': [hue: 97, saturation: 25],
+]
+
+// A stored number, or null when nothing usable is stored. hamDetailInt returns
+// 0 for an empty value, which is right for a count and wrong for a level: an
+// unset level is not a level of zero.
+Integer hamDetailNumberOrNull(Object raw) {
+    String s = "${raw ?: ''}".trim()
+    if (!s) return null
+    try { return (s as BigDecimal).intValue() } catch (Exception ignored) { return null }
+}
+
 Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
     switch (method) {
         case 'getOnOffSwitch':
@@ -10938,6 +10960,50 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             // removed - the same stale-sibling trap as rule 1775's 22:00.
             String storedVol = "${v["speakVolume.${num}"] ?: ''}".trim()
             if (speak && storedVol) o.volume = hamDetailInt(storedVol)
+            return o
+
+        case 'getCapture':
+            // The devices to capture are in capture.<n>, confirmed on rule 3593
+            // on 2026-10-06 (capability.switch). Nothing else is stored.
+            List d = hamDetailDeviceRefs(dev["capture.${num}"])
+            Map o = [type: 'capture']
+            if (d) o.devices = d
+            return o
+
+        case 'getRestore':
+            // Restore stores no settings under its own index: Rule Machine puts
+            // back whatever the rule's Capture took (rule 3593). Published with
+            // no devices rather than guessed; a consumer pairs it with the
+            // rule's own capture.
+            return [type: 'restore']
+
+        case 'getSetColor':
+            // color.<n> is the picker's MODE, and the mode decides which other
+            // keys exist (Supporting Docs/rule_machine_5_1_storage_format.md
+            // 7.3 and 7.5). The key names run the opposite way round from what
+            // they suggest: colorHex is the numeric hue, colorH the hex string.
+            // A named colour is resolved here to the hue and saturation Rule
+            // Machine sends for it, measured on a virtual RGBW light (7.5).
+            // Modes not resolved here travel as the mode alone, so a consumer
+            // refuses them by name rather than guessing.
+            Map o = [type: 'setColor', colorMode: "${v["color.${num}"] ?: ''}"]
+            List d = hamDetailDeviceRefs(dev["bulbs.${num}"])
+            if (d) o.devices = d
+            List varSourced = [['uVar', 'level'], ['uVar2', 'hue'], ['uVar3', 'saturation'], ['uVar4', 'rgb']]
+                .findAll { hamDetailBool(v["${it[0]}.${num}"]) }.collect { it[1] }
+            if (varSourced) o.variableSourced = varSourced
+            Map named = RM_NAMED_COLOURS[o.colorMode as String] as Map
+            if (named != null) {
+                o.hue = named.hue
+                o.saturation = named.saturation
+            } else if (o.colorMode == 'Custom HSB color') {
+                Integer h = hamDetailNumberOrNull(v["colorHex.${num}"])
+                Integer s = hamDetailNumberOrNull(v["colorSat.${num}"])
+                if (h != null) o.hue = h
+                if (s != null) o.saturation = s
+            }
+            Integer lvl = hamDetailNumberOrNull(v["colorLevel.${num}"])
+            if (lvl != null) o.level = lvl
             return o
 
         case 'getIfThen':

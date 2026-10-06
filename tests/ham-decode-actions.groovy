@@ -110,6 +110,32 @@ check(script.hamDetailActionDelay('3', S('3', [delayAct: 'none'])) == null,
       'delayAct none is no delay, not a zero-second one')
 
 // --- everything else refuses by name -------------------------------------
+// --- Capture, Restore and Set Colour, as rule 3593 stores them --------------
+// Read off rule 3593's status page on 2026-10-06: capture.1 holds the devices
+// (capability.switch), Restore stores nothing under its own index, and Set
+// Colour keeps the device in bulbs.2 with the picker's mode in color.2.
+Map desk = [id: '3601', name: 'Gordon Study Desk']
+Map cap = ops('1', 'getCapture', [:], ['capture.1': [desk]])
+check(cap != null && cap.type == 'capture' && (cap.devices as List) == [desk], 'capture publishes the devices in capture.<n>')
+Map res = ops('4', 'getRestore', [:])
+check(res == [type: 'restore'], 'restore publishes no devices: it puts back what the rule captured')
+
+Map green = ops('2', 'getSetColor', [color: 'Green', colorLevel: '100'], ['bulbs.2': [desk]])
+check(green.type == 'setColor' && green.colorMode == 'Green', 'set colour carries the stored colour mode')
+check(green.hue == 33 && green.saturation == 100, 'a named colour resolves to what Rule Machine sends for it, measured: Green is 33/100')
+check(green.level == 100 && (green.devices as List) == [desk], 'with its level and its devices from bulbs.<n>')
+Map soft = ops('2', 'getSetColor', [color: 'Soft White'], ['bulbs.2': [desk]])
+check(soft.hue == 11 && soft.saturation == 30 && !soft.containsKey('level'),
+      'Soft White is hue 11 saturation 30, and no stored level means no level, not zero')
+Map hsb = ops('2', 'getSetColor', [color: 'Custom HSB color', colorHex: '62', colorSat: '80', colorLevel: '40'])
+check(hsb.hue == 62 && hsb.saturation == 80 && hsb.level == 40,
+      'custom HSB reads its hue from colorHex, the key named the opposite way round')
+Map pick = ops('2', 'getSetColor', [color: 'Pick a Color', colorH: '#33cc66'])
+check(pick.colorMode == 'Pick a Color' && !pick.containsKey('hue'),
+      'a mode not resolved here travels as the mode alone, to be refused by name')
+Map byVar = ops('2', 'getSetColor', [color: 'Custom HSB color', uVar: 'true', colorHex: '10', colorSat: '20'])
+check((byVar.variableSourced as List) == ['level'], 'a variable-sourced field is named, so it is never taken as a fixed value')
+
 check(ops('4', 'getSetColorTemp', [:]) == null, 'an unsupported construct resolves to nothing')
 check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
 
