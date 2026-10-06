@@ -16,7 +16,7 @@ String block = source.substring(start, end)
 // disagreed with the app: hamDetailInt returned null where the app returns 0, hamDetailBool was
 // case-sensitive where the app is not, and hamDetailJsonList returned [] for text the app keeps as [s].
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
-String stubs = 'import groovy.transform.Field\n' +
+String stubs = 'import groovy.transform.Field\n' + AppSource.field(source, 'RULE_LINK_ACTIONS') + '\n' +
     AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
 
@@ -136,7 +136,32 @@ check(pick.colorMode == 'Pick a Color' && !pick.containsKey('hue'),
 Map byVar = ops('2', 'getSetColor', [color: 'Custom HSB color', uVar: 'true', colorHex: '10', colorSat: '20'])
 check((byVar.variableSourced as List) == ['level'], 'a variable-sourced field is named, so it is never taken as a fixed value')
 
-check(ops('4', 'getSetColorTemp', [:]) == null, 'an unsupported construct resolves to nothing')
+// --- Colour temperature, volume, the rule-control family, Wait for Expression (2026-10-06)
+Map lamp = [id: '3002', name: 'Hall 1']
+Map ct = ops('8', 'getSetColorTemp', [ctL: '2700', ctLevel: '40'], ['ct.8': [lamp]])
+check(ct.type == 'setColorTemperature' && ct.kelvin == 2700 && ct.level == 40 && (ct.devices as List) == [lamp],
+      'colour temperature reads ct, ctL and ctLevel')
+check(!ops('8', 'getSetColorTemp', [ctL: '2700'], ['ct.8': [lamp]]).containsKey('level'), 'no stored level means no level')
+Map vol = ops('9', 'getSetVolume', [volumeVal: '30'], ['volume.9': [[id: '202', name: 'Speaker']]])
+check(vol.type == 'setVolume' && vol.level == 30 && (vol.devices as List)*.id == ['202'], 'volume reads volume and volumeVal')
+
+Map run = ops('4', 'getRuleActions', [ruleAct: '["1806"]', runRuleType: 'Rule Machine'])
+check(run.type == 'runRuleActions' && (run.rules as List) == ['1806'] && run.engine == 'Rule Machine' && run.self == false,
+      'Run Actions names its target rules and their engine')
+check((ops('4', 'getRuleActions', [ruleActMain: '["2001"]']).rules as List) == ['2001'], 'and reads the ruleActMain alias too')
+check(ops('5', 'getStopActions', [stopAct: '["*","1809"]']).with { type == 'cancelRuleTimers' && self && rules == ['1809'] },
+      'Cancel Timed Actions keeps a star as self, beside a real target')
+check(ops('8', 'getPauseResumeRules', [pauseRule: '["2972"]', pR: 'true']).type == 'resumeRules', 'pR true is Resume (rule 2972 action 8)')
+check(ops('6', 'getPauseResumeRules', [pauseRule: '["2972"]', pR: '']).type == 'pauseRules', 'pR empty is Pause (rule 2972 action 6)')
+
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']) == [type: 'waitExpression', timeoutSeconds: 600],
+      'a Wait for Expression timeout is the stored action delay, h:mm:ss')
+check(script.hamDetailWaitRuleOperands([rule: 1]) == [type: 'waitExpression'], 'no delay means it waits indefinitely')
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: 'ten minutes']).timeoutRaw == 'ten minutes',
+      'a delay in another form travels raw, never guessed')
+
+// getSetColorTemp was the example here until it was decoded on 2026-10-06; getChime still is not.
+check(ops('4', 'getChime', [:]) == null, 'an unsupported construct resolves to nothing')
 check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
 
 check(!block.contains('httpGet') && !block.contains('httpPost'),
@@ -154,7 +179,7 @@ Map data = [
                 [name: 'onOff.7', value: 'true'],
                 [name: 'actSubType.8', value: 'getLogMsg'],
                 [name: 'logmsg.8', value: 'disabled step'],
-                [name: 'actSubType.9', value: 'getSetColorTemp']],
+                [name: 'actSubType.9', value: 'getChime']],
   appState: [[name: 'actionList', value: ['7', '8', '9']],
              [name: 'disabledActions', value: ['8']]]
 ]
@@ -166,7 +191,7 @@ check(steps[1].disabled == true,
       'a disabled action IS marked: Rule Machine keeps it in actionList and renders it Disabled')
 check(steps[1].supported == true && steps[1].type == 'log',
       'and is still resolved, so a consumer can see what it would have done')
-check(steps[2].supported == false && steps[2].method == 'getSetColorTemp',
+check(steps[2].supported == false && steps[2].method == 'getChime',
       'an unsupported construct carries its method name to be refused by')
 
 // A branch carries the eval group its condition lives in, which keys the

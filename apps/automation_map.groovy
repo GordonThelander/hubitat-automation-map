@@ -10904,6 +10904,27 @@ List hamDetailDeviceRefs(Object raw) {
     'Pink': [hue: 97, saturation: 25],
 ]
 
+// Wait for Expression. Its condition is the expression group already
+// published as the step's expressionGroup; its timeout is not a setting but the
+// stored action's own `delay`, as h:mm:ss (storage format sections 7 and 12,
+// rule 2279: "0:10:00"). No delay means it waits indefinitely, as Rule Machine
+// does. A delay in any other form travels raw, for a consumer to refuse.
+Map hamDetailWaitRuleOperands(Map stored) {
+    Map o = [type: 'waitExpression']
+    String raw = "${stored.delay ?: ''}".trim()
+    if (!raw) return o
+    // Split rather than a pattern: this file holds no backslashes (validate.ps1).
+    List parts = raw.tokenize(':')
+    boolean hms = parts.size() == 3 && parts.every { String p -> p.isInteger() && (p as Integer) >= 0 } &&
+                  (parts[1] as Integer) < 60 && (parts[2] as Integer) < 60
+    if (hms) {
+        o.timeoutSeconds = (parts[0] as Integer) * 3600 + (parts[1] as Integer) * 60 + (parts[2] as Integer)
+    } else {
+        o.timeoutRaw = raw
+    }
+    return o
+}
+
 // A stored number, or null when nothing usable is stored. hamDetailInt returns
 // 0 for an empty value, which is right for a count and wrong for a level: an
 // unset level is not a level of zero.
@@ -10960,6 +10981,48 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             // removed - the same stale-sibling trap as rule 1775's 22:00.
             String storedVol = "${v["speakVolume.${num}"] ?: ''}".trim()
             if (speak && storedVol) o.volume = hamDetailInt(storedVol)
+            return o
+
+        case 'getSetColorTemp':
+            // ct.<n> devices, ctL.<n> kelvin, ctLevel.<n> level, confirmed on a
+            // live hub (storage format section 7). A value that is not a plain
+            // number is left out rather than coerced, so a consumer refuses it.
+            Map o = [type: 'setColorTemperature']
+            List d = hamDetailDeviceRefs(dev["ct.${num}"])
+            if (d) o.devices = d
+            Integer k = hamDetailNumberOrNull(v["ctL.${num}"])
+            if (k != null) o.kelvin = k
+            Integer lvl = hamDetailNumberOrNull(v["ctLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getSetVolume':
+            // volume.<n> devices, volumeVal.<n> level (storage format section 7).
+            Map o = [type: 'setVolume']
+            List d = hamDetailDeviceRefs(dev["volume.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["volumeVal.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getRuleActions':
+        case 'getStopActions':
+        case 'getPauseResumeRules':
+            // Targets and engine as RULE_LINK_ACTIONS reads them for the graph,
+            // confirmed on a live hub (storage format section 8), every alias
+            // checked. '*' is this rule, kept as self rather than as an id.
+            // Pause and Resume share a method and are told apart by pR.<n>:
+            // 'true' is Resume and empty is Pause, the right way round, unlike
+            // pvTF (section 10.2, measured on rule 2972).
+            Map spec = RULE_LINK_ACTIONS[method] as Map
+            List all = ((spec.targets as List).collectMany { String pre -> hamDetailJsonList(v["${pre}.${num}"]) })
+            Map o = [type: ['getRuleActions': 'runRuleActions', 'getStopActions': 'cancelRuleTimers',
+                            'getPauseResumeRules': (hamDetailBool(v["pR.${num}"]) ? 'resumeRules' : 'pauseRules')][method],
+                     self: all.any { "${it}" == '*' }]
+            List ids = all.findAll { "${it}" != '*' }.collect { "${it}" }.unique()
+            if (ids) o.rules = ids
+            String engine = "${v["${spec.engine}.${num}"] ?: ''}".trim()
+            if (engine) o.engine = engine
             return o
 
         case 'getCapture':
@@ -11153,7 +11216,9 @@ List extractRuleActions(Map data) {
         Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
         if (evalGroup != null) step.expressionGroup = "${evalGroup}"
 
-        Map ops = hamDetailActionOperands(num, method, values, devices)
+        Map ops = method == 'getWaitRule'
+            ? hamDetailWaitRuleOperands((storedActions[num] ?: [:]) as Map)
+            : hamDetailActionOperands(num, method, values, devices)
         if (ops == null) {
             step.supported = false
         } else {
