@@ -36,6 +36,14 @@ can do, `blocked` while waiting on another Issue, and `feed` for anything touchi
 | Owns | All off-hub work: code, converter and decode logic against captured files, tests, CI, docs, reviews, merges of off-hub work | Deploying Automation Map, scans, recapturing decode files, checking a decode on the hub | Deploying HAI, hub tests (the Tested column), on-hub checks |
 | Hands to the others | `needs-hub` Issues with exact checks | Results and captures, back to `to:cloud` | Results, back to `to:cloud` |
 
+**Codex supervises the local Claude sessions** (Gordon, 2026-10-06). It keeps them to the Issue in hand,
+to hub work, and to one commit per Issue, without extra test runs. When Codex says stop or narrow the scope,
+the Claude session does that.
+
+**Concord is local only.** Codex and the local Claude sessions talk live through it, but the cloud session
+cannot see it. So anything that hands work over, records a hub result or needs Gordon's decision goes into
+an Issue, never only into Concord.
+
 Local sessions: **do hub work only**, and hand code changes to the cloud session as a `to:cloud` Issue rather
 than making them. Do not commit or run the suites after every small change. Commit once, when the hub work
 of an Issue is done. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub
