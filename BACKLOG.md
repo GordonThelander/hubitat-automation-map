@@ -331,6 +331,27 @@ to be loosened in the meantime.
 (keeping `deviceIds` for one version if HAI needs the overlap), and update HAI's reader in the same
 release.
 
+### 57. A wait publishes its duration under the name `timeoutSeconds`, which asserts the wrong thing
+
+`getWaitRule` publishes the wait's own time as `operands.timeoutSeconds`. Measured on the hub on
+2026-10-06, all eleven waits that store a usable time have `durChoice.<n> = 'true'`, which is Rule
+Machine's Use Duration toggle. A duration and a timeout are opposite instructions, so the field name
+tells a consumer the wrong one in every case this hub has.
+
+The time itself is read correctly. What is missing is the discriminator: `durChoice` is not published
+at all, so nothing downstream can tell the two apart, and the name fills the gap with a guess. Same
+pattern as entry 54: a convenience field standing in for a fact that is stored next to it.
+
+This hub has no Timeout example to verify against. The two waits without `durChoice = 'true'` store a
+zero and a `none` respectively, so the timeout branch cannot be exercised here. Whether Rule Machine
+continues or abandons the remaining actions when a timeout expires is also unmeasured, and a converter
+needs that before it can emit anything. A probe rule would settle both: one wait with a short timeout
+on a condition that never becomes true.
+
+**Next action:** publish `durChoice` on the `getWaitRule` record and rename the seconds to something
+that says it belongs to the wait rather than asserting which kind it is. Needs a decoder change, a
+deploy and a scan, so it waits for hub time rather than going into a test-only branch.
+
 ### 56. A published rule link points at a rule that no longer exists
 
 `2096 _System Start (Rule-5.1)` lists `2354` among its 42 `ruleTargets`, and
