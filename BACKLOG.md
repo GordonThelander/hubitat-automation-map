@@ -352,6 +352,46 @@ on a condition that never becomes true.
 that says it belongs to the wait rather than asserting which kind it is. Needs a decoder change, a
 deploy and a scan, so it waits for hub time rather than going into a test-only branch.
 
+### 58. `/hub2/variables` gives the hub's own record of which apps use a variable
+
+thebearmay posted on 2026-10-06 that Hubitat Beta 2.5.2.133 surfaces `/hub2/variables`. Probed on the
+Dev hub the same day: HTTP 404 on 2.5.1.147, so nothing can be done until the firmware ships. Per
+variable it answers `name`, `type`, `value`, `linked`, `meshEnabled`, `sourceName`, `sourceIp`, the
+four connector fields, `connectorOptions`, `connectorUsedBy`, and `usedBy` as a list of `{id, label}`
+app references.
+
+`usedBy` is the interesting one. Six of the seven `hubVariables` findings are deliberately hedged
+because this scan can only report what it decoded: `noDecodedUsage` says "may simply be unused, or
+used by an app this scan cannot decode", and the same caveat runs through
+`readersWithoutDecodedWriter`, `writersWithoutDecodedReader` and `unreferencedLocalVariables`. The
+hub's own list is a second, independent source for exactly the claim those hedges are protecting.
+
+The prize is not a better answer, it is a measurement. Where the hub lists an app under `usedBy` and
+this scan decoded neither a read nor a write, that difference is the decoder's blind spot, named app by
+app, for the first time. That is worth more than quietly folding the hub's answer into the findings,
+and it should be reported as coverage rather than used to suppress a hedge.
+
+`connectorId`, `connectorLabel`, `connectorType` and `connectorUsedBy` bear on a limitation this app
+documents and accepts today: a reported Connector deviceId is always trusted and resolved, which is why
+there is no `unresolvedConnectors` field. With the hub's own connector record alongside it, a stale or
+orphaned Connector id becomes detectable rather than something the trade-off hides.
+
+`linked`, `meshEnabled`, `sourceName` and `sourceIp` are hub mesh provenance, which this app does not
+model at all. Worth knowing before deciding whether it should.
+
+**The caution, and it is the same shape as entry 54.** `usedBy` is a registration list, not proof of
+use. It records apps that registered an interest through the hub's own mechanism, so an app that
+references a variable without registering would be absent from it, and webCoRE is the obvious candidate
+given the decode issues already tracked. So it is a source to cross-check against, never a replacement
+for decoding, and a variable absent from `usedBy` is not thereby unused.
+
+**Gating.** This app has no firmware or platform version check anywhere, and should not gain one for
+this. `httpFetch` already answers `ok: false` on a 404, so the read feature-detects by response and
+degrades to today's behaviour on any hub that does not have it.
+
+**Next action:** nothing until the firmware is out of beta and on a hub to read. Then one read added to
+the scan, reported as a coverage comparison against the decoded set rather than merged into it.
+
 ### 56. A published rule link points at a rule that no longer exists
 
 `2096 _System Start (Rule-5.1)` lists `2354` among its 42 `ruleTargets`, and
