@@ -331,6 +331,24 @@ to be loosened in the meantime.
 (keeping `deviceIds` for one version if HAI needs the overlap), and update HAI's reader in the same
 release.
 
+### 56. A published rule link points at a rule that no longer exists
+
+`2096 _System Start (Rule-5.1)` lists `2354` among its 42 `ruleTargets`, and
+`/installedapp/statusJson/2354` returns `{}`: the rule was deleted and Rule Machine kept the reference
+in the rule that calls it. HAM passes it through faithfully, so a consumer ordering a migration from
+`ruleTargets` is handed an id it cannot resolve. Found by `tests/ham-published-documents.groovy`
+against the 2026-10-06 capture, confirmed against the hub the same day.
+
+Faithful is not the same as useful here. The decision to make is whether a target the scan did not see
+is dropped, or published with a marker saying it is unresolvable, and the second is the safer one: a
+consumer that silently loses a link cannot tell a deleted rule from a rule the scan missed.
+
+The assertion *every step ruleTarget is a bare rule id naming a rule in this document* stays red until
+this is decided. It is not to be loosened.
+
+**Next action:** choose drop or mark, with Gordon, before the next detail contract version. Needs a
+decoder change and a hub scan to verify, so it does not belong in a test-only branch.
+
 ### 35. HAI as a third engine: map decoding and piston migration target
 
 Hubitat Automation Intelligence (HAI) is Gordon's Rule Machine replacement. It will publish its rules
