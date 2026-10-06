@@ -14,37 +14,24 @@ assert start >= 0 : 'trigger resolver not found'
 assert end > start
 String block = source.substring(start, end)
 
-String stubs = '''
-import groovy.transform.Field
-@Field static final List<String> DEVICELESS_TRIGGERS = [
-    'Certain Time (and optional date)', 'Periodic Schedule', 'Variable',
-    'Location Event', 'Mode', 'Hub Variable'
-]
-@Field Map location = [modes: [[id: 5, name: 'Home'], [id: 2, name: 'Away']]]
-String stripTags(String s) { return s.replaceAll('<[^>]*>', '') }
-Integer hamDetailInt(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s || !s.isInteger()) return null
-    return s as Integer
-}
-boolean hamDetailBool(Object raw) { return "${raw ?: ''}".trim() == 'true' }
-List hamDetailJsonList(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s) return []
-    try { return new groovy.json.JsonSlurper().parseText(s) as List } catch (Exception ignored) { return [] }
-}
-List hamDetailModeNames(List ids) {
-    List modes = (location?.modes ?: []) as List
-    return (ids ?: []).collect { Object id ->
-        Object hit = modes.find { Object m -> "${m?.id}" == "${id}" }
-        return hit != null ? "${hit.name}" : null
-    }
-}
-List hamDetailDeviceRefs(Object raw) {
-    return ((raw ?: []) as List).collect { Object d -> [id: "${(d as Map).id}", name: "${(d as Map).name}"] }
-}
-'''
+// Everything the resolver calls, sliced from the app rather than stubbed: the stubs disagreed with it
+// (hamDetailInt returned null where the app returns 0, hamDetailBool was case-sensitive, and
+// hamDetailJsonList dropped text the app keeps). Modes are objects with properties, as the hub's Mode
+// is, never plain maps - a map-shaped mode is what hid a real defect on 2026-10-05.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+String stubs = 'import groovy.transform.Field\n' +
+    AppSource.field(source, 'DEVICELESS_TRIGGERS') + '\n' +
+    'class HubMode { Integer id; String name }\n' +
+    "@Field Map location = [modes: [new HubMode(id: 5, name: 'Home'), new HubMode(id: 2, name: 'Away')]]\n" +
+    AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList',
+                                 'hamDetailModeNames', 'hamDetailDeviceRefs']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
+
+// The slices are the app's, not a stub's: each returns what only the real one returns.
+assert script.hamDetailInt('') == 0 : 'hamDetailInt is a stub: the app returns 0 for an empty value'
+assert script.hamDetailBool('TRUE') == true : 'hamDetailBool is a stub: the app ignores case'
+assert script.hamDetailJsonList('not json') == ['not json'] : 'hamDetailJsonList is a stub: the app keeps unparseable text'
+assert !(script.location.modes[0] instanceof Map) : 'modes must be objects, as the hub supplies them, not maps'
 
 int passed = 0
 Closure check = { boolean cond, String what ->

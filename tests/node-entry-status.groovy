@@ -7,29 +7,12 @@
 // that function directly instead.
 // Run with: groovy tests/node-entry-status.groovy
 //
-// nodeEntry() below is copied verbatim from apps/automation_map.groovy -
-// keep the two in sync by hand.
-
-Map nodeEntry(String id, String fullLabel, String group, String subtitle = null, String drawLabel = null,
-              String statusSuffix = null, boolean statusInTitle = true) {
-    String label = fullLabel ?: id
-    String clean = drawLabel ?: label
-    String shortLabel = clean
-    if (shortLabel.length() > 24) shortLabel = "${shortLabel.substring(0, 22)}…"
-    if (statusSuffix) shortLabel = "${shortLabel} (${statusSuffix})"
-    String canonicalName = subtitle ? "${clean} (${subtitle})" : clean
-    String drawText = statusSuffix ? "${canonicalName} (${statusSuffix})" : canonicalName
-    String titleText = subtitle ? "${label} (${subtitle})" : label
-    if (statusSuffix && statusInTitle) titleText = "${titleText} (${statusSuffix})"
-    return [
-        id: id,
-        label: shortLabel,
-        draw: drawText,
-        title: titleText,
-        name: canonicalName,
-        group: group,
-    ]
-}
+// nodeEntry() is the app's own, sliced from apps/automation_map.groovy at run time. It used to be
+// copied here and "kept in sync by hand", which nothing enforced: by 2026-10-05 the copy had already
+// lost the app's comments, and the next change to the code would have gone unseen by this suite.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+def appFns = new GroovyShell().parse(AppSource.function(AppSource.read(), 'nodeEntry'))
+binding.setVariable('nodeEntry', appFns.&nodeEntry)
 
 int pass = 0, fail = 0
 def check = { String name, Closure body ->

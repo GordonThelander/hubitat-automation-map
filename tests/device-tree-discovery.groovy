@@ -7,56 +7,12 @@
 // sibling. The pre-fix fetchDeviceListBulk() only read top-level entries.
 // Run with: groovy tests/device-tree-discovery.groovy
 //
-// aggregateDeviceTree() below is copied verbatim from
-// apps/automation_map.groovy - keep the two in sync by hand; there is no
-// shared-module mechanism between this standalone script and the Hubitat
-// app source.
-
-Map aggregateDeviceTree(Map data) {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
-    Map<String, Map> byId = [:]
-    List order = []
-    List pending = []
-    (data.devices ?: []).each { pending << [node: it, parentId: null] }
-    while (pending) {
-        Map item = pending.remove(0) as Map
-        def node = item.node
-        if (!(node instanceof Map)) continue
-        Map entry = node as Map
-        Map d = (entry.data instanceof Map) ? (entry.data as Map) : null
-        String entryId = (d && d.id != null) ? "${d.id}" : null
-        List kids = (entry.children instanceof List) ? (entry.children as List) : null
-        if (kids) kids.each { pending << [node: it, parentId: entryId] }
-        if (entryId == null || d == null) continue
-        Map agg = byId[entryId]
-        if (agg == null) {
-            agg = [:]
-            byId[entryId] = agg
-            order << entryId
-        }
-        if (!agg.name && d.name) agg.name = "${d.name}"
-        String room = d.roomName == null ? '' : "${d.roomName}".trim()
-        if (!agg.room && room) agg.room = room
-        if (!agg.type && d.type) agg.type = "${d.type}"
-        if (agg.deviceTypeId == null && d.deviceTypeId != null) agg.deviceTypeId = "${d.deviceTypeId}"
-        if (!agg.parentId && item.parentId) agg.parentId = item.parentId as String
-        if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
-    }
-    Map typeGroups = [:]
-    order.each { String devId ->
-        Map agg = byId[devId] as Map
-        out.labels[devId] = (agg.name ?: "Device ${devId}") as String
-        if (agg.room) out.rooms[devId] = agg.room as String
-        if (agg.type) out.types[devId] = agg.type as String
-        if (agg.parentId) out.parents[devId] = agg.parentId as String
-        if (agg.disabled == true) (out.disabledDevices as List) << devId
-        String typeKey = (agg.room && agg.deviceTypeId != null) ? "${agg.deviceTypeId}" : "room:${devId}"
-        List group = (typeGroups[typeKey] = typeGroups[typeKey] ?: []) as List
-        group << devId
-    }
-    out.typeGroups = typeGroups
-    return out
-}
+// aggregateDeviceTree() is the app's own, sliced from apps/automation_map.groovy at run time. It used to be
+// copied here and "kept in sync by hand", which nothing enforced: by 2026-10-05 the copy had already
+// lost the app's comments, and the next change to the code would have gone unseen by this suite.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+def appFns = new GroovyShell().parse(AppSource.function(AppSource.read(), 'aggregateDeviceTree'))
+binding.setVariable('aggregateDeviceTree', appFns.&aggregateDeviceTree)
 
 int pass = 0, fail = 0
 def check = { String name, Closure body ->

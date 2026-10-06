@@ -15,10 +15,13 @@ String source = new File('apps/automation_map.groovy').getText('UTF-8')
 String slice = source.substring(source.indexOf('Map roomPlanApplyMoves(Map moves) {'),
                                 source.indexOf('Map roomPlanGetMapping()'))
 String preamble = 'import groovy.transform.Field\nimport groovy.json.JsonOutput\n'
-String stubs = """
-@Field static final String LOOPBACK_BASE = 'http://127.0.0.1:8080'
-@Field static final List<String> ROOM_NO_ROOM_NAMES = ['Unassigned', 'No assigned room', 'No room assigned', 'None']
-Map httpFetch(String url, int t) {
+// The constants are sliced from the app. httpFetch stays a stub because it is the network boundary, but
+// with the app's signature: the stub had invented a two-argument one, so any call the app makes with
+// options - five of its callers do - would have thrown here instead of being recorded.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+String stubs = AppSource.field(source, 'LOOPBACK_BASE') + '\n' + AppSource.field(source, 'ROOM_NO_ROOM_NAMES') + """
+Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {
+    String url = uri
     binding.getVariable('requests') << ['GET', url]
     return binding.getVariable('onFetch').call(url)
 }
@@ -29,6 +32,11 @@ void httpPost(Map args, Closure c) {
     c.call([status: binding.getVariable('postStatus')])
 }
 """
+
+// The boundary stub must keep the app's signature. If the app's changes, this fails rather than the stub
+// quietly accepting calls the app can no longer make, or refusing ones it now does.
+assert AppSource.function(source, 'httpFetch').readLines()[0] == 'Map httpFetch(String uri, int timeoutSec, Map extraOpts = [:]) {' :
+    'httpFetch changed signature in the app; update the stub above to match it'
 
 int checks = 0
 List<Boolean> results = []

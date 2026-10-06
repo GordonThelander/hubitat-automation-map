@@ -15,33 +15,38 @@ String block = source.substring(start, end)
 // Stubs for the hub-provided surfaces the block reads. state and app are the
 // only two it may touch; anything else is a contract violation this harness
 // would not catch, so they are asserted below as well.
+// The constants and helpers come from the app, not from copies: the copied APP_VERSION here had already
+// drifted (2.4.3 against the app's 2.4.4), and a copied contract name would keep this suite green while
+// the app published a different one. engineOfNode's stub knew only Rule Machine. Only the hub's own
+// surfaces - state, app, settings and now() - are supplied here.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+String fromApp = ['APP_NAME', 'APP_VERSION', 'BUILD_CHANNEL', 'SUPPORTED_RULE_ENGINE', 'HAM_DECODE_CONTRACT_VERSION',
+                  'HAM_SUMMARY_CONTRACT', 'HAM_DETAIL_CONTRACT'].collect { AppSource.field(source, it) }.join('\n') + '\n' +
+    AppSource.functions(source, ['autoScanEffectivelyEnabled', 'diagOn', 'engineOfNode']) + '\n'
 def script = new GroovyShell().parse('''
 import groovy.transform.Field
-@Field static final String APP_NAME = 'Automation Map (Dev)'
-@Field static final String APP_VERSION = '2.4.3'
-@Field static final String BUILD_CHANNEL = 'dev'
-@Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
-@Field static final int HAM_DECODE_CONTRACT_VERSION = 1
-@Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
-@Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 @Field Map state = [:]
 @Field Map app = [id: 3547]
 @Field Map settings = [:]
-boolean autoScanEffectivelyEnabled() { settings.autoScanEnabled != false }
-boolean diagOn() { false }
-String engineOfNode(Map n) { "${n.appType ?: ''}".startsWith('Rule-') ? 'RM' : 'other' }
-''' + block + '''
+long now() { return System.currentTimeMillis() }
+''' + fromApp + block + '''
 void setState(Map s) { state.clear(); state.putAll(s) }
 void setSettings(Map s) { settings.clear(); settings.putAll(s) }
 ''')
+
+// The slices are the app's, not a stub's.
+assert script.engineOfNode([appType: 'webCoRE Piston']) == 'webCoRE' : 'engineOfNode is a stub: the app knows webCoRE'
+assert script.diagOn() == false : 'diagnostics are off with no settings, as on a fresh install'
 
 Map graphWith(List nodes, Map flows) {
     return [nodes: nodes.collectEntries { [(it.id): it] }, flows: flows]
 }
 
-@groovy.transform.Field int passed = 0
+// A holder, not an int: on Groovy 2.4 a closure held in an @Field cannot update an @Field int, so the
+// summary printed 0 however many passed.
+@groovy.transform.Field Map tally = [passed: 0]
 @groovy.transform.Field Closure check = { boolean cond, String what ->
-    if (cond) { passed++; println "PASS  ${what}" }
+    if (cond) { tally.passed++; println "PASS  ${what}" }
     else { println "FAIL  ${what}"; System.exit(1) }
 }
 
@@ -194,4 +199,4 @@ check(summaryName >= 1 && detailName >= 1, 'both contract names are present')
 check(source.contains('state.graph = graph') && source.indexOf('hamDecodeWriteFile()', source.indexOf('state.graph = graph')) - source.indexOf('state.graph = graph') < 400,
       'the writer runs on scan completion, beside the graph commit')
 
-println "${passed} HAM decode contract assertions passed"
+println "${tally.passed} HAM decode contract assertions passed"

@@ -23,19 +23,22 @@ int predStart = source.indexOf('boolean rulePredicateIsLive(Map st) {')
 int predEnd = source.indexOf('List unusedConstraintDeviceIds(Map data) {', predStart)
 assert predStart >= 0 && predEnd > predStart
 String predSource = source.substring(predStart, predEnd)
+// The display helpers buildRuleFlow calls are the app's. They were stubbed to return their input, an
+// empty string or an empty list - so a flow step whose label the app would have cleaned, or whose required
+// devices it would have listed, read identically to one where it had not.
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+String helpers = AppSource.functions(source, ['cleanCondition', 'stripTags', 'buildVisualRuleBuilderFlow',
+    'buildNotifierFlow', 'expressionText', 'requiredDevices', 'actionLabel'])
 def script = new GroovyShell().parse('''
 import groovy.transform.Field
 @Field static final String RM_LOCATION_EVENT_PREFIX = 'trigger:Location Event:'
 @Field static final Map RULE_LINK_ACTIONS = [:]
 ''' + predSource + '\n' + flowSource + '\n' + actionSource + '\n' + constructsSource + '''
-String cleanCondition(String value) { value }
-String stripTags(String value) { value }
-List buildVisualRuleBuilderFlow(Map state) { [] }
-List buildNotifierFlow(Map data, Map state) { [] }
-String expressionText(List expression, Map labels) { '' }
-List requiredDevices(List expression, Map settingDevices) { [] }
-String actionLabel(String method, String num, Map action, Map settingValues, Map settingDevices, Map evalMap, Map labels) { method }
-''')
+''' + '\n' + helpers + '\n')
+
+// The slices are the app's, not the identity stubs they replace.
+assert script.stripTags('<b>Hall</b>') == 'Hall' : 'stripTags is a stub: the app removes markup'
+assert script.cleanCondition('Hall <i>(on)</i>  open') == 'Hall open' : 'cleanCondition is a stub: the app strips markup and asides'
 
 List settings = [
     [name: 'tCapab2', value: 'Switch'],
