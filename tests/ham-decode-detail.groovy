@@ -33,13 +33,18 @@ class FakeMode {
     String name
 }
 
-script.location = [modes: [new FakeMode(id: 5, name: 'Home'),
+// Written to the @Field itself. `script.location = ...` lands in the script's binding on Groovy 2.4,
+// the hub's version, where the block never reads it - every mode then resolved to null and this suite
+// failed on 2.4 while passing on a newer local Groovy.
+script.@location = [modes: [new FakeMode(id: 5, name: 'Home'),
                            new FakeMode(id: 6, name: 'Visitor'),
                            new FakeMode(id: 2, name: 'Night')]]
 
-@groovy.transform.Field int passed = 0
+// A holder, not an int: on Groovy 2.4 a closure held in an @Field cannot update an @Field int, so the
+// summary printed 0 however many passed.
+@groovy.transform.Field Map tally = [passed: 0]
 @groovy.transform.Field Closure check = { boolean cond, String what ->
-    if (cond) { passed++; println "PASS  ${what}" }
+    if (cond) { tally.passed++; println "PASS  ${what}" }
     else { println "FAIL  ${what}"; System.exit(1) }
 }
 
@@ -198,4 +203,4 @@ check(!block.contains('httpGet') && !block.contains('httpPost'),
 check(!block.contains('(m as Map)'),
       'a hub Mode is read by property, never coerced to a Map, which calls get(String) and throws')
 
-println "${passed} HAM decode detail assertions passed"
+println "${tally.passed} HAM decode detail assertions passed"

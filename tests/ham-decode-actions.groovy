@@ -12,22 +12,18 @@ assert start >= 0 : 'action resolver not found'
 assert end > start : 'action resolver not terminated'
 String block = source.substring(start, end)
 
-String stubs = '''
-import groovy.transform.Field
-String stripTags(String s) { return s.replaceAll('<[^>]*>', '') }
-Integer hamDetailInt(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s || !s.isInteger()) return null
-    return s as Integer
-}
-boolean hamDetailBool(Object raw) { return "${raw ?: ''}".trim() == 'true' }
-List hamDetailJsonList(Object raw) {
-    String s = "${raw ?: ''}".trim()
-    if (!s) return []
-    try { return new groovy.json.JsonSlurper().parseText(s) as List } catch (Exception ignored) { return [] }
-}
-'''
+// The helpers the resolver calls, sliced from the app rather than stubbed. The stubs these replace
+// disagreed with the app: hamDetailInt returned null where the app returns 0, hamDetailBool was
+// case-sensitive where the app is not, and hamDetailJsonList returned [] for text the app keeps as [s].
+def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+String stubs = 'import groovy.transform.Field\n' + AppSource.field(source, 'RULE_LINK_ACTIONS') + '\n' +
+    AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
+
+// The slices are the app's, not a stub's: each returns what only the real one returns.
+assert script.hamDetailInt('') == 0 : 'hamDetailInt is a stub: the app returns 0 for an empty value'
+assert script.hamDetailBool('TRUE') == true : 'hamDetailBool is a stub: the app ignores case'
+assert script.hamDetailJsonList('not json') == ['not json'] : 'hamDetailJsonList is a stub: the app keeps unparseable text'
 
 int passed = 0
 Closure check = { boolean cond, String what ->
@@ -114,7 +110,58 @@ check(script.hamDetailActionDelay('3', S('3', [delayAct: 'none'])) == null,
       'delayAct none is no delay, not a zero-second one')
 
 // --- everything else refuses by name -------------------------------------
-check(ops('4', 'getSetColorTemp', [:]) == null, 'an unsupported construct resolves to nothing')
+// --- Capture, Restore and Set Colour, as rule 3593 stores them --------------
+// Read off rule 3593's status page on 2026-10-06: capture.1 holds the devices
+// (capability.switch), Restore stores nothing under its own index, and Set
+// Colour keeps the device in bulbs.2 with the picker's mode in color.2.
+Map desk = [id: '3601', name: 'Gordon Study Desk']
+Map cap = ops('1', 'getCapture', [:], ['capture.1': [desk]])
+check(cap != null && cap.type == 'capture' && (cap.devices as List) == [desk], 'capture publishes the devices in capture.<n>')
+Map res = ops('4', 'getRestore', [:])
+check(res == [type: 'restore'], 'restore publishes no devices: it puts back what the rule captured')
+
+Map green = ops('2', 'getSetColor', [color: 'Green', colorLevel: '100'], ['bulbs.2': [desk]])
+check(green.type == 'setColor' && green.colorMode == 'Green', 'set colour carries the stored colour mode')
+check(green.hue == 33 && green.saturation == 100, 'a named colour resolves to what Rule Machine sends for it, measured: Green is 33/100')
+check(green.level == 100 && (green.devices as List) == [desk], 'with its level and its devices from bulbs.<n>')
+Map soft = ops('2', 'getSetColor', [color: 'Soft White'], ['bulbs.2': [desk]])
+check(soft.hue == 11 && soft.saturation == 30 && !soft.containsKey('level'),
+      'Soft White is hue 11 saturation 30, and no stored level means no level, not zero')
+Map hsb = ops('2', 'getSetColor', [color: 'Custom HSB color', colorHex: '62', colorSat: '80', colorLevel: '40'])
+check(hsb.hue == 62 && hsb.saturation == 80 && hsb.level == 40,
+      'custom HSB reads its hue from colorHex, the key named the opposite way round')
+Map pick = ops('2', 'getSetColor', [color: 'Pick a Color', colorH: '#33cc66'])
+check(pick.colorMode == 'Pick a Color' && !pick.containsKey('hue'),
+      'a mode not resolved here travels as the mode alone, to be refused by name')
+Map byVar = ops('2', 'getSetColor', [color: 'Custom HSB color', uVar: 'true', colorHex: '10', colorSat: '20'])
+check((byVar.variableSourced as List) == ['level'], 'a variable-sourced field is named, so it is never taken as a fixed value')
+
+// --- Colour temperature, volume, the rule-control family, Wait for Expression (2026-10-06)
+Map lamp = [id: '3002', name: 'Hall 1']
+Map ct = ops('8', 'getSetColorTemp', [ctL: '2700', ctLevel: '40'], ['ct.8': [lamp]])
+check(ct.type == 'setColorTemperature' && ct.kelvin == 2700 && ct.level == 40 && (ct.devices as List) == [lamp],
+      'colour temperature reads ct, ctL and ctLevel')
+check(!ops('8', 'getSetColorTemp', [ctL: '2700'], ['ct.8': [lamp]]).containsKey('level'), 'no stored level means no level')
+Map vol = ops('9', 'getSetVolume', [volumeVal: '30'], ['volume.9': [[id: '202', name: 'Speaker']]])
+check(vol.type == 'setVolume' && vol.level == 30 && (vol.devices as List)*.id == ['202'], 'volume reads volume and volumeVal')
+
+Map run = ops('4', 'getRuleActions', [ruleAct: '["1806"]', runRuleType: 'Rule Machine'])
+check(run.type == 'runRuleActions' && (run.rules as List) == ['1806'] && run.engine == 'Rule Machine' && run.self == false,
+      'Run Actions names its target rules and their engine')
+check((ops('4', 'getRuleActions', [ruleActMain: '["2001"]']).rules as List) == ['2001'], 'and reads the ruleActMain alias too')
+check(ops('5', 'getStopActions', [stopAct: '["*","1809"]']).with { type == 'cancelRuleTimers' && self && rules == ['1809'] },
+      'Cancel Timed Actions keeps a star as self, beside a real target')
+check(ops('8', 'getPauseResumeRules', [pauseRule: '["2972"]', pR: 'true']).type == 'resumeRules', 'pR true is Resume (rule 2972 action 8)')
+check(ops('6', 'getPauseResumeRules', [pauseRule: '["2972"]', pR: '']).type == 'pauseRules', 'pR empty is Pause (rule 2972 action 6)')
+
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']) == [type: 'waitExpression', timeoutSeconds: 600],
+      'a Wait for Expression timeout is the stored action delay, h:mm:ss')
+check(script.hamDetailWaitRuleOperands([rule: 1]) == [type: 'waitExpression'], 'no delay means it waits indefinitely')
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: 'ten minutes']).timeoutRaw == 'ten minutes',
+      'a delay in another form travels raw, never guessed')
+
+// getSetColorTemp was the example here until it was decoded on 2026-10-06; getChime still is not.
+check(ops('4', 'getChime', [:]) == null, 'an unsupported construct resolves to nothing')
 check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
 
 check(!block.contains('httpGet') && !block.contains('httpPost'),
@@ -132,7 +179,7 @@ Map data = [
                 [name: 'onOff.7', value: 'true'],
                 [name: 'actSubType.8', value: 'getLogMsg'],
                 [name: 'logmsg.8', value: 'disabled step'],
-                [name: 'actSubType.9', value: 'getSetColorTemp']],
+                [name: 'actSubType.9', value: 'getChime']],
   appState: [[name: 'actionList', value: ['7', '8', '9']],
              [name: 'disabledActions', value: ['8']]]
 ]
@@ -144,7 +191,7 @@ check(steps[1].disabled == true,
       'a disabled action IS marked: Rule Machine keeps it in actionList and renders it Disabled')
 check(steps[1].supported == true && steps[1].type == 'log',
       'and is still resolved, so a consumer can see what it would have done')
-check(steps[2].supported == false && steps[2].method == 'getSetColorTemp',
+check(steps[2].supported == false && steps[2].method == 'getChime',
       'an unsupported construct carries its method name to be refused by')
 
 // A branch carries the eval group its condition lives in, which keys the

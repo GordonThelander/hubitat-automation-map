@@ -311,6 +311,105 @@ This works whichever hypothesis is true.
 
 ## Next
 
+### 55. Condition device references as `{id, name}`, at the next detail contract version
+
+Conditions publish devices as two parallel lists - `devices` (names) and `deviceIds` (ids) - where
+actions and triggers publish `{id, name}` pairs. Found by `tests/ham-published-documents.groovy` on
+2026-10-05 against the captured detail document: 104 condition references. Nothing is broken today:
+every condition has a `deviceIds` list of matching length with no empty id, and HAI binds from it. But
+the two lists pair by position and nothing in the document enforces that.
+
+Agreed with Gordon 2026-10-05: change it once, with a contract version bump, when both apps are
+changing anyway - not as a standalone change, because HAI's converter (`rmDeviceRefs`) reads
+`deviceIds` and would break if this side moved alone. Mirrored as HAI-D56 in the HAI repository's
+`DEV_HANDOVER_ISSUES.md`.
+
+The assertion *every condition device reference is {id, name}* stays red until this ships; it is not
+to be loosened in the meantime.
+
+**Next action:** at the next `ham.decode.detail` version, publish condition devices as `{id, name}`
+(keeping `deviceIds` for one version if HAI needs the overlap), and update HAI's reader in the same
+release.
+
+### 57. A wait publishes its duration under the name `timeoutSeconds`, which asserts the wrong thing
+
+`getWaitRule` publishes the wait's own time as `operands.timeoutSeconds`. Measured on the hub on
+2026-10-06, all eleven waits that store a usable time have `durChoice.<n> = 'true'`, which is Rule
+Machine's Use Duration toggle. A duration and a timeout are opposite instructions, so the field name
+tells a consumer the wrong one in every case this hub has.
+
+The time itself is read correctly. What is missing is the discriminator: `durChoice` is not published
+at all, so nothing downstream can tell the two apart, and the name fills the gap with a guess. Same
+pattern as entry 54: a convenience field standing in for a fact that is stored next to it.
+
+This hub has no Timeout example to verify against. The two waits without `durChoice = 'true'` store a
+zero and a `none` respectively, so the timeout branch cannot be exercised here. Whether Rule Machine
+continues or abandons the remaining actions when a timeout expires is also unmeasured, and a converter
+needs that before it can emit anything. A probe rule would settle both: one wait with a short timeout
+on a condition that never becomes true.
+
+**Next action:** publish `durChoice` on the `getWaitRule` record and rename the seconds to something
+that says it belongs to the wait rather than asserting which kind it is. Needs a decoder change, a
+deploy and a scan, so it waits for hub time rather than going into a test-only branch.
+
+### 58. `/hub2/variables` gives the hub's own record of which apps use a variable
+
+thebearmay posted on 2026-10-06 that Hubitat Beta 2.5.2.133 surfaces `/hub2/variables`. Probed on the
+Dev hub the same day: HTTP 404 on 2.5.1.147, so nothing can be done until the firmware ships. Per
+variable it answers `name`, `type`, `value`, `linked`, `meshEnabled`, `sourceName`, `sourceIp`, the
+four connector fields, `connectorOptions`, `connectorUsedBy`, and `usedBy` as a list of `{id, label}`
+app references.
+
+`usedBy` is the interesting one. Six of the seven `hubVariables` findings are deliberately hedged
+because this scan can only report what it decoded: `noDecodedUsage` says "may simply be unused, or
+used by an app this scan cannot decode", and the same caveat runs through
+`readersWithoutDecodedWriter`, `writersWithoutDecodedReader` and `unreferencedLocalVariables`. The
+hub's own list is a second, independent source for exactly the claim those hedges are protecting.
+
+The prize is not a better answer, it is a measurement. Where the hub lists an app under `usedBy` and
+this scan decoded neither a read nor a write, that difference is the decoder's blind spot, named app by
+app, for the first time. That is worth more than quietly folding the hub's answer into the findings,
+and it should be reported as coverage rather than used to suppress a hedge.
+
+`connectorId`, `connectorLabel`, `connectorType` and `connectorUsedBy` bear on a limitation this app
+documents and accepts today: a reported Connector deviceId is always trusted and resolved, which is why
+there is no `unresolvedConnectors` field. With the hub's own connector record alongside it, a stale or
+orphaned Connector id becomes detectable rather than something the trade-off hides.
+
+`linked`, `meshEnabled`, `sourceName` and `sourceIp` are hub mesh provenance, which this app does not
+model at all. Worth knowing before deciding whether it should.
+
+**The caution, and it is the same shape as entry 54.** `usedBy` is a registration list, not proof of
+use. It records apps that registered an interest through the hub's own mechanism, so an app that
+references a variable without registering would be absent from it, and webCoRE is the obvious candidate
+given the decode issues already tracked. So it is a source to cross-check against, never a replacement
+for decoding, and a variable absent from `usedBy` is not thereby unused.
+
+**Gating.** This app has no firmware or platform version check anywhere, and should not gain one for
+this. `httpFetch` already answers `ok: false` on a 404, so the read feature-detects by response and
+degrades to today's behaviour on any hub that does not have it.
+
+**Next action:** nothing until the firmware is out of beta and on a hub to read. Then one read added to
+the scan, reported as a coverage comparison against the decoded set rather than merged into it.
+
+### 56. A published rule link points at a rule that no longer exists
+
+`2096 _System Start (Rule-5.1)` lists `2354` among its 42 `ruleTargets`, and
+`/installedapp/statusJson/2354` returns `{}`: the rule was deleted and Rule Machine kept the reference
+in the rule that calls it. HAM passes it through faithfully, so a consumer ordering a migration from
+`ruleTargets` is handed an id it cannot resolve. Found by `tests/ham-published-documents.groovy`
+against the 2026-10-06 capture, confirmed against the hub the same day.
+
+Faithful is not the same as useful here. The decision to make is whether a target the scan did not see
+is dropped, or published with a marker saying it is unresolvable, and the second is the safer one: a
+consumer that silently loses a link cannot tell a deleted rule from a rule the scan missed.
+
+The assertion *every step ruleTarget is a bare rule id naming a rule in this document* stays red until
+this is decided. It is not to be loosened.
+
+**Next action:** choose drop or mark, with Gordon, before the next detail contract version. Needs a
+decoder change and a hub scan to verify, so it does not belong in a test-only branch.
+
 ### 35. HAI as a third engine: map decoding and piston migration target
 
 Hubitat Automation Intelligence (HAI) is Gordon's Rule Machine replacement. It will publish its rules
