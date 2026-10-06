@@ -1,0 +1,49 @@
+{
+  "purpose": "Pins what decides production Automation Map's table 1. See tools/feed_guard.py. Change only with Gordon's go-ahead.",
+  "pinned": [
+    {
+      "kind": "file",
+      "path": "public/hai-capabilities.json",
+      "sha256": "7f3b57e32450998a3266cd9e1c61cf4b2615d715e341befec5e28297b9e3503c"
+    },
+    {
+      "kind": "line",
+      "path": "apps/automation_map.groovy",
+      "name": "HAI_PUBLIC_CAPABILITIES_URL =",
+      "sha256": "c4e2490166a272e7af1ec6728637558fe4a2d16ea73a3a6bdaa7b235d4e90447"
+    },
+    {
+      "kind": "line",
+      "path": "apps/automation_map.groovy",
+      "name": "HAI_FEED_CONTRACT =",
+      "sha256": "43fd695c1bacb0102dc063c7506c233763022d0040a164927c5e428c4b84b407"
+    },
+    {
+      "kind": "groovy",
+      "path": "apps/automation_map.groovy",
+      "name": "fetchHaiFeed",
+      "sha256": "001180e30191adafeb87391f36def9d5d23c6c8bb3d2baa92e7df2f906d897e2"
+    },
+    {
+      "kind": "groovy",
+      "path": "apps/automation_map.groovy",
+      "name": "fetchHaiPublicCapabilities",
+      "sha256": "da4e7b6ec368cac742cc4b78b9c21d78b157063e7035ba84600165bb8a9601c9"
+    },
+    {
+      "kind": "groovy",
+      "path": "apps/automation_map.groovy",
+      "name": "haiCategoryRows",
+      "sha256": "24414b8e345af490cd9b9b2f4c6daf4635a221f67bdbdf3d9c365bcce67b7252"
+    },
+    {
+      "kind": "js",
+      "path": "apps/automation_map.groovy",
+      "name": "rmcRender",
+      "sha256": "8ec513bfebed7a28291b10e94f8690312ecf5990b5e2b1871ed169ef4d67a083"
+    }
+  ],
+  "approvals": [
+    "Initial pin, 2026-10-06: the feed as production showed it when Gordon asked for it to be protected"
+  ]
+}

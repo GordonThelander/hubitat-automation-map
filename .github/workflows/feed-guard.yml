@@ -1,0 +1,17 @@
+name: Feed guard
+
+# The RM parity feed to production Automation Map may change only with Gordon's go-ahead, recorded in
+# FEED_LOCK.json by tools/feed_guard.py --approve. This goes red on any push that changes it otherwise.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pinned feed pieces are unchanged
+        run: python3 tools/feed_guard.py

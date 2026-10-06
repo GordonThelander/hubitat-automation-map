@@ -6,9 +6,25 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/tools/cloud-setup.sh\"",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/tools/cloud-setup.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/tools/cloud-setup.sh\" || true",
             "timeout": 600
           }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/tools/feed_guard.py\" --pre" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/tools/feed_guard.py\" --hook" }
         ]
       }
     ]
