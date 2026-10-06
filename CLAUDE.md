@@ -2,6 +2,11 @@
 
 ## Read before planning work
 
+**Do not disturb the RM parity feed** from HAI Dev to the production Automation Map instance (Gordon,
+2026-10-06): how production Automation Map reads and shows HAI's `/automation-map` capability feed (table 1
+on the coverage page). A change that would alter that needs Gordon's go-ahead first. Decode changes move
+table 2 (your own rules) and are expected.
+
 - `docs/2026-10-05-handover-from-cloud-session.md` - **do this first.** Steps left from the cloud session
   of 2026-10-05: deploy and verify the volume fix, capture the decode files again, then merge. Delete this
   line and that file once done.
