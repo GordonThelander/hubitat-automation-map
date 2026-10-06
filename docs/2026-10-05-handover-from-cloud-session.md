@@ -4,9 +4,14 @@ From the cloud session that ran `docs/cloud-task-test-harness.md`, at Gordon's r
 the remaining steps to be done here, by a session that can reach the hub. Do them in order; each one
 depends on the one before.
 
+**Updated 2026-10-06: deploy `cloud/capture-restore-colour` instead of `cloud/fix-message-volume`.** It
+contains the volume fix and the whole test harness, and adds decoding of Rule Machine's Capture, Restore and
+Set Colour, which HAI can now migrate (HAI-D57, HAI branch `hai-capture-restore-colour`). Everything below
+applies to it; the extra check for the new decode is in step 1.
+
 ## 1. Deploy the volume fix to the Dev hub and verify it
 
-Branch `cloud/fix-message-volume` (it contains `cloud/test-harness`, so it carries the whole harness too).
+Branch `cloud/capture-restore-colour` (it contains `cloud/fix-message-volume` and `cloud/test-harness`).
 One change to `apps/automation_map.groovy`, in `hamDetailActionOperands`, case `getMsg`: a message now
 publishes `volume` only when it has speakers and a volume is actually stored. Before, `hamDetailInt`
 returning 0 for an empty value meant every message published a volume: 15 notify-only messages got a volume
@@ -16,6 +21,9 @@ of 0 that nothing stored, and 8 got a leftover `speakVolume` from a speaker sinc
 - Deploy it to the Dev hub with `deploy-hub.ps1` as usual, and run a scan.
 - Check a notify-only message in `ham-decode-detail-dev.json` carries no `volume`, and a speaking one with a
   stored volume still does.
+- Check rule 3593 (`_HAI Migration test simple`) in `ham-decode-detail-dev.json`: action 1 `getCapture` is
+  `supported: true` with devices `[Gordon Study Desk]`; action 2 `getSetColor` has `colorMode: Green`,
+  `hue: 33`, `saturation: 100`, `level: 100`; action 4 `getRestore` is `supported: true` with no devices.
 
 ## 2. Capture the published documents again
 
@@ -37,7 +45,8 @@ Then run `pwsh tests/run-all.ps1`. Expected:
 
 ## 3. Merge into dev
 
-Once 1 and 2 hold, merge `cloud/fix-message-volume` into `dev`. It brings `cloud/test-harness` with it.
+Once 1 and 2 hold, merge `cloud/capture-restore-colour` into `dev`. It brings `cloud/fix-message-volume` and
+`cloud/test-harness` with it. Then tell HAI: its HAI-D57 can proceed.
 Commit the new fixtures in the same change, so the suite and its evidence arrive together.
 
 ## Also worth knowing
