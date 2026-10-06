@@ -60,11 +60,14 @@ def one_line(path, marker):
 
 
 def content(entry):
+    # Line endings are normalised: a Windows checkout holds CRLF where the repository holds LF, and on
+    # 2026-10-06 that alone made the guard report an unchanged file as changed - and a re-pin was approved
+    # for a change that never happened. What the feed serves is the content, not the checkout's endings.
     kind, path = entry['kind'], entry['path']
     if kind == 'file':
-        return (ROOT / path).read_bytes()
+        return (ROOT / path).read_bytes().replace(b'\r\n', b'\n')
     text = {'groovy': groovy_function, 'js': js_function, 'line': one_line}[kind](path, entry['name'])
-    return text.encode('utf-8')
+    return text.replace('\r\n', '\n').encode('utf-8')
 
 
 def label(entry):
