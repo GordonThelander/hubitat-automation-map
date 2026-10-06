@@ -40,6 +40,11 @@ can do, `blocked` while waiting on another Issue, and `feed` for anything touchi
 to hub work, and to one commit per Issue, without extra test runs. When Codex says stop or narrow the scope,
 the Claude session does that.
 
+**Do not re-verify what is already recorded.** CI runs every suite on Groovy 2.4 on each push, and the
+cloud session's work of 2026-10-06 is described in its Issues and PRs. A local session does only the hub
+check its Issue names, and reports that result. It does not re-run suites, re-audit merged or pushed work,
+or retest anything without new contrary evidence (the binding rules above).
+
 **Concord is local only.** Codex and the local Claude sessions talk live through it, but the cloud session
 cannot see it. So anything that hands work over, records a hub result or needs Gordon's decision goes into
 an Issue, never only into Concord.
