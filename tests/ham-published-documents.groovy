@@ -56,17 +56,22 @@ check(rules*.id.sort() == ((List<Map>) summary.rules)*.id.sort(),
 // (several events, with and without a stays clause), 3596 (carries on after a timeout), 3598 (Wait for
 // Events with a timeout). Deleting one moves these counts. 2.4.11 dropped two phantom triggers, 814's 27
 // and 2816's 13: leftover tCapab settings the condition namespace used to fill in. 2.4.12 restored
-// 1230's trigger 26, Certain Time at 21:05, stored under the older label and dropped until then.
-check(rules.size() == 76, 'the capture holds 76 rules', rules.size())
-check(actions.size() == 519, 'the rules publish 519 actions', actions.size())
-check(actions.count { it.a.supported == true } == 518, '518 actions are supported', actions.count { it.a.supported == true })
-check(triggers.size() == 108, 'the rules publish 108 triggers', triggers.size())
+// 1230's trigger 26, Certain Time at 21:05, stored under the older label and dropped until then. 2.4.14's
+// capture adds Claude HAM's three paused Meter probes (3601-3603) and two empty rules made in Rule Machine's
+// UI during the session (3599, 3600).
+check(rules.size() == 81, 'the capture holds 81 rules', rules.size())
+check(actions.size() == 525, 'the rules publish 525 actions', actions.size())
+check(actions.count { it.a.supported == true } == 524, '524 actions are supported', actions.count { it.a.supported == true })
+check(triggers.size() == 111, 'the rules publish 111 triggers', triggers.size())
 List phantoms = triggers.findAll { ("${it.rule}".replaceFirst(/^a/, '') + '#' + it.t.index) in ['814#27', '2816#13'] }
 check(triggers.any { "${it.rule}".replaceFirst(/^a/, '') == '1230' && it.t.index == '26' },
       "rule 1230's Certain Time trigger is published (stored under the older label 'Certain Time')")
 Map chime66 = actions.find { "${it.rule}".replaceFirst(/^a/, '') == '2816' && it.a.index == '66' }?.a
 check(chime66 != null && ((List) ((Map) chime66.operands).devices)*.name == ['Kitchen Dome Siren'],
       "rule 2816 action 66 chimes Kitchen Dome Siren only: siren.66 (Garage) is residue, as Rule Machine's page shows")
+List switchOpts = actions.findAll { Map o = (it.a.operands ?: [:]) as Map; it.a.method == 'getOnOffSwitch' && (o.containsKey('onlyIfCurrently') || o.containsKey('trackEventSwitch') || o.containsKey('useLastDevice')) }
+check(switchOpts.size() == 1 && "${switchOpts[0].rule}".replaceFirst(/^a/, '') == '2096' && ((Map) switchOpts[0].a.operands).onlyIfCurrently == 'on',
+      "exactly one On/Off carries an option: rule 2096 action 16, an Off only to switches that are on (storage format 14)", switchOpts.collect { "${it.rule}#${it.a.index}" })
 check(phantoms.isEmpty(), "rule 814's trigger 27 and rule 2816's trigger 13 are leftovers, not triggers", phantoms)
 check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
 

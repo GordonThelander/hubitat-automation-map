@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.13'
+@Field static final String APP_VERSION = '2.4.14'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -10999,6 +10999,14 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             List d = hamDetailDeviceRefs(dev["onOffSwitch.${num}"])
             Map o = [type: 'command', command: hamDetailBool(v["onOff.${num}"]) ? 'on' : 'off']
             if (d) o.devices = d
+            // Options that change what the action does (storage format 14). Published only when true, so a
+            // consumer can refuse them rather than send a plain on/off to every device. optSwitch is
+            // "command only switches that are" in the opposite state: rule 2096 action 16 renders
+            // "Off: _Restart (Command only switches that are on)". 480 rows on this hub, one true
+            // (Claude HAM, 2026-10-07).
+            if (hamDetailBool(v["optSwitch.${num}"])) o.onlyIfCurrently = o.command == 'on' ? 'off' : 'on'
+            if (hamDetailBool(v["trackSwitch.${num}"])) o.trackEventSwitch = true
+            if (hamDetailBool(v["useLastDev.${num}"])) o.useLastDevice = true
             return o
 
         case 'getDelay':

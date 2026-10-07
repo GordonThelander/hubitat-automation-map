@@ -91,6 +91,13 @@ Map on = ops('1', 'getOnOffSwitch', [onOff: 'true'],
 check(on.command == 'on', 'onOff true is the on command')
 check(((on.devices as List)[0] as Map).id == '2450', 'and the device travels as an id')
 check(ops('3', 'getOnOffSwitch', [onOff: 'false']).command == 'off', 'onOff false is off')
+// Storage format 14: options that change what the action does are published only when true.
+Map only = ops('16', 'getOnOffSwitch', [onOff: 'false', optSwitch: 'true'])
+check(only.onlyIfCurrently == 'on', 'rule 2096 action 16: an Off with optSwitch commands only switches that are on')
+check(!ops('3', 'getOnOffSwitch', [onOff: 'false', optSwitch: 'false', trackSwitch: '', useLastDev: 'false']).with {
+    containsKey('onlyIfCurrently') || containsKey('trackEventSwitch') || containsKey('useLastDevice') },
+      'the 479 rows holding false or empty publish nothing')
+check(ops('3', 'getOnOffSwitch', [onOff: 'true', trackSwitch: 'true']).trackEventSwitch == true, 'trackSwitch true is published')
 check(!ops('3', 'getOnOffSwitch', [onOff: 'false']).containsKey('devices'),
       'a switch action with no devices omits the key rather than sending an empty list')
 
