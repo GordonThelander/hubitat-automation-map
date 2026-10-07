@@ -30,6 +30,23 @@ undocumented fields. Retain what you do not recognise, flag it, and refuse to gu
 9.1 exists because guessing what one field meant produced 28 confident and entirely
 fictional relationships on a 38-rule hub.
 
+### Sections
+
+Section numbers are identifiers, cited from code comments and other documents, so they are never
+renumbered. Some subsections were therefore added out of numeric order, and 6.2 and 6.3 do not
+exist. In document order:
+
+- 1 Scope and warnings - 2 Where the data lives - 3 The shape of a rule (3.1, 3.2) - 4 Execution order
+- 5 Conditions and expressions: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6 (5.6.1), 5.7
+- 6 Separating triggers from conditions: 6.1, 6.4
+- 7 Action parameters by family: 7.4, 7.2, 7.3, 7.5, 7.1, 7.6, 7.7 (7.7.1)
+- 8 Acting on other rules - 9 Traps: 9.1 to 9.7 - 10 What the data cannot tell you: 10.1 to 10.3
+- 11 Finding rules in the first place: 11.1 to 11.4 - 12 Worked example - 13 Hub Variables: 13.1 to 13.8
+- 14 Facts held by the community MCP Rule Server - 15 Native export and import (15.1, 15.2)
+- 16 `type` is not a format discriminator - 17 Waits, measured on the hub: 17.1 to 17.5
+- 18 More fields whose names mislead: 18.1 to 18.4 - 19 Message reads two device keys
+- 20 Trigger capability labels are not stable strings
+
 ---
 
 ## 1. Scope and warnings
@@ -88,7 +105,7 @@ section 9.1 both came out of corpus queries, not from reading rules individually
 **4. Building a decoder as the test.** The real validation was implementing the format in a
 working app that renders each rule as a flowchart, then comparing every flowchart against
 its rule page. A misreading is not subtle in that setup: it produces a visibly wrong rule.
-Three of the five traps in section 9 were found this way rather than by inspection,
+Three of the five traps section 9 first held (it now holds seven) were found this way rather than by inspection,
 including the `rule` field, which produced 28 confident and entirely fictional relationships
 before anyone noticed.
 
@@ -378,9 +395,11 @@ alphabetical order would place it. **[single]** The remaining fixes are to group
 alternatives in brackets, `Mode AND (Evening OR Morning) AND PB`, or to move the gate leftmost so a
 false gate stops the evaluation before any OR is reached.
 
-Not examined at all, and required before anyone writes an evaluator: explicit grouping or
-parentheses, NOT, whether `eval[n]` can reference another expression rather than a bare
-condition, and any operators beyond AND and OR. **[unknown]**
+Still open, and required before anyone writes an evaluator: how a non-zero `parens` entry
+encodes grouping (the key itself is established above, but every branch on this hub is zero),
+how a per-condition `not<n>` and an `XOR` interact with the early stop (the vocabulary is known
+only from the MCP server's source, above), and whether `eval[n]` can reference another expression
+rather than a bare condition. **[unknown]**
 
 For reconstructing and displaying a rule, reproduce the stored sequence as it stands and let
 the reader apply their own understanding, which is what Rule Machine's own page effectively
@@ -474,7 +493,11 @@ The condition and trigger sides use the same asymmetry as `tDev`/`rDev_`: **[str
 | `AlltDev-<n>` | Wait for Events row | the same qualifier again, dash-indexed with the rest of that family |
 | `stays<n>`, `SHours<n>`, `SMins<n>`, `SSecs<n>` | trigger | "and stays" duration |
 | `disableT<n>` | trigger | one trigger disabled in place |
-| `isCondTrig<n>`, `condTrig<n>` | trigger | a condition attached to one trigger row |
+| `isCondTrig.<n>`, `condTrig.<n>` | trigger | a condition attached to one trigger row. **Dotted**, unlike every other trigger key: rule 3448 stores `isCondTrig.<n> = true` with `condTrig.<n>` = 1, 3, 5, 7 on triggers 2, 4, 6, 8. An earlier revision wrote them undotted |
+| `ButtontDev<n>` | trigger | the button **number** on a Button trigger, not a device (rule 1775 trigger 4: button 1). Read by the decoder; not separately probed |
+| `time<n>` | trigger | Certain Time selector: `A specific time` (value in `atTime<n>`), `Sunrise` or `Sunset` (offset in `atSunriseOffset<n>` / `atSunsetOffset<n>`); see section 20 for rule 1230's `time26`. Read by the decoder |
+| `whichPeriod<n>`, `everyNSecs<n>` | trigger | Periodic Schedule period and interval (rules 3446/3448/3452: `Seconds`, every 10). Read by the decoder; not separately probed |
+| `cronString<n>` | trigger | Periodic Schedule, carried raw beside `startingTime`, `selectedHours` and the other schedule fields. Read by the decoder; not separately probed, no value seen in the 2026-10-07 scan |
 
 Comparator values are stored as the glyph, not ASCII: `RelrDev_2` on rule 2990 reads `≠`,
 never `!=`. String comparisons are stored as asterisk-wrapped literals, `*changed*` and
@@ -490,7 +513,7 @@ datetime for a one-shot dated trigger. **[external, for the ISO form]** A time r
 mode **id** in `modes<n>` (`["2"]`), not the mode name; the MCP server reports the trigger
 side writes `modesX<n>`. **[strong]** / **[external]**
 
-A conditional trigger (`isCondTrig<n>` with `condTrig<n>`) is evaluated **after** the trigger
+A conditional trigger (`isCondTrig.<n>` with `condTrig.<n>`) is evaluated **after** the trigger
 event fires, which is the structural opposite of a Required Expression: the expression decides
 whether the subscription exists at all, the conditional trigger filters an event that already
 arrived. **[external]**
@@ -514,7 +537,7 @@ nothing runs it.
 Found by the other engine's session while mechanising a check; the orphaned entry announced itself
 as an arithmetic impossibility rather than as a wrong answer. **[strong]**
 
-#### 5.6.1 Two cautions on counting conditions
+#### 5.6.1 Four cautions on counting conditions
 
 **A time condition does carry `rCapab_<n>`.** Both `Between two times` and `Time of day` appear
 there like any other condition type: 2076 holds `rCapab_57`, `rCapab_60` and `rCapab_71` all as
@@ -649,13 +672,30 @@ A non-exhaustive list of ones confirmed on a live hub:
 | `getSetColorTemp` | `ct.<n>` device, `ctL.<n>` kelvin, `ctLevel.<n>` level |
 | `getSetVolume` | `volume.<n>` device, `volumeVal.<n>` level |
 | `getMsg` | `msg.<n>` text, plus **two** independent device pickers - see 7.2 |
-| `getDelay` | `delaySecond.<n>`, `delayMin.<n>`, `delayAct.<n>` |
-| `getWaitRule` | condition via the action's `rule` field, `delay` on the action for timeout |
+| `getDelay` | `delayHour.<n>`, `delayMinute.<n>`, `delaySecond.<n>` (long names), or `xVar.<n>` (7.4); `cancelAct.<n>` cancelable, `randomAct.<n>` random |
+| `getWaitRule` | condition via the action's `rule` field; time in the action object's `delay` (`h:mm:ss`), mirrored in `delayHor.<n>` / `delayMin.<n>` / `delaySec.<n>`; `durChoice.<n>` says whether that time is a duration or a timeout (17.1) |
 | `getIfThen`, `getElseIf` | condition via the action's `rule` field |
-| `getDefinedAction` | `devices.<n>` device list, `myCapab.<n>` capability, `cCmd.<n>` command, `meter.<n>`, `meterMillis.<n>` |
+| `getDefinedAction` | `devices.<n>` device list, `myCapab.<n>` capability, `cCmd.<n>` command, `meter.<n>`, `meterMillis.<n>`, `useLastDev.<n>` (14) |
+| `getSetDimmer` | `dimA.<n>` devices, `dimLA.<n>` level, `dimRA.<n>` fade seconds (rule 3584 renders `Dim: Hallway Light: 67 --> fade: 2`) |
+| `getAdjustDimmer` | `dimA.<n>` devices, `dimAdj.<n>` amount, `dimAdjR.<n>` `true` for down (rule 2992: 10, up). Read by the decoder; not separately probed |
+| `getChime` | `chime.<n>` devices, `chimePlayStop.<n>` (`Play Sound` or a stop), `chimePlaySound.<n>` sound number (rule 2180: sound 9); see 18.2 for `siren.<n>` |
+| `getSetMode` | `mode.<n>`, a mode **id** like every mode setting (rule 2814: `6` is Guest) |
+| `getCapture` | `capture.<n>` devices, nothing else (rule 3593). `getRestore` stores nothing under its own index |
+| `getLogMsg` | `logmsg.<n>` text; no level is stored |
+| `getHTTPPost` | `httper.<n>` URL, `httpPostBody.<n>` body, `httpPostType.<n>` content type (rules 2100, 2195) |
+| `getSetVariable` | Boolean target: `valBool.<n>` (rule 3523). Number and String targets: 13.1. Read by the decoder; not separately probed |
 
 Most actions also carry `delayAct.<n>`, which is `none` unless the individual action has its
-own delay.
+own delay. That per-action delay uses the **short** names, `delayHor.<n>` / `delayMin.<n>` /
+`delaySec.<n>`, plus `cancelAct.<n>` (rule 3446: `delaySec.15 = 4` on a `getOnOffSwitch`,
+`delaySec.11 = 2` on a `getDefinedAction`, both `delayAct = hrs:min:sec`). Only `getDelay` uses
+the long `delayHour` / `delayMinute` / `delaySecond` spelling. Counted from the
+2026-10-07T08:57:53Z scan fixture, wherever its raw settings name the subtype at that index:
+long names only ever beside `getDelay`, short names only beside waits and per-action delays. Reading one spelling for the other finds no time at all.
+
+The `getAdjustDimmer` through `getSetVariable` rows above were added 2026-10-07 from Automation
+Map 2.4.14's decoder (`hamDetailActionOperands`), with the values its 2026-10-07 scan published
+for the named rules; none was separately probed beyond what the decoder comment records.
 
 The reliable general approach is: for action `n`, collect every setting whose name ends in
 `.<n>`. That finds the parameters without needing a table for every action type, which
@@ -682,7 +722,7 @@ both:
 | --- | --- |
 | `note.<n>` | notification devices |
 | `speakDevice.<n>` | speech devices |
-| `speakVolume.<n>` | volume for the speech devices, may be blank |
+| `speakVolume.<n>` | volume for the speech devices, may be blank, and can be left over from a removed speaker (section 19) |
 
 Reading only `note.<n>` loses every spoken announcement while the action still decodes as a
 message, so the failure is silent. Found across a 62-rule corpus where nine messages decoded
@@ -931,7 +971,7 @@ visibility were measured on 2026-09-25, and they fail in different ways.
 | `color.<n>`, `colorLevel.<n>`, `uVar.<n>` | `bulbs.<n>` |
 | `colorH.<n>` or `colorHex`+`colorSat`+`colorLevel` | the mode chosen in `color.<n>` (see 7.3) |
 | `onOff.<n>`, `optSwitch.<n>`, `trackSwitch.<n>`, `delayAct.<n>` | `onOffSwitch.<n>` |
-| `delayHour`/`delayMinute`/`delaySecond` | `delayAct.<n>` = `hrs:min:sec` |
+| `delayHor`/`delayMin`/`delaySec` (short names; a `getDelay` uses the long `delayHour`/`delayMinute`/`delaySecond`, see section 7) | `delayAct.<n>` = `hrs:min:sec` |
 | `xVar.<n>` | `delayAct.<n>` = `variable` |
 | `tstate<n>` | `tCapab<n>` **and** `tDev<n>` |
 | `actionDone` | every required field for the chosen subtype |
@@ -1199,9 +1239,10 @@ re-arm it at the end. It is consistent with the inversion above, and it means an
 odd `pvTF` is usually explained by which half of the pair you are looking at. The twelfth
 rule is the hand-built test rule, which holds a single unpaired action.
 
-Not enough to start rendering the value. It does narrow what a confirming test needs to be:
-a single rule page read for a pair whose stored values are `true` and `''`, since the `true`
-/ `false` pair is already covered by rule 1806 in the table above.
+This enumeration was written before the settled finding above, and originally ended by saying it
+was not enough to render the value and that one page read of a `true` / `''` pair would confirm
+it. Rule 1999 is that read, so the confirming test is done: render the negation, as stated above.
+Automation Map 2.4.14 publishes `value = !pvTF` on that basis.
 
 **`privateF.<n>` was not observed at all.** All 23 store their target under `privateT.<n>`,
 including the two actions whose `pvTF` is `false`. **[strong]** The alias remains worth
@@ -1266,7 +1307,7 @@ the failure this document warns about elsewhere.
 
 ---
 
-### RM's rendered page is lossy where its stored string is not
+### 9.6 RM's rendered page is lossy where its stored string is not
 
 A condition comparing with `<` is stored complete:
 
@@ -1286,7 +1327,7 @@ More generally, this is the same lesson as 7.3 from the other direction. What RM
 the whole command nor, here, the whole condition. The stored data is the better source in both
 cases. **[strong]**
 
-### The white colour names are not colour temperatures
+### 9.7 The white colour names are not colour temperatures
 
 `White`, `Daylight`, `Warm White` and `Soft White` read like colour temperatures, and any
 reasonable engine would route them to `setColorTemperature`. RM does not. All four resolve to
@@ -1510,6 +1551,12 @@ Rule **Theatre Room Light and Fireplace**, installed app 2325. Its page shows a 
 Expression, a motion trigger, a lamp switched on, an IF that also lights the fireplace when
 it is cold, then a ten-minute wait for motion to stop before turning everything off.
 
+**Since renamed, and since edited.** The rule is now **TV Room Light and Fireplace** (the
+2026-10-07T08:57:53Z scan fixture), and its devices are renamed to match. The reading below is
+kept as taken. That scan holds `delayMin.2 = 5`, `durChoice.2 = true`, empty `delayHor.2` and
+`delaySec.2`, and the decoder publishes `waitSeconds 300, useDuration true` for action 2; the
+Required Expression and mode list have also changed. See the correction under the action table.
+
 ### Raw
 
     actionList:   7, 6, 4, 1, 5, 2, 8, 3
@@ -1564,18 +1611,26 @@ string `"10"`. Any parser that assumes a consistent element type fails here.
 
 | # | Action | Resolution |
 | --- | --- | --- |
-| 7 | `getSetPrivateBoolean` | `pvTF.7 = true`, value not shown, see 9.3 |
+| 7 | `getSetPrivateBoolean` | `pvTF.7 = true`, so Rule Boolean **False** (9.3, inverted) |
 | 6 | `getOnOffSwitch` | `Theatre Room Lamp`, `onOff.6 = true`, so on |
 | 4 | `getIfThen` | `rule: 2` to `eval[2] = 12` to condition 12, external temperature <= 15 |
 | 1 | `getOnOffSwitch` | `Fireplace`, `onOff.1 = true`, so on |
 | 5 | `getEndIf` | |
-| 2 | `getWaitRule` | `rule: 1` to `eval[1] = 2` to condition 2, motion inactive, timeout 0:10:00 |
+| 2 | `getWaitRule` | `rule: 1` to `eval[1] = 2` to condition 2, motion inactive, held for 0:10:00 (Use Duration, see below) |
 | 8 | `getSetPrivateBoolean` | |
 | 3 | `getOnOffSwitch` | `Theatre Room Lamp, Fireplace`, `onOff.3 = false`, so off |
 
-Reading out: on motion, set the Private Boolean, turn the lamp on, and if it is 15 degrees
-or colder outside also light the fireplace; then wait up to ten minutes for motion to stop,
-reset the Private Boolean, and turn both off.
+Reading out: on motion, set the Private Boolean false, turn the lamp on, and if it is 15
+degrees or colder outside also light the fireplace; then wait for motion to stay inactive for
+ten minutes, reset the Private Boolean, and turn both off.
+
+**Corrected 2026-10-07.** This example originally read action 2's time as a timeout ("wait up
+to ten minutes"). It is a duration: the 2026-10-07 scan of this rule stores `durChoice.2 = true`,
+which is Use Duration (17.1), so the wait ends only once motion has stayed inactive for the whole
+time. The time itself is in the action object's `delay` and mirrored in `delayHor.2` / `delayMin.2`
+/ `delaySec.2`, the wait's short names, not a Delay action's `delayHour` / `delayMinute` /
+`delaySecond`. Whether the value was ten minutes at the original reading cannot be rechecked; it
+is five now.
 
 Which is what the rule's own page says.
 
@@ -1853,6 +1908,13 @@ On: Initialise Speakers                                optSwitch absent
 Gordon has never switched them on, which is weaker than saying Rule Machine cannot: the behaviour
 when they are on remains unobserved here.
 
+**What readers do with them, from Automation Map 2.4.14.** The decoder publishes each only when
+it is `true`: `optSwitch.<n>` as `onlyIfCurrently` (the opposite of the command, so rule 2096
+action 16 publishes `onlyIfCurrently: on` on an Off), `trackSwitch.<n>` as `trackEventSwitch`, and
+`useLastDev.<n>` as `useLastDevice`, the last also on `getDefinedAction`. The 2026-10-07T08:57:53Z
+scan publishes exactly one, rule 2096 action 16. HAI's converter refuses all three by name,
+`RM_ACT_SWITCH_OPTION`, rather than copying a plain on/off that would reach every listed device.
+
 **Scenes**
 
 Rule Machine 5.1 has no activate-scene action. A scene or Room Lighting group is activated by
@@ -1942,7 +2004,8 @@ opposite outcomes:
 | `2000-01-01T22:00:00+08:00` (export form) | no title, no sections, throws |
 | `2000-01-01T22:00:00.000+0800` (stored form) | title, three sections, clean |
 
-So the stored form imports cleanly and the export form does not. Both imports were deleted.
+So the stored form imports cleanly and the export form does not. These two files are the
+reproduction pair below. Both imports were deleted.
 
 **A free diagnostic.** The broken import never acquired Rule Machine's `(Paused)` label suffix,
 because the render that would have added it is the render that failed. Absence of that suffix on a
@@ -1976,7 +2039,9 @@ rules. A hand-written RM export has never been shown to be a valid RM export, so
 have separated "the time encoding is wrong" from "we cannot author an RM file at all". Changing two
 leaves of a known-good export removes that confound.
 
-**Neither file has been imported.** Whether the stored form loads cleanly is untested.
+**Both files were imported on 2026-10-04**, with the result in the table above: the stored form
+loads cleanly and the export form throws. An earlier draft said neither had been imported; that
+predated the import.
 
 ## 16. `type` is not a format discriminator
 
@@ -2014,9 +2079,11 @@ these cases. Probe rules 3594 to 3598 remain on the hub, paused, as the only ins
 
 ### 17.1 `durChoice.<n>` is the Use Duration flag, and the time lives in the delay fields
 
-A Wait for Expression (`getWaitRule`) stores its time in the **same fields a plain Delay uses**:
-`delayAct.<n>` plus `delayHor.<n>` / `delayMin.<n>` / `delaySec.<n>`. The time alone cannot say which
-kind of wait it is. `durChoice.<n>` is the discriminator:
+A Wait for Expression (`getWaitRule`) stores its time in the **same fields a per-action delay
+uses**: `delayAct.<n>` plus the short `delayHor.<n>` / `delayMin.<n>` / `delaySec.<n>`, with the
+time also in the action object's `delay` (`h:mm:ss`), which is what Automation Map reads. A plain
+Delay action (`getDelay`) does **not** use these: it stores `delayHour` / `delayMinute` /
+`delaySecond` (section 7). The time alone cannot say which kind of wait it is. `durChoice.<n>` is the discriminator:
 
 | `durChoice.<n>` | meaning |
 | --- | --- |
@@ -2026,9 +2093,12 @@ kind of wait it is. `durChoice.<n>` is the discriminator:
 Probe rule 3594 holds one of each, identical in every other field: action 1 `durChoice true` with
 `delayMin 2`, action 2 `durChoice false` with `delayMin 3`.
 
-**Every wait on this hub that stores a usable time has `durChoice = true`.** Before 3594 existed
-there was no Timeout anywhere, which is why publishing that time under the name `timeoutSeconds` was
-wrong on all eleven of them and went unnoticed.
+**Every Wait for Expression on this hub that stores a time has `durChoice = true`, except the
+probes built to measure the other case.** The 2026-10-07T08:57:53Z scan holds fourteen timed
+`getWaitRule` actions: eleven in ordinary rules (833, 2076, 2276, 2279, 2283, 2290, 2325, 2329, 2331,
+2344, 2363), all `true`; and three in probes, 3594 action 1 (`true`) and the only two Timeouts,
+3594 action 2 and 3596 action 1. Before 3594 existed there was no Timeout anywhere, which is why
+publishing that time under the name `timeoutSeconds` was wrong on all eleven and went unnoticed.
 
 Because `getWaitRule` carries `delayAct.<n>`, reading that as a per-action delay publishes a wait
 before the wait, and a rebuilt rule waits twice.
@@ -2118,9 +2188,9 @@ presence beside a chime is residue from a previous action at that index.
 **The general rule:** a setting belongs to an action only when the action's own subtype claims it. An
 audit against this found every action decoder reads exactly one device key except Message, below.
 
-### 18.3 `isCondTrig<n>` can outlive the trigger it described
+### 18.3 `isCondTrig.<n>` can outlive the trigger it described
 
-A `tCapab<n>` with no `tDev<n>` is a leftover trigger family. Reading `isCondTrig<n>` as evidence a
+A `tCapab<n>` with no `tDev<n>` is a leftover trigger family. Reading `isCondTrig.<n>` as evidence a
 trigger exists, and then filling its devices from the condition namespace (`rDev_<n>`), resurrects
 that leftover as a trigger Rule Machine does not have.
 
@@ -2136,7 +2206,15 @@ Two rules on this hub were affected, failing in opposite directions:
 **`trigDevs` is the authoritative source for device triggers.** It maps `<deviceId>:<Capability>` to
 trigger numbers, and `capabstrue` holds the rendered trigger list. A trigger exists when those say so;
 `isCondTrig` should annotate a trigger already established, never create one. A sweep of all 75 rules
-against `trigDevs` found exactly these two.
+on the hub at the time against `trigDevs` found exactly these two. (The 2026-10-07T08:57:53Z scan
+fixture holds 81 Rule-5.1 rules, the difference being probe rules added since; the sweep was not
+repeated.)
+
+Not every leftover produced a phantom. Rule 2865 stores the same shape as 2816, `tCapab13 =
+Switch` with no `tDev13` (recorded in Automation Map 2.4.14's `DEVICELESS_TRIGGERS` comment), and
+the 2026-10-07 scan publishes only its real trigger, Switch at index 40; the scan holds no
+condition 13 on that rule for a fallback to borrow devices from. The leftover is harmless only for as long as every reader drops a device family
+with no `tDev<n>`.
 
 ### 18.4 The display path repeated 18.3 independently
 
@@ -2147,6 +2225,40 @@ display path emitted one step per `tCapab<n>` with the same result. Both were co
 Worth recording because the lesson is not about one decoder. A format where a leftover key looks like
 a live one will be misread by every independent reader of it, and fixing one says nothing about the
 others. `trigDevs` is the check that works for any of them.
+
+## 19. Message (`getMsg`) reads two device keys, and both can be live
+
+Message is the one action subtype that legitimately reads two device keys: `note.<n>` for notify
+targets and `speakDevice.<n>` for speech targets, with `speakVolume.<n>` beside it.
+
+Audited on 2026-10-07 across all **35** Message actions on this hub, comparing stored values against
+each rule's own Rule Machine page text:
+
+- 13 store a `speakDevice.<n>`, 22 are notify-only, none store neither.
+- **Every stored device appeared in Rule Machine's rendered text.** No device residue was found, so
+  there is no `siren.66`-style trap in the device keys on this hub. The volume is another matter;
+  see below.
+- Four store both keys and Rule Machine renders both, for example rule 2112 action 7:
+  `Notify Mobile Proxy and Speak on Security Speaker - Google Home Speaker`.
+- Rule 2971 is the useful counter-case: it speaks on four speakers and sets the volume of a fifth it
+  does not speak on. Storage and page agree, so a decoder that inferred speech targets from the
+  volume action would be wrong.
+
+**There is no separate on/off key for speaking.** The presence of `speakDevice.<n>` is itself the
+switch; the auxiliary keys observed are `speakVolume`, `volume`, `mediaDevice`, `msg`, `ranMsg`,
+`uVar` and `xVar`. Because the switch is the key's presence rather than a flag, a turned-off speak
+leaves no device behind to misread.
+
+**It can leave a volume behind.** `speakVolume.<n>` does outlive its speaker: Automation Map's
+2.4.14 decoder records 8 notify-only messages on this hub holding a leftover `speakVolume` from a
+speaker since removed (comment in the `getMsg` case of `hamDetailActionOperands`), the same
+stale-sibling trap as rule 1775's 22:00 in 7.7. So read `speakVolume.<n>` only when
+`speakDevice.<n>` is present. The 2026-10-07T08:57:53Z scan publishes a volume on 7 of the 35
+messages, all of them speaking ones. That count of 8 comes from the decoder's own audit; the
+scan fixture does not carry raw message settings, so it cannot be recounted from there.
+
+Not established: whether Rule Machine can leave a `speakDevice.<n>` behind at all. The audit shows it
+has not on this hub, which is weaker than showing it cannot.
 
 ## 20. Trigger capability labels are not stable strings
 
@@ -2173,28 +2285,3 @@ consumer to treat it as invoked by something else, so the copy becomes a rule th
 
 Match these labels by prefix or by the fields present, not by exact string. One rule in eight here
 carries the older spelling, and nothing marks it as older.
-
-## 19. Message (`getMsg`) reads two device keys, and both can be live
-
-Message is the one action subtype that legitimately reads two device keys: `note.<n>` for notify
-targets and `speakDevice.<n>` for speech targets, with `speakVolume.<n>` beside it.
-
-Audited on 2026-10-07 across all **35** Message actions on this hub, comparing stored values against
-each rule's own Rule Machine page text:
-
-- 13 store a `speakDevice.<n>`, 22 are notify-only, none store neither.
-- **Every stored device appeared in Rule Machine's rendered text.** No residue was found, so there is
-  no `siren.66`-style trap here on this hub.
-- Four store both keys and Rule Machine renders both, for example rule 2112 action 7:
-  `Notify Mobile Proxy and Speak on Security Speaker - Google Home Speaker`.
-- Rule 2971 is the useful counter-case: it speaks on four speakers and sets the volume of a fifth it
-  does not speak on. Storage and page agree, so a decoder that inferred speech targets from the
-  volume action would be wrong.
-
-**There is no separate on/off key for speaking.** The presence of `speakDevice.<n>` is itself the
-switch; the auxiliary keys observed are `speakVolume`, `volume`, `mediaDevice`, `msg`, `ranMsg`,
-`uVar` and `xVar`. Because the switch is the key's presence rather than a flag, a turned-off speak
-leaves nothing behind to misread, which is why this subtype has not produced the residue failure.
-
-Not established: whether Rule Machine can leave a `speakDevice.<n>` behind at all. The audit shows it
-has not on this hub, which is weaker than showing it cannot.
