@@ -70,6 +70,12 @@ minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for
 - Pushing and version bumps still need Gordon's permission. Ask him for it in your own chat, at the point
   you need it, rather than waiting or working around it.
 
+**`dev` is the HPM Dev channel; a merge into it is a release** (Gordon, 2026-10-07). Testers get the app on `dev`,
+offered when `packageManifest.json`'s version rises. So any change to `apps/` reaching `dev` raises `APP_VERSION`,
+the manifest's `version` and `apps[0].version` together, and starts the release notes with that version.
+`tools/release_guard.py` fails CI on a push or PR to `dev` that does not (`.github/workflows/release-guard.yml`).
+It exists because the cloud session merged PR #2 as 2.4.4 without a bump; 2.4.7 corrected it.
+
 **Concord is local only.** Codex and the local Claude sessions talk live through it, but the cloud session
 cannot see it. So anything that hands work over, records a hub result or needs Gordon's decision goes into
 an Issue, never only into Concord.
