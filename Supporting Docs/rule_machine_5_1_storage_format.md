@@ -1914,3 +1914,159 @@ not others with no visible pattern. That is the shape diagnosed as "one broken r
 **Scope.** Two rules, two control families, both read from live storage. Nobody has enumerated the
 families, so this is demonstrated rather than general: treat an unobserved setting name as unknown
 format rather than assuming either form.
+
+## 17. Waits, measured on the hub (2026-10-07)
+
+Measured against probe rules built for the purpose, because the hub held no example of several of
+these cases. Probe rules 3594 to 3598 remain on the hub, paused, as the only instances.
+
+### 17.1 `durChoice.<n>` is the Use Duration flag, and the time lives in the delay fields
+
+A Wait for Expression (`getWaitRule`) stores its time in the **same fields a plain Delay uses**:
+`delayAct.<n>` plus `delayHor.<n>` / `delayMin.<n>` / `delaySec.<n>`. The time alone cannot say which
+kind of wait it is. `durChoice.<n>` is the discriminator:
+
+| `durChoice.<n>` | meaning |
+| --- | --- |
+| `true` | Use Duration: hold the expression true for that long |
+| `false`, absent or empty | Timeout: give up after that long |
+
+Probe rule 3594 holds one of each, identical in every other field: action 1 `durChoice true` with
+`delayMin 2`, action 2 `durChoice false` with `delayMin 3`.
+
+**Every wait on this hub that stores a usable time has `durChoice = true`.** Before 3594 existed
+there was no Timeout anywhere, which is why publishing that time under the name `timeoutSeconds` was
+wrong on all eleven of them and went unnoticed.
+
+Because `getWaitRule` carries `delayAct.<n>`, reading that as a per-action delay publishes a wait
+before the wait, and a rebuilt rule waits twice.
+
+### 17.2 A timeout expires and the rule CONTINUES
+
+Measured on probe 3596: a ten second timeout on a condition that can never become true. Trigger at
+00:57:35, the action after the wait ran at 00:57:45. It holds for the full timeout and then carries
+on. It does not abandon the remaining actions.
+
+### 17.3 Wait for Events: one per rule, stored rule-globally
+
+`getWaitEvents` does **not** store its events under the action. They live in a rule-global dash
+namespace: `tCapab-1`, `tDev-1`, `tstate-1`, `stays-1`, `SHours-1` / `SMins-1` / `SSecs-1`,
+`modesX-1`. The suffix is a negative-looking `-N`, unrelated to action numbering.
+
+**Rule Machine therefore allows exactly one Wait for Events per rule.** A second one silently
+overwrites the first, in Hubitat's own editor as well as through the API. There is consequently no
+action-to-events binding to resolve and no ambiguity to decode.
+
+A Mode event inside a wait stores as **`modesX-<n>`**, the dash form of the trigger's no-dash
+`modesX<n>`. A decoder reading the trigger spelling publishes an empty Mode event rather than
+failing, which is the worse outcome.
+
+### 17.4 Wait for Events has no `durChoice`, and its time means only one thing
+
+The wizard's live field list for a `getWaitEvents` action is:
+
+```
+actSubType, actType, actionCancel, anotherWait,
+delayAct, delayHor, delayMin, delaySec, doneWaits
+```
+
+Writing `durChoice` to it is rejected as `not_in_schema`. So a Wait for Events time has a single
+meaning and needs no discriminator; its absence is not missing data.
+
+`anotherWait` and `doneWaits` suggest the wizard can chain more than one wait inside a single action.
+No rule on this hub uses them and they are **not** investigated here.
+
+### 17.5 A multi-event wait continues on the FIRST event, and a stays clause does not gate it
+
+Measured on probes 3595 and 3597. Two events in one wait, only the first tripped: execution continued
+while the second event's device still read its original state.
+
+Adding `andStays` to a sibling event does not change this. Probe 3597 paired a contact event with a
+motion event carrying `andStays 30s`; tripping the contact continued the rule in the **same second**,
+with the stays event never completing. A stays clause belongs to its own event rather than to the
+wait as a whole.
+
+## 18. More fields whose names mislead
+
+Section 7.7 already records that a field which stops applying keeps its last value, and the orphaned
+pickers note records the same for condition indexes. These are further instances, all measured on
+2026-10-07. The pattern is the same one, and it keeps producing confident wrong answers rather than
+refusals.
+
+### 18.1 `garageRL.<n>`: empty is OPEN, `true` is CLOSE
+
+`getOCGarage` stores its devices under **`garageOpenClose.<n>`**, not a shared device key, and the
+direction in `garageRL.<n>`:
+
+| `garageRL.<n>` | rendered by Rule Machine as |
+| --- | --- |
+| empty | `Open:` |
+| `true` | `Close:` |
+
+Rule 2777 holds one of each on the same opener, and rule 2360 is named "Garage Door Autoclose" and
+stores `true`. The name reads as Raise/Lower, so `true` looks like raise looks like open. It is the
+opposite, and reading it the obvious way opens a garage door that should have closed.
+
+There is no `toner.<n>` on this action. `getMuteUnmute` likewise keeps its devices under
+**`muteUnmute.<n>`** with a flag `mU.<n>`; only one instance exists on this hub and it is empty, so
+that flag's two states are **not** established.
+
+### 18.2 `siren.<n>` can outlive a `getChime` at the same index
+
+Rule 2816 action 66 is a `getChime`. It stores `chime.66` holding Kitchen Dome Siren **and**
+`siren.66` holding Garage Dome Siren. Rule Machine's own page renders only:
+
+```
+Chime: Play Sound on Kitchen Dome Siren sound number 1
+```
+
+"Garage" does not appear anywhere on that rule's page. `siren.<n>` belongs to a siren subtype and its
+presence beside a chime is residue from a previous action at that index.
+
+**The general rule:** a setting belongs to an action only when the action's own subtype claims it. An
+audit against this found every action decoder reads exactly one device key except Message, below.
+
+### 18.3 `isCondTrig<n>` can outlive the trigger it described
+
+A `tCapab<n>` with no `tDev<n>` is a leftover trigger family. Reading `isCondTrig<n>` as evidence a
+trigger exists, and then filling its devices from the condition namespace (`rDev_<n>`), resurrects
+that leftover as a trigger Rule Machine does not have.
+
+Two rules on this hub were affected, failing in opposite directions:
+
+- **814** published a Presence trigger at index 27. The hub's `trigDevs` is empty and the presence
+  clause is the Required Expression (`eval {"0": [35]}`). A copy would have fired on every presence
+  change instead of at 20:00.
+- **2816** published a Motion trigger at index 13, built from `tCapab13 = Switch` (no `tDev13`) with
+  condition 13's Motion devices. The published capability did not even match the family it came from.
+  A copy would have carried `switch is active` on four motion sensors: a trigger that can never fire.
+
+**`trigDevs` is the authoritative source for device triggers.** It maps `<deviceId>:<Capability>` to
+trigger numbers, and `capabstrue` holds the rendered trigger list. A trigger exists when those say so;
+`isCondTrig` should annotate a trigger already established, never create one. A sweep of all 75 rules
+against `trigDevs` found exactly these two.
+
+## 19. Message (`getMsg`) reads two device keys, and both can be live
+
+Message is the one action subtype that legitimately reads two device keys: `note.<n>` for notify
+targets and `speakDevice.<n>` for speech targets, with `speakVolume.<n>` beside it.
+
+Audited on 2026-10-07 across all **35** Message actions on this hub, comparing stored values against
+each rule's own Rule Machine page text:
+
+- 13 store a `speakDevice.<n>`, 22 are notify-only, none store neither.
+- **Every stored device appeared in Rule Machine's rendered text.** No residue was found, so there is
+  no `siren.66`-style trap here on this hub.
+- Four store both keys and Rule Machine renders both, for example rule 2112 action 7:
+  `Notify Mobile Proxy and Speak on Security Speaker - Google Home Speaker`.
+- Rule 2971 is the useful counter-case: it speaks on four speakers and sets the volume of a fifth it
+  does not speak on. Storage and page agree, so a decoder that inferred speech targets from the
+  volume action would be wrong.
+
+**There is no separate on/off key for speaking.** The presence of `speakDevice.<n>` is itself the
+switch; the auxiliary keys observed are `speakVolume`, `volume`, `mediaDevice`, `msg`, `ranMsg`,
+`uVar` and `xVar`. Because the switch is the key's presence rather than a flag, a turned-off speak
+leaves nothing behind to misread, which is why this subtype has not produced the residue failure.
+
+Not established: whether Rule Machine can leave a `speakDevice.<n>` behind at all. The audit shows it
+has not on this hub, which is weaker than showing it cannot.
