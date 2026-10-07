@@ -16,8 +16,12 @@ String block = source.substring(start, end)
 // disagreed with the app: hamDetailInt returned null where the app returns 0, hamDetailBool was
 // case-sensitive where the app is not, and hamDetailJsonList returned [] for text the app keeps as [s].
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
+// Modes are objects with properties, as the hub's Mode is, never plain maps (see ham-decode-triggers).
 String stubs = 'import groovy.transform.Field\n' + AppSource.field(source, 'RULE_LINK_ACTIONS') + '\n' +
-    AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList']) + '\n'
+    'class HubMode { Integer id; String name }\n' +
+    "@Field Map location = [modes: [new HubMode(id: 5, name: 'Home'), new HubMode(id: 2, name: 'Away')]]\n" +
+    AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList',
+                                 'hamDetailModeNames']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
 
 // The slices are the app's, not a stub's: each returns what only the real one returns.
@@ -172,11 +176,12 @@ check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:00:30'], '9', [:]).us
 check(!script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']).containsKey('timeoutSeconds'),
       'contract 2 does not publish timeoutSeconds at all')
 
-// getSetColorTemp was the example here until it was decoded on 2026-10-06; getChime still is not.
-check(ops('4', 'getChime', [:]) == null, 'an unsupported construct resolves to nothing')
+// getChime was the example here until it was decoded on 2026-10-07; getOCGarage still is not.
+check(ops('4', 'getSetThermostat', [:]) == null, 'an unsupported construct resolves to nothing')
 check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
 
-check(!block.contains('httpGet') && !block.contains('httpPost'),
+// A call, not the word: the HTTP POST action's own setting keys are httpPostBody and httpPostType.
+check(!(block =~ /\bhttp(Get|Post|Put|Delete)\s*\(/).find(),
       'the action block performs no hub I/O of its own')
 check(!block.contains("'toggle'"),
       'no toggle command is invented: this family does not store one on this hub')
@@ -191,7 +196,7 @@ Map data = [
                 [name: 'onOff.7', value: 'true'],
                 [name: 'actSubType.8', value: 'getLogMsg'],
                 [name: 'logmsg.8', value: 'disabled step'],
-                [name: 'actSubType.9', value: 'getChime']],
+                [name: 'actSubType.9', value: 'getOCGarage']],
   appState: [[name: 'actionList', value: ['7', '8', '9']],
              [name: 'disabledActions', value: ['8']]]
 ]
@@ -203,7 +208,7 @@ check(steps[1].disabled == true,
       'a disabled action IS marked: Rule Machine keeps it in actionList and renders it Disabled')
 check(steps[1].supported == true && steps[1].type == 'log',
       'and is still resolved, so a consumer can see what it would have done')
-check(steps[2].supported == false && steps[2].method == 'getChime',
+check(steps[2].supported == false && steps[2].method == 'getOCGarage',
       'an unsupported construct carries its method name to be refused by')
 
 // A branch carries the eval group its condition lives in, which keys the
@@ -323,5 +328,53 @@ check(lastDev.useLastDevice == true,
       'targeting the triggering device is stated: there is no device to bind')
 check(ws[1].delay?.seconds == 4,
       'an ordinary action still carries its own delay')
+
+// --- The nine actions read from HAI's conversion spike ---------------------
+// Keys measured on this hub by tools/rm_convert_spike.py in the HAI repository.
+Map hall = [id: '3650', name: 'Hallway CT Bulb']
+Map dim = ops('6', 'getSetDimmer', [dimLA: '15', dimRA: '2'], ['dimA.6': [hall]])
+check(dim.type == 'setLevel' && dim.level == 15 && dim.fadeSeconds == 2 && (dim.devices as List) == [hall],
+      'Set Dimmer reads dimA, dimLA as the level and dimRA as the fade (rule 3584 renders "67 --> fade: 2")')
+check(!ops('6', 'getSetDimmer', [dimLA: '15'], ['dimA.6': [hall]]).containsKey('fadeSeconds'),
+      'no stored fade means no fade, not a fade of zero')
+check(!ops('6', 'getSetDimmer', [:], ['dimA.6': [hall]]).containsKey('level'), 'no stored level means no level')
+
+Map adj = ops('2', 'getAdjustDimmer', [dimAdj: '10', dimAdjR: 'true'], ['dimA.2': [hall]])
+check(adj.type == 'adjustLevel' && adj.amount == 10 && adj.down == true && (adj.devices as List) == [hall],
+      'Adjust Dimmer publishes the amount unsigned and dimAdjR as the direction')
+check(ops('2', 'getAdjustDimmer', [dimAdj: '10'], ['dimA.2': [hall]]).down == false, 'an absent dimAdjR is up')
+
+Map lights = [id: '3648', name: 'Hallway Light']
+check(ops('9', 'getFlashSwitch', [:], ['flashSwitch.9': [lights, hall]]) ==
+      [type: 'command', command: 'flash', devices: [lights, hall]], 'Flash reads its devices from flashSwitch.<n>')
+check(ops('4', 'getRefreshSwitch', [:], ['refresh.4': [lights]]).command == 'refresh', 'Refresh reads refresh.<n>')
+check(ops('4', 'getPollSwitch', [:], ['poll.4': [lights]]).with { command == 'poll' && devices == [lights] },
+      'Poll reads poll.<n>')
+check(!ops('4', 'getPollSwitch', [:], ['refresh.4': [lights]]).containsKey('devices'),
+      'each reads its own picker, not a neighbour')
+
+Map siren = [id: '66', name: 'Siren']
+Map chime = ops('6', 'getChime', [chimePlayStop: 'Play Sound', chimePlaySound: '3'], ['chime.6': [siren], 'siren.6': [siren]])
+check(chime == [type: 'chime', op: 'play', devices: [siren], sound: 3],
+      'Chime plays chimePlaySound on chime.<n>, and siren.<n> adds no second device')
+check(ops('6', 'getChime', [chimePlaySound: '1'], ['chime.6': [siren]]).op == 'play', 'an absent play/stop choice is Play Sound')
+check(!ops('6', 'getChime', [:], ['chime.6': [siren]]).containsKey('sound'), 'no stored sound means no sound, not sound 1')
+check(ops('6', 'getChime', [chimePlayStop: 'Stop'], ['chime.6': [siren]]).with { op == 'stop' && !containsKey('sound') },
+      'a stop carries no sound')
+
+Map mode = ops('15', 'getSetMode', [mode: '5'])
+check(mode == [type: 'setMode', modeId: '5', mode: 'Home'], 'Set Mode resolves the stored mode id to its name')
+check(ops('15', 'getSetMode', [mode: '99']) == [type: 'setMode', modeId: '99'],
+      'a mode id with no mode is published as the id alone, never as a name')
+
+check(ops('1', 'getComment', [comment: 'lights first']) == [type: 'comment', text: 'lights first'], 'Comment carries its text')
+
+Map post = ops('1', 'getHTTPPost', [httper: 'http://10.0.0.5/hook', httpPostBody: '{"a":1}', httpPostType: 'application/json'])
+check(post == [type: 'http', method: 'post', url: 'http://10.0.0.5/hook', body: '{"a":1}', contentType: 'application/json'],
+      'HTTP POST reads httper, httpPostBody and httpPostType')
+check(!ops('1', 'getHTTPPost', [:]).containsKey('url'), 'no stored address means no address')
+
+check(ops('41', 'getMuteUnmute', [:]) == null && ops('4', 'getOCGarage', [:]) == null,
+      'mute and the garage door stay unsupported until their direction is measured')
 
 println "${passed} HAM decode action assertions passed"

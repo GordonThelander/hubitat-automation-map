@@ -195,7 +195,8 @@ check((script.hamDetailCondition(DEV, '5', 'Mode', S([:])).operands as Map).ids 
 
 check(!block.contains('capabstrue') && !block.contains('capabsfalse'),
       'resolution reads the stored settings, never Rule Machine\'s rendered prose')
-check(!block.contains('httpGet') && !block.contains('httpPost'),
+// A call, not the word: the HTTP POST action's own setting keys are httpPostBody and httpPostType.
+check(!(block =~ /\bhttp(Get|Post|Put|Delete)\s*\(/).find(),
       'the detail block performs no hub I/O of its own')
 
 check(!block.contains('(m as Map)'),

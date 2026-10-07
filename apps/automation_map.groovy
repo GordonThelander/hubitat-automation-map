@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.8'
+@Field static final String APP_VERSION = '2.4.9'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -11217,6 +11217,92 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             // nothing else, so no level field is emitted rather than one
             // invented at info.
             return [type: 'log', text: "${v["logmsg.${num}"] ?: ''}"]
+
+        // The keys below were read off this hub's rules by HAI's conversion
+        // spike (tools/rm_convert_spike.py in the HAI repository) and set
+        // against Rule Machine's own rendering where it says so. Absent is
+        // left out, never defaulted, so a consumer refuses what is missing.
+
+        case 'getSetDimmer':
+            // dimA.<n> devices, dimLA.<n> level, dimRA.<n> fade in seconds.
+            // Rule 3584 renders "Dim: Hallway Light: 67 --> fade: 2" for
+            // dimLA 67, dimRA 2. A fade of zero and no fade are different
+            // instructions to some drivers, so an absent fade stays absent.
+            Map o = [type: 'setLevel']
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["dimLA.${num}"])
+            if (lvl != null) o.level = lvl
+            Integer fade = hamDetailNumberOrNull(v["dimRA.${num}"])
+            if (fade != null) o.fadeSeconds = fade
+            return o
+
+        case 'getAdjustDimmer':
+            // The same dimA.<n> devices; dimAdj.<n> is the amount and
+            // dimAdjR.<n> 'true' means down. Published as stored, unsigned,
+            // with the direction beside it.
+            Map o = [type: 'adjustLevel', down: hamDetailBool(v["dimAdjR.${num}"])]
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer amount = hamDetailNumberOrNull(v["dimAdj.${num}"])
+            if (amount != null) o.amount = amount
+            return o
+
+        case 'getFlashSwitch':
+        case 'getRefreshSwitch':
+        case 'getPollSwitch':
+            // One device picker each and nothing else stored: flashSwitch.<n>,
+            // refresh.<n>, poll.<n>.
+            String key = ['getFlashSwitch': 'flashSwitch', 'getRefreshSwitch': 'refresh',
+                          'getPollSwitch': 'poll'][method]
+            Map o = [type: 'command', command: ['getFlashSwitch': 'flash', 'getRefreshSwitch': 'refresh',
+                                                'getPollSwitch': 'poll'][method]]
+            List d = hamDetailDeviceRefs(dev["${key}.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getChime':
+            // chime.<n> devices, chimePlayStop.<n> 'Play Sound' or a stop,
+            // chimePlaySound.<n> the sound number. Rules 2816 and 1845 render
+            // as sound 1 on the same devices. siren.<n> and toner.<n> are the
+            // same device stored again under its class name, not more devices.
+            String playStop = "${v["chimePlayStop.${num}"] ?: 'Play Sound'}".trim()
+            Map o = [type: 'chime', op: playStop == 'Play Sound' ? 'play' : 'stop']
+            List d = hamDetailDeviceRefs(dev["chime.${num}"])
+            if (d) o.devices = d
+            if (o.op == 'play') {
+                Integer sound = hamDetailNumberOrNull(v["chimePlaySound.${num}"])
+                if (sound != null) o.sound = sound
+            }
+            return o
+
+        case 'getSetMode':
+            // mode.<n> holds a mode ID, like every mode setting, so it is
+            // resolved to the name here: a consumer given '5' would set a mode
+            // literally named 5.
+            String id = "${v["mode.${num}"] ?: ''}".trim()
+            Map o = [type: 'setMode']
+            if (id) {
+                o.modeId = id
+                String name = hamDetailModeNames([id])[0]
+                if (name) o.mode = name
+            }
+            return o
+
+        case 'getComment':
+            return [type: 'comment', text: "${v["comment.${num}"] ?: ''}"]
+
+        case 'getHTTPPost':
+            // httper.<n> the address, httpPostBody.<n> and httpPostType.<n>
+            // the body and its content type.
+            Map o = [type: 'http', method: 'post']
+            String url = "${v["httper.${num}"] ?: ''}".trim()
+            if (url) o.url = url
+            String body = "${v["httpPostBody.${num}"] ?: ''}"
+            if (body) o.body = body
+            String ct = "${v["httpPostType.${num}"] ?: ''}".trim()
+            if (ct) o.contentType = ct
+            return o
 
         default:
             return null
