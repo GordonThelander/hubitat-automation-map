@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.10'
+@Field static final String APP_VERSION = '2.4.11'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -11112,11 +11112,17 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (named != null) {
                 o.hue = named.hue
                 o.saturation = named.saturation
-            } else if (o.colorMode == 'Custom HSB color') {
+            } else if ((o.colorMode as String) in ['Custom HSB color', 'Custom RGB color']) {
+                // Custom RGB stores the same hue (0-100) and saturation as HSB,
+                // with the picked hex beside them in colorH: rules 2352 and 833,
+                // whose hex was checked against the stored hue (#FF00F7 -> 84,
+                // stored 83; #03000D -> 71, stored 70).
                 Integer h = hamDetailNumberOrNull(v["colorHex.${num}"])
                 Integer s = hamDetailNumberOrNull(v["colorSat.${num}"])
                 if (h != null) o.hue = h
                 if (s != null) o.saturation = s
+                String hex = "${v["colorH.${num}"] ?: ''}".trim()
+                if (o.colorMode == 'Custom RGB color' && hex ==~ /#[0-9A-Fa-f]{6}/) o.rgb = hex.toUpperCase()
             }
             Integer lvl = hamDetailNumberOrNull(v["colorLevel.${num}"])
             if (lvl != null) o.level = lvl
