@@ -6,7 +6,8 @@ wrote code the cloud session was already writing on a branch, and the two collid
 in CLAUDE.md did not stop it, so this makes it a question Gordon answers rather than a habit.
 
 A PreToolUse hook on Edit, Write, MultiEdit and NotebookEdit. In the cloud (CLAUDE_CODE_REMOTE=true) it
-does nothing. Locally, an edit to a code path asks Gordon first, with the reason; anything else - docs,
+does nothing. Locally, an edit to a code path is refused with the reason, and Gordon is not asked (2026-10-07: no
+per-change permission prompts); anything else - docs,
 Issues, captured fixtures, notes - goes through. Bash is not inspected, so this is a guard against the
 habit, not against a determined session.
 
@@ -36,7 +37,7 @@ def main():
     if rel.startswith('..') or any(rel.startswith(p) for p in NOT_CODE) or not any(rel.startswith(p) for p in CODE):
         return 0
     print(json.dumps({'hookSpecificOutput': {
-        'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
+        'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
         'permissionDecisionReason':
             ('%s is code, and code is the cloud session\'s work (CLAUDE.md, "Working together"). Local sessions '
              'do hub work. If this edit is needed for a hub check, Gordon can allow it here. Otherwise describe '
