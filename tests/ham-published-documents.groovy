@@ -51,11 +51,15 @@ check(rules*.id.sort() == ((List<Map>) summary.rules)*.id.sort(),
 // Exact for this capture. A change here means the app now publishes something different from the same
 // hub state, which is exactly what this suite exists to notice.
 
-check(rules.size() == 71, 'the capture holds 71 rules', rules.size())
-check(actions.size() == 507, 'the rules publish 507 actions', actions.size())
-check(actions.count { it.a.supported == true } == 467, '467 actions are supported', actions.count { it.a.supported == true })
-check(triggers.size() == 104, 'the rules publish 104 triggers', triggers.size())
-check(conditions.size() == 166, 'the rules publish 166 conditions', conditions.size())
+// Captured from 2.4.10 on the Dev hub (scan 2026-10-07T04:43:53Z, contract 3). The 75 include four paused
+// probe rules Claude HAM built, the only examples of their cases on this hub: 3594 (Use Duration beside a
+// Timeout), 3595 and 3597 (several events, with and without a stays clause), 3596 (carries on after a
+// timeout). Deleting one moves these counts.
+check(rules.size() == 75, 'the capture holds 75 rules', rules.size())
+check(actions.size() == 517, 'the rules publish 517 actions', actions.size())
+check(actions.count { it.a.supported == true } == 516, '516 actions are supported', actions.count { it.a.supported == true })
+check(triggers.size() == 108, 'the rules publish 108 triggers', triggers.size())
+check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
 
 // ---- every rule ----------------------------------------------------------------------------------
 
@@ -76,7 +80,7 @@ List waitsWithDelay = actions.findAll { (it.a.method in ['getWaitRule', 'getWait
 check(waitsWithDelay.isEmpty(),
       "no wait carries a delay: a wait's duration is not a delay before it, and a rebuilt rule would wait twice",
       waitsWithDelay)
-check(actions.count { it.a.method in ['getWaitRule', 'getWaitEvents'] } == 22, 'the capture holds 22 wait steps to check')
+check(actions.count { it.a.method in ['getWaitRule', 'getWaitEvents'] } == 28, 'the capture holds 28 wait steps to check')
 
 List flow = actions.findAll { it.a.method in ['getIfThen', 'getElseIf', 'getElse', 'getEndIf'] }
 check(flow.size() == 83, 'the capture holds 83 control-flow records', flow.size())
@@ -139,11 +143,8 @@ Map actRefs = refsIn(actions, { it.a.operands }, ['devices', 'notify', 'speak'])
 check(actRefs.n > 0 && actRefs.bad.isEmpty(), "every action device reference is {id, name} (${actRefs.n} of them)", actRefs.bad.take(5))
 Map trigRefs = refsIn(triggers, { it.t.operands }, ['devices'])
 check(trigRefs.n > 0 && trigRefs.bad.isEmpty(), "every trigger device reference is {id, name} (${trigRefs.n} of them)", trigRefs.bad.take(5))
-// Red by agreement until the next detail contract version: BACKLOG.md entry 55, HAI-D56.
 Map condRefs = refsIn(conditions, { it.c.operands }, ['devices'])
-// RED, and left red deliberately: backlog 55. Conditions still publish operands.devices as names with a
-// parallel operands.deviceIds beside them. The pairing is positional and nothing enforces it, so this
-// goes green only when the contract version bumps and conditions carry {id, name} like everything else.
+// Backlog 55, closed by contract 2: conditions carry {id, name} like everything else.
 check(condRefs.n > 0 && condRefs.bad.isEmpty(), "every condition device reference is {id, name} (${condRefs.n} of them)",
       "${condRefs.bad.size()} are bare names, e.g. ${condRefs.bad.take(3)}")
 // `steps` is the display and rule-link layer, decided by Gordon 2026-10-05: its devices are names for
@@ -152,23 +153,16 @@ check(condRefs.n > 0 && condRefs.bad.isEmpty(), "every condition device referenc
 // so those must be rule ids, and each must be a rule this document holds.
 Set ruleIds = rules.collect { "${it.id}".replaceFirst(/^a/, '') } as Set
 List targets = rules.collectMany { Map r -> ((List<Map>) r.steps).collectMany { Map st -> ((List) (st.ruleTargets ?: [])).collect { [rule: r.id, t: it] } } }
-check(targets.size() == 69, 'the capture holds 69 rule links in steps', targets.size())
+check(targets.size() == 68, 'the capture holds 68 rule links in steps', targets.size())
 List badTargets = targets.findAll { !("${it.t}" ==~ /\d+/) || !ruleIds.contains(it.t.toString()) }.collect { "${it.rule} -> ${it.t}" }
-// RED, and the document is what is wrong: backlog 56. 2096 lists 2354 among 42 targets and
-// /installedapp/statusJson/2354 returns {} - the rule was deleted and Rule Machine kept the reference.
-// HAM passes it through faithfully, which hands a consumer an id it cannot resolve.
+// Backlog 56, closed by contract 2: 2096's link to the deleted rule 2354 is dropped and listed as a
+// finding (deletedRuleReferences) rather than handed to a consumer that cannot resolve it.
 check(badTargets.isEmpty(), 'every step ruleTarget is a bare rule id naming a rule in this document', badTargets)
 
-// What a consumer binds a condition to today: the parallel deviceIds list. Not a substitute for the
-// assertion above - a parallel list pairs by position, which nothing in the document enforces - but it
-// says whether the ids are at least all there.
-List condIdGaps = conditions.findAll {
-    Map o = (it.c.operands ?: [:]) as Map
-    o.devices instanceof List && !((List) o.devices).isEmpty() &&
-        !(o.deviceIds instanceof List && ((List) o.deviceIds).size() == ((List) o.devices).size() &&
-          ((List) o.deviceIds).every { "${it ?: ''}".trim() })
-}.collect { where(it, it.c) }
-check(condIdGaps.isEmpty(), 'every condition naming devices carries a deviceIds list of the same length, none empty', condIdGaps)
+// Contract 2 replaced the parallel deviceIds list with {id, name} on each device, so the old list must be
+// gone: a consumer that still found one would be reading two shapes for the same thing.
+List oldIds = conditions.findAll { ((it.c.operands ?: [:]) as Map).containsKey('deviceIds') }.collect { where(it, it.c) }
+check(oldIds.isEmpty(), 'no condition still carries the parallel deviceIds list contract 2 replaced', oldIds)
 
 println ''
 println "${passed} passed, ${failed.size()} failed"
