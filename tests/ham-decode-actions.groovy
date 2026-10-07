@@ -134,6 +134,11 @@ check(soft.hue == 11 && soft.saturation == 30 && !soft.containsKey('level'),
 Map hsb = ops('2', 'getSetColor', [color: 'Custom HSB color', colorHex: '62', colorSat: '80', colorLevel: '40'])
 check(hsb.hue == 62 && hsb.saturation == 80 && hsb.level == 40,
       'custom HSB reads its hue from colorHex, the key named the opposite way round')
+Map rgb = ops('2', 'getSetColor', [color: 'Custom RGB color', colorH: '#ff00f7', colorHex: '83', colorSat: '100', colorLevel: '100'])
+check(rgb.hue == 83 && rgb.saturation == 100 && rgb.level == 100,
+      'custom RGB reads the same hue and saturation as HSB (rule 2352: #FF00F7 stored as hue 83)')
+check(rgb.rgb == '#FF00F7', 'custom RGB also carries the picked hex, from colorH')
+check(!hsb.containsKey('rgb'), 'custom HSB carries no hex')
 Map pick = ops('2', 'getSetColor', [color: 'Pick a Color', colorH: '#33cc66'])
 check(pick.colorMode == 'Pick a Color' && !pick.containsKey('hue'),
       'a mode not resolved here travels as the mode alone, to be refused by name')

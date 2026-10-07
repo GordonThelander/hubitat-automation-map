@@ -6,7 +6,7 @@
 // asserted on its return value; nothing asserted on the document a rebuild actually reads.
 //
 // These read tests/fixtures/ham-decode-detail.json and tests/fixtures/ham-decode.json - real output
-// captured from Gordon's hub, 71 Rule Machine rules - and assert on their shape and their counts. The
+// captured from Gordon's hub, 76 Rule Machine rules - and assert on their shape and their counts. The
 // fixtures are the evidence. When an assertion here fails, the assertion or the app is in question, never
 // the fixture: do not regenerate or edit them to make this pass.
 //
@@ -51,14 +51,17 @@ check(rules*.id.sort() == ((List<Map>) summary.rules)*.id.sort(),
 // Exact for this capture. A change here means the app now publishes something different from the same
 // hub state, which is exactly what this suite exists to notice.
 
-// Captured from 2.4.10 on the Dev hub (scan 2026-10-07T04:43:53Z, contract 3). The 75 include four paused
-// probe rules Claude HAM built, the only examples of their cases on this hub: 3594 (Use Duration beside a
-// Timeout), 3595 and 3597 (several events, with and without a stays clause), 3596 (carries on after a
-// timeout). Deleting one moves these counts.
-check(rules.size() == 75, 'the capture holds 75 rules', rules.size())
-check(actions.size() == 517, 'the rules publish 517 actions', actions.size())
-check(actions.count { it.a.supported == true } == 516, '516 actions are supported', actions.count { it.a.supported == true })
-check(triggers.size() == 108, 'the rules publish 108 triggers', triggers.size())
+// Captured from 2.4.11 on the Dev hub (contract 3). The 76 include five paused probe rules Claude HAM
+// built, the only examples of their cases on this hub: 3594 (Use Duration beside a Timeout), 3595 and 3597
+// (several events, with and without a stays clause), 3596 (carries on after a timeout), 3598 (Wait for
+// Events with a timeout). Deleting one moves these counts. 2.4.11 dropped two phantom triggers, 814's 27
+// and 2816's 13: leftover tCapab settings the condition namespace used to fill in.
+check(rules.size() == 76, 'the capture holds 76 rules', rules.size())
+check(actions.size() == 519, 'the rules publish 519 actions', actions.size())
+check(actions.count { it.a.supported == true } == 518, '518 actions are supported', actions.count { it.a.supported == true })
+check(triggers.size() == 107, 'the rules publish 107 triggers', triggers.size())
+List phantoms = triggers.findAll { ("${it.rule}".replaceFirst(/^a/, '') + '#' + it.t.index) in ['814#27', '2816#13'] }
+check(phantoms.isEmpty(), "rule 814's trigger 27 and rule 2816's trigger 13 are leftovers, not triggers", phantoms)
 check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
 
 // ---- every rule ----------------------------------------------------------------------------------
@@ -80,7 +83,7 @@ List waitsWithDelay = actions.findAll { (it.a.method in ['getWaitRule', 'getWait
 check(waitsWithDelay.isEmpty(),
       "no wait carries a delay: a wait's duration is not a delay before it, and a rebuilt rule would wait twice",
       waitsWithDelay)
-check(actions.count { it.a.method in ['getWaitRule', 'getWaitEvents'] } == 28, 'the capture holds 28 wait steps to check')
+check(actions.count { it.a.method in ['getWaitRule', 'getWaitEvents'] } == 29, 'the capture holds 29 wait steps to check')
 
 List flow = actions.findAll { it.a.method in ['getIfThen', 'getElseIf', 'getElse', 'getEndIf'] }
 check(flow.size() == 83, 'the capture holds 83 control-flow records', flow.size())
