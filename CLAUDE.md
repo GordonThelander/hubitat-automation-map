@@ -78,6 +78,9 @@ decisions, once, in your own chat, with the decision stated.
 **Nothing wakes a local session.** A PR comment wakes the cloud session; a local session is woken by nothing,
 so after asking anything it polls for the answer or binds the PR. Asking is the start of a wait, not the end of
 the task. Channels in one page: `docs/AGENT_CHANNELS.md` in the HAI repository.
+**An idle local session polls** (Gordon, 2026-10-07: both sat asleep while work waited). When a local session has
+nothing in hand, it runs `/loop 10m` over the inbox (HAI PR #34) and any open PR naming it, and picks up what is
+addressed to it. It never ends its turn idle without that loop running.
 
 **One change, one hub cycle** (Gordon, 2026-10-07: batch, and stop pushing the smallest changes).
 `dev` and `HAI_Engine_Dev` change only through merged pull requests. On Automation Map a GitHub ruleset refuses
@@ -104,10 +107,10 @@ an Issue, never only into Concord.
 
 Local sessions: **do hub work only**, and hand code changes to the cloud session as a comment on its PR rather
 than making them. Do not commit or run the suites. The one commit a local session makes is the capture, step 2
-above.
+above. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub is merged after
+the hub check on its Issue passes.
 
-**Documentation exception** (agreed on HAI PR #34, 2026-10-07, at Gordon's request): a local session may also commit and push to `Supporting Docs/` and `docs/` only, on its own branch (`ham/docs-<topic>` or `hai/docs-<topic>`), and open a PR to `dev`. The cloud session reviews and merges it. Measurements are written down by the session that made them. Nothing else changes: no code paths, no pushes to `dev` / `HAI_Engine_Dev`, no version bumps. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub
-is merged after the hub check on its Issue passes.
+**Documentation exception** (agreed on HAI PR #34, 2026-10-07, at Gordon's request): a local session may also commit and push to `Supporting Docs/` and `docs/` only, on its own branch (`ham/docs-<topic>` or `hai/docs-<topic>`), and open a PR to `dev`. The cloud session reviews and merges it. Measurements are written down by the session that made them. Nothing else changes: no code paths, no pushes to `dev` / `HAI_Engine_Dev`, no version bumps.
 
 **The RM parity feed from HAI Dev to production Automation Map must not be disturbed without Gordon's
 go-ahead.** `FEED_LOCK.json` pins every piece that decides what production's table 1 shows: HAI's capability
