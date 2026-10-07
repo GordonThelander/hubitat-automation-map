@@ -541,6 +541,27 @@ offsets as evidence of a condition inflates the defined set.
 by the orphaned expressions of 5.6. A live expression naming a missing condition would mean the
 rule evaluates something Rule Machine cannot show; checked across 62 rules by the other engine's
 session, no live expression does. Orphaned ones do it routinely and harmlessly. **[strong]**
+### 5.7 `*changed*` is a comparator on some families and the *value* on others
+
+`tstate<n> = "*changed*"` appears in two shapes, and which one you get depends on the capability
+family. Counted across every rule on 2026-10-07: **14 triggers store it, 4 of them with no
+comparator key at all.**
+
+| Shape | Families seen here | Count |
+| --- | --- | --- |
+| `tstate<n> = "*changed*"` **with** `ReltDev<n>` | Custom Attribute, Variable | 10 |
+| `tstate<n> = "*changed*"` **without** `ReltDev<n>` | Switch, Presence | 4 |
+
+The four without a comparator: rule 2364 trigger 1 (Switch), 2814 triggers 9 and 10 (Presence and
+Switch), 2816 trigger 9 (Presence).
+
+**Read as a value this becomes "is the text `*changed*`", which never fires.** On a device-state
+family it is not a value at all; it means any change of that attribute. The absence of `ReltDev<n>`
+is the signal, not a missing field to default.
+
+This is why rule 2816 would have copied into a rule that never ran even after its phantom trigger
+(18.3) was removed: the phantom was the loud defect, this is the quiet one underneath it.
+
 ## 6. Separating triggers from conditions
 
 This is the most useful distinction in the whole format and the basis for classifying what
@@ -2116,6 +2137,42 @@ Two rules on this hub were affected, failing in opposite directions:
 trigger numbers, and `capabstrue` holds the rendered trigger list. A trigger exists when those say so;
 `isCondTrig` should annotate a trigger already established, never create one. A sweep of all 75 rules
 against `trigDevs` found exactly these two.
+
+### 18.4 The display path repeated 18.3 independently
+
+The phantom-trigger defect in 18.3 existed twice in Automation Map, in two readers of the same
+format, found and fixed separately. The decode path built a trigger from a leftover `tCapab<n>`; the
+display path emitted one step per `tCapab<n>` with the same result. Both were corrected in 2.4.13.
+
+Worth recording because the lesson is not about one decoder. A format where a leftover key looks like
+a live one will be misread by every independent reader of it, and fixing one says nothing about the
+others. `trigDevs` is the check that works for any of them.
+
+## 20. Trigger capability labels are not stable strings
+
+`tCapab<n>` holds a display label, and Rule Machine has changed some of them while keeping the
+storage shape identical. On this hub:
+
+| Stored label | Rows |
+| --- | --- |
+| `Certain Time (and optional date)` | 7 |
+| `Certain Time` | 1 |
+
+Rule 1230 trigger 26 carries the short form with exactly the same fields as the long one:
+
+```
+tCapab26  "Certain Time"
+time26    "A specific time"
+atTime26  "21:05"
+```
+
+**A decoder keyed on the long label dropped this trigger entirely, and the rule then read as having
+no triggers at all.** That is worse than refusing it: a rule with no published trigger invites a
+consumer to treat it as invoked by something else, so the copy becomes a rule that never fires at
+21:05. Found 2026-10-07 and fixed in Automation Map 2.4.12.
+
+Match these labels by prefix or by the fields present, not by exact string. One rule in eight here
+carries the older spelling, and nothing marks it as older.
 
 ## 19. Message (`getMsg`) reads two device keys, and both can be live
 
