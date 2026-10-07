@@ -176,7 +176,7 @@ check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:00:30'], '9', [:]).us
 check(!script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']).containsKey('timeoutSeconds'),
       'contract 2 does not publish timeoutSeconds at all')
 
-// getChime was the example here until it was decoded on 2026-10-07; getOCGarage still is not.
+// getChime was the example here until it was decoded on 2026-10-07; getMuteUnmute still is not.
 check(ops('4', 'getSetThermostat', [:]) == null, 'an unsupported construct resolves to nothing')
 check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
 
@@ -196,7 +196,7 @@ Map data = [
                 [name: 'onOff.7', value: 'true'],
                 [name: 'actSubType.8', value: 'getLogMsg'],
                 [name: 'logmsg.8', value: 'disabled step'],
-                [name: 'actSubType.9', value: 'getOCGarage']],
+                [name: 'actSubType.9', value: 'getMuteUnmute']],
   appState: [[name: 'actionList', value: ['7', '8', '9']],
              [name: 'disabledActions', value: ['8']]]
 ]
@@ -208,7 +208,7 @@ check(steps[1].disabled == true,
       'a disabled action IS marked: Rule Machine keeps it in actionList and renders it Disabled')
 check(steps[1].supported == true && steps[1].type == 'log',
       'and is still resolved, so a consumer can see what it would have done')
-check(steps[2].supported == false && steps[2].method == 'getOCGarage',
+check(steps[2].supported == false && steps[2].method == 'getMuteUnmute',
       'an unsupported construct carries its method name to be refused by')
 
 // A branch carries the eval group its condition lives in, which keys the
@@ -374,7 +374,23 @@ check(post == [type: 'http', method: 'post', url: 'http://10.0.0.5/hook', body: 
       'HTTP POST reads httper, httpPostBody and httpPostType')
 check(!ops('1', 'getHTTPPost', [:]).containsKey('url'), 'no stored address means no address')
 
-check(ops('41', 'getMuteUnmute', [:]) == null && ops('4', 'getOCGarage', [:]) == null,
-      'mute and the garage door stay unsupported until their direction is measured')
+// getOCGarage: garageRL reads BACKWARDS. Rule 2777's page renders action 10
+// (garageRL '') as Open and action 9 (garageRL 'true') as Close; rule 2360,
+// "Garage Door Autoclose", stores 'true'. Read as raise/lower it opens the door.
+Map volos = [id: '3560', name: 'Volos Garage Door Opener']
+check(ops('10', 'getOCGarage', [garageRL: ''], ['garageOpenClose.10': [volos]]) ==
+      [type: 'garage', devices: [volos], command: 'open'], "garageRL empty is OPEN (rule 2777 action 10)")
+check(ops('9', 'getOCGarage', [garageRL: 'true'], ['garageOpenClose.9': [volos]]).command == 'close',
+      "garageRL 'true' is CLOSE (rule 2777 action 9)")
+check(ops('4', 'getOCGarage', [garageRL: 'true', onOff: 'true'], ['garageOpenClose.4': [volos]]).command == 'close',
+      'rule 2360, the autoclose, closes: onOff agrees with garageRL')
+Map conflict = ops('4', 'getOCGarage', [garageRL: 'true', onOff: 'false'], ['garageOpenClose.4': [volos]])
+check(conflict.directionConflict == true && !conflict.containsKey('command'),
+      'when onOff and garageRL disagree, no direction is published')
+check(ops('4', 'getOCGarage', [garageRL: '']).with { command == 'open' && !containsKey('devices') },
+      'devices are read from garageOpenClose.<n> only')
+
+check(ops('41', 'getMuteUnmute', [:]) == null,
+      'mute stays unsupported until its direction is measured')
 
 println "${passed} HAM decode action assertions passed"

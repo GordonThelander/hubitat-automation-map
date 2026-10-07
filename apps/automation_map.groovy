@@ -11292,6 +11292,25 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             }
             return o
 
+        case 'getOCGarage':
+            // garageOpenClose.<n> devices. garageRL.<n> is the direction and
+            // reads BACKWARDS: 'true' is CLOSE and empty is OPEN. Measured by
+            // Claude HAM on 2026-10-07 against Rule Machine's own page: rule
+            // 2777 renders action 10 (garageRL '') as "Open: Volos Garage Door
+            // Opener" and action 9 (garageRL 'true') as "Close:", and rule 2360
+            // "Garage Door Autoclose" stores 'true'. RL reads as raise/lower, so
+            // the obvious reading opens a door an autoclose rule should close.
+            // onOff.<n>, present on 2360 only, is 'true' for close as well; if
+            // the two ever disagree, nothing is published as the direction.
+            Map o = [type: 'garage']
+            List d = hamDetailDeviceRefs(dev["garageOpenClose.${num}"])
+            if (d) o.devices = d
+            boolean closing = hamDetailBool(v["garageRL.${num}"])
+            String onOffRaw = "${v["onOff.${num}"] ?: ''}".trim()
+            if (onOffRaw && hamDetailBool(onOffRaw) != closing) o.directionConflict = true
+            else o.command = closing ? 'close' : 'open'
+            return o
+
         case 'getComment':
             return [type: 'comment', text: "${v["comment.${num}"] ?: ''}"]
 
