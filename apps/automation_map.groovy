@@ -11427,17 +11427,19 @@ List extractRuleActions(Map data) {
 Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
     Map o = [:]
 
-    // A conditional trigger stores itself in the CONDITION namespace instead:
-    // rule 814's Presence trigger 27 has rCapab_27/state_27/rDev_27 and no
-    // tDev27 at all. Devices are taken from whichever namespace holds them.
-    List d = hamDetailDeviceRefs(dev["tDev${num}"] ?: dev["rDev_${num}"])
+    // Trigger settings only. Reading the condition namespace (rDev_<n>) as a
+    // fallback published rule 814's leftover tCapab27 as a Presence trigger:
+    // Rule Machine shows one trigger (20:00), trigDevs is empty, and 27's
+    // devices belong to a condition (Claude HAM, 2026-10-07). With no tDev
+    // the leftover is dropped by extractRuleTriggers like any other.
+    List d = hamDetailDeviceRefs(dev["tDev${num}"])
     if (d) o.devices = d
 
-    String state = "${v["tstate${num}"] ?: v["state_${num}"] ?: ''}".trim()
+    String state = "${v["tstate${num}"] ?: ''}".trim()
     if (state) o.value = state
-    String rel = "${v["ReltDev${num}"] ?: v["RelrDev_${num}"] ?: ''}".trim()
+    String rel = "${v["ReltDev${num}"] ?: ''}".trim()
     if (rel) o.comparator = rel
-    String all = "${v["AlltDev${num}"] ?: v["AllrDev_${num}"] ?: ''}".trim()
+    String all = "${v["AlltDev${num}"] ?: ''}".trim()
     if (all) o.allDevices = (all == 'true')
 
     // "and stays that way for" - a duration the trigger waits out before it
