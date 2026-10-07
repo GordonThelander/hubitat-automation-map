@@ -789,6 +789,15 @@ The UI labels these "Meter?" and "Meter milliseconds", and the rendered action t
 takes to return, so it caps how many devices are in flight at once only when the spacing
 exceeds a single device's response time.
 
+**Trap, measured 2026-10-07.** `meter.<n>` is the toggle and `meterMillis.<n>` is the interval,
+despite the names reading the other way round. Writing the interval into `meter.<n>` (for example
+`meter.1 = "3000"` through a raw settings write) produces a setting Rule Machine ignores entirely:
+the value is not `"true"`, so metering is off and there is no `meterMillis.<n>` at all. The action
+runs unmetered while storage looks configured, and the rendered text drops its `meter <N> ms`
+suffix, which is how to tell. Probe rule 3601 carries exactly that inert `meter.1 = "3000"` as the
+worked example. Both keys are set through the action wizard only; a write aimed at `mainPage` is
+refused as not an input on that page.
+
 An unmetered action still carries `meter.<n> = "false"` with an empty `meterMillis.<n>`, so
 the presence of either key says nothing on its own. Read the value. **[strong]**
 
@@ -1757,9 +1766,24 @@ either alone.
 
 `trackSwitch.<n>` and `useLastDev.<n>` make an action read the triggering event instead of a
 stored device, and `optSwitch.<n>` ("command only switches that are on?") changes what an
-on/off action does once a device is chosen. All three are present on this hub in quantity
-(249 `optSwitch`, 190 `trackSwitch`, 44 `useLastDev` rows), but their effect on decoding is
-recorded from the MCP source.
+on/off action does once a device is chosen.
+
+**Counted on this hub 2026-10-07, every rule read:** 245 `optSwitch`, 186 `trackSwitch`, 49
+`useLastDev` rows. (An earlier count of 249 / 190 / 44 predates rules being added and removed,
+including five probe rules; prefer the dated figure.) **Of those 480 rows, exactly one is
+`true`:** rule 2096 `_System Start` action 16, a `getOnOffSwitch` with `optSwitch.16 = true`.
+
+Rule Machine surfaces the qualifier in its own rendered text, so a reader comparing against the
+page can see it:
+
+```
+Off: _Restart (Command only switches that are on)      optSwitch true
+On: Initialise Speakers                                optSwitch absent
+```
+
+`trackSwitch` and `useLastDev` are present on 235 rows between them and `true` on none. That says
+Gordon has never switched them on, which is weaker than saying Rule Machine cannot: the behaviour
+when they are on remains unobserved here.
 
 **Scenes**
 
