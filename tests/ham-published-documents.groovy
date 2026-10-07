@@ -55,12 +55,15 @@ check(rules*.id.sort() == ((List<Map>) summary.rules)*.id.sort(),
 // built, the only examples of their cases on this hub: 3594 (Use Duration beside a Timeout), 3595 and 3597
 // (several events, with and without a stays clause), 3596 (carries on after a timeout), 3598 (Wait for
 // Events with a timeout). Deleting one moves these counts. 2.4.11 dropped two phantom triggers, 814's 27
-// and 2816's 13: leftover tCapab settings the condition namespace used to fill in.
+// and 2816's 13: leftover tCapab settings the condition namespace used to fill in. 2.4.12 restored
+// 1230's trigger 26, Certain Time at 21:05, stored under the older label and dropped until then.
 check(rules.size() == 76, 'the capture holds 76 rules', rules.size())
 check(actions.size() == 519, 'the rules publish 519 actions', actions.size())
 check(actions.count { it.a.supported == true } == 518, '518 actions are supported', actions.count { it.a.supported == true })
-check(triggers.size() == 107, 'the rules publish 107 triggers', triggers.size())
+check(triggers.size() == 108, 'the rules publish 108 triggers', triggers.size())
 List phantoms = triggers.findAll { ("${it.rule}".replaceFirst(/^a/, '') + '#' + it.t.index) in ['814#27', '2816#13'] }
+check(triggers.any { "${it.rule}".replaceFirst(/^a/, '') == '1230' && it.t.index == '26' },
+      "rule 1230's Certain Time trigger is published (stored under the older label 'Certain Time')")
 check(phantoms.isEmpty(), "rule 814's trigger 27 and rule 2816's trigger 13 are leftovers, not triggers", phantoms)
 check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
 

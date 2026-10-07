@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.12'
+@Field static final String APP_VERSION = '2.4.13'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -11278,17 +11278,14 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
         case 'getChime':
             // chime.<n> devices, chimePlayStop.<n> 'Play Sound' or a stop,
             // chimePlaySound.<n> the sound number. Rules 2816 and 1845 render
-            // as sound 1 on the same devices. siren.<n> and toner.<n> usually
-            // hold the same device again under its class name, but not always:
-            // 2816 action 66 has only Kitchen Dome Siren in chime.66 and Garage
-            // Dome Siren beside it, and renders both, as 1845 does. So all
-            // three are read, joined by device id.
+            // as sound 1. Only chime.<n> is read: siren.<n> at the same index
+            // can be residue of an earlier action there. 2816 action 66 holds
+            // Garage Dome Siren in siren.66, and Rule Machine's page shows the
+            // chime on Kitchen Dome Siren only (Claude HAM, PR #7). Reading it
+            // would sound a siren the rule never touches.
             String playStop = "${v["chimePlayStop.${num}"] ?: 'Play Sound'}".trim()
             Map o = [type: 'chime', op: playStop == 'Play Sound' ? 'play' : 'stop']
-            List d = []
-            ['chime', 'siren', 'toner'].each { String k ->
-                hamDetailDeviceRefs(dev["${k}.${num}"]).each { Map r -> if (!d.any { it.id == r.id }) d << r }
-            }
+            List d = hamDetailDeviceRefs(dev["chime.${num}"])
             if (d) o.devices = d
             if (o.op == 'play') {
                 Integer sound = hamDetailNumberOrNull(v["chimePlaySound.${num}"])
