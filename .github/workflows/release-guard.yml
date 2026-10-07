@@ -1,0 +1,21 @@
+name: Release guard
+
+# HPM's Dev channel is the dev branch: app code reaching dev must carry a higher version, stated the same way in
+# the app and the manifest, or testers get mislabelled code. See tools/release_guard.py.
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: App changes on dev carry a raised, consistent version
+        run: python3 tools/release_guard.py "${{ github.event.pull_request.base.sha || github.event.before }}"
