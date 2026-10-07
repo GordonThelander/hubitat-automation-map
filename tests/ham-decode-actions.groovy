@@ -362,6 +362,9 @@ Map siren = [id: '66', name: 'Siren']
 Map chime = ops('6', 'getChime', [chimePlayStop: 'Play Sound', chimePlaySound: '3'], ['chime.6': [siren], 'siren.6': [siren]])
 check(chime == [type: 'chime', op: 'play', devices: [siren], sound: 3],
       'Chime plays chimePlaySound on chime.<n>, and siren.<n> adds no second device')
+Map garage = [id: '47', name: 'Garage Dome Siren']
+check(ops('6', 'getChime', [chimePlaySound: '1'], ['chime.6': [siren], 'siren.6': [garage]]).devices == [siren],
+      'siren.<n> is not read: on rule 2816 action 66 it is residue, and Rule Machine shows the chime on Kitchen only')
 check(ops('6', 'getChime', [chimePlaySound: '1'], ['chime.6': [siren]]).op == 'play', 'an absent play/stop choice is Play Sound')
 check(!ops('6', 'getChime', [:], ['chime.6': [siren]]).containsKey('sound'), 'no stored sound means no sound, not sound 1')
 check(ops('6', 'getChime', [chimePlayStop: 'Stop'], ['chime.6': [siren]]).with { op == 'stop' && !containsKey('sound') },

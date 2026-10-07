@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.11'
+@Field static final String APP_VERSION = '2.4.13'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -8961,6 +8961,10 @@ List buildRuleFlow(Map data) {
         String cap = "${settingValues["tCapab${num}"] ?: ''}".trim()
         if (!cap) return
         List devs = (settingDevices["tDev${num}"] ?: settingDevices["tDev_${num}"] ?: []) as List
+        // A device family with no devices is a leftover, as extractRuleTriggers
+        // decides: 814, 2816 and 2865 showed a trigger here that Rule Machine
+        // does not have.
+        if (!devs && !DEVICELESS_TRIGGERS.contains(cap)) return
         steps << [kind: 'trigger', label: (capabs[num] ?: triggerFallbackLabel(cap, num, settingValues)),
                   devices: devs, constructs: [triggerConstructToken(cap, num, settingValues)]]
     }
@@ -11274,8 +11278,11 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
         case 'getChime':
             // chime.<n> devices, chimePlayStop.<n> 'Play Sound' or a stop,
             // chimePlaySound.<n> the sound number. Rules 2816 and 1845 render
-            // as sound 1 on the same devices. siren.<n> and toner.<n> are the
-            // same device stored again under its class name, not more devices.
+            // as sound 1. Only chime.<n> is read: siren.<n> at the same index
+            // can be residue of an earlier action there. 2816 action 66 holds
+            // Garage Dome Siren in siren.66, and Rule Machine's page shows the
+            // chime on Kitchen Dome Siren only (Claude HAM, PR #7). Reading it
+            // would sound a siren the rule never touches.
             String playStop = "${v["chimePlayStop.${num}"] ?: 'Play Sound'}".trim()
             Map o = [type: 'chime', op: playStop == 'Play Sound' ? 'play' : 'stop']
             List d = hamDetailDeviceRefs(dev["chime.${num}"])
@@ -11417,8 +11424,11 @@ List extractRuleActions(Map data) {
 // tDev13, and 2816's even collects condition 13's rendering so it reads as a
 // plausible trigger that does not exist. trigDevs is the compiled proof, but
 // this test needs no second fetch.
+// 'Certain Time' is the same trigger under an older picker label: rule 1230
+// stores it, and was published with no trigger at all because the short
+// spelling read as a device family with no devices.
 @Field static final List<String> DEVICELESS_TRIGGERS = [
-    'Certain Time (and optional date)', 'Periodic Schedule', 'Variable',
+    'Certain Time (and optional date)', 'Certain Time', 'Periodic Schedule', 'Variable',
     'Location Event', 'Mode', 'Hub Variable'
 ]
 
@@ -11491,6 +11501,7 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
             // tstate holds the event name, already captured as value above.
             break
         case 'Certain Time (and optional date)':
+        case 'Certain Time':
             // A trigger's own fields, NOT the condition ones. A condition uses
             // starting<n>/startingA<n>; a trigger uses time<n> as the selector
             // with atTime<n>, atSunriseOffset<n>, atSunsetOffset<n>. Calling

@@ -180,6 +180,13 @@ check(!block.contains('hamDetailTimeOperand'),
 Map clock = ops('7', 'Certain Time (and optional date)', [time: 'A specific time', atTime: '23:59'])
 check((clock.at as Map).at == '23:59', 'a specific time resolves from atTime')
 check((clock.at as Map).kind == 'clock', 'and is named a clock time')
+// Rule 1230 stores the older picker label 'Certain Time'. It is the same trigger, and was published as no
+// trigger at all: the short spelling read as a device family with no devices.
+Map shortLabel = ops('7', 'Certain Time', [time: 'A specific time', atTime: '21:05'])
+check(shortLabel.at != null, "the older label 'Certain Time' resolves its time like the long one (\${shortLabel})")
+List r1230 = script.extractRuleTriggers([appSettings: [[name: 'tCapab1', value: 'Certain Time'],
+                                                       [name: 'time1', value: 'A specific time'], [name: 'atTime1', value: '21:05']]])
+check(r1230*.index == ['1'], "rule 1230's Certain Time trigger is published, not dropped as a leftover")
 Map sunset = ops('7', 'Certain Time (and optional date)', [time: 'Sunset', atSunsetOffset: '-15'])
 check((sunset.at as Map).kind == 'sunset' && (sunset.at as Map).offsetMinutes == -15,
       'a sunset trigger resolves with its signed offset')

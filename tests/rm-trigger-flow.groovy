@@ -33,7 +33,7 @@ def script = new GroovyShell().parse('''
 import groovy.transform.Field
 @Field static final String RM_LOCATION_EVENT_PREFIX = 'trigger:Location Event:'
 @Field static final Map RULE_LINK_ACTIONS = [:]
-''' + predSource + '\n' + flowSource + '\n' + actionSource + '\n' + constructsSource + '''
+''' + AppSource.field(source, 'DEVICELESS_TRIGGERS') + '\n' + predSource + '\n' + flowSource + '\n' + actionSource + '\n' + constructsSource + '''
 ''' + '\n' + helpers + '\n')
 
 // The slices are the app's, not the identity stubs they replace.
@@ -54,6 +54,8 @@ List settings = [
     [name: 'tCapab8', value: 'Custom Attribute'],
     [name: 'tDev8', deviceList: ['2': 'Weather Sensor']],
     [name: 'tCustomAttr8', value: 'battery'],
+    // A leftover: a device family with no devices (rules 814, 2816, 2865). Not a trigger.
+    [name: 'tCapab13', value: 'Switch'],
     [name: 'tCapab9', value: 'Switch'],
     [name: 'tDev9', deviceList: ['3': 'Hall Switch']],
     [name: 'tCapab10', value: 'Contact'],
@@ -105,6 +107,7 @@ assert triggers[6].devices == ['Weather Sensor']
 assert triggers[7].devices == ['Hall Switch']
 assert triggers[8].devices == ['Front Door']
 assert !triggers*.label.contains('Motion')
+assert !triggers*.label.contains('Switch') : 'a leftover tCapab with no devices is not shown as a trigger'
 assert !triggers.collectMany { it.devices as List }.contains('Wait Motion')
 Map action = flow.find { it.kind == 'action' }
 assert action.constructs == ['action:getDelay']
