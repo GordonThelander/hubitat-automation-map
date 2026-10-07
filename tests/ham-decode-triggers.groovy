@@ -24,7 +24,9 @@ String stubs = 'import groovy.transform.Field\n' +
     'class HubMode { Integer id; String name }\n' +
     "@Field Map location = [modes: [new HubMode(id: 5, name: 'Home'), new HubMode(id: 2, name: 'Away')]]\n" +
     AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList',
-                                 'hamDetailModeNames', 'hamDetailDeviceRefs']) + '\n'
+                                 'hamDetailModeNames', 'hamDetailDeviceRefs',
+                                 // Wait for Events reuses this resolver against a dash namespace.
+                                 'hamDetailWaitTime', 'hamDetailWaitEventsOperands']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
 
 // The slices are the app's, not a stub's: each returns what only the real one returns.
@@ -173,6 +175,29 @@ check(hourly.startingTime == '00:25',
       'an hourly schedule publishes its starting time: absent invites a consumer to assume the top of the hour')
 check(!ops('11', 'Periodic Schedule', [whichPeriod: 'Hourly']).containsKey('startingTime'),
       'and absent stays absent rather than becoming a zero minute')
+
+// --- Wait for Events: the trigger shape in a rule-global dash namespace (contract 2) -----------------
+// Measured by Claude HAM on the Dev hub, 2026-10-07 (HAM cloud/more-rm-actions 6c0616ad): the events live
+// at tCapab-1, tDev-1, tstate-1, stays-1 and modesX-1 rather than under the action, which is why Rule Machine
+// allows one Wait for Events per rule. A Mode event is modesX-<n>, the dash form of the trigger's modesX<n>.
+Map wv = ['tCapab-1': 'Motion', 'tstate-1': 'active', 'durChoice.7': 'true',
+          'tCapab-3': 'Mode', 'modesX-3': '["5"]',
+          'tCapab-2': 'Switch',                     // a leftover: a device family with no device
+          'tCapab1': 'Contact']                     // a TRIGGER (no dash), never an event
+Map wd = ['tDev-1': [[id: '2386', name: 'Hallway Motion']]]
+Map we = script.hamDetailWaitEventsOperands('7', [delay: '0:02:00'], wv, wd)
+check(we.type == 'waitEvents' && we.useDuration == true && we.waitSeconds == 120,
+      'Wait for Events carries its time and what it means, as Wait for Expression does')
+check((we.events as List).collect { it.index } == ['-1', '-3'],
+      'events come from the dash namespace in order; a no-dash trigger and a device-less leftover are not events')
+Map ev1 = (we.events as List)[0] as Map
+check(ev1.capability == 'Motion' && (ev1.devices as List) == [[id: '2386', name: 'Hallway Motion']] && ev1.value == 'active',
+      'a device event resolves through the trigger resolver: devices as {id, name} and the awaited value')
+Map ev3 = (we.events as List)[1] as Map
+check(ev3.capability == 'Mode' && "${ev3.modes ?: ev3.value ?: ''}".contains('Home'),
+      'a Mode event reads modesX-<n>, not the trigger spelling, so it is not published empty: ' + ev3)
+check(script.hamDetailWaitEventsOperands('7', [:], [:], [:]) == [type: 'waitEvents', useDuration: false, events: []],
+      'no events and no time is an empty wait, stated, not a failure')
 
 check(!block.contains('httpGet') && !block.contains('httpPost'),
       'the trigger block performs no hub I/O of its own')
