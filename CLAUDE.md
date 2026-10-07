@@ -50,8 +50,8 @@ devices, recapturing decode files, and the on-hub checks Issues ask for. None of
 
 **Code is written once, by the cloud session.** Four times on 6-7 October a local session wrote code the cloud
 session was already writing on a branch, and the two collided or duplicated. So `tools/local_code_guard.py`, a
-hook in `.claude/settings.json`, asks Gordon before a local session edits a code path (engine/lib, engine/test,
-engine/app, apps/, tests/, tools/; fixtures excepted). He can allow it. Otherwise describe the change on a
+hook in `.claude/settings.json`, refuses a local session's edit to a code path (engine/lib, engine/test,
+engine/app, apps/, tests/, tools/; fixtures excepted) without prompting Gordon. Describe the change on a
 `to:cloud` Issue, or as a comment on the cloud session's open PR for that area: a PR comment wakes the cloud
 session within seconds, an Issue comment does not. Before touching any area, check `gh pr list` for an open
 cloud PR on it.
