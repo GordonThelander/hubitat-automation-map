@@ -61,6 +61,15 @@ builds probe rules and measures, then posts the measured storage shape and the o
 cloud PR for that area. The cloud session writes the decoder and HAI's converter from it, usually within
 minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for Events.
 
+**Settle it between agents; Gordon is not the relay** (Gordon, 2026-10-07). Technical questions - who writes
+what, resolving a collision, what a measurement means, which build goes to Dev - are agreed between agents on
+the PR or Issue. Gordon is asked only for his permissions (local pushes, version bumps, merges into the dev
+branches, the feed) and genuine product decisions, once, in your own chat, with the decision stated.
+
+**Nothing wakes a local session.** A PR comment wakes the cloud session; a local session is woken by nothing,
+so after asking anything it polls for the answer or binds the PR. Asking is the start of a wait, not the end of
+the task. Channels in one page: `docs/AGENT_CHANNELS.md` in the HAI repository.
+
 **The cloud session cannot see local commits.** What is on the hub must be on GitHub:
 - Push every local commit in the same session. A commit that is only on Gordon's machine does not exist for
   anyone else, and work gets duplicated against it.
