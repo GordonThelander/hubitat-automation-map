@@ -798,6 +798,53 @@ suffix, which is how to tell. Probe rule 3601 carries exactly that inert `meter.
 worked example. Both keys are set through the action wizard only; a write aimed at `mainPage` is
 refused as not an input on that page.
 
+**What the form allows, and what the runtime delivers.** Read from the live input on `doActPage`:
+`settings[meterMillis.<n>]` is `type=number` with `min="0"`, no `max` and `step="1"`, and
+`meter.<n>` is declared `bool`. So the wizard permits zero and upwards in single milliseconds, with
+no floor.
+
+The platform cannot honour the small end of that range. Measured 2026-10-07 on probe rule 3603 with
+`meterMillis = 1`, three devices and a marker action, run directly so no trigger sat in the timing
+path:
+
+```
+device 1   t+0.000s
+device 2   t+0.014s      14 ms
+device 3   t+0.027s      13 ms
+marker     t+0.043s      16 ms
+```
+
+A setting of 1 ms produces roughly 14 ms. The value is accepted and silently rounded up by the
+runtime rather than rejected by the form, so **anything below about 15 ms should be read as "no
+meaningful spacing"** rather than as the number stored.
+
+**The next action waits, and waits one further interval.** Measured on probe 3602 at
+`meterMillis = 2000` with three devices:
+
+```
+device 1   t+0.000s
+device 2   t+2.026s
+device 3   t+4.038s
+marker     t+6.056s      the next action
+```
+
+Device *k* at `(k-1) x meterMillis` is correct, but execution does not resume when the last command
+goes out. The next action runs at `k x meterMillis`, one whole interval after the last device. A
+consumer that resumed at the last dispatch would be `n x meterMillis` early. The same relationship
+holds at 1 ms, so it is the rule rather than an artefact of a long interval.
+
+**On the mechanism, and what is not established.** The app's `scheduledJobs` is empty mid-run:
+sampled while devices were still pending at 2000 ms spacing, rule 3602 had no scheduled jobs at all.
+Taken alone that argues against a chain of ordinary `runInMillis` timers. But the ~14 ms floor is
+characteristic of exactly those timers, and a path closer to the hardware would land nearer 1 ms.
+The reading consistent with both is an in-execution loop inside a single app execution: nothing is
+registered in the job table because no job is created, and the granularity is JVM-level because it
+is the JVM.
+
+That is the best explanation fitting the measurements, not a proven mechanism. **Rule Machine's
+source cannot settle it from the hub:** it is app type 147, a built-in, and `app/ajax/code?id=147`
+returns `"source": ""` while a user app returns its source in full.
+
 An unmetered action still carries `meter.<n> = "false"` with an empty `meterMillis.<n>`, so
 the presence of either key says nothing on its own. Read the value. **[strong]**
 
