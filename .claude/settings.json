@@ -16,7 +16,19 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/tools/feed_guard.py\" --pre" }
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/tools/feed_guard.py\" --pre"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/tools/local_code_guard.py\""
+          }
         ]
       }
     ],
@@ -24,7 +36,10 @@
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
         "hooks": [
-          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/tools/feed_guard.py\" --hook" }
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/tools/feed_guard.py\" --hook"
+          }
         ]
       }
     ]
