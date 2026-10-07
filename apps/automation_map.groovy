@@ -11511,6 +11511,21 @@ List extractRuleTriggers(Map data) {
         Map ops = hamDetailTriggerOperands(num, cap, values, devices)
         // A device family with no devices is a leftover setting, not a trigger.
         if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        // A conditional trigger: it fires only while condition condTrig.<n>
+        // holds. Rule 3448 stores isCondTrig.<n> 'true' with condTrig.<n>
+        // 1, 3, 5 and 7 on triggers 2, 4, 6 and 8, and its state lists
+        // inUseTrigConds [1, 3, 5, 7]. The number is a condition's index in
+        // `conditions`. Dropping it makes a rebuilt trigger fire when Rule
+        // Machine's would not. Both spellings are read: the storage format
+        // documents isCondTrig<n>, the hub stores isCondTrig.<n>.
+        String condFlag = "${values["isCondTrig.${num}"] ?: values["isCondTrig${num}"] ?: ''}"
+        String condNum = "${values["condTrig.${num}"] ?: values["condTrig${num}"] ?: ''}".trim()
+        // Flagged with no condition number is published as such, so a
+        // consumer refuses it rather than reading it as unconditional.
+        if (hamDetailBool(condFlag)) {
+            if (condNum) ops.condition = condNum
+            else ops.conditionMissing = true
+        }
         out << [index: num, capability: cap, operands: ops]
     }
     return out.sort { Map t -> (t.index as String) as Integer }
