@@ -64,7 +64,7 @@ script.setState([
 
 Map summary = script.hamDecodeSummary()
 check(summary.contract == 'ham.decode/1', 'envelope names the contract')
-check(summary.contractSchemaVersion == 1, 'contract schema version is published')
+check(summary.contractSchemaVersion == 2, 'contract schema version is published, 2 since 2026-10-07')
 check(summary.rmConstructVocabularyVersion == 1, 'construct vocabulary version is published separately')
 check(summary.supportedEngine == 'Rule-5.1', 'supported engine is published separately')
 check(summary.ok == true, 'a served response is ok')
@@ -91,6 +91,12 @@ check(r.hasDecodedFlow == true, 'hasDecodedFlow is stated')
 check((r.constructs as List) == ['action:getDelay', 'trigger:Motion'], 'construct tokens are carried')
 check(r.stepCount == 2, 'step count counts both non-marker steps')
 check(!r.containsKey('steps'), 'the summary never carries full steps')
+
+// --- complete marker (contract 2) ------------------------------------------
+// The hub's Groovy 2.4 parses a document cut off at a point that is still valid JSON as complete, so the
+// last keys written say the file got to the end.
+check(summary.complete == true && summary.ruleCount == 1, 'the summary ends with complete and ruleCount')
+check((summary.keySet() as List).takeRight(2) == ['ruleCount', 'complete'], 'and they are the last keys written')
 
 // --- step count excludes control-flow markers ----------------------------
 
@@ -171,6 +177,33 @@ check(noScan.message != null && "${noScan.message}".length() > 10, 'a failure ca
 check(noScan.rules == null, 'a failed response carries no payload')
 check(noScan.contract == 'ham.decode/1', 'a failure still carries the envelope')
 check((noScan.instance as Map).appId == 3547, 'a failure still names the instance')
+
+// --- detail: complete marker and links to deleted rules (contract 2) -------
+
+script.setState([
+    graph: graphWith([ruleNode('a2096', 'System Start'), ruleNode('a1806', 'Live'),
+                      [id: 'a2354', name: 'Rule 2354 (deleted)', group: 'app', missing: true, unscanned: true]],
+                     ['a2096': [[kind: 'action', label: 'Set Private Boolean', ruleTargets: ['1806', '2354']]]]),
+    appInfo: ['2096': [conditions: [], expressions: [:], triggers: [], decodeFailures: [:],
+                       actions: [[index: '1', method: 'getSetPrivateBoolean', supported: true, type: 'setRuleBoolean',
+                                  operands: [self: false, rules: ['1806', '2354'], value: true]]]]],
+    scanHeartbeat: 1790000000000L, scanError: null, appsUnreadable: 0, deviceIdsUnreadable: []
+])
+Map detail = script.hamDecodeDetail()
+check(detail.contract == 'ham.decode.detail/1' && detail.contractSchemaVersion == 2, 'the detail is contract schema 2')
+check(detail.complete == true && detail.ruleCount == 2 && (detail.keySet() as List).takeRight(2) == ['ruleCount', 'complete'],
+      'the detail ends with ruleCount and complete, written last')
+Map sys = (detail.rules as List).find { it.id == 'a2096' } as Map
+check(((sys.actions as List)[0].operands.rules as List) == ['1806'],
+      'a deleted rule is dropped from the action it was named in; the live one stays')
+check((((sys.steps as List)[0] as Map).ruleTargets as List) == ['1806'], 'and from the step links')
+check((sys.deletedRuleReferences as List) == [[ruleId: '2354', action: '1']],
+      'and published as a finding naming the deleted rule and the action, for the person to clean up')
+Map live = (detail.rules as List).find { it.id == 'a1806' } as Map
+check(!live.containsKey('deletedRuleReferences'), 'a rule with no dead links carries no finding key')
+Map storedAgain = ((script.state.appInfo as Map)['2096'] as Map)
+check((((storedAgain.actions as List)[0] as Map).operands.rules as List) == ['1806', '2354'],
+      "the scan's own record is untouched: the detail works on copies")
 
 // --- the contract never writes -------------------------------------------
 

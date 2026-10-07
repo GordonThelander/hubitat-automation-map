@@ -140,17 +140,15 @@ check(script.hamDetailExpression([]) == null, 'an empty expression is absent rat
 
 DEV.clear(); DEV['rDev_3'] = [[id: '2450', name: 'Kitchen Lamp'], [id: '2453', name: 'Hall Lamp']]
 Map dev = script.hamDetailCondition(DEV, '3', 'Switch', S(['state_3': 'off', 'RelrDev_3': '=']))
-check(((dev.operands as Map).devices as List) == ['Kitchen Lamp', 'Hall Lamp'],
-      'a device condition carries its devices, which live in deviceList not value')
-// A name cannot bind: two devices can share a label and a rename would break
-// every rule that named one, silently. The id is what a consumer binds to.
-check(((dev.operands as Map).deviceIds as List) == ['2450', '2453'],
-      'device ids travel beside the names, in the same order')
+// A name cannot bind: two devices can share a label and a rename would break every rule that named one,
+// silently. Contract 2 (backlog 55): each device is {id, name}, as everywhere else in the document, rather
+// than names with a parallel id list paired only by position.
+check(((dev.operands as Map).devices as List) == [[id: '2450', name: 'Kitchen Lamp'], [id: '2453', name: 'Hall Lamp']],
+      'a device condition carries its devices as {id, name}, from deviceList not value')
+check(!(dev.operands as Map).containsKey('deviceIds'), 'the parallel id list is gone')
 DEV.clear()
 check(!(script.hamDetailCondition(DEV, '3', 'Switch', S(['state_3': 'off'])).operands as Map).containsKey('devices'),
       'a device condition with no devices omits the key rather than sending an empty list')
-check(!(script.hamDetailCondition(DEV, '3', 'Switch', S(['state_3': 'off'])).operands as Map).containsKey('deviceIds'),
-      'the id list is omitted too rather than sent empty')
 
 // --- Variable: the setting carries an underscore -----------------------
 
