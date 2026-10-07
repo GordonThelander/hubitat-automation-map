@@ -45,6 +45,37 @@ cloud session's work of 2026-10-06 is described in its Issues and PRs. A local s
 check its Issue names, and reports that result. It does not re-run suites, re-audit merged or pushed work,
 or retest anything without new contrary evidence (the binding rules above).
 
+**Local sessions keep doing all hub work** (Gordon, 2026-10-07): deploys, scans, reading the hub, measuring
+devices, recapturing decode files, and the on-hub checks Issues ask for. None of that is restricted.
+
+**Code is written once, by the cloud session.** Four times on 6-7 October a local session wrote code the cloud
+session was already writing on a branch, and the two collided or duplicated. So `tools/local_code_guard.py`, a
+hook in `.claude/settings.json`, asks Gordon before a local session edits a code path (engine/lib, engine/test,
+engine/app, apps/, tests/, tools/; fixtures excepted). He can allow it. Otherwise describe the change on a
+`to:cloud` Issue, or as a comment on the cloud session's open PR for that area: a PR comment wakes the cloud
+session within seconds, an Issue comment does not. Before touching any area, check `gh pr list` for an open
+cloud PR on it.
+
+**Measurement on the hub, decoder in the cloud** (agreed on Automation Map PR #3, 2026-10-07). A local session
+builds probe rules and measures, then posts the measured storage shape and the observed behaviour on the
+cloud PR for that area. The cloud session writes the decoder and HAI's converter from it, usually within
+minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for Events.
+
+**The cloud session cannot see local commits.** What is on the hub must be on GitHub:
+- Push every local commit in the same session. A commit that is only on Gordon's machine does not exist for
+  anyone else, and work gets duplicated against it.
+- Every build deployed to the hub carries an incremented version (Automation Map `APP_VERSION`, HAI
+  `ENGINE_APP_VERSION`), is committed and pushed to `dev` / `HAI_Engine_Dev`, and the deploy's Issue comment
+  names the full SHA that is on the hub.
+- Pushing and version bumps still need Gordon's permission. Ask him for it in your own chat, at the point
+  you need it, rather than waiting or working around it.
+
+**`dev` is the HPM Dev channel; a merge into it is a release** (Gordon, 2026-10-07). Testers get the app on `dev`,
+offered when `packageManifest.json`'s version rises. So any change to `apps/` reaching `dev` raises `APP_VERSION`,
+the manifest's `version` and `apps[0].version` together, and starts the release notes with that version.
+`tools/release_guard.py` fails CI on a push or PR to `dev` that does not (`.github/workflows/release-guard.yml`).
+It exists because the cloud session merged PR #2 as 2.4.4 without a bump; 2.4.7 corrected it.
+
 **Concord is local only.** Codex and the local Claude sessions talk live through it, but the cloud session
 cannot see it. So anything that hands work over, records a hub result or needs Gordon's decision goes into
 an Issue, never only into Concord.
