@@ -64,6 +64,9 @@ check(triggers.size() == 108, 'the rules publish 108 triggers', triggers.size())
 List phantoms = triggers.findAll { ("${it.rule}".replaceFirst(/^a/, '') + '#' + it.t.index) in ['814#27', '2816#13'] }
 check(triggers.any { "${it.rule}".replaceFirst(/^a/, '') == '1230' && it.t.index == '26' },
       "rule 1230's Certain Time trigger is published (stored under the older label 'Certain Time')")
+Map chime66 = actions.find { "${it.rule}".replaceFirst(/^a/, '') == '2816' && it.a.index == '66' }?.a
+check(chime66 != null && ((List) ((Map) chime66.operands).devices)*.name == ['Kitchen Dome Siren'],
+      "rule 2816 action 66 chimes Kitchen Dome Siren only: siren.66 (Garage) is residue, as Rule Machine's page shows")
 check(phantoms.isEmpty(), "rule 814's trigger 27 and rule 2816's trigger 13 are leftovers, not triggers", phantoms)
 check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
 
