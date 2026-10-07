@@ -193,6 +193,18 @@ Map detail = script.hamDecodeDetail()
 check(detail.contract == 'ham.decode.detail/1' && detail.contractSchemaVersion == 3, 'the detail is contract schema 3')
 check(detail.complete == true && detail.ruleCount == 2 && (detail.keySet() as List).takeRight(2) == ['ruleCount', 'complete'],
       'the detail ends with ruleCount and complete, written last')
+check(detail.hubVariables == [:], 'no hub variable inventory means no types, never guessed ones')
+Map withVars = new LinkedHashMap(script.state)
+withVars.hubVariableInventory = [status: 'complete', variables: [
+    'Front Walkway Limiter': [type: 'Boolean', value: false], 'TestNumber': [type: 'integer', value: 3], 'Odd': [value: 1]]]
+script.setState(withVars)
+Map typed = script.hamDecodeDetail()
+check(typed.hubVariables == ['Front Walkway Limiter': 'boolean', 'TestNumber': 'integer'],
+      'each hub variable publishes the type the hub reports, lower-cased; one with no type is left out')
+check((typed.keySet() as List).takeRight(2) == ['ruleCount', 'complete'], 'and complete is still written last')
+withVars.hubVariableInventory = [status: 'failed', variables: ['X': [type: 'string']]]
+script.setState(withVars)
+check(script.hamDecodeDetail().hubVariables == [:], 'a failed inventory publishes no types')
 Map sys = (detail.rules as List).find { it.id == 'a2096' } as Map
 check(((sys.actions as List)[0].operands.rules as List) == ['1806'],
       'a deleted rule is dropped from the action it was named in; the live one stays')

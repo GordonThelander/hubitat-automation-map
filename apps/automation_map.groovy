@@ -186,7 +186,8 @@ boolean showSanta() {
 // with complete and ruleCount, so a reader can tell a whole file from one cut short.
 // 3 (2026-10-07, 2.4.9): a conditional trigger names its condition (operands.condition, or
 // conditionMissing). A file below 3 cannot say whether a trigger is conditional, so a reader must not
-// take a trigger's silence there as "unconditional". Nine more actions carry operands.
+// take a trigger's silence there as "unconditional". Ten more actions carry operands, and the detail
+// file carries hubVariables, each hub variable's type as the hub reports it.
 @Field static final int HAM_DECODE_CONTRACT_VERSION = 3
 @Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
 @Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
@@ -11761,8 +11762,26 @@ Map hamDecodeDetail() {
         if (!((List) links.found).isEmpty()) rule.deletedRuleReferences = links.found
         return rule
     }
-    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules] +
+    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules,
+                                                    hubVariables: hamDecodeHubVariableTypes()] +
         hamDecodeComplete(rules)
+}
+
+// Each hub variable's type, as getAllGlobalVars() reports it ('integer',
+// 'bigdecimal', 'boolean', 'string', 'datetime'), from the inventory the scan
+// already read. A rule only implies a type by how it uses a variable, and two
+// rules can imply different ones: "Front Walkway Limiter" is set as a boolean in
+// rule 3523 and compared to "true" in rule 2180. The hub's own type settles it.
+// Empty when the inventory failed, never guessed.
+Map hamDecodeHubVariableTypes() {
+    Map inv = (state.hubVariableInventory ?: [:]) as Map
+    if (inv.status != 'complete') return [:]
+    Map out = [:]
+    ((inv.variables ?: [:]) as Map).each { Object k, Object v ->
+        Object t = (v instanceof Map) ? (v as Map).type : null
+        if (t != null) out["${k}".toString()] = "${t}".toLowerCase()
+    }
+    return out
 }
 
 // The last keys of every contract-2 document, written after the rules so a file
