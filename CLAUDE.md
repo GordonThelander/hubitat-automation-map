@@ -62,8 +62,8 @@ cloud PR for that area. The cloud session writes the decoder and HAI's converter
 minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for Events.
 
 **Standing permissions** (Gordon, 2026-10-07 - granted once; do not ask him again for any of these):
-- Local sessions push their commits, to their branches and to `dev` / `HAI_Engine_Dev` for hub-verified Dev
-  builds, and make patch-version bumps for Dev builds (the release guard checks the bump is consistent).
+- Local sessions push a capture to the frozen PR branch they were asked to check. They do not push to `dev` or
+  `HAI_Engine_Dev` (see "One change, one hub cycle" below).
 - The cloud session pushes to its branches, opens PRs, and merges its own PRs into `dev` / `HAI_Engine_Dev`
   once CI is green and the hub check on the Issue has passed. On Automation Map that merge is the HPM Dev release.
 - Deploying to the Dev hub, reading anything, running tests, and everything technical agreed between agents.
@@ -79,12 +79,18 @@ decisions, once, in your own chat, with the decision stated.
 so after asking anything it polls for the answer or binds the PR. Asking is the start of a wait, not the end of
 the task. Channels in one page: `docs/AGENT_CHANNELS.md` in the HAI repository.
 
-**The cloud session cannot see local commits.** What is on the hub must be on GitHub:
-- Push every local commit in the same session. A commit that is only on Gordon's machine does not exist for
-  anyone else, and work gets duplicated against it.
-- Every build deployed to the hub carries an incremented version (Automation Map `APP_VERSION`, HAI
-  `ENGINE_APP_VERSION`), is committed and pushed to `dev` / `HAI_Engine_Dev`, and the deploy's Issue comment
-  names the full SHA that is on the hub.
+**One change, one hub cycle** (Gordon, 2026-10-07: batch, and stop pushing the smallest changes).
+`dev` and `HAI_Engine_Dev` change only through merged pull requests. On Automation Map a GitHub ruleset refuses
+any other push to `dev`; on HAI, `.github/workflows/dev-push-guard.yml` undoes one and a local hook refuses it.
+1. The cloud session batches a change on one PR, bumps the version itself (`APP_VERSION` with the manifest,
+   or `ENGINE_APP_VERSION`), and comments **frozen** with the full SHA. It pushes nothing to that PR after.
+2. The local session deploys exactly that SHA, runs the hub check the PR names, and pushes the capture, once,
+   to that PR branch. Nothing else: no code, no suites, no version commits.
+3. The cloud session merges. If it must change code after a freeze, it says so on the PR first, and that
+   means a new deploy and capture.
+
+**The cloud session cannot see local commits.** What is on the hub must be on GitHub: the deploy's PR
+comment names the full SHA that is on the hub, and that SHA is the frozen one on the PR.
 
 **`dev` is the HPM Dev channel; a merge into it is a release** (Gordon, 2026-10-07). Testers get the app on `dev`,
 offered when `packageManifest.json`'s version rises. So any change to `apps/` reaching `dev` raises `APP_VERSION`,
@@ -96,9 +102,9 @@ It exists because the cloud session merged PR #2 as 2.4.4 without a bump; 2.4.7 
 cannot see it. So anything that hands work over, records a hub result or needs Gordon's decision goes into
 an Issue, never only into Concord.
 
-Local sessions: **do hub work only**, and hand code changes to the cloud session as a `to:cloud` Issue rather
-than making them. Do not commit or run the suites after every small change. Commit once, when the hub work
-of an Issue is done. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub
+Local sessions: **do hub work only**, and hand code changes to the cloud session as a comment on its PR rather
+than making them. Do not commit or run the suites. The one commit a local session makes is the capture, step 2
+above. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub
 is merged after the hub check on its Issue passes.
 
 **The RM parity feed from HAI Dev to production Automation Map must not be disturbed without Gordon's
