@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.10'
+@Field static final String APP_VERSION = '2.4.11'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -11112,11 +11112,17 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (named != null) {
                 o.hue = named.hue
                 o.saturation = named.saturation
-            } else if (o.colorMode == 'Custom HSB color') {
+            } else if ((o.colorMode as String) in ['Custom HSB color', 'Custom RGB color']) {
+                // Custom RGB stores the same hue (0-100) and saturation as HSB,
+                // with the picked hex beside them in colorH: rules 2352 and 833,
+                // whose hex was checked against the stored hue (#FF00F7 -> 84,
+                // stored 83; #03000D -> 71, stored 70).
                 Integer h = hamDetailNumberOrNull(v["colorHex.${num}"])
                 Integer s = hamDetailNumberOrNull(v["colorSat.${num}"])
                 if (h != null) o.hue = h
                 if (s != null) o.saturation = s
+                String hex = "${v["colorH.${num}"] ?: ''}".trim()
+                if (o.colorMode == 'Custom RGB color' && hex ==~ /#[0-9A-Fa-f]{6}/) o.rgb = hex.toUpperCase()
             }
             Integer lvl = hamDetailNumberOrNull(v["colorLevel.${num}"])
             if (lvl != null) o.level = lvl
@@ -11421,17 +11427,19 @@ List extractRuleActions(Map data) {
 Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
     Map o = [:]
 
-    // A conditional trigger stores itself in the CONDITION namespace instead:
-    // rule 814's Presence trigger 27 has rCapab_27/state_27/rDev_27 and no
-    // tDev27 at all. Devices are taken from whichever namespace holds them.
-    List d = hamDetailDeviceRefs(dev["tDev${num}"] ?: dev["rDev_${num}"])
+    // Trigger settings only. Reading the condition namespace (rDev_<n>) as a
+    // fallback published rule 814's leftover tCapab27 as a Presence trigger:
+    // Rule Machine shows one trigger (20:00), trigDevs is empty, and 27's
+    // devices belong to a condition (Claude HAM, 2026-10-07). With no tDev
+    // the leftover is dropped by extractRuleTriggers like any other.
+    List d = hamDetailDeviceRefs(dev["tDev${num}"])
     if (d) o.devices = d
 
-    String state = "${v["tstate${num}"] ?: v["state_${num}"] ?: ''}".trim()
+    String state = "${v["tstate${num}"] ?: ''}".trim()
     if (state) o.value = state
-    String rel = "${v["ReltDev${num}"] ?: v["RelrDev_${num}"] ?: ''}".trim()
+    String rel = "${v["ReltDev${num}"] ?: ''}".trim()
     if (rel) o.comparator = rel
-    String all = "${v["AlltDev${num}"] ?: v["AllrDev_${num}"] ?: ''}".trim()
+    String all = "${v["AlltDev${num}"] ?: ''}".trim()
     if (all) o.allDevices = (all == 'true')
 
     // "and stays that way for" - a duration the trigger waits out before it

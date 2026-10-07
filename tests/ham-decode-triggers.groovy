@@ -96,15 +96,22 @@ Map attr = ops('1', 'Custom Attribute', [tCustomAttr: 'formattedUptime', tstate:
 check(attr.attribute == 'formattedUptime', 'a custom attribute names the attribute')
 check(attr.comparator == '*changed*', 'and a changed comparator is not mistaken for a value')
 
-// --- a conditional trigger lives in the CONDITION namespace ---------------
-// Rule 814's Presence trigger 27 stores rCapab_27/state_27/rDev_27 and has no
-// tDev27 at all. Reading only the trigger spelling publishes an empty trigger.
-Map cond = script.hamDetailTriggerOperands('27', 'Presence',
-    ['state_27': 'not present', 'AllrDev_27': 'false'],
-    ['rDev_27': [[id: '665', name: 'Lounge Repeater']]])
-check((cond.devices as List).size() == 1,
-      'a conditional trigger finds its devices in the condition namespace')
-check(cond.value == 'not present', 'and its compared value too')
+// --- rule 814: a leftover tCapab is not a trigger, even beside a condition --
+// 814 stores tCapab27='Presence' with no tDev27, and condition 27's settings
+// (rDev_27, state_27) beside it. Rule Machine shows one trigger, at 20:00;
+// trigDevs is empty. Reading the condition namespace published a phantom
+// Presence trigger that would fire whenever a repeater dropped (Claude HAM).
+List r814 = script.extractRuleTriggers([appSettings: [
+    [name: 'tCapab27', value: 'Presence'],
+    [name: 'rCapab_27', value: 'Presence'],
+    [name: 'rDev_27', value: null, deviceList: ['665': 'Lounge Repeater']],
+    [name: 'state_27', value: 'not present'],
+    [name: 'isCondTrig.27', value: 'true'],
+    [name: 'condTrig.27', value: '27'],
+    [name: 'tCapab30', value: 'Certain Time (and optional date)'],
+    [name: 'time30', value: '20:00']
+]])
+check(r814*.index == ['30'], "rule 814 publishes its one real trigger, not the leftover beside a condition (${r814*.index})".toString())
 
 // --- the phantom triggers from the rule-page audit ------------------------
 // 2865 and 2816 both store tCapab13='Switch' with no tDev13. Rule Machine
