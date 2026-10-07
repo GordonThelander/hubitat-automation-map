@@ -104,7 +104,9 @@ an Issue, never only into Concord.
 
 Local sessions: **do hub work only**, and hand code changes to the cloud session as a comment on its PR rather
 than making them. Do not commit or run the suites. The one commit a local session makes is the capture, step 2
-above. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub
+above.
+
+**Documentation exception** (agreed on HAI PR #34, 2026-10-07, at Gordon's request): a local session may also commit and push to `Supporting Docs/` and `docs/` only, on its own branch (`ham/docs-<topic>` or `hai/docs-<topic>`), and open a PR to `dev`. The cloud session reviews and merges it. Measurements are written down by the session that made them. Nothing else changes: no code paths, no pushes to `dev` / `HAI_Engine_Dev`, no version bumps. Cloud runs the suites (CI does as well) and merges. A change that has to reach the hub
 is merged after the hub check on its Issue passes.
 
 **The RM parity feed from HAI Dev to production Automation Map must not be disturbed without Gordon's
