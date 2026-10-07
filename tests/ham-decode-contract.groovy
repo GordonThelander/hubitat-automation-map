@@ -64,7 +64,7 @@ script.setState([
 
 Map summary = script.hamDecodeSummary()
 check(summary.contract == 'ham.decode/1', 'envelope names the contract')
-check(summary.contractSchemaVersion == 2, 'contract schema version is published, 2 since 2026-10-07')
+check(summary.contractSchemaVersion == 3, 'contract schema version is published, 3 since 2.4.9')
 check(summary.rmConstructVocabularyVersion == 1, 'construct vocabulary version is published separately')
 check(summary.supportedEngine == 'Rule-5.1', 'supported engine is published separately')
 check(summary.ok == true, 'a served response is ok')
@@ -190,9 +190,21 @@ script.setState([
     scanHeartbeat: 1790000000000L, scanError: null, appsUnreadable: 0, deviceIdsUnreadable: []
 ])
 Map detail = script.hamDecodeDetail()
-check(detail.contract == 'ham.decode.detail/1' && detail.contractSchemaVersion == 2, 'the detail is contract schema 2')
+check(detail.contract == 'ham.decode.detail/1' && detail.contractSchemaVersion == 3, 'the detail is contract schema 3')
 check(detail.complete == true && detail.ruleCount == 2 && (detail.keySet() as List).takeRight(2) == ['ruleCount', 'complete'],
       'the detail ends with ruleCount and complete, written last')
+check(detail.hubVariables == [:], 'no hub variable inventory means no types, never guessed ones')
+Map withVars = new LinkedHashMap(script.state)
+withVars.hubVariableInventory = [status: 'complete', variables: [
+    'Front Walkway Limiter': [type: 'Boolean', value: false], 'TestNumber': [type: 'integer', value: 3], 'Odd': [value: 1]]]
+script.setState(withVars)
+Map typed = script.hamDecodeDetail()
+check(typed.hubVariables == ['Front Walkway Limiter': 'boolean', 'TestNumber': 'integer'],
+      'each hub variable publishes the type the hub reports, lower-cased; one with no type is left out')
+check((typed.keySet() as List).takeRight(2) == ['ruleCount', 'complete'], 'and complete is still written last')
+withVars.hubVariableInventory = [status: 'failed', variables: ['X': [type: 'string']]]
+script.setState(withVars)
+check(script.hamDecodeDetail().hubVariables == [:], 'a failed inventory publishes no types')
 Map sys = (detail.rules as List).find { it.id == 'a2096' } as Map
 check(((sys.actions as List)[0].operands.rules as List) == ['1806'],
       'a deleted rule is dropped from the action it was named in; the live one stays')

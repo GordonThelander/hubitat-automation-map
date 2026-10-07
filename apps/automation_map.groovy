@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.8'
+@Field static final String APP_VERSION = '2.4.10'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -184,7 +184,11 @@ boolean showSanta() {
 // 2 (2026-10-07): waits say whether their time is a duration (useDuration, waitSeconds); condition
 // devices are {id, name}; a link to a deleted rule is a finding, not a link; and every document ends
 // with complete and ruleCount, so a reader can tell a whole file from one cut short.
-@Field static final int HAM_DECODE_CONTRACT_VERSION = 2
+// 3 (2026-10-07, 2.4.9): a conditional trigger names its condition (operands.condition, or
+// conditionMissing). A file below 3 cannot say whether a trigger is conditional, so a reader must not
+// take a trigger's silence there as "unconditional". Ten more actions carry operands, and the detail
+// file carries hubVariables, each hub variable's type as the hub reports it.
+@Field static final int HAM_DECODE_CONTRACT_VERSION = 3
 @Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
 @Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 // Named once here, not repeated as a literal in compatibilitySummary(),
@@ -11218,6 +11222,111 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             // invented at info.
             return [type: 'log', text: "${v["logmsg.${num}"] ?: ''}"]
 
+        // The keys below were read off this hub's rules by HAI's conversion
+        // spike (tools/rm_convert_spike.py in the HAI repository) and set
+        // against Rule Machine's own rendering where it says so. Absent is
+        // left out, never defaulted, so a consumer refuses what is missing.
+
+        case 'getSetDimmer':
+            // dimA.<n> devices, dimLA.<n> level, dimRA.<n> fade in seconds.
+            // Rule 3584 renders "Dim: Hallway Light: 67 --> fade: 2" for
+            // dimLA 67, dimRA 2. A fade of zero and no fade are different
+            // instructions to some drivers, so an absent fade stays absent.
+            Map o = [type: 'setLevel']
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["dimLA.${num}"])
+            if (lvl != null) o.level = lvl
+            Integer fade = hamDetailNumberOrNull(v["dimRA.${num}"])
+            if (fade != null) o.fadeSeconds = fade
+            return o
+
+        case 'getAdjustDimmer':
+            // The same dimA.<n> devices; dimAdj.<n> is the amount and
+            // dimAdjR.<n> 'true' means down. Published as stored, unsigned,
+            // with the direction beside it.
+            Map o = [type: 'adjustLevel', down: hamDetailBool(v["dimAdjR.${num}"])]
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer amount = hamDetailNumberOrNull(v["dimAdj.${num}"])
+            if (amount != null) o.amount = amount
+            return o
+
+        case 'getFlashSwitch':
+        case 'getRefreshSwitch':
+        case 'getPollSwitch':
+            // One device picker each and nothing else stored: flashSwitch.<n>,
+            // refresh.<n>, poll.<n>.
+            String key = ['getFlashSwitch': 'flashSwitch', 'getRefreshSwitch': 'refresh',
+                          'getPollSwitch': 'poll'][method]
+            Map o = [type: 'command', command: ['getFlashSwitch': 'flash', 'getRefreshSwitch': 'refresh',
+                                                'getPollSwitch': 'poll'][method]]
+            List d = hamDetailDeviceRefs(dev["${key}.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getChime':
+            // chime.<n> devices, chimePlayStop.<n> 'Play Sound' or a stop,
+            // chimePlaySound.<n> the sound number. Rules 2816 and 1845 render
+            // as sound 1 on the same devices. siren.<n> and toner.<n> are the
+            // same device stored again under its class name, not more devices.
+            String playStop = "${v["chimePlayStop.${num}"] ?: 'Play Sound'}".trim()
+            Map o = [type: 'chime', op: playStop == 'Play Sound' ? 'play' : 'stop']
+            List d = hamDetailDeviceRefs(dev["chime.${num}"])
+            if (d) o.devices = d
+            if (o.op == 'play') {
+                Integer sound = hamDetailNumberOrNull(v["chimePlaySound.${num}"])
+                if (sound != null) o.sound = sound
+            }
+            return o
+
+        case 'getSetMode':
+            // mode.<n> holds a mode ID, like every mode setting, so it is
+            // resolved to the name here: a consumer given '5' would set a mode
+            // literally named 5.
+            String id = "${v["mode.${num}"] ?: ''}".trim()
+            Map o = [type: 'setMode']
+            if (id) {
+                o.modeId = id
+                String name = hamDetailModeNames([id])[0]
+                if (name) o.mode = name
+            }
+            return o
+
+        case 'getOCGarage':
+            // garageOpenClose.<n> devices. garageRL.<n> is the direction and
+            // reads BACKWARDS: 'true' is CLOSE and empty is OPEN. Measured by
+            // Claude HAM on 2026-10-07 against Rule Machine's own page: rule
+            // 2777 renders action 10 (garageRL '') as "Open: Volos Garage Door
+            // Opener" and action 9 (garageRL 'true') as "Close:", and rule 2360
+            // "Garage Door Autoclose" stores 'true'. RL reads as raise/lower, so
+            // the obvious reading opens a door an autoclose rule should close.
+            // onOff.<n>, present on 2360 only, is 'true' for close as well; if
+            // the two ever disagree, nothing is published as the direction.
+            Map o = [type: 'garage']
+            List d = hamDetailDeviceRefs(dev["garageOpenClose.${num}"])
+            if (d) o.devices = d
+            boolean closing = hamDetailBool(v["garageRL.${num}"])
+            String onOffRaw = "${v["onOff.${num}"] ?: ''}".trim()
+            if (onOffRaw && hamDetailBool(onOffRaw) != closing) o.directionConflict = true
+            else o.command = closing ? 'close' : 'open'
+            return o
+
+        case 'getComment':
+            return [type: 'comment', text: "${v["comment.${num}"] ?: ''}"]
+
+        case 'getHTTPPost':
+            // httper.<n> the address, httpPostBody.<n> and httpPostType.<n>
+            // the body and its content type.
+            Map o = [type: 'http', method: 'post']
+            String url = "${v["httper.${num}"] ?: ''}".trim()
+            if (url) o.url = url
+            String body = "${v["httpPostBody.${num}"] ?: ''}"
+            if (body) o.body = body
+            String ct = "${v["httpPostType.${num}"] ?: ''}".trim()
+            if (ct) o.contentType = ct
+            return o
+
         default:
             return null
     }
@@ -11425,6 +11534,21 @@ List extractRuleTriggers(Map data) {
         Map ops = hamDetailTriggerOperands(num, cap, values, devices)
         // A device family with no devices is a leftover setting, not a trigger.
         if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        // A conditional trigger: it fires only while condition condTrig.<n>
+        // holds. Rule 3448 stores isCondTrig.<n> 'true' with condTrig.<n>
+        // 1, 3, 5 and 7 on triggers 2, 4, 6 and 8, and its state lists
+        // inUseTrigConds [1, 3, 5, 7]. The number is a condition's index in
+        // `conditions`. Dropping it makes a rebuilt trigger fire when Rule
+        // Machine's would not. Both spellings are read: the storage format
+        // documents isCondTrig<n>, the hub stores isCondTrig.<n>.
+        String condFlag = "${values["isCondTrig.${num}"] ?: values["isCondTrig${num}"] ?: ''}"
+        String condNum = "${values["condTrig.${num}"] ?: values["condTrig${num}"] ?: ''}".trim()
+        // Flagged with no condition number is published as such, so a
+        // consumer refuses it rather than reading it as unconditional.
+        if (hamDetailBool(condFlag)) {
+            if (condNum) ops.condition = condNum
+            else ops.conditionMissing = true
+        }
         out << [index: num, capability: cap, operands: ops]
     }
     return out.sort { Map t -> (t.index as String) as Integer }
@@ -11638,8 +11762,26 @@ Map hamDecodeDetail() {
         if (!((List) links.found).isEmpty()) rule.deletedRuleReferences = links.found
         return rule
     }
-    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules] +
+    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules,
+                                                    hubVariables: hamDecodeHubVariableTypes()] +
         hamDecodeComplete(rules)
+}
+
+// Each hub variable's type, as getAllGlobalVars() reports it ('integer',
+// 'bigdecimal', 'boolean', 'string', 'datetime'), from the inventory the scan
+// already read. A rule only implies a type by how it uses a variable, and two
+// rules can imply different ones: "Front Walkway Limiter" is set as a boolean in
+// rule 3523 and compared to "true" in rule 2180. The hub's own type settles it.
+// Empty when the inventory failed, never guessed.
+Map hamDecodeHubVariableTypes() {
+    Map inv = (state.hubVariableInventory ?: [:]) as Map
+    if (inv.status != 'complete') return [:]
+    Map out = [:]
+    ((inv.variables ?: [:]) as Map).each { Object k, Object v ->
+        Object t = (v instanceof Map) ? (v as Map).type : null
+        if (t != null) out["${k}".toString()] = "${t}".toLowerCase()
+    }
+    return out
 }
 
 // The last keys of every contract-2 document, written after the rules so a file

@@ -128,6 +128,22 @@ List timed = script.extractRuleTriggers([appSettings: [
 ]])
 check(timed.size() == 1, 'a periodic schedule survives having no device')
 
+// Conditional triggers, as rule 3448 stores them: isCondTrig.<n> and
+// condTrig.<n> with a dot, beside a tCapab<n> without one. Trigger 6 fires
+// only while condition 5 holds; trigger 9 is flagged false and is ordinary.
+List conditional = script.extractRuleTriggers([appSettings: [
+    [name: 'tCapab6', value: 'Periodic Schedule'], [name: 'whichPeriod6', value: 'Hours'],
+    [name: 'isCondTrig.6', value: 'true'], [name: 'condTrig.6', value: '5'],
+    [name: 'tCapab9', value: 'Periodic Schedule'], [name: 'whichPeriod9', value: 'Hours'],
+    [name: 'isCondTrig.9', value: 'false'], [name: 'condTrig.9', value: '7'],
+    [name: 'tCapab11', value: 'Periodic Schedule'], [name: 'whichPeriod11', value: 'Hours'],
+    [name: 'isCondTrig11', value: 'true']
+]])
+check(conditional[0].operands.condition == '5', 'a conditional trigger names the condition it is gated on')
+check(!conditional[1].operands.containsKey('condition'), 'a trigger flagged false is not conditional, whatever condTrig holds')
+check(conditional[2].operands.conditionMissing == true && !conditional[2].operands.containsKey('condition'),
+      'flagged with no condition number is published as missing, never as unconditional')
+
 // Negative suffixes are Wait-for-Events targets, not triggers.
 List waits = script.extractRuleTriggers([appSettings: [
     [name: 'tCapab-4', value: 'Motion'],
@@ -199,7 +215,7 @@ check(ev3.capability == 'Mode' && "${ev3.modes ?: ev3.value ?: ''}".contains('Ho
 check(script.hamDetailWaitEventsOperands('7', [:], [:], [:]) == [type: 'waitEvents', useDuration: false, events: []],
       'no events and no time is an empty wait, stated, not a failure')
 
-check(!block.contains('httpGet') && !block.contains('httpPost'),
+check(!(block =~ /\bhttp(Get|Post|Put|Delete)\s*\(/).find(),
       'the trigger block performs no hub I/O of its own')
 
 println "${passed} HAM decode trigger assertions passed"
