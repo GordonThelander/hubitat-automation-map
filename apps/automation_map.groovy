@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.7'
+@Field static final String APP_VERSION = '2.4.8'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -181,7 +181,10 @@ boolean showSanta() {
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
 // The decode contract's own shape, versioned independently of the construct
 // vocabulary and of the engine pin above. See the HAI decode contract block.
-@Field static final int HAM_DECODE_CONTRACT_VERSION = 1
+// 2 (2026-10-07): waits say whether their time is a duration (useDuration, waitSeconds); condition
+// devices are {id, name}; a link to a deleted rule is a finding, not a link; and every document ends
+// with complete and ruleCount, so a reader can tell a whole file from one cut short.
+@Field static final int HAM_DECODE_CONTRACT_VERSION = 2
 @Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
 @Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 // Named once here, not repeated as a literal in compatibilitySummary(),
@@ -10771,10 +10774,10 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
     // invisible to a value-only read. Without them a device condition says
     // what to compare and never what to compare it against.
     List devices = (settingDevices["rDev_${num}"] ?: settingDevices["rDev${num}"] ?: []) as List
-    if (devices) {
-        operands.devices = devices.collect { "${(it as Map).name}" }
-        operands.deviceIds = devices.collect { "${(it as Map).id}" }
-    }
+    // {id, name} like every other device reference in this document (contract 2,
+    // backlog 55). Until then names and ids were parallel lists paired only by
+    // position, which nothing enforced.
+    if (devices) operands.devices = hamDetailDeviceRefs(devices)
     String anyAll = "${settingValues["AllrDev${num}"] ?: ''}".trim()
     if (anyAll) operands.anyAll = anyAll
 
@@ -10905,23 +10908,69 @@ List hamDetailDeviceRefs(Object raw) {
 ]
 
 // Wait for Expression. Its condition is the expression group already
-// published as the step's expressionGroup; its timeout is not a setting but the
+// published as the step's expressionGroup; its time is not a setting but the
 // stored action's own `delay`, as h:mm:ss (storage format sections 7 and 12,
 // rule 2279: "0:10:00"). No delay means it waits indefinitely, as Rule Machine
 // does. A delay in any other form travels raw, for a consumer to refuse.
-Map hamDetailWaitRuleOperands(Map stored) {
-    Map o = [type: 'waitExpression']
+//
+// What the time MEANS is durChoice.<n>: 'true' is Rule Machine's Use Duration
+// (the expression or events must hold that long), anything else a timeout.
+// Measured 2026-10-06/07: all eleven waits on this hub that store a time have
+// 'true', and probe rule 3594 holds one of each - 'true' with 2 minutes, 'false'
+// with 3, identical otherwise. Contract 1 published every time as
+// timeoutSeconds, the wrong one of the two in all eleven cases (backlog 57).
+// useDuration is always published as a boolean, so a consumer never reads
+// absence as a third state (Claude HAM's call, agreed 2026-10-07 on PR #3).
+// Shared by Wait for Expression and Wait for Events, which store it alike.
+void hamDetailWaitTime(Map o, String num, Map stored, Map values) {
+    o.useDuration = hamDetailBool((values ?: [:])["durChoice.${num}"])
     String raw = "${stored.delay ?: ''}".trim()
-    if (!raw) return o
+    if (!raw) return
     // Split rather than a pattern: this file holds no backslashes (validate.ps1).
     List parts = raw.tokenize(':')
     boolean hms = parts.size() == 3 && parts.every { String p -> p.isInteger() && (p as Integer) >= 0 } &&
                   (parts[1] as Integer) < 60 && (parts[2] as Integer) < 60
     if (hms) {
-        o.timeoutSeconds = (parts[0] as Integer) * 3600 + (parts[1] as Integer) * 60 + (parts[2] as Integer)
+        o.waitSeconds = (parts[0] as Integer) * 3600 + (parts[1] as Integer) * 60 + (parts[2] as Integer)
     } else {
-        o.timeoutRaw = raw
+        o.waitRaw = raw
     }
+}
+
+Map hamDetailWaitRuleOperands(Map stored, String num = null, Map values = null) {
+    Map o = [type: 'waitExpression']
+    hamDetailWaitTime(o, num, stored, values)
+    return o
+}
+
+// Wait for Events keeps its events in a rule-global dash namespace - tCapab-1,
+// tDev-1, tstate-1, stays-1, modesX-1 - rather than under the action, and Rule
+// Machine 5.1 allows only ONE Wait for Events per rule for exactly that reason
+// (a second silently overwrites the first; Hubitat's own editor does the same).
+// So there is no action to bind the events to and nothing to resolve. The field
+// shape is a trigger's, so the trigger resolver reads them against the dash
+// suffix - which also gets a Mode event right: it is stored as modesX-<n>, the
+// dash form of the trigger's modesX<n>. Measured by Claude HAM on the Dev hub,
+// 2026-10-07: all ten on this hub decode, including a stays-for clause, a Mode
+// event and a 02:00 clock time (HAM cloud/more-rm-actions 6c0616ad).
+Map hamDetailWaitEventsOperands(String num, Map stored, Map values, Map devices) {
+    Map o = [type: 'waitEvents']
+    hamDetailWaitTime(o, num, stored, values)
+    List events = []
+    values.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        if (!key.startsWith('tCapab-')) return
+        String suffix = key.substring('tCapab'.length())
+        if (!suffix.matches('^-[0-9]+$')) return
+        String cap = "${values[key] ?: ''}".trim()
+        if (!cap) return
+        Map ops = hamDetailTriggerOperands(suffix, cap, values, devices)
+        // The triggers' own leftover test: a device family with no devices is a
+        // stale setting rather than an event.
+        if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        events << ([index: suffix, capability: cap] + ops)
+    }
+    o.events = events.sort { Map e -> ("${e.index}".substring(1)) as Integer }
     return o
 }
 
@@ -11216,9 +11265,14 @@ List extractRuleActions(Map data) {
         Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
         if (evalGroup != null) step.expressionGroup = "${evalGroup}"
 
-        Map ops = method == 'getWaitRule'
-            ? hamDetailWaitRuleOperands((storedActions[num] ?: [:]) as Map)
-            : hamDetailActionOperands(num, method, values, devices)
+        Map ops
+        if (method == 'getWaitRule') {
+            ops = hamDetailWaitRuleOperands((storedActions[num] ?: [:]) as Map, num, values)
+        } else if (method == 'getWaitEvents') {
+            ops = hamDetailWaitEventsOperands(num, (storedActions[num] ?: [:]) as Map, values, devices)
+        } else {
+            ops = hamDetailActionOperands(num, method, values, devices)
+        }
         if (ops == null) {
             step.supported = false
         } else {
@@ -11502,7 +11556,8 @@ Map hamDecodeSummary() {
                 constructs: ((n.rmConstructs ?: []) as List),
                 stepCount: hamDecodeStepCount(steps)]
     }
-    return hamDecodeEnvelope(HAM_SUMMARY_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
+    return hamDecodeEnvelope(HAM_SUMMARY_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules] +
+        hamDecodeComplete(rules)
 }
 
 // Published as a hub file rather than an endpoint: a sibling app reads
@@ -11544,11 +11599,13 @@ Map hamDecodeDetail() {
     Map graph = (state.graph ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
     Map appInfo = (state.appInfo ?: [:]) as Map
+    Set deleted = hamDecodeDeletedRuleIds()
     List rules = hamDecodeRuleNodes().collect { Object rawNode ->
         Map n = rawNode as Map
         String id = "${n.id}"
         Map info = (appInfo[id.startsWith('a') ? id.substring(1) : id] ?: [:]) as Map
-        return [id: id,
+        Map links = hamDecodeDropDeletedLinks(((info.actions ?: []) as List), ((flows[id] ?: []) as List), deleted)
+        Map rule = [id: id,
                 name: "${n.name ?: n.label ?: id}",
                 engine: "${n.appType}",
                 status: hamDecodeStatus(n),
@@ -11561,7 +11618,7 @@ Map hamDecodeDetail() {
                 // constructs that are half of every action on this hub.
                 // Anything else carries supported:false and its method name,
                 // to be refused by name rather than converted on a guess.
-                actions: ((info.actions ?: []) as List),
+                actions: links.actions,
                 // Resolved triggers, operands not labels: device ids, the
                 // compared value, the comparator and the stays-for duration.
                 // A rule rebuilt without its trigger is inert while looking
@@ -11577,9 +11634,67 @@ Map hamDecodeDetail() {
                 // than from Rule Machine's own indent field (wrong on rule
                 // 2816), and actionList order. Kept beside the resolved
                 // actions rather than replaced by them: this is what draws.
-                steps: ((flows[id] ?: []) as List)]
+                steps: links.steps]
+        if (!((List) links.found).isEmpty()) rule.deletedRuleReferences = links.found
+        return rule
     }
-    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules]
+    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules] +
+        hamDecodeComplete(rules)
+}
+
+// The last keys of every contract-2 document, written after the rules so a file
+// cut short loses them. Groovy 2.4's JsonSlurper - the hub's - parses a document
+// truncated at a point that is still valid JSON as complete, so a reader cannot
+// tell from parsing alone; it can tell from these.
+Map hamDecodeComplete(List rules) {
+    return [ruleCount: rules.size(), complete: true]
+}
+
+// Rules a scanned rule still names but that no longer exist: the graph marks
+// such a target missing when its id resolves to nothing (deleted, not merely
+// unscanned). Bare ids, as the links carry them.
+Set hamDecodeDeletedRuleIds() {
+    Object rawNodes = ((state.graph ?: [:]) as Map).nodes
+    List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList() : ((rawNodes ?: []) as List)
+    return nodes.findAll { it instanceof Map && (it as Map).missing }.collect {
+        String nid = "${(it as Map).id}"
+        nid.startsWith('a') ? nid.substring(1) : nid
+    } as Set
+}
+
+// A link to a deleted rule is not a link: Rule Machine does nothing for it, and
+// a consumer handed it can only fail on it (2096 named 2354 among 42 Set Private
+// Boolean targets; HAI refused the whole copy). Gordon, 2026-10-07: drop it from
+// the links and say so as a finding, so the person can clean it up in Rule
+// Machine. Dropping it changes nothing the rule does. Copies, never the scan's
+// own lists.
+Map hamDecodeDropDeletedLinks(List actions, List steps, Set deleted) {
+    List found = []
+    if (deleted.isEmpty()) return [actions: actions, steps: steps, found: found]
+    List outActions = actions.collect { Object raw ->
+        if (!(raw instanceof Map)) return raw
+        Map a = raw as Map
+        Map ops = a.operands instanceof Map ? (Map) a.operands : null
+        if (ops == null || !(ops.rules instanceof List)) return a
+        List gone = ((List) ops.rules).findAll { deleted.contains("${it}".toString()) }
+        if (gone.isEmpty()) return a
+        gone.each { found << [ruleId: "${it}".toString(), action: "${a.index}".toString()] }
+        Map copy = new LinkedHashMap(a)
+        Map opsCopy = new LinkedHashMap(ops)
+        opsCopy.rules = ((List) ops.rules).findAll { !deleted.contains("${it}".toString()) }
+        copy.operands = opsCopy
+        return copy
+    }
+    List outSteps = steps.collect { Object raw ->
+        if (!(raw instanceof Map) || !((raw as Map).ruleTargets instanceof List)) return raw
+        Map st = raw as Map
+        List keep = ((List) st.ruleTargets).findAll { !deleted.contains("${it}".toString()) }
+        if (keep.size() == ((List) st.ruleTargets).size()) return st
+        Map copy = new LinkedHashMap(st)
+        copy.ruleTargets = keep
+        return copy
+    }
+    return [actions: outActions, steps: outSteps, found: found.unique()]
 }
 
 void hamDecodeWriteDetailFile() {
