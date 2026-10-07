@@ -154,11 +154,23 @@ check(ops('5', 'getStopActions', [stopAct: '["*","1809"]']).with { type == 'canc
 check(ops('8', 'getPauseResumeRules', [pauseRule: '["2972"]', pR: 'true']).type == 'resumeRules', 'pR true is Resume (rule 2972 action 8)')
 check(ops('6', 'getPauseResumeRules', [pauseRule: '["2972"]', pR: '']).type == 'pauseRules', 'pR empty is Pause (rule 2972 action 6)')
 
-check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']) == [type: 'waitExpression', timeoutSeconds: 600],
-      'a Wait for Expression timeout is the stored action delay, h:mm:ss')
-check(script.hamDetailWaitRuleOperands([rule: 1]) == [type: 'waitExpression'], 'no delay means it waits indefinitely')
-check(script.hamDetailWaitRuleOperands([rule: 1, delay: 'ten minutes']).timeoutRaw == 'ten minutes',
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']) == [type: 'waitExpression', useDuration: false, waitSeconds: 600],
+      'a Wait for Expression time is the stored action delay, h:mm:ss, under a name that does not claim its kind')
+check(script.hamDetailWaitRuleOperands([rule: 1]) == [type: 'waitExpression', useDuration: false], 'no delay means it waits indefinitely')
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: 'ten minutes']).waitRaw == 'ten minutes',
       'a delay in another form travels raw, never guessed')
+// durChoice.<n> is what the time means (backlog 57, measured 2026-10-06: rule 2279 action 6 and rule 2276
+// action 4 both store 'true', Use Duration). Contract 1 called every one of them a timeout.
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:05:00'], '6', ['durChoice.6': 'true']) ==
+      [type: 'waitExpression', useDuration: true, waitSeconds: 300],
+      "durChoice 'true' is Use Duration: the expression must hold that long")
+// Probe rule 3594 (Claude HAM, 2026-10-07): one wait at durChoice 'true' for 2 minutes, one at 'false' for 3.
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:03:00'], '2', ['durChoice.2': 'false']) ==
+      [type: 'waitExpression', useDuration: false, waitSeconds: 180], "durChoice 'false' is a timeout (probe 3594)")
+check(script.hamDetailWaitRuleOperands([rule: 1, delay: '0:00:30'], '9', [:]).useDuration == false,
+      'useDuration is always a boolean, never absent: a consumer must not read absence as a third state')
+check(!script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']).containsKey('timeoutSeconds'),
+      'contract 2 does not publish timeoutSeconds at all')
 
 // getSetColorTemp was the example here until it was decoded on 2026-10-06; getChime still is not.
 check(ops('4', 'getChime', [:]) == null, 'an unsupported construct resolves to nothing')
