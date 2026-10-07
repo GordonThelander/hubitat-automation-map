@@ -184,7 +184,10 @@ boolean showSanta() {
 // 2 (2026-10-07): waits say whether their time is a duration (useDuration, waitSeconds); condition
 // devices are {id, name}; a link to a deleted rule is a finding, not a link; and every document ends
 // with complete and ruleCount, so a reader can tell a whole file from one cut short.
-@Field static final int HAM_DECODE_CONTRACT_VERSION = 2
+// 3 (2026-10-07, 2.4.9): a conditional trigger names its condition (operands.condition, or
+// conditionMissing). A file below 3 cannot say whether a trigger is conditional, so a reader must not
+// take a trigger's silence there as "unconditional". Nine more actions carry operands.
+@Field static final int HAM_DECODE_CONTRACT_VERSION = 3
 @Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
 @Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 // Named once here, not repeated as a literal in compatibilitySummary(),
