@@ -61,10 +61,19 @@ builds probe rules and measures, then posts the measured storage shape and the o
 cloud PR for that area. The cloud session writes the decoder and HAI's converter from it, usually within
 minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for Events.
 
+**Standing permissions** (Gordon, 2026-10-07 - granted once; do not ask him again for any of these):
+- Local sessions push their commits, to their branches and to `dev` / `HAI_Engine_Dev` for hub-verified Dev
+  builds, and make patch-version bumps for Dev builds (the release guard checks the bump is consistent).
+- The cloud session pushes to its branches, opens PRs, and merges its own PRs into `dev` / `HAI_Engine_Dev`
+  once CI is green and the hub check on the Issue has passed. On Automation Map that merge is the HPM Dev release.
+- Deploying to the Dev hub, reading anything, running tests, and everything technical agreed between agents.
+Gordon is asked only for: production releases (`main` / `preprod`), changes to the parity feed production shows,
+and destructive hub actions (reboot, firmware, radios, HSM, sirens, garage). Nothing else.
+
 **Settle it between agents; Gordon is not the relay** (Gordon, 2026-10-07). Technical questions - who writes
 what, resolving a collision, what a measurement means, which build goes to Dev - are agreed between agents on
-the PR or Issue. Gordon is asked only for his permissions (local pushes, version bumps, merges into the dev
-branches, the feed) and genuine product decisions, once, in your own chat, with the decision stated.
+the PR or Issue. Gordon is asked only for what the standing permissions below leave him, and for genuine product
+decisions, once, in your own chat, with the decision stated.
 
 **Nothing wakes a local session.** A PR comment wakes the cloud session; a local session is woken by nothing,
 so after asking anything it polls for the answer or binds the PR. Asking is the start of a wait, not the end of
@@ -76,8 +85,6 @@ the task. Channels in one page: `docs/AGENT_CHANNELS.md` in the HAI repository.
 - Every build deployed to the hub carries an incremented version (Automation Map `APP_VERSION`, HAI
   `ENGINE_APP_VERSION`), is committed and pushed to `dev` / `HAI_Engine_Dev`, and the deploy's Issue comment
   names the full SHA that is on the hub.
-- Pushing and version bumps still need Gordon's permission. Ask him for it in your own chat, at the point
-  you need it, rather than waiting or working around it.
 
 **`dev` is the HPM Dev channel; a merge into it is a release** (Gordon, 2026-10-07). Testers get the app on `dev`,
 offered when `packageManifest.json`'s version rises. So any change to `apps/` reaching `dev` raises `APP_VERSION`,

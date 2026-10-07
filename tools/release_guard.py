@@ -61,7 +61,7 @@ def main():
         for p in problems:
             print('  - ' + p)
         print('Bump APP_VERSION, packageManifest.json version and apps[0].version together, and start the release '
-              'notes with the new version. Version bumps need Gordon.')
+              'notes with the new version. Patch bumps for Dev builds are a standing permission (CLAUDE.md).')
         return 1
     print('release guard: %s, stated consistently%s' % (head, ' and raised for the app change' if base else ''))
     return 0
