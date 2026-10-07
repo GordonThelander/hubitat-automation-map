@@ -56,6 +56,11 @@ engine/app, apps/, tests/, tools/; fixtures excepted). He can allow it. Otherwis
 session within seconds, an Issue comment does not. Before touching any area, check `gh pr list` for an open
 cloud PR on it.
 
+**Measurement on the hub, decoder in the cloud** (agreed on Automation Map PR #3, 2026-10-07). A local session
+builds probe rules and measures, then posts the measured storage shape and the observed behaviour on the
+cloud PR for that area. The cloud session writes the decoder and HAI's converter from it, usually within
+minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for Events.
+
 **The cloud session cannot see local commits.** What is on the hub must be on GitHub:
 - Push every local commit in the same session. A commit that is only on Gordon's machine does not exist for
   anyone else, and work gets duplicated against it.
