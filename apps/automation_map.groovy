@@ -10914,17 +10914,18 @@ List hamDetailDeviceRefs(Object raw) {
 // does. A delay in any other form travels raw, for a consumer to refuse.
 //
 // What the time MEANS is durChoice.<n>: 'true' is Rule Machine's Use Duration
-// (the expression must stay true that long), anything else a timeout. Measured
-// 2026-10-06: all eleven waits on this hub that store a time have 'true'. Until
-// contract 2 this published the time as timeoutSeconds, which asserted the wrong
-// one in every case the hub has (backlog 57). The seconds now have a neutral
-// name and useDuration says which; it is absent when nothing is stored.
-Map hamDetailWaitRuleOperands(Map stored, String num = null, Map values = null) {
-    Map o = [type: 'waitExpression']
+// (the expression or events must hold that long), anything else a timeout.
+// Measured 2026-10-06/07: all eleven waits on this hub that store a time have
+// 'true', and probe rule 3594 holds one of each - 'true' with 2 minutes, 'false'
+// with 3, identical otherwise. Contract 1 published every time as
+// timeoutSeconds, the wrong one of the two in all eleven cases (backlog 57).
+// useDuration is always published as a boolean, so a consumer never reads
+// absence as a third state (Claude HAM's call, agreed 2026-10-07 on PR #3).
+// Shared by Wait for Expression and Wait for Events, which store it alike.
+void hamDetailWaitTime(Map o, String num, Map stored, Map values) {
+    o.useDuration = hamDetailBool((values ?: [:])["durChoice.${num}"])
     String raw = "${stored.delay ?: ''}".trim()
-    if (!raw) return o
-    String dur = num == null ? '' : "${(values ?: [:])["durChoice.${num}"] ?: ''}".trim()
-    if (dur) o.useDuration = (dur == 'true')
+    if (!raw) return
     // Split rather than a pattern: this file holds no backslashes (validate.ps1).
     List parts = raw.tokenize(':')
     boolean hms = parts.size() == 3 && parts.every { String p -> p.isInteger() && (p as Integer) >= 0 } &&
@@ -10934,6 +10935,42 @@ Map hamDetailWaitRuleOperands(Map stored, String num = null, Map values = null) 
     } else {
         o.waitRaw = raw
     }
+}
+
+Map hamDetailWaitRuleOperands(Map stored, String num = null, Map values = null) {
+    Map o = [type: 'waitExpression']
+    hamDetailWaitTime(o, num, stored, values)
+    return o
+}
+
+// Wait for Events keeps its events in a rule-global dash namespace - tCapab-1,
+// tDev-1, tstate-1, stays-1, modesX-1 - rather than under the action, and Rule
+// Machine 5.1 allows only ONE Wait for Events per rule for exactly that reason
+// (a second silently overwrites the first; Hubitat's own editor does the same).
+// So there is no action to bind the events to and nothing to resolve. The field
+// shape is a trigger's, so the trigger resolver reads them against the dash
+// suffix - which also gets a Mode event right: it is stored as modesX-<n>, the
+// dash form of the trigger's modesX<n>. Measured by Claude HAM on the Dev hub,
+// 2026-10-07: all ten on this hub decode, including a stays-for clause, a Mode
+// event and a 02:00 clock time (HAM cloud/more-rm-actions 6c0616ad).
+Map hamDetailWaitEventsOperands(String num, Map stored, Map values, Map devices) {
+    Map o = [type: 'waitEvents']
+    hamDetailWaitTime(o, num, stored, values)
+    List events = []
+    values.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        if (!key.startsWith('tCapab-')) return
+        String suffix = key.substring('tCapab'.length())
+        if (!suffix.matches('^-[0-9]+$')) return
+        String cap = "${values[key] ?: ''}".trim()
+        if (!cap) return
+        Map ops = hamDetailTriggerOperands(suffix, cap, values, devices)
+        // The triggers' own leftover test: a device family with no devices is a
+        // stale setting rather than an event.
+        if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        events << ([index: suffix, capability: cap] + ops)
+    }
+    o.events = events.sort { Map e -> ("${e.index}".substring(1)) as Integer }
     return o
 }
 
@@ -11228,9 +11265,14 @@ List extractRuleActions(Map data) {
         Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
         if (evalGroup != null) step.expressionGroup = "${evalGroup}"
 
-        Map ops = method == 'getWaitRule'
-            ? hamDetailWaitRuleOperands((storedActions[num] ?: [:]) as Map, num, values)
-            : hamDetailActionOperands(num, method, values, devices)
+        Map ops
+        if (method == 'getWaitRule') {
+            ops = hamDetailWaitRuleOperands((storedActions[num] ?: [:]) as Map, num, values)
+        } else if (method == 'getWaitEvents') {
+            ops = hamDetailWaitEventsOperands(num, (storedActions[num] ?: [:]) as Map, values, devices)
+        } else {
+            ops = hamDetailActionOperands(num, method, values, devices)
+        }
         if (ops == null) {
             step.supported = false
         } else {
