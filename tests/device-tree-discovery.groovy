@@ -325,6 +325,20 @@ check('the first record explicitly reporting true wins - a later record reportin
     assert r17.disabledDevices == ['162']
 }
 
+println '--- 18. whether the hub reported disabled state at all (HAI Issue #45) ---'
+check('a list where any record carries the field says it was reported, even when none is disabled') {
+    assert r15.disabledFieldSeen == true
+    assert r14.disabledFieldSeen == true
+}
+def r18 = aggregateDeviceTree([devices: [
+    [key: 'DEV-170', data: [id: 170, name: 'Hall Light'], child: false, parent: false, children: []],
+    [key: 'DEV-171', data: [id: 171, name: 'Front Door'], child: false, parent: false, children: []],
+]])
+check('a list where no record carries the field says it was not reported, so [] is not "none disabled"') {
+    assert r18.disabledFieldSeen == false
+    assert r18.disabledDevices == []
+}
+
 println ''
 println "${pass} passed, ${fail} failed"
 System.exit(fail == 0 ? 0 : 1)
