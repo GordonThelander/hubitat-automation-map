@@ -305,6 +305,16 @@ Rule Machine's stored target IDs.
 - `unreferencedDevices`: devices with no mapped incoming relationship;
 - `inertApps`: installed apps with no device or rule relationship, including a reason;
 - `brokenRuleReferences`: deleted rule targets and the rules still referencing them.
+- `haiRuleContainers` (2.4.15, HAI Issue #44): HAI Rule Container child apps judged by their own
+  saved state, never their name. `withoutRule` lists containers whose state holds no rule id and
+  nothing staged and which have no event subscriptions. `nameStateMismatches` lists containers
+  whose name disagrees with that state (`named-as-rule-without-rule`: named `[HAI] ...` with no
+  rule; `placeholder-name-with-rule`: still the `HAI rule <id>` placeholder while holding one),
+  each with `defectIn: "HAI"`. `couldNotCheck` lists containers whose state could not be read or
+  was not in the expected shape, with the reason, and `appsOfUnknownType` counts apps the scan
+  could not read at all, any of which may be a container. An empty `withoutRule` is a clean result
+  only when both of those are empty too. `checkedCount` is the number actually judged, and
+  `summary.haiRuleContainerWithoutRuleCount` equals `withoutRule.length`.
 
 These are precomputed conveniences, not additional source facts. A conforming consumer may
 recalculate them from nodes and edges and should report a mismatch as a validation warning.

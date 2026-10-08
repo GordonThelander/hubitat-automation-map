@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.14'
+@Field static final String APP_VERSION = '2.4.15'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -188,7 +188,10 @@ boolean showSanta() {
 // conditionMissing). A file below 3 cannot say whether a trigger is conditional, so a reader must not
 // take a trigger's silence there as "unconditional". Ten more actions carry operands, and the detail
 // file carries hubVariables, each hub variable's type as the hub reports it.
-@Field static final int HAM_DECODE_CONTRACT_VERSION = 3
+// 4 (2026-10-08, 2.4.15): the detail file carries disabledDevices, the bare ids of every device the
+// scan saw as disabled, ascending. Empty means none is; the key is absent when the scan could not
+// tell, so a reader below 4, or one finding no key, must not take that as "none disabled".
+@Field static final int HAM_DECODE_CONTRACT_VERSION = 4
 @Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
 @Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 // Named once here, not repeated as a literal in compatibilitySummary(),
@@ -219,6 +222,10 @@ boolean showSanta() {
 // in the state file. Deliberately a second file: the state file is rewritten
 // whenever a rule changes and this list only moves when the engine is built.
 @Field static final String HAI_CAPABILITIES_FILE = 'hai-am-capabilities.json'
+// Each HAI rule lives in one child app of this type ('HAI Rule Container' and
+// 'HAI Rule Container (DEV)'), matched as a substring for the same reason as
+// the prefixes above. See haiContainerFacts().
+@Field static final String HAI_RULE_CONTAINER_TYPE = 'HAI Rule Container'
 
 
 @Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
@@ -2111,6 +2118,9 @@ Map startScan(String entry = 'unknown') {
     // Every device id the hub itself reports disabled. A List, not a Map -
     // sparse and only ever tested for membership (item 18).
     state.deviceDisabled = bulk.disabledDevices as List
+    // Read by hamDecodeDisabledDevices(): an empty list above is a fact only
+    // when the hub reported the field for at least one device.
+    state.deviceDisabledChecked = (bulk.disabledFieldSeen == true)
     state.deviceCapabilities = [:]
     // Map of representative device id -> every device id sharing its driver
     // (deviceTypeId), including the representative itself. dispatchDeviceOne
@@ -3381,7 +3391,8 @@ void finishScan(data = null) {
 // recover an endpoint-omitted room (or confirm it is genuinely unassigned)
 // without broadcasting one atypical response across its whole driver group.
 Map fetchDeviceListBulk() {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [],
+               disabledFieldSeen: false, error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
@@ -3413,7 +3424,8 @@ Map fetchDeviceListBulk() {
 // device seen more than once during the walk (top level and nested, or
 // nested under more than one path) is grouped exactly once.
 Map aggregateDeviceTree(Map data) {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [],
+               disabledFieldSeen: false, error: null]
     Map<String, Map> byId = [:]
     List order = []
     List pending = []
@@ -3449,6 +3461,10 @@ Map aggregateDeviceTree(Map data) {
         // absent", which for a boolean is wrong: false is real information,
         // not emptiness.
         if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
+        // Whether the hub reported disabled state at all. Without one record
+        // carrying the field, an empty disabledDevices means "not told", not
+        // "none disabled", and the decode detail must not publish it as the latter.
+        if (d.containsKey('disabled')) out.disabledFieldSeen = true
     }
     Map typeGroups = [:]
     order.each { String devId ->
@@ -4183,6 +4199,10 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             out.disabled = (installedApp?.disabled == true)
             out.paused = paused
             out.inactive = out.disabled || out.paused
+            // HAI Issue #44. Read from the same response, no extra call.
+            if ("${out.type}".contains(HAI_RULE_CONTAINER_TYPE)) {
+                out.haiContainer = haiContainerFacts(data, out.drawLabel as String)
+            }
 
             Map roles = [:]
             List stateful = []
@@ -9927,6 +9947,61 @@ List scheduledJobList(def raw) {
     return []
 }
 
+// One HAI Rule Container's own account of whether it ever received a rule
+// (HAI Issue #44). Keyed on its state, never its name: HAI keeps everything
+// under state.rt, whose ruleId is set when a rule is first staged into it,
+// so ruleId and staged both null with no event subscription is a container
+// that never received one. The name is read only to say whether
+// it agrees - "[HAI] <name>" claims a rule, "HAI rule <id>" is the
+// placeholder HAI gives a container before it has one - because a
+// disagreement is a defect in HAI, not in the hub.
+//
+// Anything not in the expected shape is "could not check" with the reason,
+// never a verdict either way: an rt entry missing, not a map, or one that
+// says no rule while holding subscriptions or a staged rule is something
+// this scan does not understand, and reading it as "no orphan" would be a
+// clean bill of health it never earned.
+//
+// Shape: [checked: true, ruleId: String|null, staged: boolean, subs: int,
+//         nameKind: 'rule'|'placeholder'|'other']
+//     or [checked: false, reason: String]
+Map haiContainerFacts(Map data, String label) {
+    Object rtRaw = null
+    boolean rtSeen = false
+    Object entries = data?.appState
+    if (!(entries instanceof List)) return [checked: false, reason: 'its state was not in the hub response']
+    (entries as List).each { Object e ->
+        if (e instanceof Map && "${(e as Map).name}" == 'rt') { rtSeen = true; rtRaw = (e as Map).value }
+    }
+    if (!rtSeen) return [checked: false, reason: 'its state holds no rt entry']
+    // Not yet measured whether statusJson returns a map-valued state entry as
+    // an object or as its JSON text, so both are read rather than one refused.
+    if (rtRaw instanceof String) {
+        try { rtRaw = new groovy.json.JsonSlurper().parseText(rtRaw as String) } catch (Exception ex) { rtRaw = null }
+    }
+    if (!(rtRaw instanceof Map)) return [checked: false, reason: 'its rt state is not a map']
+    Map rt = rtRaw as Map
+    // v is written by HAI's own state initialiser and never removed, so a map
+    // without it is not the shape this check was written against.
+    if (!rt.containsKey('v')) return [checked: false, reason: 'its rt state has no version marker']
+    if (!(data.eventSubscriptions instanceof List)) {
+        return [checked: false, reason: 'its event subscriptions were not in the hub response']
+    }
+    int subs = (data.eventSubscriptions as List).size()
+    String ruleId = rt.ruleId == null ? null : "${rt.ruleId}".toString()
+    boolean staged = rt.staged != null
+    if (ruleId == null && staged) return [checked: false, reason: 'its state holds a staged rule with no rule id']
+    if (ruleId == null && subs > 0) {
+        return [checked: false, reason: "its state names no rule but it holds ${subs} event subscription${subs == 1 ? '' : 's'}".toString()]
+    }
+    String name = (label ?: '').trim()
+    // No regex: a backslash in this file is the mistake check_template.sh guards.
+    String placeholderId = name.startsWith('HAI rule ') ? name.substring('HAI rule '.length()) : ''
+    boolean placeholder = placeholderId && !placeholderId.contains(' ')
+    String nameKind = name.startsWith('[HAI]') ? 'rule' : (placeholder ? 'placeholder' : 'other')
+    return [checked: true, ruleId: ruleId, staged: staged, subs: subs, nameKind: nameKind]
+}
+
 // Removes hub-injected status from an app label, CONTENT AND ALL, where
 // stripTags removes only the markup and keeps the words.
 //
@@ -11789,9 +11864,33 @@ Map hamDecodeDetail() {
         if (!((List) links.found).isEmpty()) rule.deletedRuleReferences = links.found
         return rule
     }
-    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules,
-                                                    hubVariables: hamDecodeHubVariableTypes()] +
-        hamDecodeComplete(rules)
+    Map body = [ok: true, issue: null, scan: hamDecodeScan(), rules: rules,
+                hubVariables: hamDecodeHubVariableTypes()]
+    // Absent, not empty, when the scan could not tell: see below.
+    List disabledDevices = hamDecodeDisabledDevices()
+    if (disabledDevices != null) body.disabledDevices = disabledDevices
+    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + body + hamDecodeComplete(rules)
+}
+
+// Contract 4 (HAI Issue #45): every device the scan saw as disabled, as bare
+// device ids in ascending numeric order. The fact, not a conclusion - which
+// rules use one, and what that means for them, is the reader's to work out,
+// and this app's own disabledDevicesStillUsed insight stays its own.
+//
+// Three answers, never two: a list (possibly empty, meaning the hub reported
+// disabled state and none is disabled), or null when the scan never learnt
+// it - no scan since this field existed, or a device list in which no record
+// carried the field. A caller omits the key for null. Defaulting that to []
+// would tell HAI "none disabled" about a hub it was never told about.
+List hamDecodeDisabledDevices() {
+    if (state.deviceDisabledChecked != true || !(state.deviceDisabled instanceof List)) return null
+    List ids = ((state.deviceDisabled as List).collect { "${it}".toString() }).unique()
+    return ids.sort { String a, String b ->
+        boolean an = a.isLong(), bn = b.isLong()
+        if (an && bn) return (a as Long) <=> (b as Long)
+        if (an != bn) return an ? -1 : 1
+        return a <=> b
+    }
 }
 
 // Each hub variable's type, as getAllGlobalVars() reports it ('integer',
@@ -13125,6 +13224,9 @@ Map buildGraph() {
         if (appMap.disabled) nodes[appNodeId].disabled = true
         if (appMap.paused) nodes[appNodeId].paused = true
         if (appMap.broken) nodes[appNodeId].broken = true
+        // HAI Issue #44: the container's own state facts, judged in
+        // deriveInsightData() like every other finding.
+        if (appMap.haiContainer instanceof Map) nodes[appNodeId].haiContainer = appMap.haiContainer
         if (appMap.webcoreVariableDecodeStatus) {
             nodes[appNodeId].webcoreVariableDecodeStatus = "${appMap.webcoreVariableDecodeStatus}"
         }
@@ -20709,6 +20811,35 @@ function deriveInsightData() {
     return n.group === 'app' && (n.disabled || n.paused);
   });
 
+  // HAI Issue #44: HAI Rule Containers that never received a rule. Judged from
+  // the facts haiContainerFacts() read out of each container's own state, never
+  // from its name; the name is only compared against them. A container without
+  // those facts - unreadable, or scanned by a build before this check - is
+  // "could not check", never counted as fine. An app the scan could not read
+  // at all has no known type, so it may itself be a container; those are
+  // counted rather than guessed at.
+  const haiContainers = { checked: [], withoutRule: [], nameStateMismatches: [], couldNotCheck: [], appsOfUnknownType: 0 };
+  ALL_NODES.forEach(function (n) {
+    if (n.group !== 'app') return;
+    const type = String(n.appType || '');
+    if (n.unreadable && (!type || type === 'null')) { haiContainers.appsOfUnknownType++; return; }
+    if (type.indexOf('HAI Rule Container') < 0) return;
+    const f = n.haiContainer;
+    if (!f || f.checked !== true) {
+      haiContainers.couldNotCheck.push({ id: n.id, reason: (f && f.reason) ? f.reason
+        : (n.unreadable ? 'the app could not be read' : 'scanned before this check existed; run a scan') });
+      return;
+    }
+    haiContainers.checked.push(n.id);
+    const hasRule = f.ruleId !== null && f.ruleId !== undefined;
+    if (!hasRule && !f.staged && !f.subs) haiContainers.withoutRule.push(n.id);
+    if (f.nameKind === 'rule' && !hasRule) {
+      haiContainers.nameStateMismatches.push({ id: n.id, ruleId: null, problem: 'named-as-rule-without-rule' });
+    } else if (f.nameKind === 'placeholder' && hasRule) {
+      haiContainers.nameStateMismatches.push({ id: n.id, ruleId: String(f.ruleId), problem: 'placeholder-name-with-rule' });
+    }
+  });
+
   return {
     missingIds: missingIds,
     referencesTo: referencesTo,
@@ -20738,6 +20869,7 @@ function deriveInsightData() {
     // Hubitat's own broken marker, not this scan's opinion.
     brokenApps: ALL_NODES.filter(function (n) { return n.broken; }).map(function (n) { return n.id; }),
     disabledDevicesInUse: Object.keys(disabledDeviceUsers),
+    haiContainers: haiContainers,
     unreferencedLocals: ALL_NODES
       .filter(function (n) { return n.group === 'localVariable' && n.unreferencedLocal; })
       .map(function (n) { return n.id; }),
@@ -20854,6 +20986,19 @@ function insightGuidance() {
         meaning: 'The scan found no device relationship, rule link or child app held by this app.',
         normal: 'Schedule-only apps, API integrations and unsupported automation engines can look inactive to this scan.',
         next: 'Open the app and check its status, schedules and external purpose before deciding it is unused.'
+      },
+      haiContainerWithoutRule: {
+        meaning: 'This HAI Rule Container never received a rule: its own state holds no rule id and nothing staged, and it has no event subscriptions.',
+        normal: 'HAI creates the container before a rule is committed to it, so an interrupted Run on hub can leave one like this.',
+        next: 'Check in HAI whether a rule is meant to live here before removing the container.'
+      },
+      haiContainerNameStateMismatch: {
+        meaning: 'This HAI Rule Container is named as if it holds a rule while its state holds none, or still carries the placeholder name while its state holds a rule. That disagreement is a defect in HAI, not in the hub.',
+        next: 'Report it to HAI with the container id. Do not rename or remove the container by hand to make the two agree.'
+      },
+      haiContainerNotChecked: {
+        meaning: 'This HAI Rule Container could not be checked for a rule: its state could not be read or was not in the shape this check expects.',
+        next: 'Run the scan again. If it stays unchecked, treat it as unknown rather than as a container that holds a rule.'
       },
       notificationOnly: {
         meaning: 'These devices receive only momentary notifications, chimes or speech commands.',
@@ -20972,9 +21117,10 @@ function buildInsights() {
 
   // --- Needs attention: only things genuinely wrong -----------------------
   const scanBad = D.scan.status !== 'complete';
+  const hc = D.haiContainers;
   const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0) +
     D.brokenApps.length + D.inactiveInvoked.length + D.disabledDevicesInUse.length +
-    D.hubVar.webcoreDecodeIssues.length;
+    D.hubVar.webcoreDecodeIssues.length + hc.nameStateMismatches.length + hc.couldNotCheck.length;
   let attentionBody = '';
   if (scanBad) {
     const what = D.scan.status === 'failed'
@@ -21004,6 +21150,22 @@ function buildInsights() {
     attentionBody += rows(D.disabledDevicesInUse,
       function (id) { return (D.disabledDeviceUsers[id] || []).length + ' automations'; },
       function (id) { return advice('disabledDeviceInUse') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.disabledDeviceUsers[id]) + '</p>'; });
+  }
+  if (hc.nameStateMismatches.length) {
+    attentionBody += '<p class="insLead">' + amPlural(hc.nameStateMismatches.length, 'HAI Rule Container has a name that disagrees', 'HAI Rule Containers have names that disagree') + ' with its own state. This is a defect in HAI.</p>';
+    attentionBody += rows(hc.nameStateMismatches.map(function (m) { return m.id; }),
+      function (id) {
+        const m = hc.nameStateMismatches.filter(function (x) { return x.id === id; })[0];
+        return (m && m.problem === 'placeholder-name-with-rule') ? 'placeholder name, holds a rule' : 'named as a rule, holds none';
+      }, function () { return advice('haiContainerNameStateMismatch'); });
+  }
+  if (hc.couldNotCheck.length) {
+    attentionBody += '<p class="insLead">' + amPlural(hc.couldNotCheck.length, 'HAI Rule Container', 'HAI Rule Containers') + ' could not be checked for a rule, so whether they hold one is unknown.</p>';
+    attentionBody += rows(hc.couldNotCheck.map(function (c) { return c.id; }),
+      function (id) {
+        const c = hc.couldNotCheck.filter(function (x) { return x.id === id; })[0];
+        return c ? c.reason : 'could not check';
+      }, function () { return advice('haiContainerNotChecked'); });
   }
   if (D.hubVar.webcoreDecodeIssues.length) {
     attentionBody += '<p class="insLead">' + amPlural(D.hubVar.webcoreDecodeIssues.length, 'webCoRE piston has', 'webCoRE pistons have') + ' saved variable configuration that could not be decoded safely.</p>' + advice('webcoreVariableDecodeIssue') + '<ul class="insPlain">';
@@ -21055,8 +21217,12 @@ function buildInsights() {
 
   // --- Possibly unused ----------------------------------------------------
   const orphanApps = D.inertNodes.filter(function (n) { return !n.holds && !(n.kids && n.kids.length); });
-  const cleanupCount = D.untouched.length + orphanApps.length;
+  const cleanupCount = D.untouched.length + orphanApps.length + hc.withoutRule.length;
   let cleanupBody = '';
+  if (hc.withoutRule.length) {
+    cleanupBody += '<p class="insLead">' + amPlural(hc.withoutRule.length, 'HAI Rule Container never received a rule', 'HAI Rule Containers never received a rule') + ', by their own state.</p>';
+    cleanupBody += rows(hc.withoutRule, function () { return 'no rule id, nothing staged'; }, function () { return advice('haiContainerWithoutRule'); });
+  }
   if (D.untouched.length) {
     cleanupBody += '<p class="insLead">' + amPlural(D.untouched.length, 'device is', 'devices are') + ' not referenced by any scanned app.</p>';
     cleanupBody += rows(D.untouched, function () { return 'no mapped references'; }, function () { return advice('unreferencedDevice'); });
@@ -22915,6 +23081,18 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     };
   });
   const unreferencedLocalVariables = INS.unreferencedLocals.map(function (id) { return ref(id, nameOf); });
+  // HAI Issue #44, additive. Each container is judged from its own state;
+  // couldNotCheck and appsOfUnknownType say where that judgement could not be
+  // made, so an empty withoutRule is never read as "no orphans" on its own.
+  const haiRuleContainers = {
+    checkedCount: INS.haiContainers.checked.length,
+    withoutRule: INS.haiContainers.withoutRule.map(function (id) { return ref(id, nameOf); }),
+    nameStateMismatches: INS.haiContainers.nameStateMismatches.map(function (m) {
+      return { app: ref(m.id, nameOf), ruleId: m.ruleId, problem: m.problem, defectIn: 'HAI' };
+    }),
+    couldNotCheck: INS.haiContainers.couldNotCheck.map(function (c) { return { app: ref(c.id, nameOf), reason: c.reason }; }),
+    appsOfUnknownType: INS.haiContainers.appsOfUnknownType
+  };
 
   // Hub Variable findings (v2.0.14, schema 4 - parent spec 8.3/11.5). Reader/
   // writer/multiple-writer findings are computed from the same GRAPH.edges
@@ -23195,6 +23373,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     unreferencedDeviceCount: unreferencedDevices.length,
     inertAppCount: inertApps.length,
     brokenRuleReferenceCount: brokenRuleReferences.length,
+    haiRuleContainerWithoutRuleCount: haiRuleContainers.withoutRule.length,
     // v2.1.4, schema 5 (Gate C): decoded evidence from the rules this export
     // could read, NOT a hub-wide inventory the way hubVariableCount above is
     // - see the limitations entry on this distinction.
@@ -23235,7 +23414,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     'A write/read edge in edges[] whose toId is absent from hubVariables[] is a Local Variable reference, not a data gap - resolve it by flattening ruleFlows[].localVariables[] and matching on identity (see the edges schema entry). Do not treat an unmatched toId as an error before checking there.',
     'A Local Variable with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. The same "may simply be unused" caveat that already applies to a Hub Variable with insights.hubVariables.noDecodedUsage applies here too; these are now also collected in insights.unreferencedLocalVariables.',
     'insights.rulesFlaggedBroken reflects the *BROKEN* marker Hubitat itself puts on an app label, which is the only place that state is exposed. It is read, not judged: absence of the marker is not proof a rule is healthy, and this scan cannot see runtime execution errors, failed actions or exceptions at all - nothing here is evidence about whether a rule actually ran or succeeded.',
-    'insights.inactiveRulesStillCalled and insights.disabledDevicesStillUsed pair a paused/disabled state with a still-live reference, which is static configuration evidence that a step cannot do anything - not evidence that it was ever reached at runtime. The calling rule may itself be paused, conditional, or never triggered.'
+    'insights.inactiveRulesStillCalled and insights.disabledDevicesStillUsed pair a paused/disabled state with a still-live reference, which is static configuration evidence that a step cannot do anything - not evidence that it was ever reached at runtime. The calling rule may itself be paused, conditional, or never triggered.',
+    'insights.haiRuleContainers judges each HAI Rule Container from its own saved state, never its name: withoutRule lists containers whose state holds no rule id and nothing staged and which have no event subscriptions. nameStateMismatches lists containers whose name disagrees with that state (named [HAI] with no rule, or still the HAI rule <id> placeholder while holding one), which is a defect in HAI. couldNotCheck lists containers whose state could not be read or was not in the expected shape, and appsOfUnknownType counts apps the scan could not read at all, any of which may be a container. Neither is evidence that a container holds a rule, so an empty withoutRule is only a clean result when both are empty.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -23321,7 +23501,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       rmConstructVocabulary: 'Dictionary keyed by the opaque Rule Machine construct tokens that need translation. Each value has category, a plain-language meaning, and haiCapabilityId where the HAI capability catalogue has an explicit mapping. Self-describing condition and trigger tokens are intentionally absent, so absence from this dictionary does not mean a token is unknown or unsupported. rmConstructVocabularyVersion versions token spelling and meaning separately from the export JSON shape.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. A recognized inert/no-action Rule Machine app may correctly have no entry here; inspect apps[].rmConstructs for the complete per-scanned-app construct publication. steps is the decoded trigger/condition/action sequence for that rule. A Rule Machine trigger or action step may carry constructs, a sorted array containing the exact normalized token proven for that saved row; other engines and unproven associations omit it. Conditions are not step-associated. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored Rule Machine configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry. rmConstructs (v2.4.3) repeats the matching apps[] rule-level inventory for convenience when a decoded flow exists. It may omit a construct stored under an unrecognised setting family, so absence is not proof that a feature is absent. Trigger and action tokens can be joined to their matching steps[].constructs record; condition, option and structure tokens remain rule-level only. These fields describe observed saved settings, not proven reachability or runtime behavior, do not contain configured values, do not reconstruct the rule, and do not repair an unresolved or ambiguous steps[].references record. Token spelling and meaning are versioned by rmConstructVocabularyVersion. The root rmConstructVocabulary defines only opaque tokens; a token absent from that dictionary may already be plain language and must not be treated as unknown for that reason.',
       migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
-      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. haiRuleContainers (2.4.15) - {checkedCount, withoutRule[], nameStateMismatches[{app, ruleId, problem: "named-as-rule-without-rule"|"placeholder-name-with-rule", defectIn: "HAI"}], couldNotCheck[{app, reason}], appsOfUnknownType} - HAI Rule Containers judged by their own saved state, never their name; see limitations for why an empty withoutRule alone is not a clean result. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others. webcoreHubVariableUseCount and webcoreVariableDecodeIssueCount summarize all webCoRE variable edges and fixed-code decode gaps; schema 10 adds separate read, write and unknown-use counts. localVariableCount (schema 12, v2.2.8) is counted directly from every owner-scoped Local Variable graph node across all supported engines - see the top-level localVariables[] array - not summed from ruleFlows[].localVariables alone, since a webCoRE piston never gets a ruleFlows entry at all. nonResolvedVariableReferenceCount (schema 5, v2.1.4) still totals ruleFlows[].nonResolvedVariableReferences across every decoded rule specifically - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
@@ -23368,6 +23548,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       disabledDevicesStillUsed: disabledDevicesStillUsed,
       inactiveRules: inactiveRules,
       unreferencedLocalVariables: unreferencedLocalVariables,
+      // HAI Issue #44, additive - see the limitations entry.
+      haiRuleContainers: haiRuleContainers,
       // v2.0.14, schema 4 (parent spec 8.3/11.5). Neutral findings, not fault
       // claims - see recommendedAiBehaviour and this section's own limitations
       // note above.
