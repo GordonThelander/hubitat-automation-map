@@ -4,7 +4,7 @@
     {
       "kind": "file",
       "path": "public/hai-capabilities.json",
-      "sha256": "7f3b57e32450998a3266cd9e1c61cf4b2615d715e341befec5e28297b9e3503c"
+      "sha256": "1f36284ac7cd459623dfe18209f69b498662c0c450b6d93b6c99f6fc3c94fe83"
     },
     {
       "kind": "line",
@@ -44,6 +44,7 @@
     }
   ],
   "approvals": [
-    "Initial pin, 2026-10-06: the feed as production showed it when Gordon asked for it to be protected"
+    "Initial pin, 2026-10-06: the feed as production showed it when Gordon asked for it to be protected",
+    "Gordon, 2026-10-08, in the cloud session's chat: \"yes\" to the parity feed changing for the Display current values row moving from Scoped to Tested on hub evidence (recorded on HAI #47; hub run HAI 0.5.14, PR #55)"
   ]
 }

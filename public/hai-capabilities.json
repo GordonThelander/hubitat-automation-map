@@ -1,8 +1,8 @@
 {
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
- "capabilitiesHash": "d85fe8ad1074599dbf212b8177f5817dc7add5625c2566ed7cbd9a01f9927ebf",
- "generatedAt": "2026-10-02T14:16:50+08:00",
+ "capabilitiesHash": "5caa93d519b25c397412d32d1469a5860775137ad0f79e9c12aee3121aa60445",
+ "generatedAt": "2026-10-08T11:39:36+00:00",
  "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means observed HAI runtime execution using virtual or physical hub devices; \"simulated\" means modelled execution only for that row. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
   "Runs": "Implementation status, not a claim that this row has been watched on a hub: built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run. Rows share mechanisms - several features run through one command, subscription or evaluation path - so the number of hub-observed rows is not a completeness score.",
@@ -18,9 +18,9 @@
  "counts": {
   "total": 158,
   "byEvidence": {
-   "hub": 140,
+   "hub": 141,
    "simulated": 14,
-   "none": 4
+   "none": 3
   }
  },
  "capabilities": [
@@ -743,9 +743,12 @@
    "id": "condition.display-current-values-t-f-shown-per-condition",
    "area": "condition",
    "feature": "\"Display current values\" (T/F shown per condition)",
-   "status": "Scoped",
-   "evidence": null,
-   "note": "route known, parts exist, the view does not. Demoted from Runs 2026-10-01 after Codex traced it (HAI-1190, HAI-1192) and I checked the same source. The data is there - rtShrink retains each condition node's path with T, F or U in the trace's c. What is missing is any view that shows it: tlFailedConditions (hai_timeline.groovy:59) filters to F and U only, skips group nodes, and is called only for rejected runs (:148, :195); the editor's Current values pane renders raw device and variable readings with no per-condition truth. So this was claiming implementation it does not have, which is worse than claiming a test it has not had. Not Tested, and not altered on source review alone - the Tested count is untouched by this. Building the view is a small job on top of data already retained, and then it needs a real hub condition run.",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-08"
+   },
+   "note": null,
    "rm51": "4. Conditions and operators: \"Display current values\" (T/F shown per condition)",
    "hai": []
   },
