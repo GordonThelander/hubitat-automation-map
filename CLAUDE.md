@@ -101,6 +101,8 @@ the manifest's `version` and `apps[0].version` together, and starts the release 
 `tools/release_guard.py` fails CI on a push or PR to `dev` that does not (`.github/workflows/release-guard.yml`).
 It exists because the cloud session merged PR #2 as 2.4.4 without a bump; 2.4.7 corrected it.
 
+**Hub data stays private** (Gordon, 2026-10-08). This repository is public; the HAI repository is private. Anything describing Gordon's home goes only to the HAI repository: rule names and numbers, device names, modes, captures, decode files, screenshots, hub addresses and measurements. Post it on the HAI Issue for that work, or on the inbox, HAI #34. A PR here carries code, the version, the frozen SHA and a link to that HAI comment, nothing more. Its hub check is reported on HAI, and a capture is committed to the HAI repository, never to a branch here. When a public example is needed, invent one ("Hall Light", "Front Door").
+
 **Concord is local only.** Codex and the local Claude sessions talk live through it, but the cloud session
 cannot see it. So anything that hands work over, records a hub result or needs Gordon's decision goes into
 an Issue, never only into Concord.
