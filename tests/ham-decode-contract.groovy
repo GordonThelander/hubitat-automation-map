@@ -64,7 +64,7 @@ script.setState([
 
 Map summary = script.hamDecodeSummary()
 check(summary.contract == 'ham.decode/1', 'envelope names the contract')
-check(summary.contractSchemaVersion == 3, 'contract schema version is published, 3 since 2.4.9')
+check(summary.contractSchemaVersion == 4, 'contract schema version is published, 4 since 2.4.15')
 check(summary.rmConstructVocabularyVersion == 1, 'construct vocabulary version is published separately')
 check(summary.supportedEngine == 'Rule-5.1', 'supported engine is published separately')
 check(summary.ok == true, 'a served response is ok')
@@ -190,7 +190,7 @@ script.setState([
     scanHeartbeat: 1790000000000L, scanError: null, appsUnreadable: 0, deviceIdsUnreadable: []
 ])
 Map detail = script.hamDecodeDetail()
-check(detail.contract == 'ham.decode.detail/1' && detail.contractSchemaVersion == 3, 'the detail is contract schema 3')
+check(detail.contract == 'ham.decode.detail/1' && detail.contractSchemaVersion == 4, 'the detail is contract schema 4')
 check(detail.complete == true && detail.ruleCount == 2 && (detail.keySet() as List).takeRight(2) == ['ruleCount', 'complete'],
       'the detail ends with ruleCount and complete, written last')
 check(detail.hubVariables == [:], 'no hub variable inventory means no types, never guessed ones')
@@ -205,6 +205,33 @@ check((typed.keySet() as List).takeRight(2) == ['ruleCount', 'complete'], 'and c
 withVars.hubVariableInventory = [status: 'failed', variables: ['X': [type: 'string']]]
 script.setState(withVars)
 check(script.hamDecodeDetail().hubVariables == [:], 'a failed inventory publishes no types')
+
+// --- detail: disabledDevices (contract 4, HAI Issue #45) ------------------
+// Three answers, never two: a sorted list, an empty list, or no key at all.
+check(!detail.containsKey('disabledDevices'),
+      'a scan that never recorded whether the hub reports disabled state publishes no disabledDevices key, not []')
+Map withDisabled = new LinkedHashMap(script.state)
+withDisabled.deviceDisabledChecked = true
+withDisabled.deviceDisabled = ['3615', '12', '3614', '3614']
+script.setState(withDisabled)
+Map dis = script.hamDecodeDetail()
+check(dis.disabledDevices == ['12', '3614', '3615'],
+      'disabledDevices is every disabled device id once, as a bare string, in ascending numeric order')
+check((dis.disabledDevices as List).every { it instanceof String }, 'and each id is a String, never a number')
+check((dis.keySet() as List).takeRight(2) == ['ruleCount', 'complete'], 'and complete is still written last')
+check(!(dis.rules as List).any { (it as Map).containsKey('disabledDevices') || (it as Map).containsKey('disabledDevice') },
+      'the fact is published once in the envelope; no rule carries a per-reference flag')
+withDisabled.deviceDisabled = []
+script.setState(withDisabled)
+check(script.hamDecodeDetail().disabledDevices == [], 'a hub that reported disabled state and has none disabled publishes []')
+withDisabled.deviceDisabled = null
+script.setState(withDisabled)
+check(!script.hamDecodeDetail().containsKey('disabledDevices'), 'no recorded list publishes no key')
+withDisabled.deviceDisabledChecked = false
+withDisabled.deviceDisabled = []
+script.setState(withDisabled)
+check(!script.hamDecodeDetail().containsKey('disabledDevices'),
+      'a device list in which no record carried the disabled field publishes no key, not []')
 Map sys = (detail.rules as List).find { it.id == 'a2096' } as Map
 check(((sys.actions as List)[0].operands.rules as List) == ['1806'],
       'a deleted rule is dropped from the action it was named in; the live one stays')
