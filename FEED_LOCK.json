@@ -4,7 +4,7 @@
     {
       "kind": "file",
       "path": "public/hai-capabilities.json",
-      "sha256": "1f36284ac7cd459623dfe18209f69b498662c0c450b6d93b6c99f6fc3c94fe83"
+      "sha256": "23ec9baa5a670b476425a4c9c3e76e0dcc8e91fe92557cdcd794671ce8a21184"
     },
     {
       "kind": "line",
@@ -45,6 +45,7 @@
   ],
   "approvals": [
     "Initial pin, 2026-10-06: the feed as production showed it when Gordon asked for it to be protected",
-    "Gordon, 2026-10-08, in the cloud session's chat: \"yes\" to the parity feed changing for the Display current values row moving from Scoped to Tested on hub evidence (recorded on HAI #47; hub run HAI 0.5.14, PR #55)"
+    "Gordon, 2026-10-08, in the cloud session's chat: \"yes\" to the parity feed changing for the Display current values row moving from Scoped to Tested on hub evidence (recorded on HAI #47; hub run HAI 0.5.14, PR #55)",
+    "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list c113a153: Disable/Enable devices, HSM alert, push button per mode, Z-Wave polling"
   ]
 }

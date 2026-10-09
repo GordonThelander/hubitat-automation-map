@@ -1,8 +1,8 @@
 {
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
- "capabilitiesHash": "5caa93d519b25c397412d32d1469a5860775137ad0f79e9c12aee3121aa60445",
- "generatedAt": "2026-10-08T11:39:36+00:00",
+ "capabilitiesHash": "c113a153c1d1f60abdeb28ea8b41f8e5950360893d35fe500454ff56cb0d554d",
+ "generatedAt": "2026-10-09T11:52:35+00:00",
  "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means observed HAI runtime execution using virtual or physical hub devices; \"simulated\" means modelled execution only for that row. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
   "Runs": "Implementation status, not a claim that this row has been watched on a hub: built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run. Rows share mechanisms - several features run through one command, subscription or evaluation path - so the number of hub-observed rows is not a completeness score.",
@@ -18,9 +18,9 @@
  "counts": {
   "total": 158,
   "byEvidence": {
-   "hub": 141,
-   "simulated": 14,
-   "none": 3
+   "hub": 145,
+   "simulated": 12,
+   "none": 1
   }
  },
  "capabilities": [
@@ -326,8 +326,8 @@
    "feature": "HSM alert (intrusion, smoke, water, rule, arming, cancel, and variants)",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-09"
    },
    "note": null,
    "rm51": "3. Triggers: HSM alert (intrusion, smoke, water, rule, arming, cancel, and variants)",
@@ -866,8 +866,8 @@
    "feature": "Switches: Push button, push button per mode, choose button per mode",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-09"
    },
    "note": null,
    "rm51": "5. Actions: Switches: Push button, push button per mode, choose button per mode",
@@ -1429,19 +1429,27 @@
    "id": "action.devices-disable-enable-devices",
    "area": "action",
    "feature": "Devices: Disable/Enable devices",
-   "status": "Scoped",
-   "evidence": null,
-   "note": "route known, parts exist, nothing built or watched. both halves were wrong. The hub own UI does it with a plain JSON call, POST /device/disable with {\"id\": <deviceId>, \"disable\": true.",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-09"
+   },
+   "note": null,
    "rm51": "5. Actions: Devices: Disable/Enable devices",
-   "hai": []
+   "hai": [
+    "action:deviceEnabled"
+   ]
   },
   {
    "id": "action.devices-start-stop-z-wave-polling",
    "area": "action",
    "feature": "Devices: Start/Stop Z-Wave polling",
-   "status": "Scoped",
-   "evidence": null,
-   "note": "the route is in this row own HAI column - a repeat of refresh or poll on HAI own timers does the same work for a device. Nothing is built or watched, so this is not a working capability, but it needs no mechanism HAI lacks. The earlier note claimed apps cannot reach the hub built-in poller through the app API. That was asserted from documentation on 2026-09-19 and never tested, and the neighbouring claim about device disabling turned out to be false, so this one is not trustworthy either. A search of /ui2/js/vue-hub2.min.js on 2026-09-28 found no radio or polling endpoint, which is evidence of absence from that bundle and nothing more. Treat as unknown rather than blocked until someone reads the page that carries the control.",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-09"
+   },
+   "note": null,
    "rm51": "5. Actions: Devices: Start/Stop Z-Wave polling",
    "hai": [
     "action:repeat",
