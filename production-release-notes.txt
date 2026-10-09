@@ -8,7 +8,7 @@ Changes since v2.4.2:
 - More reliable scans: a scan that loses the app list partway, as can happen just after a hub restart, is no longer saved as an empty map. It tries again by itself three minutes later.
 - Fixes to the rule flowcharts: rules that test the hub mode are no longer dropped during a scan, renamed modes show their current names, a Certain Time trigger saved in Rule Machine's older format is now read, and settings Rule Machine leaves behind after a trigger is removed are no longer shown as triggers.
 - App tags: apps are tagged [CUS] or [INT] from the hub's own list of apps you installed, so community apps are no longer shown as shipping with the hub.
-- Room Manager: a new room appears as soon as the hub confirms it, instead of after a full reload.
+- Room Manager: creating or deleting a room is quicker, and the change shows as soon as the hub confirms it, without reloading every device's room.
 - Insights: a hub variable that no rule is seen to use now says whether any app uses it.
 - webCoRE Migration Assessment: ratings are kept and shown at once, with a Refresh button to re-run them.
 - For Hubitat Automation Intelligence users: rules are read in much more detail for migration, and HAI rule apps are checked in Insights.

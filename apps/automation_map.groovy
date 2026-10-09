@@ -15153,17 +15153,15 @@ Map roomPlanPostRoom(Map payload) {
 Map roomPlanCreateRoom(String name) {
     String clean = "${name ?: ''}".trim()
     if (!clean) return [ok: false, reason: 'a room needs a name']
-    if (hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }) {
-        return [ok: false, reason: "this hub already has a room called ${clean}"]
-    }
+    // Two hub calls, not four (Gordon, 2026-10-10). The name is checked by the page against the live room list it
+    // loaded when Room Manager opened, so it is not fetched again before the save; and a new room holds no
+    // devices, so nothing else needs reloading after it. The one read-back confirms the room exists and gives
+    // its id.
     Map res = roomPlanPostRoom([roomId: 0, name: clean, deviceIds: []])
     if (res.failure) return [ok: false, reason: res.failure]
-    // The read-back list goes back to the page too, so the new room is drawn from this answer at once rather
-    // than after a full reload of every device's room (about 9 s on a 261-device hub, Gordon 2026-10-10).
-    List after = hubRoomList()
-    boolean landed = after.any { "${(it as Map).name}".equalsIgnoreCase(clean) }
-    return [ok: landed, name: clean, rooms: after,
-            reason: landed ? '' : 'the hub accepted the request but the room is not in its list']
+    Map created = hubRoomList().find { "${(it as Map).name}".equalsIgnoreCase(clean) } as Map
+    return [ok: created != null, name: clean, room: created,
+            reason: created != null ? '' : 'the hub accepted the request but the room is not in its list']
 }
 
 Map roomPlanRenameRoom(String roomId, String name) {
@@ -15196,29 +15194,26 @@ Map roomPlanRenameRoom(String roomId, String name) {
     return [ok: true, name: clean, devices: now]
 }
 
-Map roomPlanDeleteRoom(String roomId) {
+// Two hub calls, as a create is (Gordon, 2026-10-10): the delete, then one read confirming the room is gone. The
+// page names the devices it holds - it has the live room plan it drew and counted for the confirmation - so the
+// hub is not asked for a membership snapshot of every device first, and the page moves those devices to Not
+// Allocated itself instead of reloading. A room's devices are never deleted with it; the hub unassigns them.
+Map roomPlanDeleteRoom(String roomId, List deviceIds = []) {
     if (!roomId) return [ok: false, reason: 'no room id']
-    // Destructive, so it fails closed. Not knowing what is in the room is a
-    // reason to stop, not a reason to go ahead and find out afterwards.
-    Map members = roomPlanRoomMembers(roomId)
-    if (!members.ok) {
-        return [ok: false, reason: 'could not read what is in this room, so it was not deleted']
-    }
-    Integer freed = (members.ids as List).size()
     Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
     state.roomIdCache = [:]
     boolean gone = !hubRoomList().any { "${(it as Map).id}" == roomId }
     if (!gone) {
         return [ok: false, reason: fetched.ok ? 'the hub still lists this room' : 'the delete request failed']
     }
-    // Devices are unassigned rather than deleted, so the panel's own room map
-    // has to follow or they will keep showing in a room that no longer exists.
+    // The panel's own room map follows, or they keep showing in a room that no longer exists.
+    List freed = (deviceIds ?: []).collect { "${it}".toString() }
     if (freed) {
         Map rooms = (state.deviceRooms ?: [:]) as Map
-        (members.ids as List).each { Object devId -> rooms["${devId}"] = '' }
+        freed.each { String devId -> rooms[devId] = '' }
         state.deviceRooms = rooms
     }
-    return [ok: true, freed: freed]
+    return [ok: true, id: roomId, freed: freed.size()]
 }
 
 Map roomPlanGetMapping() {
@@ -15307,8 +15302,11 @@ Map roomPlanSaveMapping() {
                       data: JsonOutput.toJson(roomPlanRenameRoom("${r.id ?: ''}".trim(), "${r.name ?: ''}")))
     }
     if (payload.containsKey('deleteRoom')) {
+        // {id, deviceIds} from this page; a bare id from an older page still deletes.
+        Map del = (payload.deleteRoom instanceof Map) ? (payload.deleteRoom as Map) : [id: payload.deleteRoom]
+        List ids = (del.deviceIds instanceof List) ? (del.deviceIds as List) : []
         return render(status: 200, contentType: 'application/json',
-                      data: JsonOutput.toJson(roomPlanDeleteRoom("${payload.deleteRoom}".trim())))
+                      data: JsonOutput.toJson(roomPlanDeleteRoom("${del.id ?: ''}".trim(), ids)))
     }
 
     Map incoming = (payload.layout instanceof Map) ? (payload.layout as Map) : [:]
@@ -22661,13 +22659,32 @@ function roomPlanCrud(body, busy) {
   }).then(function (r) { return r.json(); })
     .then(function (d) {
       if (d && d.ok) {
-        // A create answers with the hub's room list as read back after the save: draw the new room from it now,
-        // then refresh every device's room in the background, saying so until it is done. The message used to
-        // clear here, and the room appeared only after that reload, about 9 s later (Gordon, 2026-10-10).
-        if (Array.isArray(d.rooms)) { ROOMPLAN.rooms = d.rooms; roomPlanRender(); }
-        const refreshing = 'Updating from the hub...';
-        msg.textContent = refreshing;
-        roomPlanRefreshLive(keep).then(function () { if (msg.textContent === refreshing) msg.textContent = ''; });
+        msg.textContent = '';
+        // A create answers with the one room it confirmed on the hub. It holds no devices, so it is added and
+        // drawn as it is, with no reload of every device's room - which took about 9 s on a 261-device hub and
+        // drew the room only after it (Gordon, 2026-10-10). Rename and delete still reload: they change the
+        // rooms devices are in.
+        if (d.room && d.room.name) {
+          ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([d.room]).sort(function (a, b) {
+            return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
+          });
+          roomPlanRender();
+        } else if (body.deleteRoom && d.id) {
+          // A delete the hub confirmed: drop the room and put the devices it held in Not Allocated, as the hub has.
+          const gone = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) === String(d.id); })[0];
+          ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) !== String(d.id); });
+          const live = ROOMPLAN.deviceRooms || {};
+          ((body.deleteRoom && body.deleteRoom.deviceIds) || []).forEach(function (id) { live[String(id)] = ''; });
+          if (gone) Object.keys(live).forEach(function (id) { if (live[id] === gone.name) live[id] = ''; });
+          ROOMPLAN.deviceRooms = live;
+          // A staged move into the deleted room has nowhere to go now.
+          if (gone) Object.keys(roomPending).forEach(function (k) {
+            if (String(roomPending[k] || '').toLowerCase() === String(gone.name).toLowerCase()) delete roomPending[k];
+          });
+          roomPlanRender();
+        } else {
+          roomPlanRefreshLive(keep);
+        }
         return d;
       }
       msg.textContent = (d && d.reason) || 'That did not work.';
@@ -22916,7 +22933,10 @@ function roomPlanWire() {
         ? ('Delete the room ' + nm + '? Its ' + n + (n === 1 ? ' device' : ' devices') + ' will not be deleted, but they will end up in Not Allocated.')
         : ('Delete the room ' + nm + '? It has no devices in it.');
       if (!window.confirm(warn)) return;
-      roomPlanCrud({ deleteRoom: btn.getAttribute('data-del') }, 'Deleting...');
+      // The devices drawn in it, so the hub need not be asked and the page can move them itself.
+      const devIds = Array.prototype.map.call(rect.querySelectorAll('.devChip'), function (c) { return c.getAttribute('data-dev'); })
+        .filter(function (x) { return x; });
+      roomPlanCrud({ deleteRoom: { id: btn.getAttribute('data-del'), deviceIds: devIds } }, 'Deleting...');
     });
   });
   canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
@@ -24039,6 +24059,12 @@ document.getElementById('roomTipClose').addEventListener('click', roomTipDismiss
 document.getElementById('roomPlanNew').addEventListener('click', function () {
   const name = window.prompt('Name the new room');
   if (name === null || !name.trim()) return;
+  // Checked against the live room list loaded when Room Manager opened; the hub is no longer asked again first.
+  const wanted = name.trim().toLowerCase();
+  if ((ROOMPLAN.rooms || []).some(function (r) { return r && String(r.name || '').trim().toLowerCase() === wanted; })) {
+    document.getElementById('roomPlanMsg').textContent = 'There is already a room called ' + name.trim() + '.';
+    return;
+  }
   roomPlanCrud({ createRoom: name.trim() }, 'Creating...');
 });
 document.getElementById('roomPlanReset').addEventListener('click', function () {
