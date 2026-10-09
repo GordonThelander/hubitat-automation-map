@@ -62,8 +62,9 @@ check(source.contains('boolean graphStale = graphIsStale() && !scanActive && !sc
 
 // 5. Publication fails closed on an impossible collapse.
 String finishSlice = slice('Integer enumeratedApps =', 'atomicState.graphVersion = GRAPH_SCHEMA')
-check(finishSlice.contains('enumeratedApps > 0 && collectedApps != enumeratedApps'),
-      'a generation that enumerated apps and holds a different number refuses to publish, which covers holding none')
+check(finishSlice.contains('publishRefusal(enumeratedApps, collectedApps, witnessedApps)') &&
+      finishSlice.contains('appPhaseWitnessCount(lockToken)'),
+      'the publish decision reads the atomicState witness beside the two state lists (HAI #58)')
 check(finishSlice.contains('state.scanError = why'),
       'the refusal surfaces an error rather than failing silently')
 check(finishSlice.indexOf('return') in 0..finishSlice.indexOf('Map graph = buildGraph()'),
@@ -88,8 +89,35 @@ check(traceFn.contains('catch (Exception'),
 }
 
 // 7. Publication enforces the equality the pipeline's own model guarantees.
-check(finishSlice.contains('collectedApps != enumeratedApps'),
-      'publication requires every enumerated app to be present, not merely non-zero')
+// The decision itself, run rather than read. A stale whole-snapshot write-back
+// erases appIds and appInfo together, so they agree on nothing; only the
+// witness, kept in atomicState, still knows what the generation read.
+String refusalFn = slice('String publishRefusal(Integer enumerated, Integer held, Integer witnessed)', '\n}\n') + '\n}\n'
+def refusal = new GroovyShell().evaluate(refusalFn + 'return this')
+check(refusal.publishRefusal(185, 185, 185) == null, 'a complete generation publishes')
+check(refusal.publishRefusal(185, 0, 185) != null, 'enumerated but holding none refuses (the partial loss the old guard caught)')
+check(refusal.publishRefusal(185, 120, 185) != null, 'publication requires every enumerated app to be present, not merely non-zero')
+check(refusal.publishRefusal(0, 0, 185) != null, 'both state lists lost together refuses: the 2026-10-09 empty feed published as complete')
+check(refusal.publishRefusal(0, 0, null) != null, 'no witness and nothing held refuses: a hub always lists this app')
+check(refusal.publishRefusal(0, 0, 0) == null, 'an app phase that genuinely read no apps, and says so, still publishes')
+
+// The witness is written where the race cannot reach, by both app-phase exits.
+String witnessFn = slice('void recordAppPhaseWitness(String lockToken, int apps)', '\n}')
+check(witnessFn.contains('atomicState.appPhaseWitness') && witnessFn.contains('genKey(lockToken)'),
+      'the witness is in atomicState and keyed by generation')
+check(source.contains('recordAppPhaseWitness(scan.lockToken as String, (scan.appInfo as Map).size())'),
+      'the app-phase finalize records what it read')
+check(source.contains('recordAppPhaseWitness(lockToken, 0)'),
+      'the empty-app-list path records that it read none')
+
+// The registry step, the other reader of state.appInfo (HAI #59).
+String registryFn = slice('void fetchRegistry(jobData = null)', "runIn(1, 'finishScan'")
+check(registryFn.contains('appPhaseWitnessCount(lockToken)') && registryFn.contains('heldApps < witnessedApps'),
+      'registry matching compares the app list it can see with the witness')
+check(registryFn.indexOf('meta.error = inventoryLost') in 0..registryFn.indexOf('httpFetch(REGISTRY_URL'),
+      'a lost inventory is recorded as an error before any matching, so the last good matches are kept')
+check(registryFn.contains("log.warn \"\${app.label}: registry matching skipped"),
+      'a skipped match is a warning, not an info line behind diagnostic logging')
 check(source.contains('appInfoSize == total && decoded + unreadable == total'),
       'both finalize entry points still require that equality upstream, which is what makes it valid here')
 check(source.contains('failing closed, no map published for this scan'),

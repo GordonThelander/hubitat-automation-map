@@ -3,7 +3,16 @@ param(
     [string]$AppFile = 'apps/automation_map.groovy',
     [int]$InstalledAppId = 0,
     [switch]$SkipValidation,
-    [switch]$WhatIf
+    [switch]$WhatIf,
+    # The memory gate, ported from HAI's engine/deploy-hub.ps1 (HAI #63). This app is the larger write to
+    # the hub (about 1.4 MB, twice HAI's engine), and the failure it guards against has happened: on
+    # 2026-10-05 a write failed with OutOfMemoryError on Metaspace while the hub still reported plenty
+    # free. Metaspace comes back only with a reboot.
+    [int]$MinFreeOsMemoryKb = 100000,
+    [int]$MaxNativeConsumedPercent = 50,
+    [int]$MinHubUptimeMinutes = 5,
+    [switch]$AllowLowMemory,
+    [switch]$IgnoreHubUptime
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +43,91 @@ function Get-Utf8Text([string]$Path) {
 function Get-FileSha256([string]$Path) {
     $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
     return Get-BytesSha256 ([IO.File]::ReadAllBytes($resolvedPath))
+}
+
+# Refuses a write the hub may not have the memory to take, before anything is contacted for writing.
+# Reads /hub/advanced/freeOSMemoryLast (falling back to /freeOSMemory) for free memory now, and the first
+# row of /hub/advanced/freeOSMemoryHistory for what was free at boot; the history resets at boot, so
+# nothing has to be remembered between runs. A reading that cannot be taken refuses too: a gate that goes
+# quiet looks exactly like a gate that passed. -WhatIf reports and never refuses.
+function Test-HubMemory([string]$HubBase) {
+    $freeKb = $null
+    $heap = ''
+    try {
+        $last = (Invoke-WebRequest -Uri "$HubBase/hub/advanced/freeOSMemoryLast" -Method Get -TimeoutSec 15 -UseBasicParsing).Content
+        $lastRow = @("$last" -split "`n" | Where-Object { $_ -match '^\d\d-\d\d ' }) | Select-Object -Last 1
+        if ($lastRow) {
+            $f = "$lastRow" -split ','
+            if ($f.Count -ge 5) {
+                $freeKb = [int]$f[1].Trim()
+                $heap = ", Java heap {0:N0} of {1:N0} KB free" -f [int]$f[4].Trim(), [int]$f[3].Trim()
+            }
+        }
+    } catch { }
+    if ($null -eq $freeKb) {
+        try {
+            $raw = (Invoke-WebRequest -Uri "$HubBase/hub/advanced/freeOSMemory" -Method Get -TimeoutSec 15 -UseBasicParsing).Content
+            if ("$raw".Trim() -match '^\d+$') { $freeKb = [int]("$raw".Trim()) }
+        } catch { $freeKb = $null }
+    }
+
+    $bootFreeKb = $null
+    $bootAt = $null
+    try {
+        $hist = (Invoke-WebRequest -Uri "$HubBase/hub/advanced/freeOSMemoryHistory" -Method Get -TimeoutSec 30 -UseBasicParsing).Content
+        $firstRow = @("$hist" -split "`n" | Where-Object { $_ -match '^\d\d-\d\d ' }) | Select-Object -First 1
+        if ($firstRow) {
+            $bf = "$firstRow" -split ','
+            if ($bf.Count -ge 2) { $bootFreeKb = [int]$bf[1].Trim() }
+            # The stamp carries no year: assume this one, and step back if that puts the boot in the future.
+            if ($bf[0] -match '^(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)') {
+                try {
+                    $bootAt = Get-Date -Year (Get-Date).Year -Month ([int]$Matches[1]) -Day ([int]$Matches[2]) `
+                                       -Hour ([int]$Matches[3]) -Minute ([int]$Matches[4]) -Second ([int]$Matches[5])
+                    if ($bootAt -gt (Get-Date).AddDays(1)) { $bootAt = $bootAt.AddYears(-1) }
+                } catch { $bootAt = $null }
+            }
+        }
+    } catch { $bootFreeKb = $null }
+
+    # A hub still bringing its apps up is busy, not short of memory; the first renders after a boot compile
+    # this one-megabyte app cold, which is what widened the scan race of 2026-10-09 (HAI #58).
+    if ($null -ne $bootAt) {
+        $upMin = ((Get-Date) - $bootAt).TotalMinutes
+        Write-Host ("Hub has been up {0:N1} minute(s) (settling period {1})." -f $upMin, $MinHubUptimeMinutes)
+        if ($upMin -lt $MinHubUptimeMinutes -and -not $IgnoreHubUptime -and -not $WhatIf) {
+            throw ("Refusing: the hub came back {0:N1} minute(s) ago and is still bringing its apps up. Wait until {1:HH:mm}, or pass -IgnoreHubUptime. Nothing was written." -f $upMin, $bootAt.AddMinutes($MinHubUptimeMinutes))
+        }
+    }
+
+    $unread = @()
+    if ($null -eq $freeKb) { $unread += 'free memory (/hub/advanced/freeOSMemoryLast and /freeOSMemory)' }
+    if ($null -eq $bootFreeKb) { $unread += 'the memory free at boot (/hub/advanced/freeOSMemoryHistory)' }
+    if ($unread.Count -gt 0) {
+        $what = $unread -join ' or '
+        if (-not $AllowLowMemory -and -not $WhatIf) {
+            throw ("Refusing: the hub's {0} could not be read, so the memory check cannot run. Check the endpoint by hand, or pass -AllowLowMemory. Nothing was written." -f $what)
+        }
+        Write-Warning ("The hub's {0} could not be read; the memory check did not run." -f $what)
+    }
+
+    if ($null -ne $freeKb) {
+        Write-Host ("Hub free OS memory: {0:N0} KB (threshold {1:N0}){2}" -f $freeKb, $MinFreeOsMemoryKb, $heap)
+        if ($null -ne $bootFreeKb) {
+            $gone = $bootFreeKb - $freeKb
+            $pct = if ($bootFreeKb -gt 0) { [math]::Round(100.0 * $gone / $bootFreeKb) } else { 0 }
+            Write-Host ("Native memory consumed since the hub booted: {0:N0} KB of {1:N0} ({2}%), threshold {3}%." -f $gone, $bootFreeKb, $pct, $MaxNativeConsumedPercent)
+            if ($pct -ge $MaxNativeConsumedPercent -and -not $AllowLowMemory -and -not $WhatIf) {
+                throw ("Refusing: {0}% of the hub's free memory at boot has gone, mostly class metadata from earlier app-code saves. Metaspace has its own cap, so a write can fail with OutOfMemoryError while the hub still reports {1:N0} KB free. Reboot the hub, or pass -AllowLowMemory. Nothing was written." -f $pct, $freeKb)
+            }
+            if ($pct -ge $MaxNativeConsumedPercent) {
+                Write-Warning ("{0}% of the memory the hub had free at boot has gone; continuing because {1}." -f $pct, $(if ($WhatIf) { 'this is -WhatIf' } else { '-AllowLowMemory was given' }))
+            }
+        }
+        if ($freeKb -lt $MinFreeOsMemoryKb -and -not $AllowLowMemory -and -not $WhatIf) {
+            throw ("Refusing: the hub has {0:N0} KB free, below {1:N0}. Reboot it, or pass -AllowLowMemory. Nothing was written." -f $freeKb, $MinFreeOsMemoryKb)
+        }
+    }
 }
 
 Push-Location $repoRoot
@@ -79,6 +173,7 @@ try {
     }
 
     $hubBase = $HubUrl.TrimEnd('/')
+    Test-HubMemory $hubBase
     $apps = Invoke-RestMethod -Uri "$hubBase/hub2/appsList" -Method Get -TimeoutSec 20
     $matches = @($apps.userAppTypes | Where-Object { $_.name -eq $expectedAppName })
     if ($matches.Count -gt 1 -and $InstalledAppId -gt 0) {
