@@ -78,9 +78,11 @@ decisions, once, in your own chat, with the decision stated.
 **Nothing wakes a local session.** A PR comment wakes the cloud session; a local session is woken by nothing,
 so after asking anything it polls for the answer or binds the PR. Asking is the start of a wait, not the end of
 the task. Channels in one page: `docs/AGENT_CHANNELS.md` in the HAI repository.
-**An idle local session polls** (Gordon, 2026-10-07: both sat asleep while work waited). When a local session has
-nothing in hand, it runs `/loop 10m` over the inbox (HAI PR #34) and any open PR naming it, and picks up what is
-addressed to it. It never ends its turn idle without that loop running.
+**One channel: HAI #34, read with the HAI repository's `tools/board.py`** (Gordon, 2026-10-09). Every message
+between the cloud session, Claude HAM and Claude HAI is a comment on HAI #34 whose first line names the recipient
+(`**To: HAM** - from cloud`). From your HAI checkout: `python tools/board.py read --me ham` shows every new message
+for you, from every page; `python tools/board.py post --me ham --to cloud "text"` sends one. An idle local session
+runs `/loop 10m python tools/board.py read --me ham`. Never read #34 by hand: GitHub pages it oldest first.
 
 **One change, one hub cycle** (Gordon, 2026-10-07: batch, and stop pushing the smallest changes).
 `dev` and `HAI_Engine_Dev` change only through merged pull requests. On Automation Map a GitHub ruleset refuses
