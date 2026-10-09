@@ -11,6 +11,12 @@ assert source.indexOf('There is already a room called', btn) < source.indexOf('r
 int crud = source.indexOf('function roomPlanCrud(')
 String crudBody = source.substring(crud, source.indexOf('\n}\n', crud))
 assert crudBody.indexOf('ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([d.room])') < crudBody.indexOf('roomPlanRefreshLive(keep)') : 'a create reloads every device again'
+// Claude HAM's 2.4.20 check: a create that landed reported 'Failed: TypeError' because the request's catch also
+// wrapped the redraw. The catch must come before the success handling, and the redraw must catch its own errors.
+assert crudBody.indexOf(".catch(function (e) { msg.textContent = 'Failed: ' + e; return null; })") < crudBody.indexOf('if (!(d && d.ok))') : 'a redraw error can read as a failed change again'
+assert !crudBody.contains('roomPlanRender();') : 'roomPlanCrud redraws without the guard'
+String redraw = source.substring(source.indexOf('function roomPlanRedrawAfter('), source.indexOf('function roomPlanCrud('))
+assert redraw.contains('if (!ICONS) { roomPlanLoad(); return; }') && redraw.contains('catch (e)')
 println 'ok   a create is two hub calls, and the room is drawn from the one it confirmed'
 
 // Delete, the same way: the delete and one read confirming the room is gone; the page moves its devices.

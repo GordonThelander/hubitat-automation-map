@@ -22647,50 +22647,63 @@ function roomPlanIdFor(name) {
   return hit ? String(hit.id) : '';
 }
 
+// Redraws after a hub change that already succeeded. A redraw problem must never read as the change failing:
+// told a create failed, a person presses it again and gets a second room (Claude HAM's 2.4.20 check, where a
+// create that landed reported "Failed: TypeError"). Without the panel's device list it reloads the panel.
+function roomPlanRedrawAfter(what) {
+  const msg = document.getElementById('roomPlanMsg');
+  if (!ICONS) { roomPlanLoad(); return; }
+  try {
+    roomPlanRender();
+  } catch (e) {
+    msg.textContent = what + ' on the hub, but this page could not redraw it; reloading Room Manager.';
+    roomPlanLoad();
+  }
+}
+
 function roomPlanCrud(body, busy) {
   const msg = document.getElementById('roomPlanMsg');
   const keep = {};
   Object.keys(roomPending).forEach(function (k) { keep[k] = roomPending[k]; });
   msg.textContent = busy;
+  // The catch covers the request only. What happens after the hub has answered is handled apart from it, so a
+  // problem drawing a successful change cannot be reported as the change failing.
   return fetch(ROOMPLAN_URL, {
     method: 'POST', cache: 'no-store', credentials: 'omit',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function (r) { return r.json(); })
+    .catch(function (e) { msg.textContent = 'Failed: ' + e; return null; })
     .then(function (d) {
-      if (d && d.ok) {
-        msg.textContent = '';
-        // A create answers with the one room it confirmed on the hub. It holds no devices, so it is added and
-        // drawn as it is, with no reload of every device's room - which took about 9 s on a 261-device hub and
-        // drew the room only after it (Gordon, 2026-10-10). Rename and delete still reload: they change the
-        // rooms devices are in.
-        if (d.room && d.room.name) {
-          ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([d.room]).sort(function (a, b) {
-            return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
-          });
-          roomPlanRender();
-        } else if (body.deleteRoom && d.id) {
-          // A delete the hub confirmed: drop the room and put the devices it held in Not Allocated, as the hub has.
-          const gone = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) === String(d.id); })[0];
-          ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) !== String(d.id); });
-          const live = ROOMPLAN.deviceRooms || {};
-          ((body.deleteRoom && body.deleteRoom.deviceIds) || []).forEach(function (id) { live[String(id)] = ''; });
-          if (gone) Object.keys(live).forEach(function (id) { if (live[id] === gone.name) live[id] = ''; });
-          ROOMPLAN.deviceRooms = live;
-          // A staged move into the deleted room has nowhere to go now.
-          if (gone) Object.keys(roomPending).forEach(function (k) {
-            if (String(roomPending[k] || '').toLowerCase() === String(gone.name).toLowerCase()) delete roomPending[k];
-          });
-          roomPlanRender();
-        } else {
-          roomPlanRefreshLive(keep);
-        }
-        return d;
+      if (d === null) return null;
+      if (!(d && d.ok)) { msg.textContent = (d && d.reason) || 'That did not work.'; return d; }
+      msg.textContent = '';
+      // A create answers with the one room it confirmed on the hub. It holds no devices, so it is added and
+      // drawn as it is, with no reload of every device's room - which took about 9 s on a 261-device hub and
+      // drew the room only after it (Gordon, 2026-10-10). Rename still reloads: it carries a room's devices.
+      if (d.room && d.room.name) {
+        ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([d.room]).sort(function (a, b) {
+          return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
+        });
+        roomPlanRedrawAfter('Created');
+      } else if (body.deleteRoom && d.id) {
+        // A delete the hub confirmed: drop the room and put the devices it held in Not Allocated, as the hub has.
+        const gone = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) === String(d.id); })[0];
+        ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) !== String(d.id); });
+        const live = ROOMPLAN.deviceRooms || {};
+        ((body.deleteRoom && body.deleteRoom.deviceIds) || []).forEach(function (id) { live[String(id)] = ''; });
+        if (gone) Object.keys(live).forEach(function (id) { if (live[id] === gone.name) live[id] = ''; });
+        ROOMPLAN.deviceRooms = live;
+        // A staged move into the deleted room has nowhere to go now.
+        if (gone) Object.keys(roomPending).forEach(function (k) {
+          if (String(roomPending[k] || '').toLowerCase() === String(gone.name).toLowerCase()) delete roomPending[k];
+        });
+        roomPlanRedrawAfter('Deleted');
+      } else {
+        roomPlanRefreshLive(keep);
       }
-      msg.textContent = (d && d.reason) || 'That did not work.';
       return d;
-    })
-    .catch(function (e) { msg.textContent = 'Failed: ' + e; });
+    });
 }
 
 // The live hub answer wins. d.room is scan state and can be a scan old, which
