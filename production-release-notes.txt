@@ -1,12 +1,14 @@
-v2.4.19: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+v2.4.20: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
 Changes since v2.4.2:
 
+- See how your rules drive each other: set Show to "Rule to rule only" to see just the links where one rule runs another, pauses or resumes it, cancels its timed actions, or sets its Private Boolean, so chains of rules stand out at a glance. New in this release: rules that only reset others at hub start are drawn faintly, with two filters to separate them, "Rule to rule, except startup resets" and "Startup resets only".
 - Dashboards on the map: Easy Mobile Dashboard apps now appear with the devices they show. The hub leaves them off its app list, so Automation Map now also asks which apps use each device.
 - Visual Rule Builder's repeated action (hub 2.5.2.135) is drawn as the builder describes it, and a device it checks only to decide when to stop is shown as a condition, not a trigger.
 - More reliable scans: a scan that loses the app list partway, as can happen just after a hub restart, is no longer saved as an empty map. It tries again by itself three minutes later.
 - Fixes to the rule flowcharts: rules that test the hub mode are no longer dropped during a scan, renamed modes show their current names, a Certain Time trigger saved in Rule Machine's older format is now read, and settings Rule Machine leaves behind after a trigger is removed are no longer shown as triggers.
-- Startup-only rule links: links between rules that apply only at hub start are now drawn faintly, with two new Show filters.
+- App tags: apps are tagged [CUS] or [INT] from the hub's own list of apps you installed, so community apps are no longer shown as shipping with the hub.
+- Room Manager: a new room appears as soon as the hub confirms it, instead of after a full reload.
 - Insights: a hub variable that no rule is seen to use now says whether any app uses it.
 - webCoRE Migration Assessment: ratings are kept and shown at once, with a Refresh button to re-run them.
 - For Hubitat Automation Intelligence users: rules are read in much more detail for migration, and HAI rule apps are checked in Insights.

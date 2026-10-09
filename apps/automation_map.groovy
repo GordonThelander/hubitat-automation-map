@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.19'
+@Field static final String APP_VERSION = '2.4.20'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -629,6 +629,16 @@ void scheduleAutoScan() {
 // atomicState, where the stale write-back that causes refusals cannot reset it.
 @Field static final int REFUSAL_RETRY_SECONDS = 180
 
+// What the settings page says while a refused scan waits for its one automatic retry, or null when none is
+// pending. Pure, so it is tested directly.
+String refusalRetryNotice(Map retry, long nowMs, TimeZone zone) {
+    if (!(retry?.pending)) return null
+    long due = ((retry.at ?: 0L) as Long) + REFUSAL_RETRY_SECONDS * 1000L
+    if (due <= nowMs) return 'Retrying the scan automatically now. This page refreshes when it finishes.'
+    String at = new Date(due).format('HH:mm', zone ?: TimeZone.getDefault())
+    return "Retrying the scan automatically at ${at}. Nothing needs doing; this page refreshes when it finishes.".toString()
+}
+
 void scheduleRetryAfterRefusal() {
     if ((atomicState.refusalRetry as Map)?.pending) {
         atomicState.refusalRetry = null
@@ -725,7 +735,7 @@ Map main() {
     // JS poll itself ever fails to start or silently stalls - the same
     // belt-and-suspenders reasoning as the async pipeline's own watchdogs.
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}${updateNoticeSuffix()}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && scanActive) ? 60 : 0) {
+                       refreshInterval: (ready && (scanActive || (atomicState.refusalRetry as Map)?.pending)) ? 60 : 0) {
         // Scan status, the map link and the Scan button all sit ABOVE the device
         // picker. The picker renders as a list of every device on the hub, so
         // anything below it is off the bottom of the screen - which is where the
@@ -841,6 +851,10 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                 }
                 if (state.scanError) {
                     paragraph "<b style='color:#c0392b'>Scan error: ${state.scanError}</b>"
+                    // Said on the page, not only in the log: without it a refused scan read as a hang for the
+                    // three minutes until the retry ran (Gordon, 2026-10-10).
+                    String retryLine = refusalRetryNotice(atomicState.refusalRetry as Map, now(), location.timeZone)
+                    if (retryLine) paragraph "<span style='color:#555'>${retryLine}</span>"
                 }
                 if (state.graph) {
                     Map g = state.graph as Map
@@ -1028,7 +1042,13 @@ void selfHealGraphIfNeeded() {
     if (state.graph != null) return
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
-    if (!(state.appInfo)) return
+    if (!(state.appInfo)) {
+        // The same late write-back can erase the app list with the graph; rebuild from the last scan's kept copy.
+        Map kept = latestAppResults()
+        if (!(kept?.appInfo)) return
+        state.appInfo = new LinkedHashMap(kept.appInfo as Map)
+        state.appIds = new ArrayList((kept.appIds ?: []) as List)
+    }
     // Backlog item 30: this fires after most scans, and the log gave no way to
     // tell WHICH re-render raced the commit. The snapshot below is the evidence
     // that question needs.
@@ -1053,6 +1073,10 @@ void selfHealGraphIfNeeded() {
     state.hubVariableInventory = fetchHubVariableInventory()
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
+    // As finishScan does: the flowcharts now live in the graph, so the app list does not keep a second copy.
+    Map healedInfo = (state.appInfo ?: [:]) as Map
+    healedInfo.each { String appId, info -> if (info instanceof Map) (info as Map).remove('flow') }
+    state.appInfo = healedInfo
     Long healedAt = now()
     state.graphCommittedAtLocal = healedAt
     atomicState.graphCommittedAt = healedAt
@@ -1895,6 +1919,13 @@ ConcurrentHashMap liveAppScan() {
 // not replaced by this.
 @Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
+// Each generation's finished app list (appInfo and appIds), written by the app phase's finalize and read back
+// by the steps after it. state.appInfo can be erased between them: any execution that loaded state before the
+// finalize and ends after it writes its whole older snapshot back. Measured 2026-10-10 on 2.4.19 - finalize
+// held 216 apps at 07:01:59, the registry step still saw 216 at 07:02:07, and the graph build a second later
+// saw 0 and refused to publish. Static, so that write-back cannot reach it; a code reload wipes it, and then
+// the publish guard and its retry remain the fallback.
+@Field static final ConcurrentHashMap<String, Map> APP_RESULTS = new ConcurrentHashMap<>()
 @Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
 
 // Composite key matching SCAN_LOCKS's own app.id scoping - collision across
@@ -1977,6 +2008,38 @@ void sweepGenerationRecords() {
         Long createdAt = (v?.createdAt ?: 0L) as Long
         if (createdAt < cutoff) REGISTRY_RESULTS.remove(entry.key, entry.value)
     }
+    new ArrayList(APP_RESULTS.entrySet()).each { entry ->
+        Map v = entry.value as Map
+        Long createdAt = (v?.createdAt ?: 0L) as Long
+        if (createdAt < cutoff) APP_RESULTS.remove(entry.key, entry.value)
+    }
+}
+
+// Puts this generation's app list back into state when a stale write-back has erased it since the app phase
+// finished, from the copy the finalize kept in APP_RESULTS. Returns true when it restored anything. Only ever
+// restores a LARGER list than state holds, so it can never shrink what a later execution wrote.
+boolean restoreAppResultsIfLost(String lockToken) {
+    Map held = APP_RESULTS.get(genKey(lockToken)) as Map
+    if (held == null) return false
+    Map heldInfo = (held.appInfo ?: [:]) as Map
+    int inState = ((state.appInfo ?: [:]) as Map).size()
+    if (heldInfo.size() <= inState) return false
+    state.appInfo = new LinkedHashMap(heldInfo)
+    state.appIds = new ArrayList((held.appIds ?: []) as List)
+    log.info "${app.label}: another page or job had overwritten the app list this scan had just read (${inState} of ${heldInfo.size()}); restored it"
+    return true
+}
+
+// The most recent generation's kept app list for this app, or null. Used by the self-heal after a publish,
+// when a late write-back can erase state.appInfo and state.graph together.
+Map latestAppResults() {
+    String prefix = "${app.id}:".toString()
+    Map best = null
+    APP_RESULTS.each { String k, Map v ->
+        if (!k.startsWith(prefix)) return
+        if (best == null || ((v.createdAt ?: 0L) as Long) > ((best.createdAt ?: 0L) as Long)) best = v
+    }
+    return best
 }
 
 // Everything this app knows comes from undocumented hub endpoints, so on a hub
@@ -3078,6 +3141,8 @@ void finalizeAppPhase(String scanId) {
 
     try {
         state.appInfo = new LinkedHashMap(scan.appInfo as Map)
+        APP_RESULTS.put(genKey(scan.lockToken as String), [appInfo: new LinkedHashMap(scan.appInfo as Map),
+                                                         appIds: new ArrayList((state.appIds ?: []) as List), createdAt: now()])
         // The independent witness the publish guard and the registry step read
         // (HAI #58, #59). state.appIds and state.appInfo live in the same
         // snapshot, so a stale whole-snapshot write-back from a concurrent
@@ -3184,6 +3249,7 @@ void fetchRegistry(jobData = null) {
     // with no error to stop it (HAI #59). Compared with the app phase's own
     // witness, which that write-back cannot reach; on a loss the matching is
     // skipped and recorded as an error, so the last good set is kept.
+    restoreAppResultsIfLost(lockToken)
     Integer witnessedApps = appPhaseWitnessCount(lockToken)
     int heldApps = ((state.appInfo ?: [:]) as Map).size()
     String inventoryLost = (witnessedApps != null && heldApps < witnessedApps) ?
@@ -3276,6 +3342,9 @@ void finishScan(data = null) {
     // own comment.
     String logicalGen = (data?.logicalGen ?: lockToken) as String
     boolean finished = finishGeneration(lockToken, null, logicalGen) {
+        // First, before the feed lookup and the publish guard read it: put back an app list a stale
+        // write-back erased after the app phase (see APP_RESULTS).
+        restoreAppResultsIfLost(lockToken)
         // v2.0.14: authoritative Hub Variable inventory. A synchronous,
         // in-process call (getAllGlobalVars()) with no
         // async round trip of its own, so it is called and published here,
@@ -3721,6 +3790,15 @@ void collectAppIds(def nodes, List ids) {
 // Failure here degrades to every app having a null namespace rather than
 // failing the scan; namespace is an enhancement for the Community Context
 // Card match, not something core scanning depends on.
+// Whether an app type is one the user installed: present in the hub's userAppTypes table. Through a String,
+// never a GString: the table's keys are Strings, and containsKey("${id}") is false for every one of them, which
+// tagged every app on the hub [INT] from 2.4.3 until 2.4.20 (Gordon, 2026-10-10).
+boolean isUserAppType(Map namespaces, Object appTypeId) {
+    if (appTypeId == null) return false
+    String key = "${appTypeId}".toString()
+    return namespaces.containsKey(key)
+}
+
 Map fetchAppTypeNamespaces() {
     Map out = [status: 'ok', error: null, namespaces: [:]]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/userAppTypes", 30)
@@ -3739,7 +3817,7 @@ Map fetchAppTypeNamespaces() {
         if (!(entry instanceof Map)) return
         Map e = entry as Map
         if (e.id == null || !e.namespace) return
-        namespaces["${e.id}"] = "${e.namespace}"
+        namespaces.put("${e.id}".toString(), "${e.namespace}".toString())
     }
     out.namespaces = namespaces
     return out
@@ -4278,14 +4356,14 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             // definitionName's namespace, for the Community Context Card match
             // only (spec section 4.1) - never added to the AI-friendly export.
             if (installedApp?.appTypeId != null) {
-                out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
+                out.namespace = appTypeNamespaces["${installedApp.appTypeId}".toString()]
                 // Same table, read for a second purpose: it holds only the app
                 // types the user installed, so presence in it is the hub's own
                 // answer to built-in versus user app. Null when the table is
                 // empty, which means the lookup failed rather than that every
                 // app on this hub ships with it.
                 if (appTypeNamespaces) {
-                    out.userApp = appTypeNamespaces.containsKey("${installedApp.appTypeId}")
+                    out.userApp = isUserAppType(appTypeNamespaces, installedApp.appTypeId)
                 }
             }
             // Stored for EVERY app, not only the empty ones, because it is read
@@ -15080,8 +15158,11 @@ Map roomPlanCreateRoom(String name) {
     }
     Map res = roomPlanPostRoom([roomId: 0, name: clean, deviceIds: []])
     if (res.failure) return [ok: false, reason: res.failure]
-    boolean landed = hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }
-    return [ok: landed, name: clean,
+    // The read-back list goes back to the page too, so the new room is drawn from this answer at once rather
+    // than after a full reload of every device's room (about 9 s on a 261-device hub, Gordon 2026-10-10).
+    List after = hubRoomList()
+    boolean landed = after.any { "${(it as Map).name}".equalsIgnoreCase(clean) }
+    return [ok: landed, name: clean, rooms: after,
             reason: landed ? '' : 'the hub accepted the request but the room is not in its list']
 }
 
@@ -17054,6 +17135,11 @@ const PIVOT_PRESETS = [
 // the display label, which inert/unreadable states overwrite.
 function isRuleNode(n) {
   return !!(n && n.appType && n.appType.indexOf('Rule-') === 0);
+}
+// An app whose kind keeps rule steps Automation Map decodes into a flowchart: Rule Machine, Visual Rule
+// Builder and Notifier (see buildRuleFlow).
+function hasRuleSteps(n) {
+  return isRuleNode(n) || !!(n && n.appType && (n.appType.indexOf('Visual Rule') === 0 || n.appType === 'Notifier'));
 }
 function isVariableAutomationNode(n) {
   return isRuleNode(n) || !!(n && n.appType === 'webCoRE Piston');
@@ -19077,7 +19163,9 @@ function showFlow(appId) {
         ? 'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.'
         : (node && node.engine === 'HAI'
           ? 'Hubitat Automation Intelligence published no steps for this rule. Its devices, variables and rule links are on the map as usual, and its own page has the rule itself.'
-          : 'This app has no decoded rule flow to show.')), isWebcoreNotice);
+          // Only an app that has rule steps can lack them. For an integration or a dashboard the line said
+          // nothing and sat above the useful part of the panel (Gordon, 2026-10-10).
+          : (hasRuleSteps(node) ? 'This rule has no decoded flow to show.' : ''))), isWebcoreNotice);
     setFlowWebcoreIndent(node);
     renderEngineLink(node);
     flowChart.innerHTML = '';
@@ -22572,7 +22660,16 @@ function roomPlanCrud(body, busy) {
     body: JSON.stringify(body)
   }).then(function (r) { return r.json(); })
     .then(function (d) {
-      if (d && d.ok) { msg.textContent = ''; roomPlanRefreshLive(keep); return d; }
+      if (d && d.ok) {
+        // A create answers with the hub's room list as read back after the save: draw the new room from it now,
+        // then refresh every device's room in the background, saying so until it is done. The message used to
+        // clear here, and the room appeared only after that reload, about 9 s later (Gordon, 2026-10-10).
+        if (Array.isArray(d.rooms)) { ROOMPLAN.rooms = d.rooms; roomPlanRender(); }
+        const refreshing = 'Updating from the hub...';
+        msg.textContent = refreshing;
+        roomPlanRefreshLive(keep).then(function () { if (msg.textContent === refreshing) msg.textContent = ''; });
+        return d;
+      }
       msg.textContent = (d && d.reason) || 'That did not work.';
       return d;
     })
