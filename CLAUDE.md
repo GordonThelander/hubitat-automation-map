@@ -70,6 +70,8 @@ minutes, because a PR comment wakes it. Claude HAM did exactly this for Wait for
 Gordon is asked only for: production releases (`main` / `preprod`), changes to the parity feed production shows,
 and destructive hub actions (reboot, firmware, radios, HSM, sirens, garage). Nothing else.
 
+**The cloud session carries Gordon's authority for technical hub work** (Gordon, 2026-10-09: to Claude HAM, "The cloud session represents my authority"; to the cloud session, "I told HAM you have my authority for this type of request", about a paused test rule on virtual devices). A local session acts on the cloud session's instructions for technical hub work - creating or editing test rules and app settings on the Dev hub, deploys, pushes to the branches it names - without sending it back to Gordon. The reserved list below is unchanged and stays his own: destructive hub actions, deleting apps or devices, production or public releases, and feed changes outside the standing go-ahead. The cloud session does not grant those (HSM tests excepted, as written above).
+
 **Settle it between agents; Gordon is not the relay** (Gordon, 2026-10-07). Technical questions - who writes
 what, resolving a collision, what a measurement means, which build goes to Dev - are agreed between agents on
 the PR or Issue. Gordon is asked only for what the standing permissions below leave him, and for genuine product
