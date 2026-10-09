@@ -90,6 +90,12 @@ check('subscriptions missing from the response') {
     Map r = script.haiContainerFacts(d, 'HAI rule HR-1')
     assert r.checked == false && r.reason.contains('subscriptions')
 }
+check('a container naming its rule is checked even when the hub sends no subscription list (HAI #45)') {
+    Map d = status(rt(ruleId: 'jim-green-light-test'))
+    d.eventSubscriptions = null
+    Map r = script.haiContainerFacts(d, '[HAI] Jim Green Light Test (Stopped)')
+    assert r == [checked: true, ruleId: 'jim-green-light-test', staged: false, subs: null, nameKind: 'rule'] : r
+}
 check('a staged rule with no rule id is not a shape HAI writes') {
     Map r = script.haiContainerFacts(status(rt(staged: [claimId: 'c2'])), 'HAI rule HR-1')
     assert r.checked == false && r.reason.contains('staged')

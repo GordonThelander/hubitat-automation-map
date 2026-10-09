@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.15'
+@Field static final String APP_VERSION = '2.4.16'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -9984,12 +9984,19 @@ Map haiContainerFacts(Map data, String label) {
     // v is written by HAI's own state initialiser and never removed, so a map
     // without it is not the shape this check was written against.
     if (!rt.containsKey('v')) return [checked: false, reason: 'its rt state has no version marker']
-    if (!(data.eventSubscriptions instanceof List)) {
-        return [checked: false, reason: 'its event subscriptions were not in the hub response']
-    }
-    int subs = (data.eventSubscriptions as List).size()
     String ruleId = rt.ruleId == null ? null : "${rt.ruleId}".toString()
     boolean staged = rt.staged != null
+    // Subscriptions only decide the no-rule case. A container naming its rule is checked even when the hub
+    // sends no subscription list for it (null for two stopped containers on the 2.4.15 hub check, HAI #45),
+    // so it counts as checked instead of "could not check"; subs is then null, not a guessed 0.
+    if (!(data.eventSubscriptions instanceof List)) {
+        if (ruleId == null) return [checked: false, reason: 'its event subscriptions were not in the hub response']
+        String nameNs = (label ?: '').trim()
+        String pidNs = nameNs.startsWith('HAI rule ') ? nameNs.substring('HAI rule '.length()) : ''
+        String kindNs = nameNs.startsWith('[HAI]') ? 'rule' : (pidNs && !pidNs.contains(' ') ? 'placeholder' : 'other')
+        return [checked: true, ruleId: ruleId, staged: staged, subs: null, nameKind: kindNs]
+    }
+    int subs = (data.eventSubscriptions as List).size()
     if (ruleId == null && staged) return [checked: false, reason: 'its state holds a staged rule with no rule id']
     if (ruleId == null && subs > 0) {
         return [checked: false, reason: "its state names no rule but it holds ${subs} event subscription${subs == 1 ? '' : 's'}".toString()]
