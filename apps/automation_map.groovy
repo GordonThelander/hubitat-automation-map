@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.17'
+@Field static final String APP_VERSION = '2.4.18'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -622,6 +622,32 @@ void scheduleAutoScan() {
 // large hub - rather than racing it. Skipping silently here is correct: the
 // next scheduled run, or a manual press, covers it, and clearAbandonedScan()
 // already handles a scan that genuinely got stuck.
+// One automatic retry after a refused publish (2.4.18). A scan clears the saved map when it starts, so a
+// refusal leaves no map at all until the next good scan, which could be the overnight one. The retry runs a
+// few minutes later, when the page render that overlapped the scan has finished. Only one: if the retry is
+// refused as well, the cause is not a passing race and the next scheduled scan is left to it. The flag is in
+// atomicState, where the stale write-back that causes refusals cannot reset it.
+@Field static final int REFUSAL_RETRY_SECONDS = 180
+
+void scheduleRetryAfterRefusal() {
+    if ((atomicState.refusalRetry as Map)?.pending) {
+        atomicState.refusalRetry = null
+        log.warn "${app.label}: the automatic retry was refused too, so it is not retried again; the next scheduled scan will try"
+        return
+    }
+    atomicState.refusalRetry = [pending: true, at: now()]
+    runIn(REFUSAL_RETRY_SECONDS, 'retryScanAfterRefusal')
+    log.warn "${app.label}: retrying the scan once in ${(int) (REFUSAL_RETRY_SECONDS / 60)} minutes"
+}
+
+void retryScanAfterRefusal() {
+    if (state.scanRunning) {
+        if (diagOn()) log.info "${app.label}: automatic retry skipped, a scan is already running"
+        return
+    }
+    startScan('retry')
+}
+
 void scheduledScanHandler() {
     if (state.scanRunning) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
@@ -3249,6 +3275,9 @@ void finishScan(data = null) {
         // definite, current-generation answer to read rather than stale state
         // from a previous scan.
         state.hubVariableInventory = fetchHubVariableInventory()
+        // Who the hub itself says uses each variable (2.4.18): qualifies the
+        // "no decoded usage" finding, never an edge. See fetchHubVariableUsers().
+        state.hubVariableUsers = fetchHubVariableUsers()
 
         // One small request to another app on this same hub, published here
         // for the same reason as the inventory above: buildGraph() reads a
@@ -3332,9 +3361,11 @@ void finishScan(data = null) {
             genTrace('publish-refused', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
             state.scanError = why
             state.scanHeartbeat = now()
+            scheduleRetryAfterRefusal()
             return
         }
         genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
+        atomicState.refusalRetry = null
         Map graph = buildGraph()
         state.scanHeartbeat = now()
         state.graph = graph
@@ -10277,6 +10308,44 @@ Map fetchHubVariableInventory() {
     }
 }
 
+// Who uses each Hub Variable, as the hub's own variables page reports it (2.4.18, HAI #60). Firmware 2.5.2.133
+// added /hub2/variables behind that page; it is undocumented, so it is feature-detected and its absence is
+// a plain "unavailable", never an error. Its usedBy list is settings membership, not behaviour, and has no
+// read or write direction, so it never becomes an edge: it only says whether an app the decode cannot see
+// names the variable, which turns "may be unused, or used by an app this scan cannot decode" into one or
+// the other.
+Map fetchHubVariableUsers() {
+    try {
+        Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/variables", 15, [contentType: 'application/json'])
+        if (!fetched.ok || !(fetched.data instanceof Map) || !((fetched.data as Map).variables instanceof List)) {
+            return [status: 'unavailable', users: [:]]
+        }
+        return [status: 'complete', users: hubVariableUsersByName(((fetched.data as Map).variables) as List)]
+    } catch (Exception e) {
+        return [status: 'unavailable', users: [:]]
+    }
+}
+
+// name -> [[id, label], ...] from /hub2/variables' rows. Pure, so it is tested against the captured response.
+Map hubVariableUsersByName(List rows) {
+    Map out = [:]
+    rows.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map row = raw as Map
+        if (!row.name) return
+        out["${row.name}"] = ((row.usedBy ?: []) as List).findAll { it instanceof Map && (it as Map).id != null }
+            .collect { Map u -> [id: u.id.toString(), label: (u.label ?: '').toString()] }
+    }
+    return out
+}
+
+// The apps that name a variable, less the HAI engine's own permission list: HAI lists every variable rules
+// may change in its settings, so it names all of them and says nothing about use. Pure, for the test.
+List hubVariableUsersExcept(List users, Set ignoredAppIds) {
+    // toString, not "${}": a GString never equals the String in the set, so nothing would be excluded.
+    return ((users ?: []) as List).findAll { Map u -> !ignoredAppIds.contains(u.id.toString()) }
+}
+
 // Map a platform Hub Variable type spelling to the canonical schema-4 value,
 // case-insensitively. Confirmed live 2026-08-26 against real test variables of
 // all five types (a v2.0.14 export of TestNumber/
@@ -13138,6 +13207,12 @@ Map buildGraph() {
         }
     }
     int hubVarConnectorCount = 0
+    Map hubVarUsersState = (state.hubVariableUsers ?: [:]) as Map
+    boolean hubVarUsersKnown = hubVarUsersState.status == 'complete'
+    Map hubVarUsers = (hubVarUsersState.users ?: [:]) as Map
+    Set haiParentAppIds = ((state.appInfo ?: [:]) as Map).findAll { Object id, Object raw ->
+        raw instanceof Map && HAI_PARENT_TYPE_PREFIXES.any { "${(raw as Map).type ?: ''}".toLowerCase().startsWith(it.toLowerCase()) }
+    }.keySet().collect { it.toString() } as Set
     hubVarInventoryVars.each { String varName, meta ->
         if (!varName) return
         String varNodeId = "v${varName}"
@@ -13145,6 +13220,10 @@ Map buildGraph() {
         nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
         nodes[varNodeId].variableType = normalizeHubVariableType(m.type as String)
         nodes[varNodeId].identitySource = 'hub-inventory'
+        if (hubVarUsersKnown) {
+            nodes[varNodeId].hubUsers = hubVariableUsersExcept((hubVarUsers[varName] ?: []) as List, haiParentAppIds)
+                .collect { Map u -> [id: 'a' + u.id, label: u.label] }
+        }
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
             // Corrected 2026-08-31: a Connector device is not guaranteed absent
@@ -21087,6 +21166,16 @@ function insightGuidance() {
         normal: 'That is the expected structure for parent apps such as rule containers.',
         next: 'Review its child apps if you need detail. The parent itself is not a cleanup candidate.'
       },
+      variableUnused: {
+        meaning: 'No decoded rule reads or writes this Hub Variable, and the hub names no app that uses it.',
+        normal: 'It is most likely unused. A dashboard or an outside integration can still read it without the hub listing it.',
+        next: 'Check dashboards and external integrations; if nothing reads it, it can be removed.'
+      },
+      variableUsedByUndecodedApp: {
+        meaning: 'No decoded rule reads or writes this Hub Variable, but the hub says the apps below name it.',
+        normal: 'Those apps use an engine or a part of a rule this scan cannot decode, so the variable is in use.',
+        next: 'Keep it. Open the named apps to see how they use it.'
+      },
       variableWithoutDecodedUsage: {
         meaning: 'No decoded rule reads or writes this Hub Variable.',
         normal: 'It may be unused, manually maintained, externally consumed or used by an app engine this scan cannot decode.',
@@ -21350,8 +21439,20 @@ function buildInsights() {
       function () { return advice('unreferencedLocalVariable'); });
   }
   if (hv.noDecodedUsage.length) {
-    normalBody += '<p class="insLead">' + amPlural(hv.noDecodedUsage.length, 'hub variable has no decoded reader or writer. It may be unused, or used by an app this scan cannot decode', 'hub variables have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode') + '.</p>';
-    normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, function () { return advice('variableWithoutDecodedUsage'); });
+    // 2.4.18: where the hub's own variables page answered, each row says which of the two it is - no app
+    // names the variable, or an app the decode cannot read does - instead of leaving both open.
+    const hubUsersOf = function (id) { const n = ALL_NODES.find(function (x) { return x.id === id; }); return n && n.hubUsers; };
+    normalBody += '<p class="insLead">' + amPlural(hv.noDecodedUsage.length, 'hub variable has no decoded reader or writer', 'hub variables have no decoded reader or writer') + '. Where the hub says which apps name it, each row says so.</p>';
+    normalBody += rows(hv.noDecodedUsage, function (id) {
+      const u = hubUsersOf(id);
+      if (!u) return 'no decoded usage';
+      return u.length ? 'named by ' + amPlural(u.length, 'app', 'apps') + ' this scan cannot decode' : 'no app uses it';
+    }, function (id) {
+      const u = hubUsersOf(id);
+      if (u && u.length) return advice('variableUsedByUndecodedApp') + '<p class="sub"><b>Named by:</b> ' + appLinks(u.map(function (x) { return x.id; })) + '</p>';
+      if (u) return advice('variableUnused');
+      return advice('variableWithoutDecodedUsage');
+    });
   }
   if (hv.directionUnknownUsage.length) {
     normalBody += '<p class="insLead">' + amPlural(hv.directionUnknownUsage.length, 'hub variable is', 'hub variables are') + ' referenced by webCoRE with direction intentionally left unknown.</p>';
