@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.18'
+@Field static final String APP_VERSION = '2.4.19'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -2710,6 +2710,16 @@ void startAppPhase(String lockToken) {
     // same pipeline as any other app, and the out.type check below is what
     // suppresses its relationship data.
     appIds.addAll(appListing.ids as List)
+    // A second source (HAI #69): the hub's own list of apps using each device. /hub2/appsList leaves out
+    // whole families - every Easy Mobile Dashboard instance on the hub measured on 2026-10-09 - so a
+    // dashboard showing a device had no edge to it. Only apps the listing missed are added; they then go
+    // through the same per-app pipeline as every other app.
+    Map unlisted = appsUsingDevicesNotListed((((state.deviceLabels ?: [:]) as Map).keySet() as List), appIds)
+    if (unlisted.ids) {
+        appIds.addAll(unlisted.ids as List)
+        log.info "${app.label}: ${(unlisted.ids as List).size()} app(s) found through their devices that the hub's app list leaves out"
+    }
+    if (unlisted.note) log.info "${app.label}: ${unlisted.note}"
     // Re-checked here, not only trusted from the caller's own earlier check -
     // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
     // fresh acquisition can interleave during it exactly as easily as around
@@ -3639,6 +3649,46 @@ Map fetchInstalledAppIds() {
     return out
 }
 
+// How long a scan may spend asking the hub which apps use each device (HAI #69): about 7 s on 260 devices.
+@Field static final long APPS_USING_DEVICE_BUDGET_MS = 20000L
+
+// Apps that use one of these devices but are not among the listed ids, from the hub's getAppsUsingDevice
+// (measured on 2.5.2.134, 2026-10-09: 12 to 66 ms a device). It names apps whose settings select the
+// device; the owning app is not among them and needs nothing here, since the listing already has it.
+// Bounded in time, and skipped where the hub does not offer the call, so it can only ever add apps.
+Map appsUsingDevicesNotListed(List deviceIds, Collection listed) {
+    Set known = [] as Set
+    (listed ?: []).each { known << "${it}".toString() }
+    Set found = [] as LinkedHashSet
+    long started = now()
+    int checked = 0
+    for (Object d : (deviceIds ?: [])) {
+        if (now() - started > APPS_USING_DEVICE_BUDGET_MS) {
+            return [ids: found as List, note: "stopped looking for unlisted apps after ${checked} of ${deviceIds.size()} devices, to keep the scan short".toString()]
+        }
+        Long devId = "${d}".isLong() ? ("${d}" as Long) : null
+        if (devId == null) continue
+        def users
+        try {
+            users = getAppsUsingDevice(devId)
+        } catch (MissingMethodException e) {
+            return [ids: [], note: 'this hub does not report which apps use a device; apps it leaves off its app list are not shown']
+        } catch (Exception e) {
+            checked++
+            continue
+        }
+        checked++
+        (users ?: []).each { Object a ->
+            def id = null
+            try { id = a?.id } catch (Exception e) { id = null }
+            if (id == null) return
+            String s = "${id}".toString()
+            if (!known.contains(s)) found << s
+        }
+    }
+    return [ids: found as List, note: null]
+}
+
 // Iterative rather than recursive on purpose. A self-calling method inside a
 // Hubitat app is a sandbox risk not worth taking for a tree that is three deep,
 // and a stack of pending nodes does the same job with no such question.
@@ -4352,6 +4402,22 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             subscribed.each { String devId ->
                 List existing = (roles[devId] ?: []) as List
                 if (!existing) addRole(roles, devId, 'trigger')
+            }
+
+            // Visual Rule Builder 2.0 subscribes to every device it must watch, a decision's or a repeat's
+            // stop condition included, so the subscription alone drew a stop-condition sensor as a trigger.
+            // Its graph says which devices start the rule; one named only in a condition is a constraint.
+            Map vrbDevices = vrbGraphDeviceRoles(data)
+            if (vrbDevices) {
+                ((Set) vrbDevices.conditions).each { String devId ->
+                    if (((Set) vrbDevices.triggers).contains(devId)) return
+                    List existing = (roles[devId] ?: []) as List
+                    if (existing.contains('trigger')) {
+                        existing.remove('trigger')
+                        roles[devId] = existing
+                        addRole(roles, devId, 'constraint')
+                    }
+                }
             }
 
             // webCoRE's parent device settings are permissions: they describe
@@ -7570,7 +7636,7 @@ Map webcoreVrbAssessment(Map piston, Map hubVariableTypes, Map tokenToDeviceId, 
     (statementsJson =~ /":[0-9a-f]{32}:"/).each { Object m -> String t = webcoreMigrationStr(m); if (!tokenToDeviceId.containsKey(t.substring(1, t.length() - 1))) unknownDevices++ }
     if (unknownDevices) fatal << "Fix the piston first: ${unknownDevices} device ${unknownDevices == 1 ? 'reference' : 'references'} not found on this hub".toString()
     if (statementsJson.contains('"o":"followed by"')) fatal << 'No Visual Rule Builder equivalent: followed-by condition group'
-    if (statementsJson.contains('"t":"each"') || statementsJson.contains('"t":"for"')) fatal << 'No Visual Rule Builder equivalent: loops over devices or counts'
+    if (statementsJson.contains('"t":"each"') || statementsJson.contains('"t":"for"')) fatal << 'No Visual Rule Builder equivalent: loops over devices or counts (its repeat runs one action on an interval until a condition, with no count and no device list)'
 
     // Variables by dataflow: a declaration nothing reads is dead; a variable that controls triggers, conditions or
     // flow has no VRB2 equivalent; one used only as an action value is manual work on that action.
@@ -9154,7 +9220,15 @@ List buildVisualRuleBuilderFlow(Map st) {
         return names
     }
 
-    Closure labelForNode = { Map node ->
+    Closure conditionGroupText = null
+    // An action's devices; a repeat's are those of the action it wraps (its stop condition's are in its words).
+    Closure actionDevices = { Map node ->
+        Map config = node.config instanceof Map ? (node.config as Map) : [:]
+        if (node.type == 'repeatAction' && config.action instanceof Map) return resolveDevices(((config.action as Map).config) as Map)
+        return resolveDevices(config)
+    }
+    Closure labelForNode
+    labelForNode = { Map node ->
         String type = "${node.type}"
         Map config = (node.config instanceof Map) ? (node.config as Map) : [:]
         switch (type) {
@@ -9182,8 +9256,39 @@ List buildVisualRuleBuilderFlow(Map st) {
                 String msg = "${config.notificationMessage ?: ''}"
                 return msg ? "Notify: ${msg}" : 'Notify'
             case 'runRule': return 'Run Rule Actions'
-            default: return prettyMethod(type)
+            // Since 2.5.2.135: one wrapped action, repeated on an interval until a stop condition holds
+            // (measured on the hub 2026-10-09). Worded as the builder's own card words it.
+            case 'repeatAction':
+                Map inner = config.action instanceof Map ? (config.action as Map) : [:]
+                List innerDevs = resolveDevices(inner.config as Map)
+                String what = inner ? labelForNode(inner) : 'an action'
+                if (innerDevs) what = "${what} ${innerDevs.join(', ')}"
+                List every = []
+                ['hours': 'h', 'minutes': 'm', 'seconds': 's'].each { k, u -> Integer n = (config[k] ?: 0) as Integer; if (n) every << "${n}${u}" }
+                String text = "Repeat ${what}${every ? ', every ' + every.join(' ') : ''}"
+                Map stop = config.stopWhen instanceof Map ? (config.stopWhen as Map) : null
+                String until = stop ? conditionGroupText(stop) : ''
+                return until ? "${text}, until ${until}" : text
+            default:
+                // Any other trigger or condition that carries its own state text (a key ending Event or State,
+                // as motionCondition does inside a repeat's stopWhen) is worded by it, as the cases above are.
+                String own = null
+                config.each { k, v -> if (v instanceof String && ("${k}".endsWith('Event') || "${k}".endsWith('State'))) own = v }
+                return own ?: prettyMethod(type)
         }
+    }
+    // A condition group as words, the shape a decision node and a repeat's stopWhen share: its type is the
+    // AND/OR toggle and each condition carries its own device list.
+    conditionGroupText = { Map group ->
+        List conditions = (group.conditions ?: []) as List
+        if (!conditions) return ''
+        String joiner = "${group.type}" == 'any' ? ' OR ' : ' AND '
+        return conditions.collect { c ->
+            Map cond = (c instanceof Map) ? (c as Map) : [:]
+            String t = labelForNode(cond)
+            List devs = resolveDevices(cond.config as Map)
+            return devs ? "${t} on ${devs.join(', ')}" : t
+        }.join(joiner)
     }
 
     // A decision node's own type ("all"/"any") is the AND/OR toggle, not the
@@ -9274,7 +9379,7 @@ List buildVisualRuleBuilderFlow(Map st) {
                     if (!n2 || "${n2.kind}" == 'merge') { joinId = c; break }
                     List rt = (n2.type == 'runRule' && n2.config instanceof Map && (n2.config as Map).appId != null) ?
                         ["${(n2.config as Map).appId}"] : []
-                    steps << [kind: 'action', label: labelForNode(n2), devices: resolveDevices(n2.config as Map), ruleTargets: rt]
+                    steps << [kind: 'action', label: labelForNode(n2), devices: actionDevices(n2), ruleTargets: rt]
                     List o2 = (outgoing["${c}"] ?: []) as List
                     c = o2 ? "${(o2[0] as Map).to}" : null
                 }
@@ -9289,7 +9394,7 @@ List buildVisualRuleBuilderFlow(Map st) {
                     if (!n3 || "${n3.kind}" == 'merge') { joinId = joinId ?: c; break }
                     List rt = (n3.type == 'runRule' && n3.config instanceof Map && (n3.config as Map).appId != null) ?
                         ["${(n3.config as Map).appId}"] : []
-                    steps << [kind: 'action', label: labelForNode(n3), devices: resolveDevices(n3.config as Map), ruleTargets: rt]
+                    steps << [kind: 'action', label: labelForNode(n3), devices: actionDevices(n3), ruleTargets: rt]
                     List o3 = (outgoing["${c}"] ?: []) as List
                     c = o3 ? "${(o3[0] as Map).to}" : null
                 }
@@ -9304,7 +9409,7 @@ List buildVisualRuleBuilderFlow(Map st) {
         // Plain action node.
         List ruleTargets = (node.type == 'runRule' && node.config instanceof Map && (node.config as Map).appId != null) ?
             ["${(node.config as Map).appId}"] : []
-        steps << [kind: 'action', label: labelForNode(node), devices: resolveDevices(node.config as Map), ruleTargets: ruleTargets]
+        steps << [kind: 'action', label: labelForNode(node), devices: actionDevices(node), ruleTargets: ruleTargets]
         cursor = out ? "${(out[0] as Map).to}" : null
     }
 
@@ -9971,6 +10076,38 @@ List unusedConstraintDeviceIds(Map data) {
     }
     idle.removeAll(used)
     return idle.toList()
+}
+
+// Which devices of a Visual Rule Builder 2.0 rule start it, and which it only tests: [triggers, conditions],
+// or null for any other app. Device ids sit under config keys named switches or ending Sensors or Devices
+// (see buildVisualRuleBuilderFlow), and since 2.5.2.135 also one level down, inside a repeatAction's wrapped
+// action and its stopWhen group.
+Map vrbGraphDeviceRoles(Map data) {
+    Object doc = null
+    (data?.appState ?: []).each { e -> if (e instanceof Map && e.name == 'graphDocument') doc = e.value }
+    if (!(doc instanceof Map) || !((doc as Map).nodes instanceof List)) return null
+    Set triggers = [] as Set
+    Set conditions = [] as Set
+    Closure collect
+    collect = { Object v, Set into ->
+        if (v instanceof Map) {
+            (v as Map).each { k, val ->
+                String key = "${k}".toLowerCase()
+                boolean devices = key == 'switches' || key.endsWith('sensors') || key.endsWith('devices')
+                if (devices && val instanceof List) (val as List).each { if (it != null) into << "${it}".toString() }
+                else collect(val, into)
+            }
+        } else if (v instanceof List) (v as List).each { collect(it, into) }
+    }
+    ((doc as Map).nodes as List).each { Object o ->
+        if (!(o instanceof Map)) return
+        Map node = o as Map
+        Map config = node.config instanceof Map ? (node.config as Map) : [:]
+        if ("${node.kind}" == 'trigger') { collect(config, triggers); return }
+        if ("${node.kind}" == 'decision') { collect(config.conditions, conditions); return }
+        if (config.stopWhen != null) collect(config.stopWhen, conditions)
+    }
+    return [triggers: triggers, conditions: conditions]
 }
 
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
