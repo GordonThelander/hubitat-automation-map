@@ -124,6 +124,12 @@ it in CI on every push. A Claude hook in this repository's `.claude/settings.jso
 and asks Gordon before any publish. Re-pin only with his words: `python tools/feed_guard.py --approve
 "<Gordon's go-ahead, date>"`.
 
+**Standing go-ahead: production's Table 1 changes as each RM parity gap closes** (Gordon, 2026-10-09, asked
+"May production's Table 1 change each time a parity gap closes?": "YES - why is that even a question?"). A
+session that closes a parity row on its evidence copies HAI's regenerated public list here, re-pins with those
+words and merges to `dev`. Do not ask him again. It covers row-level changes backed by implementation or dated
+hub evidence only, never a change to how the feed is fetched or rendered.
+
 Gordon lifted the cloud brief's "never commit to `dev`" (`docs/cloud-task-test-harness.md`) on 2026-10-06,
 provided the feed stays protected: the cloud session may now merge off-hub work into `dev`. Code the hub
 runs is merged after its hub check passes. Production installs update from `main`, not `dev`, with one exception:
