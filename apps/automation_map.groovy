@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.16'
+@Field static final String APP_VERSION = '2.4.17'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -1876,6 +1876,41 @@ ConcurrentHashMap liveAppScan() {
 // embedded timestamp+random, this makes it impossible by construction instead.
 String genKey(String token) { return "${app.id}:${token}" }
 
+// What the app phase of one generation read, kept where a stale whole-snapshot
+// write-back cannot reach it (HAI #58). Keyed by generation, so a later
+// execution of a different generation never compares against it.
+void recordAppPhaseWitness(String lockToken, int apps) {
+    atomicState.appPhaseWitness = [gen: genKey(lockToken), apps: apps, at: now()]
+}
+
+// The number of apps this generation's app phase read, or null when it left
+// no witness (an older build's generation, or a path that never reached it).
+Integer appPhaseWitnessCount(String lockToken) {
+    Map w = atomicState.appPhaseWitness as Map
+    if (w == null || w.gen != genKey(lockToken)) return null
+    return w.apps as Integer
+}
+
+// Why a generation must not publish, or null when it may. Pure, so it is tested
+// directly. Three ways to have lost the inventory:
+//   - enumerated and held disagree (the original guard: a partial loss);
+//   - held disagrees with the witness (both state lists were reverted together,
+//     which is what published an empty feed as complete on 2026-10-09);
+//   - no witness and nothing held: a hub always lists at least this app, so an
+//     empty inventory is never a real result.
+String publishRefusal(Integer enumerated, Integer held, Integer witnessed) {
+    if (enumerated > 0 && held != enumerated) {
+        return "this scan found ${enumerated} apps but finished holding ${held}, so no map was saved"
+    }
+    if (witnessed != null && held != witnessed) {
+        return "this scan read ${witnessed} apps but its saved copy now holds ${held}, so no map was saved and the last one is kept"
+    }
+    if (witnessed == null && held == 0) {
+        return "this scan finished holding no apps, which a hub with this app installed cannot have, so no map was saved"
+    }
+    return null
+}
+
 // Generation lifecycle trace. Durable and always recorded, not gated on
 // diagOn(): the 2026-10-01 preprod incident published a zero-app graph with
 // diagnostic logging off, so the one trace that would have named the writer
@@ -2670,6 +2705,7 @@ void startAppPhase(String lockToken) {
         // A genuinely app-less hub has a complete empty result. Commit the
         // same invariant finalizeAppPhase sets for a non-empty app scan.
         state.appResultsReady = true
+        recordAppPhaseWitness(lockToken, 0)
         beginRegistryAndFinish(lockToken)
         return
     }
@@ -3006,6 +3042,13 @@ void finalizeAppPhase(String scanId) {
 
     try {
         state.appInfo = new LinkedHashMap(scan.appInfo as Map)
+        // The independent witness the publish guard and the registry step read
+        // (HAI #58, #59). state.appIds and state.appInfo live in the same
+        // snapshot, so a stale whole-snapshot write-back from a concurrent
+        // execution (normally a slow page render) erases both together and they
+        // still agree. atomicState is written at once and that write-back cannot
+        // move it, so it records what this generation actually read.
+        recordAppPhaseWitness(scan.lockToken as String, (scan.appInfo as Map).size())
         // After the write, not before it. Traced before, this read the
         // execution's pre-commit snapshot and reported collected=0 on a
         // healthy scan - true of that snapshot, and badly misleading about
@@ -3099,37 +3142,52 @@ void fetchRegistry(jobData = null) {
     List types = discoveredAppTypes()
     List matches = []
     Map meta = [state: 'OK', fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
+    // Matching joins the registry against the app types in state.appInfo. If a
+    // stale write-back has emptied that since the app phase, every entry
+    // matches nothing and the last good set would be replaced by an empty one
+    // with no error to stop it (HAI #59). Compared with the app phase's own
+    // witness, which that write-back cannot reach; on a loss the matching is
+    // skipped and recorded as an error, so the last good set is kept.
+    Integer witnessedApps = appPhaseWitnessCount(lockToken)
+    int heldApps = ((state.appInfo ?: [:]) as Map).size()
+    String inventoryLost = (witnessedApps != null && heldApps < witnessedApps) ?
+        "this step could not see the app list the scan had just read (${heldApps} of ${witnessedApps}), so the last matches were kept" : null
 
-    try {
-        Map result = httpFetch(REGISTRY_URL, 30, [contentType: 'application/json'])
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        List entries = (data.entries ?: []) as List
-        meta.entries = entries.size()
-        meta.schemaVersion = "${data.schemaVersion}"
+    if (inventoryLost) {
+        meta.state = 'ERROR'
+        meta.error = inventoryLost
+    } else {
+        try {
+            Map result = httpFetch(REGISTRY_URL, 30, [contentType: 'application/json'])
+            if (!result.ok) throw new Exception(result.error)
+            Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+            List entries = (data.entries ?: []) as List
+            meta.entries = entries.size()
+            meta.schemaVersion = "${data.schemaVersion}"
 
-        types.each { String appType ->
-            entries.each { ent ->
-                if (!(ent instanceof Map)) return
-                Map e = ent as Map
-                if (registryEntryState(e, appType) != 'MATCH') return
-                (e.dependencies ?: []).each { dep ->
-                    if (!(dep instanceof Map)) return
-                    Map d = dep as Map
-                    String name = "${d.name}".trim()
-                    if (!name || name == 'null') return
-                    String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
-                    String crit = "${d.runtimeCriticality}"
-                    if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
-                    matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
+            types.each { String appType ->
+                entries.each { ent ->
+                    if (!(ent instanceof Map)) return
+                    Map e = ent as Map
+                    if (registryEntryState(e, appType) != 'MATCH') return
+                    (e.dependencies ?: []).each { dep ->
+                        if (!(dep instanceof Map)) return
+                        Map d = dep as Map
+                        String name = "${d.name}".trim()
+                        if (!name || name == 'null') return
+                        String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
+                        String crit = "${d.runtimeCriticality}"
+                        if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
+                        matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
+                    }
                 }
             }
+            meta.matched = matches.size()
+            meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
+        } catch (Exception ex) {
+            meta.state = 'ERROR'
+            meta.error = "${ex.message}"
         }
-        meta.matched = matches.size()
-        meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
-    } catch (Exception ex) {
-        meta.state = 'ERROR'
-        meta.error = "${ex.message}"
     }
 
     // Written unconditionally, keyed by this generation's own token, not
@@ -3157,7 +3215,9 @@ void fetchRegistry(jobData = null) {
     // (map still builds, just without registry-derived matches) and stays
     // always logged; a normal match count is routine detail, gated.
     // One warning per failure, carrying the cause.
-    if (meta.error) {
+    if (inventoryLost) {
+        log.warn "${app.label}: registry matching skipped - ${inventoryLost}"
+    } else if (meta.error) {
         log.warn "${app.label}: registry unavailable, continuing without it: ${meta.error}"
     } else if (diagOn()) {
         log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
@@ -3259,17 +3319,22 @@ void finishScan(data = null) {
         // and the watchdog path fails closed without publishing, so anything
         // reaching this line with an unequal pair has lost records between
         // finalize and here - which is the failure this guard exists for.
+        //
+        // Both of those lists are in state, so a stale write-back erases them as
+        // a pair and they still agree (HAI #58). The witness is read from
+        // atomicState, which that write-back cannot reach.
         Integer enumeratedApps = ((state.appIds ?: []) as List).size()
         Integer collectedApps = ((state.appInfo ?: [:]) as Map).size()
-        if (enumeratedApps > 0 && collectedApps != enumeratedApps) {
-            String why = "this scan found ${enumeratedApps} apps but finished holding ${collectedApps}, so no map was saved"
+        Integer witnessedApps = appPhaseWitnessCount(lockToken)
+        String why = publishRefusal(enumeratedApps, collectedApps, witnessedApps)
+        if (why != null) {
             log.warn "${app.label}: refusing to publish - ${why}"
-            genTrace('publish-refused', [enumerated: enumeratedApps, collected: collectedApps])
+            genTrace('publish-refused', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
             state.scanError = why
             state.scanHeartbeat = now()
             return
         }
-        genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps])
+        genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
         Map graph = buildGraph()
         state.scanHeartbeat = now()
         state.graph = graph
