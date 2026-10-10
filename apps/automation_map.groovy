@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.26'
+@Field static final String APP_VERSION = '2.4.27'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '18'
+@Field static final String GRAPH_SCHEMA = '19'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -11585,6 +11585,23 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             return [type: 'branch',
                     branch: ['getIfThen': 'if', 'getElseIf': 'elseif',
                              'getElse': 'else', 'getEndIf': 'endif'][method]]
+
+        case 'getRepeat':
+            // A repeat block, measured on a probe rule (HAI #85): getRepeat opens it, the body follows as
+            // ordinary actions, getEndRepeat (END-REP, no keys) closes it. Only the unit used is stored;
+            // repeatN is the number of times, stopRepeat whether Stop Repeating Actions may stop it.
+            Integer rh = hamDetailNumberOrNull(v["repeatHour.${num}"])
+            Integer rm = hamDetailNumberOrNull(v["repeatMinute.${num}"])
+            Integer rs = hamDetailNumberOrNull(v["repeatSecond.${num}"])
+            if (rh == null && rm == null && rs == null) return null
+            Map o = [type: 'repeat', everySeconds: ((rh ?: 0) * 3600) + ((rm ?: 0) * 60) + (rs ?: 0),
+                     stoppable: hamDetailBool(v["stopRepeat.${num}"])]
+            Integer times = hamDetailNumberOrNull(v["repeatN.${num}"])
+            if (times != null) o.times = times
+            return o
+
+        case 'getEndRepeat':
+            return [type: 'repeatEnd']
 
         case 'getDefinedAction':
             // A custom command. cCmd is the method, myCapab the capability it
