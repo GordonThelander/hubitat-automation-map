@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.23'
+@Field static final String APP_VERSION = '2.4.24'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -22204,7 +22204,7 @@ function extRender(message) {
        '<button id="extSave" type="button">Save</button>' +
        '<button id="extExport" type="button">Download backup</button>' +
        '<button id="extImport" type="button">Restore from file</button>' +
-       '<input type="file" id="extFile" accept="application/json" style="display:none">' +
+       '<input type="file" id="extFile" accept=".txt,.json,text/plain,application/json" style="display:none">' +
        '<span class="msg" id="extMsg">' + extEsc(message) + '</span></div>';
   const rm = EXT.registryMeta || {};
   let reg = '';
@@ -22343,11 +22343,11 @@ function extExport() {
     exported: new Date().toISOString(),
     entries: clean
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'automation-map-external-systems.json';
+  a.download = 'automation-map-external-systems.txt';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -23218,7 +23218,7 @@ function iconsRender(message, filter) {
   h += '<div class="bar"><button id="iconsSave" type="button">Save</button>' +
        '<button id="iconsExport" type="button">Download backup</button>' +
        '<button id="iconsImport" type="button">Restore from file</button>' +
-       '<input type="file" id="iconsFile" accept="application/json" style="display:none">' +
+       '<input type="file" id="iconsFile" accept=".txt,.json,text/plain,application/json" style="display:none">' +
        '<span class="msg" id="iconsMsg">' + extEsc(message || '') + '</span></div>';
   h += '<p class="sub" style="margin-top:10px">Your overrides and notes live with this app. Removing the app ' +
        'removes them, so download a backup before you do.</p>';
@@ -23313,11 +23313,11 @@ function iconsExport() {
     exported: new Date().toISOString(),
     overrides: overrides
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'automation-map-device-icons.json';
+  a.download = 'automation-map-device-icons.txt';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -23391,7 +23391,7 @@ function exportJSON() {
     fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
     fetchMigrationRatings(btn, failedFetches)
   ]).then(function (results) {
-    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -25165,7 +25165,7 @@ String comparatorHtml() {
 
 <div id="amc-root">
   <p class="amc-note">
-    Select two Automation Map AI-friendly JSON exports. Comparison happens entirely in this browser;
+    Select two Automation Map AI-friendly exports (.txt files; older .json exports also open). Comparison happens entirely in this browser;
     the files are not uploaded to the hub or sent anywhere else. Only discovered apps, devices,
     Connectors, and Hub Variables are compared. A Hub Variable Connector is shown as its own
     Connector category, separate from Devices, since it represents synchronized shared state and
@@ -25177,12 +25177,12 @@ String comparatorHtml() {
   <div class="amc-grid">
     <div class="amc-card">
       <h3>Earlier or baseline export</h3>
-      <input id="amc-left-file" class="amc-file" type="file" accept="application/json,.json">
+      <input id="amc-left-file" class="amc-file" type="file" accept=".txt,.json,text/plain,application/json">
       <div id="amc-left-meta" class="amc-meta">No file selected.</div>
     </div>
     <div class="amc-card">
       <h3>Later or comparison export</h3>
-      <input id="amc-right-file" class="amc-file" type="file" accept="application/json,.json">
+      <input id="amc-right-file" class="amc-file" type="file" accept=".txt,.json,text/plain,application/json">
       <div id="amc-right-meta" class="amc-meta">No file selected.</div>
     </div>
   </div>
