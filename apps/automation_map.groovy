@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.20'
+@Field static final String APP_VERSION = '2.4.21'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -2773,16 +2773,6 @@ void startAppPhase(String lockToken) {
     // same pipeline as any other app, and the out.type check below is what
     // suppresses its relationship data.
     appIds.addAll(appListing.ids as List)
-    // A second source (HAI #69): the hub's own list of apps using each device. /hub2/appsList leaves out
-    // whole families - every Easy Mobile Dashboard instance on the hub measured on 2026-10-09 - so a
-    // dashboard showing a device had no edge to it. Only apps the listing missed are added; they then go
-    // through the same per-app pipeline as every other app.
-    Map unlisted = appsUsingDevicesNotListed((((state.deviceLabels ?: [:]) as Map).keySet() as List), appIds)
-    if (unlisted.ids) {
-        appIds.addAll(unlisted.ids as List)
-        log.info "${app.label}: ${(unlisted.ids as List).size()} app(s) found through their devices that the hub's app list leaves out"
-    }
-    if (unlisted.note) log.info "${app.label}: ${unlisted.note}"
     // Re-checked here, not only trusted from the caller's own earlier check -
     // fetchInstalledAppIds() is a real HTTP call, and abandonment plus a
     // fresh acquisition can interleave during it exactly as easily as around
@@ -3716,46 +3706,6 @@ Map fetchInstalledAppIds() {
     }
     out.ids = ids
     return out
-}
-
-// How long a scan may spend asking the hub which apps use each device (HAI #69): about 7 s on 260 devices.
-@Field static final long APPS_USING_DEVICE_BUDGET_MS = 20000L
-
-// Apps that use one of these devices but are not among the listed ids, from the hub's getAppsUsingDevice
-// (measured on 2.5.2.134, 2026-10-09: 12 to 66 ms a device). It names apps whose settings select the
-// device; the owning app is not among them and needs nothing here, since the listing already has it.
-// Bounded in time, and skipped where the hub does not offer the call, so it can only ever add apps.
-Map appsUsingDevicesNotListed(List deviceIds, Collection listed) {
-    Set known = [] as Set
-    (listed ?: []).each { known << "${it}".toString() }
-    Set found = [] as LinkedHashSet
-    long started = now()
-    int checked = 0
-    for (Object d : (deviceIds ?: [])) {
-        if (now() - started > APPS_USING_DEVICE_BUDGET_MS) {
-            return [ids: found as List, note: "stopped looking for unlisted apps after ${checked} of ${deviceIds.size()} devices, to keep the scan short".toString()]
-        }
-        Long devId = "${d}".isLong() ? ("${d}" as Long) : null
-        if (devId == null) continue
-        def users
-        try {
-            users = getAppsUsingDevice(devId)
-        } catch (MissingMethodException e) {
-            return [ids: [], note: 'this hub does not report which apps use a device; apps it leaves off its app list are not shown']
-        } catch (Exception e) {
-            checked++
-            continue
-        }
-        checked++
-        (users ?: []).each { Object a ->
-            def id = null
-            try { id = a?.id } catch (Exception e) { id = null }
-            if (id == null) return
-            String s = "${id}".toString()
-            if (!known.contains(s)) found << s
-        }
-    }
-    return [ids: found as List, note: null]
 }
 
 // Iterative rather than recursive on purpose. A self-calling method inside a
