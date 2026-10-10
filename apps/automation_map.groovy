@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit a067171cff910695d1dbde1639e2573d9e8dabb3; developer
+ * builder from the annotated Dev source at commit 5ede78a57ff392b02fd1fd464d1e475e80ef0cdc; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/a067171cff910695d1dbde1639e2573d9e8dabb3/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/5ede78a57ff392b02fd1fd464d1e475e80ef0cdc/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
