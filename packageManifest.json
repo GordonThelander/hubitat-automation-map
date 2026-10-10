@@ -1,12 +1,12 @@
 {
     "packageName": "Automation Map",
     "author": "Gordon Thelander",
-    "version": "2.4.2",
+    "version": "2.4.24",
     "minimumHEVersion": "2.5.1",
-    "dateReleased": "2026-09-28",
+    "dateReleased": "2026-10-10",
     "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
     "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-    "releaseNotes": "v2.4.2: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export. It now also groups devices by room.\n\nChanges since v2.3.2:\n\n- Room Manager: Arrange rooms as movable, resizable rectangles with device icons inside them. Devices without a room appear in a \"Not Allocated\" column. Drag devices into rooms, use Ctrl-click or Shift-click to select several, and create, rename or delete rooms without leaving the page. Changes remain staged until you press Apply. Discard removes staged changes, and failed changes remain staged so you can retry only those items.\n- Hub writes are limited to room membership: Automation Map changes only which room a device belongs to. It does not send any other field of the device record, so nothing else about the device can be altered by a room change. This is Automation Map's first release that writes to the hub. Room Manager does not command devices, edit rules or change other apps. Deleting a room leaves its devices intact and unallocated, with a confirmation showing how many will be affected.\n- Experimental HAI integration: Hubitat Automation Intelligence Engine can now appear on the map. Hubs without HAI continue to use Automation Map normally.\n- HAI RM5 Coverage report: Compare Rule Machine 5.1 and HAI capabilities, see which HAI capabilities have been observed running on a hub, and see which capabilities your own rules use.\n- webCoRE Migration Assessment: Adds an HAI Engine rating alongside Rule Machine and Visual Rule Builder.\n- Read-only relationship API: Other apps can retrieve Automation Map's device relationships.\n- Easier-to-read flowcharts: Diagrams open in a wider panel that adjusts when you zoom or resize the browser.\n- Faster map opening: The flowchart library now loads when you first open a flowchart, removing about 3 MB from the initial map load.\n- Better phone layout: The link to open the map now appears above the Scan button.\n\nAfter upgrading: Run a rescan to refresh app tags.",
+    "releaseNotes": "v2.4.24: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.\n\nChanges since v2.4.2:\n\n* See how your rules drive each other: set Show to \u201cRule to rule only\u201d to see just the links where one rule runs another, pauses or resumes it, cancels its timed actions, or sets its Private Boolean, so chains of rules stand out at a glance. New in this release: rules that only reset others at hub start are drawn faintly, with two filters to separate them, \u201cRule to rule, except startup resets\u201d and \u201cStartup resets only\u201d.\n* Visual Rule Builder\u2019s repeated action (hub 2.5.2.135) is drawn as the builder describes it, and a device it checks only to decide when to stop is shown as a condition, not a trigger.\n* More reliable scans: a scan that loses the app list partway, as can happen if a scan starts immediately after a hub restart, is no longer saved as an empty map. It will now try again by itself three minutes later.\n* Room Manager: creating or deleting a room is quicker, and the change shows as soon as the hub confirms it, without reloading every device\u2019s room.\n* Insights: a hub variable that no rule is seen to use now shows that nothing uses it.\n* webCoRE Migration Assessment: ratings are cached after first run, with a Refresh button to re-run them.\n* For Hubitat Automation Intelligence [HAI] users: rules are read in much more detail for migration, and HAI rule apps are included in Insights.\n* Exports and backups are saved as .txt files, and Baseline Comparison and the Import buttons open them (older .json files still open). On a hub page opened by its local address Chrome may warn about the download, because the page is not HTTPS; choose Keep.\n\nAfter upgrading: the settings page asks you to run a scan; the map shows this version\u2019s results once it has.",
     "apps": [
         {
             "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
             "required": true,
             "oauth": true,
             "primary": true,
-            "version": "2.4.2"
+            "version": "2.4.24"
         }
     ]
 }
