@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.21'
+@Field static final String APP_VERSION = '2.4.22'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -2021,13 +2021,24 @@ void sweepGenerationRecords() {
 boolean restoreAppResultsIfLost(String lockToken) {
     Map held = APP_RESULTS.get(genKey(lockToken)) as Map
     if (held == null) return false
+    boolean restored = false
     Map heldInfo = (held.appInfo ?: [:]) as Map
     int inState = ((state.appInfo ?: [:]) as Map).size()
-    if (heldInfo.size() <= inState) return false
-    state.appInfo = new LinkedHashMap(heldInfo)
-    state.appIds = new ArrayList((held.appIds ?: []) as List)
-    log.info "${app.label}: another page or job had overwritten the app list this scan had just read (${inState} of ${heldInfo.size()}); restored it"
-    return true
+    if (heldInfo.size() > inState) {
+        state.appInfo = new LinkedHashMap(heldInfo)
+        log.info "${app.label}: another page or job had overwritten the app list this scan had just read (${inState} of ${heldInfo.size()}); restored it"
+        restored = true
+    }
+    // The enumerated list separately: Claude HAM's 2.4.21 check saw it erased while the app list survived
+    // (enumerated 0, collected 188), which left the publish guard with nothing to compare.
+    List heldIds = (held.appIds ?: []) as List
+    int idsInState = ((state.appIds ?: []) as List).size()
+    if (heldIds.size() > idsInState) {
+        state.appIds = new ArrayList(heldIds)
+        log.info "${app.label}: another page or job had overwritten the list of apps this scan enumerated (${idsInState} of ${heldIds.size()}); restored it"
+        restored = true
+    }
+    return restored
 }
 
 // The most recent generation's kept app list for this app, or null. Used by the self-heal after a publish,
@@ -3301,7 +3312,10 @@ void fetchRegistry(jobData = null) {
 
     // Only on success, so a failed fetch keeps the last good set rather than
     // silently emptying the map of everything the registry contributed.
-    if (!meta.error) state.registryMatches = matches
+    if (!meta.error) {
+        state.registryMatches = matches
+        atomicState.registryMatchesLastGood = matches
+    }
     state.registryMeta = meta
     // Split by outcome (v2.1.8): registry unavailable is a degraded outcome
     // (map still builds, just without registry-derived matches) and stays
@@ -3391,8 +3405,19 @@ void finishScan(data = null) {
             // registry contributed - same rule fetchRegistry() itself
             // applies to its own state.registryMatches write, enforced again
             // here at the point of use.
-            if (!regMeta.error) state.registryMatches = (regResult.matches as List)
+            if (!regMeta.error) {
+                state.registryMatches = (regResult.matches as List)
+                atomicState.registryMatchesLastGood = (regResult.matches as List)
+            }
             state.registryMeta = regMeta
+        }
+        // A failed or unfinished registry step keeps the last good matches, and they are read back from atomicState
+        // when state has lost them: a stale write-back can blank state.registryMatches, and a registry failure on
+        // the same scan then drew the map without every registry-supplied external system (11 fewer on one 2.4.20
+        // scan, Claude HAM 2026-10-10).
+        if (!(state.registryMatches) && atomicState.registryMatchesLastGood) {
+            state.registryMatches = new ArrayList(atomicState.registryMatchesLastGood as List)
+            log.info "${app.label}: restored ${(state.registryMatches as List).size()} external-system match(es) from the last good registry read"
         }
 
         // Fail closed on an impossible collapse. A generation that enumerated
