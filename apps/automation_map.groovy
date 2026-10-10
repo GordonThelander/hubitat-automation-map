@@ -11284,7 +11284,9 @@ Map hamDetailDuration(String num, Map v) {
     Integer sec = hamDetailInt(v["delaySecond.${num}"])
     Map out = [cancelable: hamDetailBool(v["cancelAct.${num}"]),
                random: hamDetailBool(v["randomAct.${num}"])]
-    if (var) {
+    // uVar switches the delay to a variable, read as seconds; RM then offers no unit (HAI #85). A stale
+    // xVar left behind after uVar was switched off does not override the stored time.
+    if (var && (hamDetailBool(v["uVar.${num}"]) || (h == null && m == null && sec == null))) {
         out.seconds = null
         out.variable = var
         return out
@@ -11982,6 +11984,33 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             o.modes = hamDetailPerMode(v["chooseModes.${num}"]) { String id, String name ->
                 return [on: hamDetailDeviceRefs(dev["chooseSwOn${id}.${num}"]),
                         off: hamDetailDeviceRefs(dev["chooseSwOff${id}.${num}"])]
+            }
+            return o
+
+        case 'getPushButtonPerMode':
+            // One button device for every mode (pushMBtn), then per mode the button number butM<modeId>.<n>
+            // and its event butM<modeId>.<n>Op. The action index sits INSIDE the event key, before Op, unlike
+            // every other indexed setting (measured on a probe rule, HAI #85).
+            Map o = [type: 'buttonPerMode']
+            List d = hamDetailDeviceRefs(dev["pushMBtn.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["pushModes.${num}"]) { String id, String name ->
+                Integer b = hamDetailNumberOrNull(v["butM${id}.${num}"])
+                String evt = "${v["butM${id}.${num}Op"] ?: 'push'}".trim()
+                return b == null || !(evt in ['push', 'hold', 'doubleTap', 'release']) ? null : [button: b, command: evt]
+            }
+            return o
+
+        case 'getChooseButton':
+            // Device, button number and event all per mode, with the index last as usual:
+            // chooseButton<modeId>.<n>, chooseButNo<modeId>.<n>, chooseButAct<modeId>.<n> (HAI #85).
+            Map o = [type: 'chooseButtonPerMode']
+            o.modes = hamDetailPerMode(v["chooseModes.${num}"]) { String id, String name ->
+                List d = hamDetailDeviceRefs(dev["chooseButton${id}.${num}"])
+                Integer b = hamDetailNumberOrNull(v["chooseButNo${id}.${num}"])
+                String evt = "${v["chooseButAct${id}.${num}"] ?: ''}".trim()
+                return !d || b == null || !(evt in ['push', 'hold', 'doubleTap', 'release']) ? null :
+                       [devices: d, button: b, command: evt]
             }
             return o
 
