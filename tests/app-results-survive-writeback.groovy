@@ -22,6 +22,13 @@ assert script.restoreAppResultsIfLost('tok1') : 'an erased app list was not rest
 assert state.appInfo.size() == 216 && logged.any { it.contains('0 of 216') }
 println 'ok   an app list erased after the app phase is put back'
 
+// The enumerated list alone erased, the app list intact (Claude HAM, 2.4.21: enumerated 0, collected 216).
+state.appInfo = new LinkedHashMap(apps)
+state.appIds = []
+assert script.restoreAppResultsIfLost('tok1') && state.appIds.size() == 216 : 'an erased enumeration list was not restored'
+assert logged.any { it.contains('apps this scan enumerated (0 of 216)') }
+println 'ok   an enumeration list erased on its own is put back too'
+
 // Never shrinks a list: a state already holding as many (or more) is left alone.
 state.appInfo = new LinkedHashMap(apps); state.appInfo['999'] = [type: 'y']
 assert !script.restoreAppResultsIfLost('tok1') && state.appInfo.size() == 217
@@ -47,3 +54,10 @@ int reg = source.indexOf('void fetchRegistry(')
 assert source.indexOf('restoreAppResultsIfLost(lockToken)', reg) < source.indexOf('int heldApps =', reg)
 assert source.indexOf('Map kept = latestAppResults()', source.indexOf('void selfHealGraphIfNeeded(')) > 0
 println 'ok   finalize keeps it; registry, publish and self-heal restore it first'
+
+// Registry: the last good matches live in atomicState too, and fill in when state has lost them on a failed read.
+int fs = source.indexOf('void finishScan(')
+assert source.indexOf('atomicState.registryMatchesLastGood = (regResult.matches as List)', fs) > 0
+assert source.indexOf('if (!(state.registryMatches) && atomicState.registryMatchesLastGood)', fs) > 0
+assert source.indexOf('atomicState.registryMatchesLastGood = matches', source.indexOf('void fetchRegistry(')) > 0
+println 'ok   last good registry matches survive a stale write-back'
