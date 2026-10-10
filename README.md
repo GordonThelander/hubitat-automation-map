@@ -31,7 +31,7 @@ A device can hold different roles in different apps: a motion sensor may trigger
 | **Stops** | the rule stops another rule's actions |
 | **Private Boolean** | the rule sets another rule's Private Boolean |
 
-Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden.
+Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden. Rules that only reset others when the hub starts are drawn faintly, and two more filters separate them: **Rule to rule, except startup resets** and **Startup resets only**.
 
 A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped. If a rule still names another rule that has since been deleted, that is shown too - labelled `deleted`, so the action silently doing nothing is something you can actually see rather than only discover the hard way.
 
@@ -55,6 +55,12 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
 **AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
+
+The export is saved as a `.txt` file (the contents are JSON). Chrome blocks downloads from a hub page opened by its local address, because the page is not HTTPS: choose **Keep** in Chrome's download list. Exports and backups made with older versions as `.json` still open.
+
+**Baseline Comparison.** Pick two exports, an earlier one and a later one, and see which apps, devices, Connectors and Hub Variables were added, removed or changed. The comparison runs in your browser; nothing is uploaded. Differences export to CSV.
+
+**webCoRE Migration Assessment.** Rates every webCoRE piston for Rule Machine, Visual Rule Builder and Hubitat Automation Intelligence. Ratings are kept after the first run and shown at once; **Refresh Scan** rates them again. The rating runs from the open page, so leaving the page stops it; ratings already taken are kept.
 
 ### Room Manager
 

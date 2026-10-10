@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.25'
+@Field static final String APP_VERSION = '2.4.26'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '17'
+@Field static final String GRAPH_SCHEMA = '18'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -11856,6 +11856,21 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (d) o.devices = d
             return o
 
+        case 'getOCValve':
+            // valveOpenClose.<n> devices; valveRL.<n> 'false' open, 'true' close (measured, HAI #85).
+            Map o = [type: 'command', command: hamDetailBool(v["valveRL.${num}"]) ? 'closeValve' : 'openValve']
+            List d = hamDetailDeviceRefs(dev["valveOpenClose.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getSetHSM':
+            // alarm.<n> holds the command literal: armAway, armHome, armNight, disarm, disarmAll, armRules,
+            // cancelAlerts. No devices (measured, HAI #85).
+            Map o = [type: 'hsm']
+            String op = "${v["alarm.${num}"] ?: ''}".trim()
+            if (op) o.op = op
+            return o
+
         case 'getStopShade':
             Map o = [type: 'command', command: 'stopPositionChange']
             List d = hamDetailDeviceRefs(dev["shadeStop.${num}"])
@@ -22994,16 +23009,23 @@ function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
 
 // index is the position among the ordinary rooms only; Not Allocated is placed
 // separately and does not consume a grid slot.
-function roomPlanGeom(name, index, perRow, columnHeight) {
+function roomPlanGeom(name, index, perRow, columnHeight, taken) {
   const saved = (ROOMPLAN.layout || {})[roomPlanLayoutKey(name)];
   if (saved && saved.w) return { x: saved.x, y: saved.y, w: saved.w, h: saved.h };
   if (name === RP_UNASSIGNED) return { x: 0, y: 0, w: RP_UNALLOC_W, h: columnHeight };
   const left = RP_UNALLOC_W + RP_GAP;
-  return {
-    x: left + (index % perRow) * (RP_W + RP_GAP),
-    y: Math.floor(index / perRow) * (RP_H + RP_GAP),
-    w: RP_W, h: RP_H
-  };
+  // A room with no saved place takes the first grid slot nothing else covers. Taking slot `index` blindly put a
+  // room created outside Room Manager on top of rooms that had been dragged there (#91).
+  function slot(i) {
+    return { x: left + (i % perRow) * (RP_W + RP_GAP), y: Math.floor(i / perRow) * (RP_H + RP_GAP), w: RP_W, h: RP_H };
+  }
+  function overlaps(a, b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+  const busy = taken || [];
+  for (let i = 0; i < 1000; i++) {
+    const g = slot(i);
+    if (!busy.some(function (r) { return overlaps(g, r); })) return g;
+  }
+  return slot(index);
 }
 
 // Selection is a class on a chip, not a change to what rooms hold, so it
@@ -23049,10 +23071,16 @@ function roomPlanRender() {
   let maxBottom = 0;
   let h = '';
   let roomIndex = -1;
+  // Every saved room's place is known before any unsaved room is placed, so a free slot means free of all of them.
+  const taken = buckets.filter(function (n) { return n !== RP_UNASSIGNED; }).map(function (n) {
+    const sv = (ROOMPLAN.layout || {})[roomPlanLayoutKey(n)];
+    return sv && sv.w ? { x: sv.x, y: sv.y, w: sv.w, h: sv.h } : null;
+  }).filter(function (r) { return r; });
   buckets.forEach(function (name, i) {
     const key = roomPlanLayoutKey(name);
     if (name !== RP_UNASSIGNED) roomIndex += 1;
-    const g = roomPlanGeom(name, roomIndex, perRow, columnHeight);
+    const g = roomPlanGeom(name, roomIndex, perRow, columnHeight, taken);
+    if (name !== RP_UNASSIGNED && !((ROOMPLAN.layout || {})[key] || {}).w) taken.push(g);
     maxBottom = Math.max(maxBottom, g.y + g.h);
     const all = byRoom[key] || [];
     // Rooms always stay on screen while searching: a hidden room is a room you
