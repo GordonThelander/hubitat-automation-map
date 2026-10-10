@@ -11743,6 +11743,83 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             else o.command = closing ? 'close' : 'open'
             return o
 
+        // HAI #85: the actions Rule Machine offers that no rule on the first hub used, measured by Claude HAM
+        // on Test-room probe rules (2026-10-10). Only fields with no direction or enumerated value are read
+        // here; those whose stored values were not yet measured stay unsupported rather than guessed.
+        case 'getToggleSwitch':
+            // toggleSwitch.<n> devices, nothing else stored. Parallel to onOffSwitch.<n>.
+            Map o = [type: 'command', command: 'toggle']
+            List d = hamDetailDeviceRefs(dev["toggleSwitch.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getToggleDimmer':
+            // dimA.<n> devices, dimLA.<n> the level to turn on at.
+            Map o = [type: 'toggleLevel']
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["dimLA.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getStopDimmer':
+            // dimStop.<n> devices: stop a raise or lower in progress.
+            Map o = [type: 'command', command: 'stopLevelChange']
+            List d = hamDetailDeviceRefs(dev["dimStop.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getShadePosition':
+            // shadePosition.<n> devices, shadeLevel.<n> position 0-100.
+            Map o = [type: 'command', command: 'setPosition']
+            List d = hamDetailDeviceRefs(dev["shadePosition.${num}"])
+            if (d) o.devices = d
+            Integer pos = hamDetailNumberOrNull(v["shadeLevel.${num}"])
+            if (pos != null) o.position = pos
+            return o
+
+        case 'getAdjustFan':
+            // fanAdjust.<n> devices: step to the next fan speed.
+            Map o = [type: 'command', command: 'cycleSpeed']
+            List d = hamDetailDeviceRefs(dev["fanAdjust.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getExitRule':
+            return [type: 'exit']
+
+        case 'getStopRepeat':
+            return [type: 'stopRepeat']
+
+        case 'getHTTPGet':
+            // httper.<n> the address, as for a POST.
+            Map o = [type: 'http', method: 'get']
+            String url = "${v["httper.${num}"] ?: ''}".trim()
+            if (url) o.url = url
+            return o
+
+        case 'getPingIP':
+            // pingIP.<n> the address.
+            Map o = [type: 'ping']
+            String host = "${v["pingIP.${num}"] ?: ''}".trim()
+            if (host) o.host = host
+            return o
+
+        case 'getWriteLocalFile':
+        case 'getAppendLocalFile':
+            // localFile.<n> the file name, fileContents.<n> the text. Delete uses a different field.
+            Map o = [type: 'file', op: method == 'getWriteLocalFile' ? 'write' : 'append']
+            String name = "${v["localFile.${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            o.text = "${v["fileContents.${num}"] ?: ''}"
+            return o
+
+        case 'getDeleteLocalFile':
+            Map o = [type: 'file', op: 'delete']
+            String name = "${v["deleteFile.${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            return o
+
         case 'getComment':
             return [type: 'comment', text: "${v["comment.${num}"] ?: ''}"]
 
