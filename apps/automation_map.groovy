@@ -16603,6 +16603,9 @@ String buildMapHtml() {
   .roomRectName[data-rename] { cursor:text; }
   .roomRectDel { background:none; border:0; color:#5f7883; font-size:13px; line-height:1; padding:0 2px; cursor:pointer; }
   .roomRectDel:hover { color:#e0443e; }
+  .roomRect.rpPending { border-style:dashed; border-color:#4fb3a9; }
+  .roomRect.rpDeleting { opacity:0.45; border-style:dashed; }
+  .rpPendingTag { font-size:10px; font-weight:400; color:#9fb6c0; margin-left:6px; white-space:nowrap; }
   .roomRectCount { color:#7f9aa6; font-size:10px; white-space:nowrap; }
   .roomRectBody { flex:1; min-height:0; overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:4px; }
   .roomRectBody.dropHot { background:rgba(129,188,0,0.16); outline:1px dashed #81BC00; outline-offset:-3px; }
@@ -22647,6 +22650,24 @@ function roomPlanIdFor(name) {
   return hit ? String(hit.id) : '';
 }
 
+// The pending marker on a room in ROOMPLAN.rooms: 'create', 'delete', or null.
+function roomPlanPendingFor(name) {
+  const want = String(name || '').toLowerCase();
+  const r = (ROOMPLAN.rooms || []).filter(function (x) { return x && String(x.name || '').toLowerCase() === want; })[0];
+  return (r && r.pending) || null;
+}
+
+// Puts the plan back as it was before a create or delete the hub refused or never answered.
+function roomPlanUndoPending(body) {
+  if (body.createRoom) {
+    const want = String(body.createRoom).toLowerCase();
+    ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) { return !(r.pending === 'create' && String(r.name).toLowerCase() === want); });
+  } else if (body.deleteRoom) {
+    (ROOMPLAN.rooms || []).forEach(function (r) { if (String(r.id) === String(body.deleteRoom.id)) delete r.pending; });
+  }
+  roomPlanRedrawAfter('Nothing changed');
+}
+
 // Redraws after a hub change that already succeeded. A redraw problem must never read as the change failing:
 // told a create failed, a person presses it again and gets a second room (Claude HAM's 2.4.20 check, where a
 // create that landed reported "Failed: TypeError"). Without the panel's device list it reloads the panel.
@@ -22673,16 +22694,19 @@ function roomPlanCrud(body, busy) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function (r) { return r.json(); })
-    .catch(function (e) { msg.textContent = 'Failed: ' + e; return null; })
+    .catch(function (e) { msg.textContent = 'Failed: ' + e; roomPlanUndoPending(body); return null; })
     .then(function (d) {
       if (d === null) return null;
-      if (!(d && d.ok)) { msg.textContent = (d && d.reason) || 'That did not work.'; return d; }
+      if (!(d && d.ok)) { msg.textContent = (d && d.reason) || 'That did not work.'; roomPlanUndoPending(body); return d; }
       msg.textContent = '';
       // A create answers with the one room it confirmed on the hub. It holds no devices, so it is added and
       // drawn as it is, with no reload of every device's room - which took about 9 s on a 261-device hub and
       // drew the room only after it (Gordon, 2026-10-10). Rename still reloads: it carries a room's devices.
       if (d.room && d.room.name) {
-        ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([d.room]).sort(function (a, b) {
+        const confirmed = String(d.room.name).toLowerCase();
+        ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) {
+          return !(r.pending === 'create' && String(r.name).toLowerCase() === confirmed);
+        }).concat([d.room]).sort(function (a, b) {
           return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
         });
         roomPlanRedrawAfter('Created');
@@ -22793,16 +22817,22 @@ function roomPlanRender() {
     // cannot drop into, which is the one thing a search must not take away.
     const list = roomSearch ? all.filter(roomPlanMatches) : all;
     const isUnassigned = name === RP_UNASSIGNED;
-    h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') + '" data-room="' + extEsc(key) + '"' +
+    // A create or delete the hub has not confirmed yet is drawn at once, marked as pending (Gordon, 2026-10-10:
+    // the hub's own room save takes about 11 s, so waiting for it showed nothing for that long).
+    const pending = isUnassigned ? null : roomPlanPendingFor(name);
+    h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') +
+         (pending === 'create' ? ' rpPending' : pending === 'delete' ? ' rpDeleting' : '') + '" data-room="' + extEsc(key) + '"' +
          ' style="left:' + g.x + 'px; top:' + g.y + 'px; width:' + g.w + 'px; height:' + g.h + 'px;">';
     const roomId = isUnassigned ? '' : roomPlanIdFor(name);
     h += '<div class="roomRectHead" title="Drag to move this room. Drag the corner to resize it.' +
          (isUnassigned ? '' : ' Double-click the name to rename.') + '">' +
-         '<span class="roomRectName"' + (isUnassigned ? '' : ' data-rename="' + extEsc(roomId) + '"') + '>' +
+         '<span class="roomRectName"' + (isUnassigned || pending ? '' : ' data-rename="' + extEsc(roomId) + '"') + '>' +
          extEsc(isUnassigned ? 'Not Allocated' : name) + '</span>' +
-         (isUnassigned || !roomId ? '' : '<button class="roomRectDel" type="button" data-del="' + extEsc(roomId) + '" title="Delete this room">&times;</button>') +
+         (pending ? '<span class="rpPendingTag">' + (pending === 'create' ? 'Saving to hub...' : 'Deleting...') + '</span>' : '') +
+         (isUnassigned || !roomId || pending ? '' : '<button class="roomRectDel" type="button" data-del="' + extEsc(roomId) + '" title="Delete this room">&times;</button>') +
          '<span class="roomRectCount">' + (roomSearch ? (list.length + ' of ' + all.length) : all.length) + '</span></div>';
-    h += '<div class="roomRectBody" data-drop="' + extEsc(name) + '">';
+    // Nothing can be dropped into a room the hub has not confirmed, or is deleting.
+    h += '<div class="roomRectBody"' + (pending ? '' : ' data-drop="' + extEsc(name) + '"') + '>';
     if (!list.length) h += '<div class="roomRectEmpty">' + (roomSearch && all.length ? 'no match' : 'empty') + '</div>';
     list.forEach(function (d) {
       const staged = Object.prototype.hasOwnProperty.call(roomPending, String(d.id));
@@ -22949,7 +22979,10 @@ function roomPlanWire() {
       // The devices drawn in it, so the hub need not be asked and the page can move them itself.
       const devIds = Array.prototype.map.call(rect.querySelectorAll('.devChip'), function (c) { return c.getAttribute('data-dev'); })
         .filter(function (x) { return x; });
-      roomPlanCrud({ deleteRoom: { id: btn.getAttribute('data-del'), deviceIds: devIds } }, 'Deleting...');
+      const delId = btn.getAttribute('data-del');
+      (ROOMPLAN.rooms || []).forEach(function (r) { if (String(r.id) === String(delId)) r.pending = 'delete'; });
+      roomPlanRedrawAfter('Nothing changed');
+      roomPlanCrud({ deleteRoom: { id: delId, deviceIds: devIds } }, 'Deleting ' + nm + ' on the hub...');
     });
   });
   canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
@@ -24078,7 +24111,11 @@ document.getElementById('roomPlanNew').addEventListener('click', function () {
     document.getElementById('roomPlanMsg').textContent = 'There is already a room called ' + name.trim() + '.';
     return;
   }
-  roomPlanCrud({ createRoom: name.trim() }, 'Creating...');
+  ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([{ id: '', name: name.trim(), pending: 'create' }]).sort(function (a, b) {
+    return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
+  });
+  roomPlanRedrawAfter('Nothing changed');
+  roomPlanCrud({ createRoom: name.trim() }, 'Saving ' + name.trim() + ' to the hub...');
 });
 document.getElementById('roomPlanReset').addEventListener('click', function () {
   // A room the user dragged keeps its saved geometry forever, so a change to

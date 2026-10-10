@@ -24,6 +24,16 @@ String del = AppSource.function(source, 'roomPlanDeleteRoom')
 assert !del.contains('roomPlanRoomMembers(') : 'the delete reads every device membership first again'
 assert del.count('hubRoomList()') == 1 && del.indexOf('/room/delete/') < del.indexOf('hubRoomList()')
 int delBtn = source.indexOf("querySelectorAll('.roomRectDel')")
-assert source.indexOf('deleteRoom: { id: btn.getAttribute', delBtn) > 0 : 'the page no longer sends the devices it holds'
+assert source.indexOf('deleteRoom: { id: delId, deviceIds: devIds }', delBtn) > 0 : 'the page no longer sends the devices it holds'
 assert crudBody.indexOf('body.deleteRoom && d.id') < crudBody.indexOf('roomPlanRefreshLive(keep)') : 'a delete reloads every device again'
 println 'ok   a delete is two hub calls, and the page moves the room devices itself'
+
+// Option A (Gordon, 2026-10-10): the hub's own save takes about 11 s, so a create or delete is drawn at once as
+// pending, confirmed or undone when the hub answers, and a pending room takes no drops.
+int newBtn = source.indexOf("getElementById('roomPlanNew').addEventListener")
+assert source.indexOf("pending: 'create'", newBtn) < source.indexOf('roomPlanCrud({ createRoom', newBtn) : 'a create is not drawn before the hub answers'
+assert source.indexOf("r.pending = 'delete'", delBtn) < source.indexOf('roomPlanCrud({ deleteRoom', delBtn) : 'a delete is not shown before the hub answers'
+assert crudBody.count('roomPlanUndoPending(body)') == 2 : 'a refused or failed change leaves its pending room behind'
+assert source.contains("(pending ? '' : ' data-drop=")  : 'a pending room accepts drops'
+assert source.contains("'Saving to hub...'") && source.contains(".roomRect.rpPending")
+println 'ok   a create or delete shows at once as pending, and is confirmed or undone by the hub answer'
