@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.24'
+@Field static final String APP_VERSION = '2.4.25'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '16'
+@Field static final String GRAPH_SCHEMA = '17'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -11304,6 +11304,24 @@ Map hamDetailActionDelay(String num, Map v) {
     return [seconds: sec, cancelable: hamDetailBool(v["cancelAct.${num}"]), mode: mode]
 }
 
+// A per-mode action's entries: one per stored mode id, with the mode's name and whatever the closure
+// reads for it. An entry the closure cannot read is kept with unreadable:true rather than dropped, so a
+// consumer refuses the action instead of silently doing nothing in that mode.
+List hamDetailPerMode(Object rawIds, Closure read) {
+    List ids = hamDetailJsonList(rawIds)
+    List names = hamDetailModeNames(ids)
+    List out = []
+    ids.eachWithIndex { Object id, int i ->
+        String name = names[i]
+        Map got = (Map) read("${id}".toString(), name)
+        Map e = [modeId: "${id}".toString()]
+        if (name) e.mode = name
+        if (got == null) e.unreadable = true else e.putAll(got)
+        out << e
+    }
+    return out
+}
+
 List hamDetailDeviceRefs(Object raw) {
     return ((raw ?: []) as List).collect { Object d -> [id: "${(d as Map).id}", name: "${(d as Map).name}"] }
 }
@@ -11741,6 +11759,251 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             String onOffRaw = "${v["onOff.${num}"] ?: ''}".trim()
             if (onOffRaw && hamDetailBool(onOffRaw) != closing) o.directionConflict = true
             else o.command = closing ? 'close' : 'open'
+            return o
+
+        // HAI #85: the actions Rule Machine offers that no rule on the first hub used, measured by Claude HAM
+        // on Test-room probe rules (2026-10-10). Only fields with no direction or enumerated value are read
+        // here; those whose stored values were not yet measured stay unsupported rather than guessed.
+        case 'getToggleSwitch':
+            // toggleSwitch.<n> devices, nothing else stored. Parallel to onOffSwitch.<n>.
+            Map o = [type: 'command', command: 'toggle']
+            List d = hamDetailDeviceRefs(dev["toggleSwitch.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getToggleDimmer':
+            // dimA.<n> devices, dimLA.<n> the level to turn on at.
+            Map o = [type: 'toggleLevel']
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["dimLA.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getStopDimmer':
+            // dimStop.<n> devices: stop a raise or lower in progress.
+            Map o = [type: 'command', command: 'stopLevelChange']
+            List d = hamDetailDeviceRefs(dev["dimStop.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getShadePosition':
+            // shadePosition.<n> devices, shadeLevel.<n> position 0-100.
+            Map o = [type: 'command', command: 'setPosition']
+            List d = hamDetailDeviceRefs(dev["shadePosition.${num}"])
+            if (d) o.devices = d
+            Integer pos = hamDetailNumberOrNull(v["shadeLevel.${num}"])
+            if (pos != null) o.position = pos
+            return o
+
+        case 'getAdjustFan':
+            // fanAdjust.<n> devices: step to the next fan speed.
+            Map o = [type: 'command', command: 'cycleSpeed']
+            List d = hamDetailDeviceRefs(dev["fanAdjust.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getExitRule':
+            return [type: 'exit']
+
+        case 'getStopRepeat':
+            return [type: 'stopRepeat']
+
+        case 'getHTTPGet':
+            // httper.<n> the address, as for a POST.
+            Map o = [type: 'http', method: 'get']
+            String url = "${v["httper.${num}"] ?: ''}".trim()
+            if (url) o.url = url
+            return o
+
+        case 'getPingIP':
+            // pingIP.<n> the address.
+            Map o = [type: 'ping']
+            String host = "${v["pingIP.${num}"] ?: ''}".trim()
+            if (host) o.host = host
+            return o
+
+        case 'getWriteLocalFile':
+        case 'getAppendLocalFile':
+            // localFile.<n> the file name, fileContents.<n> the text. Delete uses a different field.
+            Map o = [type: 'file', op: method == 'getWriteLocalFile' ? 'write' : 'append']
+            String name = "${v["localFile.${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            o.text = "${v["fileContents.${num}"] ?: ''}"
+            return o
+
+        case 'getDeleteLocalFile':
+            Map o = [type: 'file', op: 'delete']
+            String name = "${v["deleteFile.${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            return o
+
+        // HAI #85 part 2: direction and per-mode actions, from the raw stored values Claude HAM measured
+        // (2026-10-10). Three direction booleans read "backwards": dimRL, shadeRL and lockRL store 'false' for
+        // the FIRST menu option (raise, open, lock) and 'true' for the second. dimFadeUp and ctFadeUp read the
+        // natural way ('true' is up). mU is inverted against its name: 'true' renders Unmute. Each direction is
+        // resolved here, in one place, so no consumer reads the raw flag.
+        case 'getRLDimmer':
+            Map o = [type: 'command', command: 'startLevelChange',
+                     direction: hamDetailBool(v["dimRL.${num}"]) ? 'down' : 'up']
+            List d = hamDetailDeviceRefs(dev["dimRaiseLower.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getRLShade':
+            Map o = [type: 'command', command: hamDetailBool(v["shadeRL.${num}"]) ? 'closeShade' : 'openShade']
+            List d = hamDetailDeviceRefs(dev["shadeOpenClose.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getStopShade':
+            Map o = [type: 'command', command: 'stopPositionChange']
+            List d = hamDetailDeviceRefs(dev["shadeStop.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getLULock':
+            Map o = [type: 'command', command: hamDetailBool(v["lockRL.${num}"]) ? 'unlock' : 'lock']
+            List d = hamDetailDeviceRefs(dev["lockLockUnlock.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getMuteUnmute':
+            Map o = [type: 'command', command: hamDetailBool(v["mU.${num}"]) ? 'unmute' : 'mute']
+            List d = hamDetailDeviceRefs(dev["muteUnmute.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getFanSpeed':
+            // fanSpeed.<n> is the driver's own lowercase literal (low, medium-low, ..., auto).
+            Map o = [type: 'command', command: 'setSpeed']
+            List d = hamDetailDeviceRefs(dev["fanDevice.${num}"])
+            if (d) o.devices = d
+            String speed = "${v["fanSpeed.${num}"] ?: ''}".trim()
+            if (speed) o.speed = speed
+            return o
+
+        case 'getPushButton':
+            // pushButNo.<n> the button number; pushButOp.<n> the event, measured as 'push' only.
+            Map o = [type: 'command', command: 'push']
+            List d = hamDetailDeviceRefs(dev["pushButton.${num}"])
+            if (d) o.devices = d
+            Integer button = hamDetailNumberOrNull(v["pushButNo.${num}"])
+            if (button != null) o.button = button
+            String event = "${v["pushButOp.${num}"] ?: ''}".trim()
+            if (event) o.event = event
+            return o
+
+        case 'getFadeDimmer':
+        case 'getFadeCT':
+            // Fade to a target over minutes. The direction flag only says which way the target lies.
+            boolean ct = method == 'getFadeCT'
+            String pre = ct ? 'ctFade' : 'dimFade'
+            Map o = [type: 'fade', attribute: ct ? 'colorTemperature' : 'level',
+                     up: hamDetailBool(v["${pre}Up.${num}"])]
+            List d = hamDetailDeviceRefs(dev["${pre}.${num}"])
+            if (d) o.devices = d
+            Integer target = hamDetailNumberOrNull(v["${pre}Target.${num}"])
+            if (target != null) o.target = target
+            String mins = "${v["${pre}Time.${num}"] ?: ''}".trim()
+            if (mins) {
+                try { o.seconds = ((mins as BigDecimal) * 60).intValue() } catch (Exception ignored) { }
+            }
+            return o
+
+        case 'getToggleColor':
+            // colorTog.<n> a named colour, as Rule Machine names it; colorTogLevel.<n> the level.
+            Map o = [type: 'toggleColor']
+            List d = hamDetailDeviceRefs(dev["bulbsTog.${num}"])
+            if (d) o.devices = d
+            String name = "${v["colorTog.${num}"] ?: ''}".trim()
+            Map hs = (Map) RM_NAMED_COLOURS[name]
+            if (name) o.color = name
+            if (hs) { o.hue = hs.hue; o.saturation = hs.saturation }
+            Integer lvl = hamDetailNumberOrNull(v["colorTogLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getToggleColorTemp':
+            Map o = [type: 'toggleColorTemperature']
+            List d = hamDetailDeviceRefs(dev["ctTog.${num}"])
+            if (d) o.devices = d
+            Integer k = hamDetailNumberOrNull(v["ctLTog.${num}"])
+            if (k != null) o.kelvin = k
+            Integer lvl = hamDetailNumberOrNull(v["ctTogLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getSetThermostat':
+            // One field per action: a mode, a fan mode, a setpoint, or a signed adjustment.
+            Map o = [type: 'thermostat']
+            List d = hamDetailDeviceRefs(dev["thermo.${num}"])
+            if (d) o.devices = d
+            Map fields = [thermoMode: 'mode', thermoFan: 'fanMode', thermoSetHeat: 'heatingSetpoint',
+                          thermoSetCool: 'coolingSetpoint', thermoAdjHeat: 'adjustHeating', thermoAdjCool: 'adjustCooling']
+            fields.each { String key, String out ->
+                String raw = "${v["${key}.${num}"] ?: ''}".trim()
+                if (!raw) return
+                if (out in ['mode', 'fanMode']) o[out] = raw
+                else { try { o[out] = raw as BigDecimal } catch (Exception ignored) { } }
+            }
+            return o
+
+        // Per mode. Mode lists are arrays of mode ids; values are suffixed with the mode id, except Delay per
+        // mode, whose value fields are suffixed with the mode NAME (delaySecondHome.<n>).
+        case 'getModeSwitch':
+            Map o = [type: 'switchPerMode']
+            List d = hamDetailDeviceRefs(dev["switchM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["switchModes.${num}"]) { String id, String name ->
+                String cmd = "${v["switch${id}.${num}"] ?: ''}".trim()
+                return cmd in ['on', 'off'] ? [command: cmd] : null
+            }
+            return o
+
+        case 'getChooseSwitch':
+            Map o = [type: 'chooseSwitchPerMode']
+            o.modes = hamDetailPerMode(v["chooseModes.${num}"]) { String id, String name ->
+                return [on: hamDetailDeviceRefs(dev["chooseSwOn${id}.${num}"]),
+                        off: hamDetailDeviceRefs(dev["chooseSwOff${id}.${num}"])]
+            }
+            return o
+
+        case 'getDimmersPerMode':
+            Map o = [type: 'levelPerMode']
+            List d = hamDetailDeviceRefs(dev["dimM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["dimmerModes.${num}"]) { String id, String name ->
+                Integer lvl = hamDetailNumberOrNull(v["level${id}.${num}"])
+                return lvl == null ? null : [level: lvl]
+            }
+            return o
+
+        case 'getColorPerMode':
+            Map o = [type: 'colorPerMode']
+            List d = hamDetailDeviceRefs(dev["bulbsM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["colorModes.${num}"]) { String id, String name ->
+                String colour = "${v["color${id}.${num}"] ?: ''}".trim()
+                Map hs = (Map) RM_NAMED_COLOURS[colour]
+                if (!hs) return null
+                Map e = [color: colour, hue: hs.hue, saturation: hs.saturation]
+                Integer lvl = hamDetailNumberOrNull(v["colorLevel${id}.${num}"])
+                if (lvl != null) e.level = lvl
+                return e
+            }
+            return o
+
+        case 'getDelayPerMode':
+            Map o = [type: 'delayPerMode', cancelable: hamDetailBool(v["cancelAct.${num}"])]
+            o.modes = hamDetailPerMode(v["delayModes.${num}"]) { String id, String name ->
+                if (!name) return null
+                Integer h = hamDetailNumberOrNull(v["delayHour${name}.${num}"])
+                Integer m = hamDetailNumberOrNull(v["delayMinute${name}.${num}"])
+                Integer sec = hamDetailNumberOrNull(v["delaySecond${name}.${num}"])
+                if (h == null && m == null && sec == null) return null
+                return [seconds: ((h ?: 0) * 3600) + ((m ?: 0) * 60) + (sec ?: 0)]
+            }
             return o
 
         case 'getComment':
