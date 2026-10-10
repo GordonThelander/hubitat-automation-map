@@ -189,14 +189,16 @@ check(!script.hamDetailWaitRuleOperands([rule: 1, delay: '0:10:00']).containsKey
       'contract 2 does not publish timeoutSeconds at all')
 
 // getChime was the example here until it was decoded on 2026-10-07; getMuteUnmute still is not.
-check(ops('4', 'getSetThermostat', [:]) == null, 'an unsupported construct resolves to nothing')
+check(ops('4', 'getRepeat', [:]) == null, 'an unsupported construct resolves to nothing')
 check(ops('4', 'getWaitEvents', [:]) == null, 'including the ones with a measured shape waiting')
 
 // A call, not the word: the HTTP POST action's own setting keys are httpPostBody and httpPostType.
 check(!(block =~ /\bhttp(Get|Post|Put|Delete)\s*\(/).find(),
       'the action block performs no hub I/O of its own')
-check(!block.contains("'toggle'"),
-      'no toggle command is invented: this family does not store one on this hub')
+// Toggle is its own Rule Machine action, getToggleSwitch (measured by Claude HAM, HAI #85), so the only
+// 'toggle' in the block is that one: the on/off family still never invents it.
+check(block.count("'toggle'") == 1 && block.contains("case 'getToggleSwitch'"),
+      'toggle comes only from Rule Machine\'s own Toggle action, never from on/off')
 
 // --- the whole extractor, where the real trap was --------------------------
 // The operand resolvers above all passed while disabled actions were silently
@@ -208,7 +210,7 @@ Map data = [
                 [name: 'onOff.7', value: 'true'],
                 [name: 'actSubType.8', value: 'getLogMsg'],
                 [name: 'logmsg.8', value: 'disabled step'],
-                [name: 'actSubType.9', value: 'getMuteUnmute']],
+                [name: 'actSubType.9', value: 'getRepeat']],
   appState: [[name: 'actionList', value: ['7', '8', '9']],
              [name: 'disabledActions', value: ['8']]]
 ]
@@ -220,7 +222,7 @@ check(steps[1].disabled == true,
       'a disabled action IS marked: Rule Machine keeps it in actionList and renders it Disabled')
 check(steps[1].supported == true && steps[1].type == 'log',
       'and is still resolved, so a consumer can see what it would have done')
-check(steps[2].supported == false && steps[2].method == 'getMuteUnmute',
+check(steps[2].supported == false && steps[2].method == 'getRepeat',
       'an unsupported construct carries its method name to be refused by')
 
 // A branch carries the eval group its condition lives in, which keys the
@@ -405,7 +407,9 @@ check(conflict.directionConflict == true && !conflict.containsKey('command'),
 check(ops('4', 'getOCGarage', [garageRL: '']).with { command == 'open' && !containsKey('devices') },
       'devices are read from garageOpenClose.<n> only')
 
-check(ops('41', 'getMuteUnmute', [:]) == null,
-      'mute stays unsupported until its direction is measured')
+// Measured by Claude HAM (HAI #85): mU reads against its name. Stored 'true' renders Unmute.
+check(ops('41', 'getMuteUnmute', [mU: 'true'])?.command == 'unmute' &&
+      ops('41', 'getMuteUnmute', [mU: 'false'])?.command == 'mute',
+      'mute follows Rule Machine\'s rendering: mU true is unmute, false is mute')
 
 println "${passed} HAM decode action assertions passed"
