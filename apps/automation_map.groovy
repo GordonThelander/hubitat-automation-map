@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit daab6ec465ec6b70519a3ec859627c6d97cde1c6; developer
+ * builder from the annotated Dev source at commit 5ede78a57ff392b02fd1fd464d1e475e80ef0cdc; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/daab6ec465ec6b70519a3ec859627c6d97cde1c6/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/5ede78a57ff392b02fd1fd464d1e475e80ef0cdc/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.2'
+@Field static final String APP_VERSION = '2.4.24'
 
 
 
@@ -120,7 +120,11 @@ boolean isDevBuild() {
 
 
 
-@Field static final String GRAPH_SCHEMA = '15'
+
+
+
+
+@Field static final String GRAPH_SCHEMA = '16'
 
 
 
@@ -136,6 +140,21 @@ boolean showSanta() {
 
 
 @Field static final String SUPPORTED_RULE_ENGINE = 'Rule-5.1'
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final int HAM_DECODE_CONTRACT_VERSION = 4
+@Field static final String HAM_SUMMARY_CONTRACT = 'ham.decode/1'
+@Field static final String HAM_DETAIL_CONTRACT = 'ham.decode.detail/1'
 
 
 
@@ -164,6 +183,10 @@ boolean showSanta() {
 
 
 @Field static final String HAI_CAPABILITIES_FILE = 'hai-am-capabilities.json'
+
+
+
+@Field static final String HAI_RULE_CONTAINER_TYPE = 'HAI Rule Container'
 
 
 @Field static final String HAI_FEED_CONTRACT = 'hai.am/1'
@@ -560,6 +583,42 @@ void scheduleAutoScan() {
 
 
 
+
+
+
+
+
+@Field static final int REFUSAL_RETRY_SECONDS = 180
+
+
+
+String refusalRetryNotice(Map retry, long nowMs, TimeZone zone) {
+    if (!(retry?.pending)) return null
+    long due = ((retry.at ?: 0L) as Long) + REFUSAL_RETRY_SECONDS * 1000L
+    if (due <= nowMs) return 'Retrying the scan automatically now. This page refreshes when it finishes.'
+    String at = new Date(due).format('HH:mm', zone ?: TimeZone.getDefault())
+    return "Retrying the scan automatically at ${at}. Nothing needs doing; this page refreshes when it finishes.".toString()
+}
+
+void scheduleRetryAfterRefusal() {
+    if ((atomicState.refusalRetry as Map)?.pending) {
+        atomicState.refusalRetry = null
+        log.warn "${app.label}: the automatic retry was refused too, so it is not retried again; the next scheduled scan will try"
+        return
+    }
+    atomicState.refusalRetry = [pending: true, at: now()]
+    runIn(REFUSAL_RETRY_SECONDS, 'retryScanAfterRefusal')
+    log.warn "${app.label}: retrying the scan once in ${(int) (REFUSAL_RETRY_SECONDS / 60)} minutes"
+}
+
+void retryScanAfterRefusal() {
+    if (state.scanRunning) {
+        if (diagOn()) log.info "${app.label}: automatic retry skipped, a scan is already running"
+        return
+    }
+    startScan('retry')
+}
+
 void scheduledScanHandler() {
     if (state.scanRunning) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
@@ -637,7 +696,7 @@ Map main() {
     
     
     return dynamicPage(name: 'main', title: "<b>${APP_NAME} v${APP_VERSION}${updateNoticeSuffix()}</b>", install: true, uninstall: ready,
-                       refreshInterval: (ready && scanActive) ? 60 : 0) {
+                       refreshInterval: (ready && (scanActive || (atomicState.refusalRetry as Map)?.pending)) ? 60 : 0) {
         
         
         
@@ -753,6 +812,10 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                 }
                 if (state.scanError) {
                     paragraph "<b style='color:#c0392b'>Scan error: ${state.scanError}</b>"
+                    
+                    
+                    String retryLine = refusalRetryNotice(atomicState.refusalRetry as Map, now(), location.timeZone)
+                    if (retryLine) paragraph "<span style='color:#555'>${retryLine}</span>"
                 }
                 if (state.graph) {
                     Map g = state.graph as Map
@@ -940,7 +1003,13 @@ void selfHealGraphIfNeeded() {
     if (state.graph != null) return
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
-    if (!(state.appInfo)) return
+    if (!(state.appInfo)) {
+        
+        Map kept = latestAppResults()
+        if (!(kept?.appInfo)) return
+        state.appInfo = new LinkedHashMap(kept.appInfo as Map)
+        state.appIds = new ArrayList((kept.appIds ?: []) as List)
+    }
     
     
     
@@ -965,6 +1034,10 @@ void selfHealGraphIfNeeded() {
     state.hubVariableInventory = fetchHubVariableInventory()
     state.graph = buildGraph()
     atomicState.graphVersion = GRAPH_SCHEMA
+    
+    Map healedInfo = (state.appInfo ?: [:]) as Map
+    healedInfo.each { String appId, info -> if (info instanceof Map) (info as Map).remove('flow') }
+    state.appInfo = healedInfo
     Long healedAt = now()
     state.graphCommittedAtLocal = healedAt
     atomicState.graphCommittedAt = healedAt
@@ -1807,12 +1880,54 @@ ConcurrentHashMap liveAppScan() {
 
 @Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
+
+
+
+
+
+
+@Field static final ConcurrentHashMap<String, Map> APP_RESULTS = new ConcurrentHashMap<>()
 @Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
 
 
 
 
 String genKey(String token) { return "${app.id}:${token}" }
+
+
+
+
+void recordAppPhaseWitness(String lockToken, int apps) {
+    atomicState.appPhaseWitness = [gen: genKey(lockToken), apps: apps, at: now()]
+}
+
+
+
+Integer appPhaseWitnessCount(String lockToken) {
+    Map w = atomicState.appPhaseWitness as Map
+    if (w == null || w.gen != genKey(lockToken)) return null
+    return w.apps as Integer
+}
+
+
+
+
+
+
+
+
+String publishRefusal(Integer enumerated, Integer held, Integer witnessed) {
+    if (enumerated > 0 && held != enumerated) {
+        return "this scan found ${enumerated} apps but finished holding ${held}, so no map was saved"
+    }
+    if (witnessed != null && held != witnessed) {
+        return "this scan read ${witnessed} apps but its saved copy now holds ${held}, so no map was saved and the last one is kept"
+    }
+    if (witnessed == null && held == 0) {
+        return "this scan finished holding no apps, which a hub with this app installed cannot have, so no map was saved"
+    }
+    return null
+}
 
 
 
@@ -1854,6 +1969,49 @@ void sweepGenerationRecords() {
         Long createdAt = (v?.createdAt ?: 0L) as Long
         if (createdAt < cutoff) REGISTRY_RESULTS.remove(entry.key, entry.value)
     }
+    new ArrayList(APP_RESULTS.entrySet()).each { entry ->
+        Map v = entry.value as Map
+        Long createdAt = (v?.createdAt ?: 0L) as Long
+        if (createdAt < cutoff) APP_RESULTS.remove(entry.key, entry.value)
+    }
+}
+
+
+
+
+boolean restoreAppResultsIfLost(String lockToken) {
+    Map held = APP_RESULTS.get(genKey(lockToken)) as Map
+    if (held == null) return false
+    boolean restored = false
+    Map heldInfo = (held.appInfo ?: [:]) as Map
+    int inState = ((state.appInfo ?: [:]) as Map).size()
+    if (heldInfo.size() > inState) {
+        state.appInfo = new LinkedHashMap(heldInfo)
+        log.info "${app.label}: another page or job had overwritten the app list this scan had just read (${inState} of ${heldInfo.size()}); restored it"
+        restored = true
+    }
+    
+    
+    List heldIds = (held.appIds ?: []) as List
+    int idsInState = ((state.appIds ?: []) as List).size()
+    if (heldIds.size() > idsInState) {
+        state.appIds = new ArrayList(heldIds)
+        log.info "${app.label}: another page or job had overwritten the list of apps this scan enumerated (${idsInState} of ${heldIds.size()}); restored it"
+        restored = true
+    }
+    return restored
+}
+
+
+
+Map latestAppResults() {
+    String prefix = "${app.id}:".toString()
+    Map best = null
+    APP_RESULTS.each { String k, Map v ->
+        if (!k.startsWith(prefix)) return
+        if (best == null || ((v.createdAt ?: 0L) as Long) > ((best.createdAt ?: 0L) as Long)) best = v
+    }
+    return best
 }
 
 
@@ -2056,6 +2214,9 @@ Map startScan(String entry = 'unknown') {
     
     
     state.deviceDisabled = bulk.disabledDevices as List
+    
+    
+    state.deviceDisabledChecked = (bulk.disabledFieldSeen == true)
     state.deviceCapabilities = [:]
     
     
@@ -2605,6 +2766,7 @@ void startAppPhase(String lockToken) {
         
         
         state.appResultsReady = true
+        recordAppPhaseWitness(lockToken, 0)
         beginRegistryAndFinish(lockToken)
         return
     }
@@ -2941,6 +3103,15 @@ void finalizeAppPhase(String scanId) {
 
     try {
         state.appInfo = new LinkedHashMap(scan.appInfo as Map)
+        APP_RESULTS.put(genKey(scan.lockToken as String), [appInfo: new LinkedHashMap(scan.appInfo as Map),
+                                                         appIds: new ArrayList((state.appIds ?: []) as List), createdAt: now()])
+        
+        
+        
+        
+        
+        
+        recordAppPhaseWitness(scan.lockToken as String, (scan.appInfo as Map).size())
         
         
         
@@ -3034,37 +3205,53 @@ void fetchRegistry(jobData = null) {
     List types = discoveredAppTypes()
     List matches = []
     Map meta = [state: 'OK', fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
+    
+    
+    
+    
+    
+    
+    restoreAppResultsIfLost(lockToken)
+    Integer witnessedApps = appPhaseWitnessCount(lockToken)
+    int heldApps = ((state.appInfo ?: [:]) as Map).size()
+    String inventoryLost = (witnessedApps != null && heldApps < witnessedApps) ?
+        "this step could not see the app list the scan had just read (${heldApps} of ${witnessedApps}), so the last matches were kept" : null
 
-    try {
-        Map result = httpFetch(REGISTRY_URL, 30, [contentType: 'application/json'])
-        if (!result.ok) throw new Exception(result.error)
-        Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
-        List entries = (data.entries ?: []) as List
-        meta.entries = entries.size()
-        meta.schemaVersion = "${data.schemaVersion}"
+    if (inventoryLost) {
+        meta.state = 'ERROR'
+        meta.error = inventoryLost
+    } else {
+        try {
+            Map result = httpFetch(REGISTRY_URL, 30, [contentType: 'application/json'])
+            if (!result.ok) throw new Exception(result.error)
+            Map data = (result.data instanceof Map) ? (result.data as Map) : [:]
+            List entries = (data.entries ?: []) as List
+            meta.entries = entries.size()
+            meta.schemaVersion = "${data.schemaVersion}"
 
-        types.each { String appType ->
-            entries.each { ent ->
-                if (!(ent instanceof Map)) return
-                Map e = ent as Map
-                if (registryEntryState(e, appType) != 'MATCH') return
-                (e.dependencies ?: []).each { dep ->
-                    if (!(dep instanceof Map)) return
-                    Map d = dep as Map
-                    String name = "${d.name}".trim()
-                    if (!name || name == 'null') return
-                    String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
-                    String crit = "${d.runtimeCriticality}"
-                    if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
-                    matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
+            types.each { String appType ->
+                entries.each { ent ->
+                    if (!(ent instanceof Map)) return
+                    Map e = ent as Map
+                    if (registryEntryState(e, appType) != 'MATCH') return
+                    (e.dependencies ?: []).each { dep ->
+                        if (!(dep instanceof Map)) return
+                        Map d = dep as Map
+                        String name = "${d.name}".trim()
+                        if (!name || name == 'null') return
+                        String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String
+                        String crit = "${d.runtimeCriticality}"
+                        if (!EXTERNAL_CRITICALITY.containsKey(crit)) crit = 'RUNTIME'
+                        matches << [type: appType, name: name, kind: kind, crit: crit, entry: "${e.id}"]
+                    }
                 }
             }
+            meta.matched = matches.size()
+            meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
+        } catch (Exception ex) {
+            meta.state = 'ERROR'
+            meta.error = "${ex.message}"
         }
-        meta.matched = matches.size()
-        meta.fetched = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
-    } catch (Exception ex) {
-        meta.state = 'ERROR'
-        meta.error = "${ex.message}"
     }
 
     
@@ -3086,13 +3273,18 @@ void fetchRegistry(jobData = null) {
 
     
     
-    if (!meta.error) state.registryMatches = matches
+    if (!meta.error) {
+        state.registryMatches = matches
+        atomicState.registryMatchesLastGood = matches
+    }
     state.registryMeta = meta
     
     
     
     
-    if (meta.error) {
+    if (inventoryLost) {
+        log.warn "${app.label}: registry matching skipped - ${inventoryLost}"
+    } else if (meta.error) {
         log.warn "${app.label}: registry unavailable, continuing without it: ${meta.error}"
     } else if (diagOn()) {
         log.info "${app.label}: registry gave ${meta.matched} dependency match(es) from ${meta.entries} entries"
@@ -3117,6 +3309,9 @@ void finishScan(data = null) {
     boolean finished = finishGeneration(lockToken, null, logicalGen) {
         
         
+        restoreAppResultsIfLost(lockToken)
+        
+        
         
         
         
@@ -3124,6 +3319,9 @@ void finishScan(data = null) {
         
         
         state.hubVariableInventory = fetchHubVariableInventory()
+        
+        
+        state.hubVariableUsers = fetchHubVariableUsers()
 
         
         
@@ -3168,8 +3366,19 @@ void finishScan(data = null) {
             
             
             
-            if (!regMeta.error) state.registryMatches = (regResult.matches as List)
+            if (!regMeta.error) {
+                state.registryMatches = (regResult.matches as List)
+                atomicState.registryMatchesLastGood = (regResult.matches as List)
+            }
             state.registryMeta = regMeta
+        }
+        
+        
+        
+        
+        if (!(state.registryMatches) && atomicState.registryMatchesLastGood) {
+            state.registryMatches = new ArrayList(atomicState.registryMatchesLastGood as List)
+            log.info "${app.label}: restored ${(state.registryMatches as List).size()} external-system match(es) from the last good registry read"
         }
 
         
@@ -3194,21 +3403,31 @@ void finishScan(data = null) {
         
         
         
+        
+        
+        
+        
         Integer enumeratedApps = ((state.appIds ?: []) as List).size()
         Integer collectedApps = ((state.appInfo ?: [:]) as Map).size()
-        if (enumeratedApps > 0 && collectedApps != enumeratedApps) {
-            String why = "this scan found ${enumeratedApps} apps but finished holding ${collectedApps}, so no map was saved"
+        Integer witnessedApps = appPhaseWitnessCount(lockToken)
+        String why = publishRefusal(enumeratedApps, collectedApps, witnessedApps)
+        if (why != null) {
             log.warn "${app.label}: refusing to publish - ${why}"
-            genTrace('publish-refused', [enumerated: enumeratedApps, collected: collectedApps])
+            genTrace('publish-refused', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
             state.scanError = why
             state.scanHeartbeat = now()
+            scheduleRetryAfterRefusal()
             return
         }
-        genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps])
+        genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
+        atomicState.refusalRetry = null
         Map graph = buildGraph()
         state.scanHeartbeat = now()
         state.graph = graph
         atomicState.graphVersion = GRAPH_SCHEMA
+        
+        hamDecodeWriteFile()
+        hamDecodeWriteDetailFile()
         
         
         
@@ -3323,7 +3542,8 @@ void finishScan(data = null) {
 
 
 Map fetchDeviceListBulk() {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [],
+               disabledFieldSeen: false, error: null]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/devicesList", 30)
     if (!result.ok) {
         log.warn "${app.label}: could not list devices: ${result.error}"
@@ -3355,7 +3575,8 @@ Map fetchDeviceListBulk() {
 
 
 Map aggregateDeviceTree(Map data) {
-    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [], error: null]
+    Map out = [labels: [:], rooms: [:], types: [:], typeGroups: [:], parents: [:], disabledDevices: [],
+               disabledFieldSeen: false, error: null]
     Map<String, Map> byId = [:]
     List order = []
     List pending = []
@@ -3391,6 +3612,10 @@ Map aggregateDeviceTree(Map data) {
         
         
         if (agg.disabled == null && d.containsKey('disabled')) agg.disabled = (d.disabled == true)
+        
+        
+        
+        if (d.containsKey('disabled')) out.disabledFieldSeen = true
     }
     Map typeGroups = [:]
     order.each { String devId ->
@@ -3501,6 +3726,15 @@ void collectAppIds(def nodes, List ids) {
 
 
 
+
+
+
+boolean isUserAppType(Map namespaces, Object appTypeId) {
+    if (appTypeId == null) return false
+    String key = "${appTypeId}".toString()
+    return namespaces.containsKey(key)
+}
+
 Map fetchAppTypeNamespaces() {
     Map out = [status: 'ok', error: null, namespaces: [:]]
     Map result = httpFetch("${LOOPBACK_BASE}/hub2/userAppTypes", 30)
@@ -3519,7 +3753,7 @@ Map fetchAppTypeNamespaces() {
         if (!(entry instanceof Map)) return
         Map e = entry as Map
         if (e.id == null || !e.namespace) return
-        namespaces["${e.id}"] = "${e.namespace}"
+        namespaces.put("${e.id}".toString(), "${e.namespace}".toString())
     }
     out.namespaces = namespaces
     return out
@@ -4043,19 +4277,29 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             
             
             
-            out.broken = rawLabel.contains('*BROKEN*')
+            
+            
+            
+            
+            
+            
+            Object brokenFlag = null
+            (data.appState ?: []).each { Object e ->
+                if (e instanceof Map && "${(e as Map).name}" == 'broken') brokenFlag = (e as Map).value
+            }
+            out.broken = (brokenFlag == null) ? rawLabel.contains('*BROKEN*') : (brokenFlag == true)
             out.type = stripReplacementChar(installedApp?.name as String)
             
             
             if (installedApp?.appTypeId != null) {
-                out.namespace = appTypeNamespaces["${installedApp.appTypeId}"]
+                out.namespace = appTypeNamespaces["${installedApp.appTypeId}".toString()]
                 
                 
                 
                 
                 
                 if (appTypeNamespaces) {
-                    out.userApp = appTypeNamespaces.containsKey("${installedApp.appTypeId}")
+                    out.userApp = isUserAppType(appTypeNamespaces, installedApp.appTypeId)
                 }
             }
             
@@ -4115,6 +4359,10 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             out.disabled = (installedApp?.disabled == true)
             out.paused = paused
             out.inactive = out.disabled || out.paused
+            
+            if ("${out.type}".contains(HAI_RULE_CONTAINER_TYPE)) {
+                out.haiContainer = haiContainerFacts(data, out.drawLabel as String)
+            }
 
             Map roles = [:]
             List stateful = []
@@ -4168,6 +4416,22 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
             subscribed.each { String devId ->
                 List existing = (roles[devId] ?: []) as List
                 if (!existing) addRole(roles, devId, 'trigger')
+            }
+
+            
+            
+            
+            Map vrbDevices = vrbGraphDeviceRoles(data)
+            if (vrbDevices) {
+                ((Set) vrbDevices.conditions).each { String devId ->
+                    if (((Set) vrbDevices.triggers).contains(devId)) return
+                    List existing = (roles[devId] ?: []) as List
+                    if (existing.contains('trigger')) {
+                        existing.remove('trigger')
+                        roles[devId] = existing
+                        addRole(roles, devId, 'constraint')
+                    }
+                }
             }
 
             
@@ -4237,7 +4501,37 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 
                 
                 out.localVariables = extractLocalVariableDefinitions(data, "a${appId}")
+            }
+            
+            
+            
+            
+            
+            
+            if (supportsRmConstructExtraction("${out.type}")) {
                 out.rmConstructs = extractRuleConstructs(data)
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                Map decodeFailures = [:]
+                out.conditions = hamDetailSafely('conditions', decodeFailures) { extractRuleConditions(data) } ?: []
+                out.expressions = hamDetailSafely('expressions', decodeFailures) { extractRuleExpressions(data) } ?: [:]
+                out.actions = hamDetailSafely('actions', decodeFailures) { extractRuleActions(data) } ?: []
+                out.triggers = hamDetailSafely('triggers', decodeFailures) { extractRuleTriggers(data) } ?: []
+                if (decodeFailures) out.decodeFailures = decodeFailures
             }
             if ("${out.type}" == 'webCoRE Piston') {
                 
@@ -7010,9 +7304,13 @@ void cacheMigrationRating(String appId, Map rating) {
     
     
     
+    
+    
+    
     cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
                     hai: side(rating.hai),
-                    engineVersion: ((rating.hai ?: [:]) as Map).version]
+                    engineVersion: ((rating.hai ?: [:]) as Map).version,
+                    appVersion: APP_VERSION]
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -7067,9 +7365,14 @@ Map migrationRatingsMapping() {
         
         
         boolean engineMoved = ratedAt && engineVersion && hit.engineVersion && "${hit.engineVersion}" != engineVersion
+        
+        
+        
+        boolean appMoved = ratedAt && "${hit.appVersion ?: ''}" != APP_VERSION
         out << [appId: appId,
                 status: ratedAt ? 'complete' : 'not-rated',
                 ratedAt: ratedAt ?: null,
+                appVersionMoved: ratedAt ? appMoved : null,
                 stale: ratedAt ? ((ratedAt < graphAt) || engineMoved) : null,
                 staleReason: ratedAt ? (engineMoved ? 'engine-version' : ((ratedAt < graphAt) ? 'graph-rebuilt' : null)) : null,
                 ruleMachine: hit.ruleMachine, visualRuleBuilder: hit.visualRuleBuilder,
@@ -7077,6 +7380,13 @@ Map migrationRatingsMapping() {
     }
     return render(status: 200, contentType: 'application/json',
         data: JsonOutput.toJson([ratings: out, graphCommittedAt: graphAt ?: null,
+                                 appVersion: APP_VERSION,
+                                 
+                                 
+                                 
+                                 
+                                 lastRatedAt: (out.findAll { it.appVersionMoved != true }
+                                                  .collect { (it.ratedAt ?: 0) as Long }.max() ?: 0) ?: null,
                                  rated: out.count { it.status == 'complete' }, total: out.size()]))
 }
 
@@ -7340,7 +7650,7 @@ Map webcoreVrbAssessment(Map piston, Map hubVariableTypes, Map tokenToDeviceId, 
     (statementsJson =~ /":[0-9a-f]{32}:"/).each { Object m -> String t = webcoreMigrationStr(m); if (!tokenToDeviceId.containsKey(t.substring(1, t.length() - 1))) unknownDevices++ }
     if (unknownDevices) fatal << "Fix the piston first: ${unknownDevices} device ${unknownDevices == 1 ? 'reference' : 'references'} not found on this hub".toString()
     if (statementsJson.contains('"o":"followed by"')) fatal << 'No Visual Rule Builder equivalent: followed-by condition group'
-    if (statementsJson.contains('"t":"each"') || statementsJson.contains('"t":"for"')) fatal << 'No Visual Rule Builder equivalent: loops over devices or counts'
+    if (statementsJson.contains('"t":"each"') || statementsJson.contains('"t":"for"')) fatal << 'No Visual Rule Builder equivalent: loops over devices or counts (its repeat runs one action on an interval until a condition, with no count and no device list)'
 
     
     
@@ -8614,7 +8924,7 @@ List extractHubVariableReads(Map data) {
     
     
     
-    boolean hasPredicate = st.hasPredicate == true
+    boolean hasPredicate = rulePredicateIsLive(st)
 
     Map settingValues = [:]
     (data.appSettings ?: []).each { s ->
@@ -8747,6 +9057,27 @@ List extractHubVariableReads(Map data) {
     return found
 }
 
+
+
+
+String triggerConstructToken(String capability, String num, Map settingValues) {
+    if (capability == 'Location Event') {
+        String event = "${settingValues["tstate${num}"] ?: ''}".trim()
+        return "${RM_LOCATION_EVENT_PREFIX}${event}"
+    }
+    return "trigger:${capability}"
+}
+
+
+
+
+String triggerFallbackLabel(String capability, String num, Map settingValues) {
+    String companion = "${settingValues["tstate${num}"] ?: ''}".trim()
+    String varName = "${settingValues["xVar${num}"] ?: ''}".trim()
+    if (varName) return companion ? "${capability} ${varName} ${companion}" : "${capability} ${varName}"
+    return companion ? "${capability}: ${companion}" : capability
+}
+
 List buildRuleFlow(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -8785,18 +9116,57 @@ List buildRuleFlow(Map data) {
         if (s.value != null && "${s.value}") settingValues[n] = "${s.value}"
     }
 
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    settingValues.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        String num = key.startsWith('rCapab_') ? key.substring('rCapab_'.length())
+                   : (key.startsWith('tCapab') ? key.substring('tCapab'.length()) : null)
+        
+        
+        if (num == null || !num.matches('^[0-9]+$')) return
+        if ("${settingValues[key] ?: ''}".trim() != 'Mode') return
+        List ids = hamDetailJsonList(settingValues["modes${num}"])
+        if (!ids) return
+        List names = hamDetailModeNames(ids)
+        
+        
+        if (names.any { it == null }) return
+        capabs[num] = names.size() == 1 ? "Mode is ${names[0]}" : "Mode in [${names.join(', ')}]"
+    }
+
     List steps = []
 
     
     
     
-    settingDevices.keySet().findAll { it.startsWith('tDev') && !it.startsWith('tDev-') }.sort().each { String n ->
-        String num = n.replaceAll('^tDev_?', '')
-        steps << [kind: 'trigger', label: (capabs[num] ?: "Trigger ${num}"), devices: settingDevices[n]]
+    
+    
+    
+    List triggerNums = settingValues.keySet().findAll { it.matches('^tCapab[0-9]+$') }
+        .collect { it.substring('tCapab'.length()) }
+        .sort { String a, String b -> (a as Integer) <=> (b as Integer) }
+    triggerNums.each { String num ->
+        String cap = "${settingValues["tCapab${num}"] ?: ''}".trim()
+        if (!cap) return
+        List devs = (settingDevices["tDev${num}"] ?: settingDevices["tDev_${num}"] ?: []) as List
+        
+        
+        
+        if (!devs && !DEVICELESS_TRIGGERS.contains(cap)) return
+        steps << [kind: 'trigger', label: (capabs[num] ?: triggerFallbackLabel(cap, num, settingValues)),
+                  devices: devs, constructs: [triggerConstructToken(cap, num, settingValues)]]
     }
 
     
-    if (st.hasPredicate == true) {
+    if (rulePredicateIsLive(st)) {
         String text = expressionText((evalMap['0'] ?: []) as List, capabs)
         if (text) steps << [kind: 'required', label: text, devices: requiredDevices(evalMap['0'] as List, settingDevices)]
     }
@@ -8864,7 +9234,15 @@ List buildVisualRuleBuilderFlow(Map st) {
         return names
     }
 
-    Closure labelForNode = { Map node ->
+    Closure conditionGroupText = null
+    
+    Closure actionDevices = { Map node ->
+        Map config = node.config instanceof Map ? (node.config as Map) : [:]
+        if (node.type == 'repeatAction' && config.action instanceof Map) return resolveDevices(((config.action as Map).config) as Map)
+        return resolveDevices(config)
+    }
+    Closure labelForNode
+    labelForNode = { Map node ->
         String type = "${node.type}"
         Map config = (node.config instanceof Map) ? (node.config as Map) : [:]
         switch (type) {
@@ -8892,8 +9270,39 @@ List buildVisualRuleBuilderFlow(Map st) {
                 String msg = "${config.notificationMessage ?: ''}"
                 return msg ? "Notify: ${msg}" : 'Notify'
             case 'runRule': return 'Run Rule Actions'
-            default: return prettyMethod(type)
+            
+            
+            case 'repeatAction':
+                Map inner = config.action instanceof Map ? (config.action as Map) : [:]
+                List innerDevs = resolveDevices(inner.config as Map)
+                String what = inner ? labelForNode(inner) : 'an action'
+                if (innerDevs) what = "${what} ${innerDevs.join(', ')}"
+                List every = []
+                ['hours': 'h', 'minutes': 'm', 'seconds': 's'].each { k, u -> Integer n = (config[k] ?: 0) as Integer; if (n) every << "${n}${u}" }
+                String text = "Repeat ${what}${every ? ', every ' + every.join(' ') : ''}"
+                Map stop = config.stopWhen instanceof Map ? (config.stopWhen as Map) : null
+                String until = stop ? conditionGroupText(stop) : ''
+                return until ? "${text}, until ${until}" : text
+            default:
+                
+                
+                String own = null
+                config.each { k, v -> if (v instanceof String && ("${k}".endsWith('Event') || "${k}".endsWith('State'))) own = v }
+                return own ?: prettyMethod(type)
         }
+    }
+    
+    
+    conditionGroupText = { Map group ->
+        List conditions = (group.conditions ?: []) as List
+        if (!conditions) return ''
+        String joiner = "${group.type}" == 'any' ? ' OR ' : ' AND '
+        return conditions.collect { c ->
+            Map cond = (c instanceof Map) ? (c as Map) : [:]
+            String t = labelForNode(cond)
+            List devs = resolveDevices(cond.config as Map)
+            return devs ? "${t} on ${devs.join(', ')}" : t
+        }.join(joiner)
     }
 
     
@@ -8984,7 +9393,7 @@ List buildVisualRuleBuilderFlow(Map st) {
                     if (!n2 || "${n2.kind}" == 'merge') { joinId = c; break }
                     List rt = (n2.type == 'runRule' && n2.config instanceof Map && (n2.config as Map).appId != null) ?
                         ["${(n2.config as Map).appId}"] : []
-                    steps << [kind: 'action', label: labelForNode(n2), devices: resolveDevices(n2.config as Map), ruleTargets: rt]
+                    steps << [kind: 'action', label: labelForNode(n2), devices: actionDevices(n2), ruleTargets: rt]
                     List o2 = (outgoing["${c}"] ?: []) as List
                     c = o2 ? "${(o2[0] as Map).to}" : null
                 }
@@ -8999,7 +9408,7 @@ List buildVisualRuleBuilderFlow(Map st) {
                     if (!n3 || "${n3.kind}" == 'merge') { joinId = joinId ?: c; break }
                     List rt = (n3.type == 'runRule' && n3.config instanceof Map && (n3.config as Map).appId != null) ?
                         ["${(n3.config as Map).appId}"] : []
-                    steps << [kind: 'action', label: labelForNode(n3), devices: resolveDevices(n3.config as Map), ruleTargets: rt]
+                    steps << [kind: 'action', label: labelForNode(n3), devices: actionDevices(n3), ruleTargets: rt]
                     List o3 = (outgoing["${c}"] ?: []) as List
                     c = o3 ? "${(o3[0] as Map).to}" : null
                 }
@@ -9014,7 +9423,7 @@ List buildVisualRuleBuilderFlow(Map st) {
         
         List ruleTargets = (node.type == 'runRule' && node.config instanceof Map && (node.config as Map).appId != null) ?
             ["${(node.config as Map).appId}"] : []
-        steps << [kind: 'action', label: labelForNode(node), devices: resolveDevices(node.config as Map), ruleTargets: ruleTargets]
+        steps << [kind: 'action', label: labelForNode(node), devices: actionDevices(node), ruleTargets: ruleTargets]
         cursor = out ? "${(out[0] as Map).to}" : null
     }
 
@@ -9096,6 +9505,7 @@ List requiredDevices(List expr, Map settingDevices) {
 
 Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
     String method = (act.method ?: settingValues["actSubType.${num}"] ?: 'Action') as String
+    String savedSubtype = "${settingValues["actSubType.${num}"] ?: ''}".trim()
 
     List devices = []
     settingDevices.each { String n, List d ->
@@ -9148,7 +9558,7 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         }
     }
 
-    return [
+    Map step = [
         kind: 'action',
         ctrl: ctrl,
         cond: cond,
@@ -9165,6 +9575,12 @@ Map actionStep(String num, Map act, Map settingValues, Map settingDevices, Map e
         
         variableField: (method == 'getSetVariable') ? "xVarV.${num}" : null,
     ]
+    
+    
+    
+    
+    if (savedSubtype) step.constructs = ["action:${savedSubtype}"]
+    return step
 }
 
 String actionLabel(String method, String num, Map act, Map settingValues, Map settingDevices, Map evalMap, Map capabs) {
@@ -9618,6 +10034,23 @@ boolean isStatefulCapability(String settingType) {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+boolean rulePredicateIsLive(Map st) {
+    if (st?.hasPredicate == true) return true
+    return (((st?.eval ?: [:]) as Map)['0'] ?: []) as boolean
+}
+
 List unusedConstraintDeviceIds(Map data) {
     Map st = [:]
     (data.appState ?: []).each { e ->
@@ -9630,7 +10063,7 @@ List unusedConstraintDeviceIds(Map data) {
     Map evalMap = (st.eval ?: [:]) as Map
 
     Set<String> liveGroups = new LinkedHashSet<String>()
-    if (st.hasPredicate == true) liveGroups << '0'
+    if (rulePredicateIsLive(st)) liveGroups << '0'
     actionList.each { a ->
         Object r = ((actions["${a}"] ?: [:]) as Map).rule
         if (r != null) liveGroups << "${r}"
@@ -9657,6 +10090,38 @@ List unusedConstraintDeviceIds(Map data) {
     }
     idle.removeAll(used)
     return idle.toList()
+}
+
+
+
+
+
+Map vrbGraphDeviceRoles(Map data) {
+    Object doc = null
+    (data?.appState ?: []).each { e -> if (e instanceof Map && e.name == 'graphDocument') doc = e.value }
+    if (!(doc instanceof Map) || !((doc as Map).nodes instanceof List)) return null
+    Set triggers = [] as Set
+    Set conditions = [] as Set
+    Closure collect
+    collect = { Object v, Set into ->
+        if (v instanceof Map) {
+            (v as Map).each { k, val ->
+                String key = "${k}".toLowerCase()
+                boolean devices = key == 'switches' || key.endsWith('sensors') || key.endsWith('devices')
+                if (devices && val instanceof List) (val as List).each { if (it != null) into << "${it}".toString() }
+                else collect(val, into)
+            }
+        } else if (v instanceof List) (v as List).each { collect(it, into) }
+    }
+    ((doc as Map).nodes as List).each { Object o ->
+        if (!(o instanceof Map)) return
+        Map node = o as Map
+        Map config = node.config instanceof Map ? (node.config as Map) : [:]
+        if ("${node.kind}" == 'trigger') { collect(config, triggers); return }
+        if ("${node.kind}" == 'decision') { collect(config.conditions, conditions); return }
+        if (config.stopWhen != null) collect(config.stopWhen, conditions)
+    }
+    return [triggers: triggers, conditions: conditions]
 }
 
 String roleForSetting(String settingName, String settingType, String devId, List subscribed) {
@@ -9727,6 +10192,68 @@ List scheduledJobList(def raw) {
     if (raw instanceof List) return raw as List
     if (raw instanceof Map && raw) return [raw as Map]
     return []
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map haiContainerFacts(Map data, String label) {
+    Object rtRaw = null
+    boolean rtSeen = false
+    Object entries = data?.appState
+    if (!(entries instanceof List)) return [checked: false, reason: 'its state was not in the hub response']
+    (entries as List).each { Object e ->
+        if (e instanceof Map && "${(e as Map).name}" == 'rt') { rtSeen = true; rtRaw = (e as Map).value }
+    }
+    if (!rtSeen) return [checked: false, reason: 'its state holds no rt entry']
+    
+    
+    if (rtRaw instanceof String) {
+        try { rtRaw = new groovy.json.JsonSlurper().parseText(rtRaw as String) } catch (Exception ex) { rtRaw = null }
+    }
+    if (!(rtRaw instanceof Map)) return [checked: false, reason: 'its rt state is not a map']
+    Map rt = rtRaw as Map
+    
+    
+    if (!rt.containsKey('v')) return [checked: false, reason: 'its rt state has no version marker']
+    String ruleId = rt.ruleId == null ? null : "${rt.ruleId}".toString()
+    boolean staged = rt.staged != null
+    
+    
+    
+    if (!(data.eventSubscriptions instanceof List)) {
+        if (ruleId == null) return [checked: false, reason: 'its event subscriptions were not in the hub response']
+        String nameNs = (label ?: '').trim()
+        String pidNs = nameNs.startsWith('HAI rule ') ? nameNs.substring('HAI rule '.length()) : ''
+        String kindNs = nameNs.startsWith('[HAI]') ? 'rule' : (pidNs && !pidNs.contains(' ') ? 'placeholder' : 'other')
+        return [checked: true, ruleId: ruleId, staged: staged, subs: null, nameKind: kindNs]
+    }
+    int subs = (data.eventSubscriptions as List).size()
+    if (ruleId == null && staged) return [checked: false, reason: 'its state holds a staged rule with no rule id']
+    if (ruleId == null && subs > 0) {
+        return [checked: false, reason: "its state names no rule but it holds ${subs} event subscription${subs == 1 ? '' : 's'}".toString()]
+    }
+    String name = (label ?: '').trim()
+    
+    String placeholderId = name.startsWith('HAI rule ') ? name.substring('HAI rule '.length()) : ''
+    boolean placeholder = placeholderId && !placeholderId.contains(' ')
+    String nameKind = name.startsWith('[HAI]') ? 'rule' : (placeholder ? 'placeholder' : 'other')
+    return [checked: true, ruleId: ruleId, staged: staged, subs: subs, nameKind: nameKind]
 }
 
 
@@ -9930,6 +10457,44 @@ Map fetchHubVariableInventory() {
         return [status: 'failed', error: "${e.message}", count: 0,
                 source: 'authoritative-hub-inventory', variables: [:]]
     }
+}
+
+
+
+
+
+
+
+Map fetchHubVariableUsers() {
+    try {
+        Map fetched = httpFetch("${LOOPBACK_BASE}/hub2/variables", 15, [contentType: 'application/json'])
+        if (!fetched.ok || !(fetched.data instanceof Map) || !((fetched.data as Map).variables instanceof List)) {
+            return [status: 'unavailable', users: [:]]
+        }
+        return [status: 'complete', users: hubVariableUsersByName(((fetched.data as Map).variables) as List)]
+    } catch (Exception e) {
+        return [status: 'unavailable', users: [:]]
+    }
+}
+
+
+Map hubVariableUsersByName(List rows) {
+    Map out = [:]
+    rows.each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map row = raw as Map
+        if (!row.name) return
+        out["${row.name}"] = ((row.usedBy ?: []) as List).findAll { it instanceof Map && (it as Map).id != null }
+            .collect { Map u -> [id: u.id.toString(), label: (u.label ?: '').toString()] }
+    }
+    return out
+}
+
+
+
+List hubVariableUsersExcept(List users, Set ignoredAppIds) {
+    
+    return ((users ?: []) as List).findAll { Map u -> !ignoredAppIds.contains(u.id.toString()) }
 }
 
 
@@ -10166,7 +10731,52 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
 
 
 
+@Field static final Map<String, String> RM_CONSTRUCT_DEFINITIONS = [
+    'action:getAdjustDimmer'     : 'Adjust a dimmer level relative to its current level.',
+    'action:getCapture'          : 'Capture the current state of selected devices for a later restore action.',
+    'action:getChime'            : 'Play a chime on selected devices.',
+    'action:getComment'          : 'Add a non-executing comment to the rule flow.',
+    'action:getDefinedAction'    : 'Run a named custom or defined action.',
+    'action:getDelay'            : 'Delay subsequent rule actions.',
+    'action:getElse'             : 'Begin the ELSE branch of an IF block.',
+    'action:getElseIf'           : 'Begin an ELSE IF branch of an IF block.',
+    'action:getEndIf'            : 'End an IF block.',
+    'action:getFlashSwitch'      : 'Flash selected switches.',
+    'action:getHTTPPost'         : 'Send an HTTP request.',
+    'action:getIfThen'           : 'Begin an IF THEN conditional block.',
+    'action:getLogMsg'           : 'Write a message to the hub log.',
+    'action:getMsg'              : 'Send or speak a message.',
+    'action:getMuteUnmute'       : 'Mute or unmute selected audio devices.',
+    'action:getOCGarage'         : 'Open or close selected garage doors.',
+    'action:getOnOffSwitch'      : 'Turn selected switches on or off.',
+    'action:getPauseResumeRules' : 'Pause or resume selected rules.',
+    'action:getPollSwitch'       : 'Poll selected devices for their current state.',
+    'action:getRefreshSwitch'    : 'Refresh selected devices.',
+    'action:getRestore'          : 'Restore device state saved by an earlier capture action.',
+    'action:getRuleActions'      : 'Run the actions of selected Rule Machine rules.',
+    'action:getSetColor'         : 'Set the colour of selected colour-capable devices.',
+    'action:getSetColorTemp'     : 'Set the colour temperature of selected devices.',
+    'action:getSetDimmer'        : 'Set the level of selected dimmers.',
+    'action:getSetMode'          : 'Set the hub mode.',
+    'action:getSetPrivateBoolean': 'Set the Private Boolean of this rule or selected rules.',
+    'action:getSetVariable'      : 'Set a Rule Machine Hub or Local Variable.',
+    'action:getSetVolume'        : 'Set the volume of selected audio devices.',
+    'action:getStopActions'      : 'Cancel pending timed actions.',
+    'action:getWaitEvents'       : 'Wait for one of the configured events, optionally with a timeout.',
+    'action:getWaitRule'         : 'Wait for a configured expression, optionally with a timeout.',
+    'structure:actionDelay'      : 'The rule contains at least one individually delayed action.',
+    'structure:conditionalTrigger': 'The rule uses a conditional trigger.',
+    'option:displayCurrentValues': 'The rule is configured to display current values on its Rule Machine page.',
+]
 
+
+
+
+
+
+boolean supportsRmConstructExtraction(String appType) {
+    return appType?.startsWith('Rule-') || appType?.startsWith('Button Rule-')
+}
 
 List extractRuleConstructs(Map data) {
     Set<String> out = new LinkedHashSet<String>()
@@ -10187,16 +10797,14 @@ List extractRuleConstructs(Map data) {
         String v = (value instanceof String || value instanceof Number || value instanceof Boolean) ? "${value}".trim() : ''
         if (!name || !v) return
         if (name.startsWith('actSubType.')) out << "action:${v}".toString()
-        else if (name.startsWith('tCapab')) {
+        
+        
+        
+        else if (name.matches('^tCapab[0-9]+$')) {
             
             
-            if (v == 'Location Event') {
-                String idx = name.substring('tCapab'.length())
-                String event = "${settingsByName["tstate${idx}"] ?: ''}".trim()
-                out << "${RM_LOCATION_EVENT_PREFIX}${event}".toString()
-            } else {
-                out << "trigger:${v}".toString()
-            }
+            String idx = name.substring('tCapab'.length())
+            out << triggerConstructToken(v, idx, settingsByName)
         }
         
         
@@ -10394,6 +11002,1270 @@ Map rmCoverageReport() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map hamDetailTimeOperand(String which, String num, Map settingValues) {
+    String kindWord = "${settingValues[which + num] ?: ''}".trim()
+    String prefix = (which == 'starting') ? 'start' : 'end'
+    if (kindWord == 'Sunrise') {
+        return [kind: 'sunrise', offsetMinutes: hamDetailInt(settingValues["${prefix}SunriseOffset${num}"])]
+    }
+    if (kindWord == 'Sunset') {
+        return [kind: 'sunset', offsetMinutes: hamDetailInt(settingValues["${prefix}SunsetOffset${num}"])]
+    }
+    if (!kindWord) return null
+    return [kind: 'clock', at: "${settingValues[which + 'A' + num] ?: ''}" ?: null]
+}
+
+Integer hamDetailInt(Object v) {
+    String s = "${v ?: ''}".trim()
+    if (!s) return 0
+    try { return s as Integer } catch (Exception ignored) { return 0 }
+}
+
+
+
+
+boolean hamDetailBool(Object v) {
+    return "${v ?: ''}".trim().equalsIgnoreCase('true')
+}
+
+
+
+
+
+
+List hamDetailModeNames(List ids) {
+    
+    
+    
+    List modes = (location?.modes ?: []) as List
+    return (ids ?: []).collect { Object id ->
+        Object hit = modes.find { Object m -> "${m?.id}" == "${id}" }
+        return hit != null ? "${hit.name}" : null
+    }
+}
+
+List hamDetailJsonList(Object raw) {
+    String s = "${raw ?: ''}".trim()
+    if (!s) return []
+    try {
+        Object parsed = new groovy.json.JsonSlurper().parseText(s)
+        return (parsed instanceof List) ? (parsed as List).collect { "${it}" } : ["${parsed}"]
+    } catch (Exception ignored) { return [s] }
+}
+
+
+
+
+Map hamDetailDateOperand(String side, String num, Map settingValues) {
+    String month = "${settingValues["month${side}${num}"] ?: ''}".trim()
+    String day = "${settingValues["day${side}${num}"] ?: ''}".trim()
+    String at = "${settingValues["time${side}${num}"] ?: ''}".trim()
+    String dateType = "${settingValues["${side.toLowerCase()}DateType${num}"] ?: ''}".trim()
+    if (!month && !day && !at) return null
+    Map out = [:]
+    if (dateType) out.dateType = dateType
+    if (month) out.month = month
+    if (day) out.day = day
+    if (at) out.at = at
+    return out
+}
+
+Map hamDetailCondition(Map settingDevices, String num, String capability, Map settingValues) {
+    Map operands = [:]
+    Map raw = [:]
+    settingValues.each { Object k, Object v ->
+        String name = "${k}"
+        if (name.endsWith(num) || name.endsWith("_${num}")) raw[name] = "${v ?: ''}"
+    }
+    String comparator = "${settingValues["RelrDev_${num}"] ?: ''}".trim()
+
+    if (capability == 'Between two times' || capability == 'Time of day') {
+        
+        
+        
+        
+        
+        boolean single = hamDetailBool(settingValues["atOrBetween${num}"]) ||
+                         "${settingValues["ending${num}"] ?: ''}".trim() == 'atTime'
+        operands.mode = single ? 'at' : 'between'
+        operands.from = hamDetailTimeOperand('starting', num, settingValues)
+        if (!single) operands.to = hamDetailTimeOperand('ending', num, settingValues)
+    } else if (capability == 'Between two dates') {
+        operands.from = hamDetailDateOperand('Start', num, settingValues)
+        operands.to = hamDetailDateOperand('End', num, settingValues)
+    } else if (capability == 'On a Day') {
+        
+        
+        
+        operands.days = hamDetailJsonList(settingValues["days${num}"])
+    } else if (capability == 'Mode') {
+        List ids = hamDetailJsonList(settingValues["modes${num}"])
+        operands.modes = hamDetailModeNames(ids)
+        operands.ids = ids
+    } else if (capability == 'Private Boolean') {
+        
+        
+        
+        
+        operands.value = hamDetailBool(settingValues["state_${num}"])
+        operands.source = 'private'
+    } else if (capability == 'Variable') {
+        
+        
+        operands.name = "${settingValues["xVar_${num}"] ?: settingValues["xVar${num}"] ?: ''}" ?: null
+        if (comparator) operands.comparator = comparator
+        operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
+    } else {
+        
+        
+        
+        
+        if (comparator) operands.comparator = comparator
+        String state = "${settingValues["state_${num}"] ?: ''}"
+        if (state) operands.value = [literal: state]
+    }
+
+    
+    
+    
+    List devices = (settingDevices["rDev_${num}"] ?: settingDevices["rDev${num}"] ?: []) as List
+    
+    
+    
+    if (devices) operands.devices = hamDetailDeviceRefs(devices)
+    String anyAll = "${settingValues["AllrDev${num}"] ?: ''}".trim()
+    if (anyAll) operands.anyAll = anyAll
+
+    return [index: num,
+            capability: capability,
+            negated: hamDetailBool(settingValues["not${num}"]),
+            operands: operands,
+            raw: raw]
+}
+
+
+
+
+
+
+
+Map hamDetailExpression(List tokens) {
+    List out = (tokens ?: []).collect { "${it}" }
+    if (!out) return null
+    return [tokens: out, evaluation: 'left-to-right-short-circuit']
+}
+
+
+
+List extractRuleConditions(Map data) {
+    Map settingValues = [:]
+    Map settingDevices = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        if (s.value != null) settingValues["${s.name}"] = "${s.value}"
+        Map dl = s.deviceList as Map
+        
+        
+        
+        if (dl) settingDevices["${s.name}"] = dl.collect { Object k, Object v ->
+            [id: "${k}", name: stripTags("${v}")]
+        }
+    }
+    List out = []
+    settingValues.each { Object k, Object v ->
+        String name = "${k}"
+        if (!name.startsWith('rCapab_')) return
+        String num = name.substring('rCapab_'.length())
+        if (!num.isInteger()) return
+        String capability = "${v ?: ''}".trim()
+        if (!capability) return
+        out << hamDetailCondition(settingDevices, num, capability, settingValues)
+    }
+    return out.sort { Map c -> (c.index as String) as Integer }
+}
+
+
+
+
+Map extractRuleExpressions(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { Object e ->
+        if (e instanceof Map && (e as Map).name != null) st["${(e as Map).name}"] = (e as Map).value
+    }
+    Map evalMap = (st.eval ?: [:]) as Map
+    Map out = [:]
+    evalMap.each { Object k, Object v ->
+        Map expr = hamDetailExpression((v ?: []) as List)
+        if (expr) out["${k}"] = expr
+    }
+    return out
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map hamDetailDuration(String num, Map v) {
+    String var = "${v["xVar.${num}"] ?: ''}".trim()
+    Integer h = hamDetailInt(v["delayHour.${num}"])
+    Integer m = hamDetailInt(v["delayMinute.${num}"])
+    Integer sec = hamDetailInt(v["delaySecond.${num}"])
+    Map out = [cancelable: hamDetailBool(v["cancelAct.${num}"]),
+               random: hamDetailBool(v["randomAct.${num}"])]
+    if (var) {
+        out.seconds = null
+        out.variable = var
+        return out
+    }
+    if (h == null && m == null && sec == null) return null
+    out.seconds = ((h ?: 0) * 3600) + ((m ?: 0) * 60) + (sec ?: 0)
+    return out
+}
+
+
+
+
+Map hamDetailActionDelay(String num, Map v) {
+    String mode = "${v["delayAct.${num}"] ?: ''}".trim()
+    if (!mode || mode == 'none') return null
+    Integer sec = hamDetailInt(v["delaySec.${num}"])
+    return [seconds: sec, cancelable: hamDetailBool(v["cancelAct.${num}"]), mode: mode]
+}
+
+List hamDetailDeviceRefs(Object raw) {
+    return ((raw ?: []) as List).collect { Object d -> [id: "${(d as Map).id}", name: "${(d as Map).name}"] }
+}
+
+
+
+@Field static final List<String> WAIT_METHODS = ['getWaitRule', 'getWaitEvents']
+
+
+
+
+
+@Field static final Map RM_NAMED_COLOURS = [
+    'Soft White': [hue: 11, saturation: 30], 'White': [hue: 11, saturation: 0],
+    'Daylight': [hue: 11, saturation: 10], 'Warm White': [hue: 11, saturation: 20],
+    'Red': [hue: 100, saturation: 100], 'Green': [hue: 33, saturation: 100],
+    'Blue': [hue: 66, saturation: 100], 'Yellow': [hue: 16, saturation: 100],
+    'Orange': [hue: 11, saturation: 100], 'Purple': [hue: 83, saturation: 100],
+    'Pink': [hue: 97, saturation: 25],
+]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void hamDetailWaitTime(Map o, String num, Map stored, Map values) {
+    o.useDuration = hamDetailBool((values ?: [:])["durChoice.${num}"])
+    String raw = "${stored.delay ?: ''}".trim()
+    if (!raw) return
+    
+    List parts = raw.tokenize(':')
+    boolean hms = parts.size() == 3 && parts.every { String p -> p.isInteger() && (p as Integer) >= 0 } &&
+                  (parts[1] as Integer) < 60 && (parts[2] as Integer) < 60
+    if (hms) {
+        o.waitSeconds = (parts[0] as Integer) * 3600 + (parts[1] as Integer) * 60 + (parts[2] as Integer)
+    } else {
+        o.waitRaw = raw
+    }
+}
+
+Map hamDetailWaitRuleOperands(Map stored, String num = null, Map values = null) {
+    Map o = [type: 'waitExpression']
+    hamDetailWaitTime(o, num, stored, values)
+    return o
+}
+
+
+
+
+
+
+
+
+
+
+
+Map hamDetailWaitEventsOperands(String num, Map stored, Map values, Map devices) {
+    Map o = [type: 'waitEvents']
+    hamDetailWaitTime(o, num, stored, values)
+    List events = []
+    values.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        if (!key.startsWith('tCapab-')) return
+        String suffix = key.substring('tCapab'.length())
+        if (!suffix.matches('^-[0-9]+$')) return
+        String cap = "${values[key] ?: ''}".trim()
+        if (!cap) return
+        Map ops = hamDetailTriggerOperands(suffix, cap, values, devices)
+        
+        
+        if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        events << ([index: suffix, capability: cap] + ops)
+    }
+    o.events = events.sort { Map e -> ("${e.index}".substring(1)) as Integer }
+    return o
+}
+
+
+
+
+Integer hamDetailNumberOrNull(Object raw) {
+    String s = "${raw ?: ''}".trim()
+    if (!s) return null
+    try { return (s as BigDecimal).intValue() } catch (Exception ignored) { return null }
+}
+
+Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
+    switch (method) {
+        case 'getOnOffSwitch':
+            
+            
+            List d = hamDetailDeviceRefs(dev["onOffSwitch.${num}"])
+            Map o = [type: 'command', command: hamDetailBool(v["onOff.${num}"]) ? 'on' : 'off']
+            if (d) o.devices = d
+            
+            
+            
+            
+            
+            if (hamDetailBool(v["optSwitch.${num}"])) o.onlyIfCurrently = o.command == 'on' ? 'off' : 'on'
+            if (hamDetailBool(v["trackSwitch.${num}"])) o.trackEventSwitch = true
+            if (hamDetailBool(v["useLastDev.${num}"])) o.useLastDevice = true
+            return o
+
+        case 'getDelay':
+            Map dur = hamDetailDuration(num, v)
+            return dur == null ? [type: 'wait'] : ([type: 'wait'] + dur)
+
+        case 'getSetPrivateBoolean':
+            
+            
+            
+            
+            
+            
+            
+            List targets = hamDetailJsonList(v["privateT.${num}"])
+            List ruleIds = targets.findAll { "${it}" != '*' }.collect { "${it}" }
+            Map o = [type: 'setRuleBoolean', value: !hamDetailBool(v["pvTF.${num}"]),
+                     self: targets.any { "${it}" == '*' }]
+            if (ruleIds) o.rules = ruleIds
+            return o
+
+        case 'getMsg':
+            
+            
+            
+            
+            Map o = [type: 'message', text: "${v["msg.${num}"] ?: ''}"]
+            List notify = hamDetailDeviceRefs(dev["note.${num}"])
+            List speak = hamDetailDeviceRefs(dev["speakDevice.${num}"])
+            if (notify) o.notify = notify
+            if (speak) o.speak = speak
+            
+            
+            
+            
+            
+            
+            String storedVol = "${v["speakVolume.${num}"] ?: ''}".trim()
+            if (speak && storedVol) o.volume = hamDetailInt(storedVol)
+            return o
+
+        case 'getSetColorTemp':
+            
+            
+            
+            Map o = [type: 'setColorTemperature']
+            List d = hamDetailDeviceRefs(dev["ct.${num}"])
+            if (d) o.devices = d
+            Integer k = hamDetailNumberOrNull(v["ctL.${num}"])
+            if (k != null) o.kelvin = k
+            Integer lvl = hamDetailNumberOrNull(v["ctLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getSetVolume':
+            
+            Map o = [type: 'setVolume']
+            List d = hamDetailDeviceRefs(dev["volume.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["volumeVal.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getRuleActions':
+        case 'getStopActions':
+        case 'getPauseResumeRules':
+            
+            
+            
+            
+            
+            
+            Map spec = RULE_LINK_ACTIONS[method] as Map
+            List all = ((spec.targets as List).collectMany { String pre -> hamDetailJsonList(v["${pre}.${num}"]) })
+            Map o = [type: ['getRuleActions': 'runRuleActions', 'getStopActions': 'cancelRuleTimers',
+                            'getPauseResumeRules': (hamDetailBool(v["pR.${num}"]) ? 'resumeRules' : 'pauseRules')][method],
+                     self: all.any { "${it}" == '*' }]
+            List ids = all.findAll { "${it}" != '*' }.collect { "${it}" }.unique()
+            if (ids) o.rules = ids
+            String engine = "${v["${spec.engine}.${num}"] ?: ''}".trim()
+            if (engine) o.engine = engine
+            return o
+
+        case 'getCapture':
+            
+            
+            List d = hamDetailDeviceRefs(dev["capture.${num}"])
+            Map o = [type: 'capture']
+            if (d) o.devices = d
+            return o
+
+        case 'getRestore':
+            
+            
+            
+            
+            return [type: 'restore']
+
+        case 'getSetColor':
+            
+            
+            
+            
+            
+            
+            
+            
+            Map o = [type: 'setColor', colorMode: "${v["color.${num}"] ?: ''}"]
+            List d = hamDetailDeviceRefs(dev["bulbs.${num}"])
+            if (d) o.devices = d
+            List varSourced = [['uVar', 'level'], ['uVar2', 'hue'], ['uVar3', 'saturation'], ['uVar4', 'rgb']]
+                .findAll { hamDetailBool(v["${it[0]}.${num}"]) }.collect { it[1] }
+            if (varSourced) o.variableSourced = varSourced
+            Map named = RM_NAMED_COLOURS[o.colorMode as String] as Map
+            if (named != null) {
+                o.hue = named.hue
+                o.saturation = named.saturation
+            } else if ((o.colorMode as String) in ['Custom HSB color', 'Custom RGB color']) {
+                
+                
+                
+                
+                Integer h = hamDetailNumberOrNull(v["colorHex.${num}"])
+                Integer s = hamDetailNumberOrNull(v["colorSat.${num}"])
+                if (h != null) o.hue = h
+                if (s != null) o.saturation = s
+                String hex = "${v["colorH.${num}"] ?: ''}".trim()
+                if (o.colorMode == 'Custom RGB color' && hex ==~ /#[0-9A-Fa-f]{6}/) o.rgb = hex.toUpperCase()
+            }
+            Integer lvl = hamDetailNumberOrNull(v["colorLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getIfThen':
+        case 'getElseIf':
+        case 'getElse':
+        case 'getEndIf':
+            
+            
+            
+            
+            
+            
+            
+            
+            return [type: 'branch',
+                    branch: ['getIfThen': 'if', 'getElseIf': 'elseif',
+                             'getElse': 'else', 'getEndIf': 'endif'][method]]
+
+        case 'getDefinedAction':
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            Map o = [type: 'command', command: "${v["cCmd.${num}"] ?: ''}"]
+            String capab = "${v["myCapab.${num}"] ?: ''}".trim()
+            if (capab) o.capability = capab
+            List d = hamDetailDeviceRefs(dev["devices.${num}"])
+            if (d) o.devices = d
+            
+            
+            if (hamDetailBool(v["useLastDev.${num}"])) o.useLastDevice = true
+            List params = []
+            v.keySet().toList().each { Object rawK ->
+                String k = "${rawK}"
+                if (!k.startsWith('cpVal') || !k.endsWith(".${num}")) return
+                String idx = k.substring('cpVal'.length(), k.length() - num.length() - 1)
+                if (!idx.matches('^[0-9]+$')) return
+                params << [index: idx as Integer,
+                           value: "${v[k]}",
+                           type: "${v["cpType${idx}.${num}"] ?: ''}"]
+            }
+            if (params) o.parameters = params.sort { Map pm -> pm.index as Integer }
+            Integer meter = hamDetailInt(v["meterMillis.${num}"])
+            if (meter != null && hamDetailBool(v["meter.${num}"])) o.meterMillis = meter
+            return o
+
+        case 'getSetVariable':
+            
+            
+            
+            
+            
+            
+            
+            Map o = [type: 'setVariable', name: "${v["xVarV.${num}"] ?: ''}"]
+            String numOp = "${v["numOp.${num}"] ?: ''}".trim()
+            String strOp = "${v["valStringOp.${num}"] ?: ''}".trim()
+            String boolRaw = "${v["valBool.${num}"] ?: ''}".trim()
+
+            if (numOp == 'variable math') {
+                
+                
+                
+                
+                
+                String right = "${v["xVar4.${num}"] ?: ''}".trim()
+                Map rightOperand = (right == '(constant)' || !right) ?
+                    [constant: "${v["valConst2.${num}"] ?: ''}"] : [variable: right]
+                o.value = [kind: 'math',
+                           left: "${v["xVar3.${num}"] ?: ''}",
+                           operator: "${v["valMathOp.${num}"] ?: ''}",
+                           right: rightOperand]
+            } else if (numOp) {
+                
+                
+                
+                o.value = [kind: (numOp == 'add number') ? 'addNumber' : 'number',
+                           value: "${v["valNumber.${num}"] ?: ''}"]
+            } else if (strOp == 'Device attribute') {
+                Map av = [kind: 'deviceAttribute', attribute: "${v["tCustomAttr.${num}"] ?: ''}"]
+                List d = hamDetailDeviceRefs(dev["customDev.${num}"])
+                if (d) av.devices = d
+                o.value = av
+            } else if (strOp) {
+                o.value = [kind: 'string', value: "${v["valString.${num}"] ?: ''}"]
+            } else if (boolRaw) {
+                o.value = [kind: 'boolean', value: (boolRaw == 'true')]
+            }
+            return o
+
+        case 'getLogMsg':
+            
+            
+            
+            return [type: 'log', text: "${v["logmsg.${num}"] ?: ''}"]
+
+        
+        
+        
+        
+
+        case 'getSetDimmer':
+            
+            
+            
+            
+            Map o = [type: 'setLevel']
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["dimLA.${num}"])
+            if (lvl != null) o.level = lvl
+            Integer fade = hamDetailNumberOrNull(v["dimRA.${num}"])
+            if (fade != null) o.fadeSeconds = fade
+            return o
+
+        case 'getAdjustDimmer':
+            
+            
+            
+            Map o = [type: 'adjustLevel', down: hamDetailBool(v["dimAdjR.${num}"])]
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer amount = hamDetailNumberOrNull(v["dimAdj.${num}"])
+            if (amount != null) o.amount = amount
+            return o
+
+        case 'getFlashSwitch':
+        case 'getRefreshSwitch':
+        case 'getPollSwitch':
+            
+            
+            String key = ['getFlashSwitch': 'flashSwitch', 'getRefreshSwitch': 'refresh',
+                          'getPollSwitch': 'poll'][method]
+            Map o = [type: 'command', command: ['getFlashSwitch': 'flash', 'getRefreshSwitch': 'refresh',
+                                                'getPollSwitch': 'poll'][method]]
+            List d = hamDetailDeviceRefs(dev["${key}.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getChime':
+            
+            
+            
+            
+            
+            
+            
+            String playStop = "${v["chimePlayStop.${num}"] ?: 'Play Sound'}".trim()
+            Map o = [type: 'chime', op: playStop == 'Play Sound' ? 'play' : 'stop']
+            List d = hamDetailDeviceRefs(dev["chime.${num}"])
+            if (d) o.devices = d
+            if (o.op == 'play') {
+                Integer sound = hamDetailNumberOrNull(v["chimePlaySound.${num}"])
+                if (sound != null) o.sound = sound
+            }
+            return o
+
+        case 'getSetMode':
+            
+            
+            
+            String id = "${v["mode.${num}"] ?: ''}".trim()
+            Map o = [type: 'setMode']
+            if (id) {
+                o.modeId = id
+                String name = hamDetailModeNames([id])[0]
+                if (name) o.mode = name
+            }
+            return o
+
+        case 'getOCGarage':
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            Map o = [type: 'garage']
+            List d = hamDetailDeviceRefs(dev["garageOpenClose.${num}"])
+            if (d) o.devices = d
+            boolean closing = hamDetailBool(v["garageRL.${num}"])
+            String onOffRaw = "${v["onOff.${num}"] ?: ''}".trim()
+            if (onOffRaw && hamDetailBool(onOffRaw) != closing) o.directionConflict = true
+            else o.command = closing ? 'close' : 'open'
+            return o
+
+        case 'getComment':
+            return [type: 'comment', text: "${v["comment.${num}"] ?: ''}"]
+
+        case 'getHTTPPost':
+            
+            
+            Map o = [type: 'http', method: 'post']
+            String url = "${v["httper.${num}"] ?: ''}".trim()
+            if (url) o.url = url
+            String body = "${v["httpPostBody.${num}"] ?: ''}"
+            if (body) o.body = body
+            String ct = "${v["httpPostType.${num}"] ?: ''}".trim()
+            if (ct) o.contentType = ct
+            return o
+
+        default:
+            return null
+    }
+}
+
+
+
+
+
+List extractRuleActions(Map data) {
+    Map st = [:]
+    (data.appState ?: []).each { Object e ->
+        if (e instanceof Map && (e as Map).name != null) st["${(e as Map).name}"] = (e as Map).value
+    }
+    Map values = [:]
+    Map devices = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        if (s.value != null) values["${s.name}"] = "${s.value}"
+        Map dl = s.deviceList as Map
+        if (dl) devices["${s.name}"] = dl.collect { Object k, Object val -> [id: "${k}", name: stripTags("${val}")] }
+    }
+    
+    
+    
+    
+    
+    
+    
+    List disabledList = ((st.disabledActions ?: []) as List).collect { "${it}".toString() }
+    Map storedActions = (st.actions ?: [:]) as Map
+    List out = []
+    ((st.actionList ?: []) as List).each { Object rawNum ->
+        String num = "${rawNum}"
+        String method = "${values["actSubType.${num}"] ?: ''}".trim()
+        if (!method) return
+        Map step = [index: num, method: method]
+        if (disabledList.contains(num)) step.disabled = true
+        
+        
+        
+        
+        
+        Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
+        if (evalGroup != null) step.expressionGroup = "${evalGroup}"
+
+        Map ops
+        if (method == 'getWaitRule') {
+            ops = hamDetailWaitRuleOperands((storedActions[num] ?: [:]) as Map, num, values)
+        } else if (method == 'getWaitEvents') {
+            ops = hamDetailWaitEventsOperands(num, (storedActions[num] ?: [:]) as Map, values, devices)
+        } else {
+            ops = hamDetailActionOperands(num, method, values, devices)
+        }
+        if (ops == null) {
+            step.supported = false
+        } else {
+            step.supported = true
+            step.type = ops.remove('type')
+            step.operands = ops
+        }
+        
+        
+        
+        
+        
+        
+        
+        if (!WAIT_METHODS.contains(method)) {
+            Map d = hamDetailActionDelay(num, values)
+            if (d) step.delay = d
+        }
+        out << step
+    }
+    return out
+}
+
+
+
+
+
+
+
+
+
+
+@Field static final List<String> DEVICELESS_TRIGGERS = [
+    'Certain Time (and optional date)', 'Certain Time', 'Periodic Schedule', 'Variable',
+    'Location Event', 'Mode', 'Hub Variable'
+]
+
+
+
+Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
+    Map o = [:]
+
+    
+    
+    
+    
+    
+    List d = hamDetailDeviceRefs(dev["tDev${num}"])
+    if (d) o.devices = d
+
+    String state = "${v["tstate${num}"] ?: ''}".trim()
+    if (state) o.value = state
+    String rel = "${v["ReltDev${num}"] ?: ''}".trim()
+    if (rel) o.comparator = rel
+    String all = "${v["AlltDev${num}"] ?: ''}".trim()
+    if (all) o.allDevices = (all == 'true')
+
+    
+    
+    if (hamDetailBool(v["stays${num}"])) {
+        Integer h = hamDetailInt(v["SHours${num}"])
+        Integer m = hamDetailInt(v["SMins${num}"])
+        Integer sec = hamDetailInt(v["SSecs${num}"])
+        o.staysForSeconds = ((h ?: 0) * 3600) + ((m ?: 0) * 60) + (sec ?: 0)
+    }
+
+    switch (cap) {
+        case 'Button':
+            Integer btn = hamDetailInt(v["ButtontDev${num}"])
+            if (btn != null) o.button = btn
+            break
+        case 'Variable':
+            String name = "${v["xVar${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            break
+        case 'Custom Attribute':
+            String attr = "${v["tCustomAttr${num}"] ?: ''}".trim()
+            if (attr) o.attribute = attr
+            break
+        case 'Mode':
+            
+            
+            List ids = hamDetailJsonList(v["modesX${num}"])
+            o.ids = ids.collect { "${it}" }
+            o.modes = hamDetailModeNames(ids)
+            break
+        case 'Periodic Schedule':
+            String period = "${v["whichPeriod${num}"] ?: ''}".trim()
+            if (period) o.period = period
+            Integer every = hamDetailInt(v["everyNSecs${num}"])
+            if (every != null) o.every = every
+            
+            
+            
+            
+            ['startingTime', 'selectedHours', 'selectedMinutes', 'weekdaysOnly',
+             'daysOfWeek', 'dayOfMonth', 'weekOfMonth', 'everyNMonths', 'months',
+             'cronString'].each { String f ->
+                String raw = "${v["${f}${num}"] ?: ''}".trim()
+                if (raw) o[f] = raw
+            }
+            break
+        case 'Location Event':
+            
+            break
+        case 'Certain Time (and optional date)':
+        case 'Certain Time':
+            
+            
+            
+            
+            
+            
+            String kind = "${v["time${num}"] ?: ''}".trim()
+            if (kind == 'Sunrise') {
+                o.at = [kind: 'sunrise', offsetMinutes: hamDetailInt(v["atSunriseOffset${num}"])]
+            } else if (kind == 'Sunset') {
+                o.at = [kind: 'sunset', offsetMinutes: hamDetailInt(v["atSunsetOffset${num}"])]
+            } else {
+                String at = "${v["atTime${num}"] ?: ''}".trim()
+                if (at) o.at = [kind: 'clock', at: at]
+            }
+            
+            if (hamDetailBool(v["date${num}"])) {
+                String onDate = "${v["atDate${num}"] ?: ''}".trim()
+                if (onDate) o.date = onDate
+            }
+            break
+    }
+    return o
+}
+
+
+
+
+List extractRuleTriggers(Map data) {
+    Map values = [:]
+    Map devices = [:]
+    (data.appSettings ?: []).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map s = raw as Map
+        if (s.value != null) values["${s.name}"] = "${s.value}"
+        Map dl = s.deviceList as Map
+        if (dl) devices["${s.name}"] = dl.collect { Object k, Object val -> [id: "${k}", name: stripTags("${val}")] }
+    }
+    List out = []
+    values.keySet().toList().each { Object rawKey ->
+        String key = "${rawKey}"
+        if (!key.startsWith('tCapab')) return
+        String num = key.substring('tCapab'.length())
+        
+        
+        if (!num.matches('^[0-9]+$')) return
+        String cap = "${values[key] ?: ''}".trim()
+        if (!cap) return
+        Map ops = hamDetailTriggerOperands(num, cap, values, devices)
+        
+        if (!ops.devices && !DEVICELESS_TRIGGERS.contains(cap)) return
+        
+        
+        
+        
+        
+        
+        
+        String condFlag = "${values["isCondTrig.${num}"] ?: values["isCondTrig${num}"] ?: ''}"
+        String condNum = "${values["condTrig.${num}"] ?: values["condTrig${num}"] ?: ''}".trim()
+        
+        
+        if (hamDetailBool(condFlag)) {
+            if (condNum) ops.condition = condNum
+            else ops.conditionMissing = true
+        }
+        out << [index: num, capability: cap, operands: ops]
+    }
+    return out.sort { Map t -> (t.index as String) as Integer }
+}
+
+
+
+
+
+Object hamDetailSafely(String part, Map failures, Closure work) {
+    try {
+        return work()
+    } catch (Exception ex) {
+        failures[part] = "${ex.message}"
+        if (diagOn()) log.warn "${app.label}: rule decode part '${part}' failed: ${ex.message}"
+        return null
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map hamDecodeEnvelope(String contract) {
+    return [contract: contract,
+            contractSchemaVersion: HAM_DECODE_CONTRACT_VERSION,
+            rmConstructVocabularyVersion: 1,
+            supportedEngine: SUPPORTED_RULE_ENGINE,
+            instance: [appId: app.id, appName: APP_NAME, appVersion: APP_VERSION,
+                       buildChannel: BUILD_CHANNEL]]
+}
+
+Map hamDecodeFailure(String contract, String issue, String message) {
+    return hamDecodeEnvelope(contract) + [ok: false, issue: issue, message: message]
+}
+
+
+
+String hamDecodeStatus(Map n) {
+    if (n.missing) return 'deleted-but-referenced'
+    if (n.unreadable) return 'unreadable'
+    if (n.disabled) return 'disabled'
+    if (n.paused) return 'paused'
+    if (n.unscanned) return 'unscanned'
+    if (n.inert) return 'inert'
+    return 'active'
+}
+
+
+
+
+Map hamDecodeScan() {
+    Integer appsUnreadable = (state.appsUnreadable ?: 0) as Integer
+    Integer devicesUnreadable = ((state.deviceIdsUnreadable ?: []) as List).size()
+    String status = state.scanError ? 'failed'
+        : ((appsUnreadable > 0 || devicesUnreadable > 0) ? 'complete-with-gaps' : 'complete')
+    Long beat = state.scanHeartbeat as Long
+    
+    
+    
+    
+    
+    
+    
+    boolean auto = autoScanEffectivelyEnabled()
+    return [lastScanCompletedAt: beat ? new Date(beat).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC')) : null,
+            status: status,
+            autoScanEnabled: auto,
+            staleAfterSeconds: auto ? 90000 : null]
+}
+
+List hamDecodeRuleNodes() {
+    Map graph = (state.graph ?: [:]) as Map
+    Object rawNodes = graph.nodes
+    List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList()
+                                           : ((rawNodes ?: []) as List)
+    return nodes.findAll { Object raw ->
+        if (!(raw instanceof Map)) return false
+        Map n = raw as Map
+        return n.group == 'app' && "${n.appType ?: ''}" == SUPPORTED_RULE_ENGINE
+    }
+}
+
+
+
+int hamDecodeStepCount(List steps) {
+    return ((steps ?: []) as List).count { Object raw ->
+        !(raw instanceof Map) || !"${(raw as Map).ctrl ?: ''}"
+    } as int
+}
+
+Map hamDecodeSummary() {
+    
+    
+    
+    if (state.graph == null) return hamDecodeFailure(HAM_SUMMARY_CONTRACT, 'no-scan',
+        'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
+    Map graph = (state.graph ?: [:]) as Map
+    Map flows = (graph.flows ?: [:]) as Map
+    List rules = hamDecodeRuleNodes().collect { Object raw ->
+        Map n = raw as Map
+        String id = "${n.id}"
+        List steps = (flows[id] ?: []) as List
+        return [id: id,
+                name: "${n.name ?: n.label ?: id}",
+                engine: "${n.appType}",
+                status: hamDecodeStatus(n),
+                hasDecodedFlow: flows.containsKey(id),
+                constructs: ((n.rmConstructs ?: []) as List),
+                stepCount: hamDecodeStepCount(steps)]
+    }
+    return hamDecodeEnvelope(HAM_SUMMARY_CONTRACT) + [ok: true, issue: null, scan: hamDecodeScan(), rules: rules] +
+        hamDecodeComplete(rules)
+}
+
+
+
+
+
+
+String hamDecodeFileName() {
+    return isDevBuild() ? 'ham-decode-dev.json' : 'ham-decode.json'
+}
+
+
+
+
+void hamDecodeWriteFile() {
+    try {
+        String body = JsonOutput.toJson(hamDecodeSummary())
+        uploadHubFile(hamDecodeFileName(), body.getBytes('UTF-8'))
+        if (diagOn()) log.info "${app.label}: wrote ${hamDecodeFileName()} (${body.length()} bytes)"
+    } catch (Exception ex) {
+        
+        
+        
+        log.warn "${app.label}: could not write ${hamDecodeFileName()} for the sibling decode contract (${ex.message})."
+    }
+}
+
+
+String hamDecodeDetailFileName() {
+    return isDevBuild() ? 'ham-decode-detail-dev.json' : 'ham-decode-detail.json'
+}
+
+
+
+
+Map hamDecodeDetail() {
+    if (state.graph == null) return hamDecodeFailure(HAM_DETAIL_CONTRACT, 'no-scan',
+        'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
+    Map graph = (state.graph ?: [:]) as Map
+    Map flows = (graph.flows ?: [:]) as Map
+    Map appInfo = (state.appInfo ?: [:]) as Map
+    Set deleted = hamDecodeDeletedRuleIds()
+    List rules = hamDecodeRuleNodes().collect { Object rawNode ->
+        Map n = rawNode as Map
+        String id = "${n.id}"
+        Map info = (appInfo[id.startsWith('a') ? id.substring(1) : id] ?: [:]) as Map
+        Map links = hamDecodeDropDeletedLinks(((info.actions ?: []) as List), ((flows[id] ?: []) as List), deleted)
+        Map rule = [id: id,
+                name: "${n.name ?: n.label ?: id}",
+                engine: "${n.appType}",
+                status: hamDecodeStatus(n),
+                hasDecodedFlow: flows.containsKey(id),
+                conditions: ((info.conditions ?: []) as List),
+                
+                
+                expressions: ((info.expressions ?: [:]) as Map),
+                
+                
+                
+                
+                actions: links.actions,
+                
+                
+                
+                
+                triggers: ((info.triggers ?: []) as List),
+                
+                
+                
+                
+                decodeFailures: ((info.decodeFailures ?: [:]) as Map),
+                
+                
+                
+                
+                
+                steps: links.steps]
+        if (!((List) links.found).isEmpty()) rule.deletedRuleReferences = links.found
+        return rule
+    }
+    Map body = [ok: true, issue: null, scan: hamDecodeScan(), rules: rules,
+                hubVariables: hamDecodeHubVariableTypes()]
+    
+    List disabledDevices = hamDecodeDisabledDevices()
+    if (disabledDevices != null) body.disabledDevices = disabledDevices
+    return hamDecodeEnvelope(HAM_DETAIL_CONTRACT) + body + hamDecodeComplete(rules)
+}
+
+
+
+
+
+
+
+
+
+
+
+List hamDecodeDisabledDevices() {
+    if (state.deviceDisabledChecked != true || !(state.deviceDisabled instanceof List)) return null
+    List ids = ((state.deviceDisabled as List).collect { "${it}".toString() }).unique()
+    return ids.sort { String a, String b ->
+        boolean an = a.isLong(), bn = b.isLong()
+        if (an && bn) return (a as Long) <=> (b as Long)
+        if (an != bn) return an ? -1 : 1
+        return a <=> b
+    }
+}
+
+
+
+
+
+
+
+Map hamDecodeHubVariableTypes() {
+    Map inv = (state.hubVariableInventory ?: [:]) as Map
+    if (inv.status != 'complete') return [:]
+    Map out = [:]
+    ((inv.variables ?: [:]) as Map).each { Object k, Object v ->
+        Object t = (v instanceof Map) ? (v as Map).type : null
+        if (t != null) out["${k}".toString()] = "${t}".toLowerCase()
+    }
+    return out
+}
+
+
+
+
+
+Map hamDecodeComplete(List rules) {
+    return [ruleCount: rules.size(), complete: true]
+}
+
+
+
+
+Set hamDecodeDeletedRuleIds() {
+    Object rawNodes = ((state.graph ?: [:]) as Map).nodes
+    List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList() : ((rawNodes ?: []) as List)
+    return nodes.findAll { it instanceof Map && (it as Map).missing }.collect {
+        String nid = "${(it as Map).id}"
+        nid.startsWith('a') ? nid.substring(1) : nid
+    } as Set
+}
+
+
+
+
+
+
+
+Map hamDecodeDropDeletedLinks(List actions, List steps, Set deleted) {
+    List found = []
+    if (deleted.isEmpty()) return [actions: actions, steps: steps, found: found]
+    List outActions = actions.collect { Object raw ->
+        if (!(raw instanceof Map)) return raw
+        Map a = raw as Map
+        Map ops = a.operands instanceof Map ? (Map) a.operands : null
+        if (ops == null || !(ops.rules instanceof List)) return a
+        List gone = ((List) ops.rules).findAll { deleted.contains("${it}".toString()) }
+        if (gone.isEmpty()) return a
+        gone.each { found << [ruleId: "${it}".toString(), action: "${a.index}".toString()] }
+        Map copy = new LinkedHashMap(a)
+        Map opsCopy = new LinkedHashMap(ops)
+        opsCopy.rules = ((List) ops.rules).findAll { !deleted.contains("${it}".toString()) }
+        copy.operands = opsCopy
+        return copy
+    }
+    List outSteps = steps.collect { Object raw ->
+        if (!(raw instanceof Map) || !((raw as Map).ruleTargets instanceof List)) return raw
+        Map st = raw as Map
+        List keep = ((List) st.ruleTargets).findAll { !deleted.contains("${it}".toString()) }
+        if (keep.size() == ((List) st.ruleTargets).size()) return st
+        Map copy = new LinkedHashMap(st)
+        copy.ruleTargets = keep
+        return copy
+    }
+    return [actions: outActions, steps: outSteps, found: found.unique()]
+}
+
+void hamDecodeWriteDetailFile() {
+    try {
+        String body = JsonOutput.toJson(hamDecodeDetail())
+        uploadHubFile(hamDecodeDetailFileName(), body.getBytes('UTF-8'))
+        if (diagOn()) log.info "${app.label}: wrote ${hamDecodeDetailFileName()} (${body.length()} bytes)"
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not write ${hamDecodeDetailFileName()} for the sibling decode contract (${ex.message})."
+    }
+}
 
 
 
@@ -11486,6 +13358,12 @@ Map buildGraph() {
         }
     }
     int hubVarConnectorCount = 0
+    Map hubVarUsersState = (state.hubVariableUsers ?: [:]) as Map
+    boolean hubVarUsersKnown = hubVarUsersState.status == 'complete'
+    Map hubVarUsers = (hubVarUsersState.users ?: [:]) as Map
+    Set haiParentAppIds = ((state.appInfo ?: [:]) as Map).findAll { Object id, Object raw ->
+        raw instanceof Map && HAI_PARENT_TYPE_PREFIXES.any { "${(raw as Map).type ?: ''}".toLowerCase().startsWith(it.toLowerCase()) }
+    }.keySet().collect { it.toString() } as Set
     hubVarInventoryVars.each { String varName, meta ->
         if (!varName) return
         String varNodeId = "v${varName}"
@@ -11493,6 +13371,10 @@ Map buildGraph() {
         nodes[varNodeId] = nodeEntry(varNodeId, varName, 'hubVariable')
         nodes[varNodeId].variableType = normalizeHubVariableType(m.type as String)
         nodes[varNodeId].identitySource = 'hub-inventory'
+        if (hubVarUsersKnown) {
+            nodes[varNodeId].hubUsers = hubVariableUsersExcept((hubVarUsers[varName] ?: []) as List, haiParentAppIds)
+                .collect { Map u -> [id: 'a' + u.id, label: u.label] }
+        }
         String connDevId = m.deviceId ? "${m.deviceId}" : null
         if (connDevId) {
             
@@ -11625,6 +13507,10 @@ Map buildGraph() {
         
         
         
+        if (appMap.containsKey('rmConstructs')) nodes[appNodeId].rmConstructs = (appMap.rmConstructs as List)
+        
+        
+        
         if (appMap.namespace) nodes[appNodeId].namespace = "${appMap.namespace}"
         
         
@@ -11640,6 +13526,9 @@ Map buildGraph() {
         if (appMap.disabled) nodes[appNodeId].disabled = true
         if (appMap.paused) nodes[appNodeId].paused = true
         if (appMap.broken) nodes[appNodeId].broken = true
+        
+        
+        if (appMap.haiContainer instanceof Map) nodes[appNodeId].haiContainer = appMap.haiContainer
         if (appMap.webcoreVariableDecodeStatus) {
             nodes[appNodeId].webcoreVariableDecodeStatus = "${appMap.webcoreVariableDecodeStatus}"
         }
@@ -12109,6 +13998,27 @@ Map buildGraph() {
     
     
     
+    
+    
+    
+    
+    
+    
+    
+    
+    Set<String> startupRules = [] as Set
+    flows.each { String flowId, Object rawFlow ->
+        List trig = ((rawFlow ?: []) as List).findAll { (it instanceof Map) && (it as Map).kind == 'trigger' }
+        if (!trig) return
+        boolean allStartup = trig.every { Object st ->
+            (((st as Map).constructs ?: []) as List).any { "${it}".contains('systemStart') }
+        }
+        if (allStartup) startupRules << flowId
+    }
+
+    
+    
+    
     appInfo.each { String appId, info ->
         if (!(info instanceof Map)) return
         List links = ((info as Map).ruleLinks ?: []) as List
@@ -12151,7 +14061,9 @@ Map buildGraph() {
             String key = "${fromId}|${toId}|${kind}"
             if (seen.contains(key)) return
             seen << key
-            edges << [from: fromId, to: toId, kind: kind]
+            Map edge = [from: fromId, to: toId, kind: kind]
+            if (startupRules.contains(fromId)) edge.startup = true
+            edges << edge
         }
     }
 
@@ -13177,14 +15089,15 @@ Map roomPlanPostRoom(Map payload) {
 Map roomPlanCreateRoom(String name) {
     String clean = "${name ?: ''}".trim()
     if (!clean) return [ok: false, reason: 'a room needs a name']
-    if (hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }) {
-        return [ok: false, reason: "this hub already has a room called ${clean}"]
-    }
+    
+    
+    
+    
     Map res = roomPlanPostRoom([roomId: 0, name: clean, deviceIds: []])
     if (res.failure) return [ok: false, reason: res.failure]
-    boolean landed = hubRoomList().any { "${(it as Map).name}".equalsIgnoreCase(clean) }
-    return [ok: landed, name: clean,
-            reason: landed ? '' : 'the hub accepted the request but the room is not in its list']
+    Map created = hubRoomList().find { "${(it as Map).name}".equalsIgnoreCase(clean) } as Map
+    return [ok: created != null, name: clean, room: created,
+            reason: created != null ? '' : 'the hub accepted the request but the room is not in its list']
 }
 
 Map roomPlanRenameRoom(String roomId, String name) {
@@ -13217,15 +15130,12 @@ Map roomPlanRenameRoom(String roomId, String name) {
     return [ok: true, name: clean, devices: now]
 }
 
-Map roomPlanDeleteRoom(String roomId) {
+
+
+
+
+Map roomPlanDeleteRoom(String roomId, List deviceIds = []) {
     if (!roomId) return [ok: false, reason: 'no room id']
-    
-    
-    Map members = roomPlanRoomMembers(roomId)
-    if (!members.ok) {
-        return [ok: false, reason: 'could not read what is in this room, so it was not deleted']
-    }
-    Integer freed = (members.ids as List).size()
     Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
     state.roomIdCache = [:]
     boolean gone = !hubRoomList().any { "${(it as Map).id}" == roomId }
@@ -13233,13 +15143,13 @@ Map roomPlanDeleteRoom(String roomId) {
         return [ok: false, reason: fetched.ok ? 'the hub still lists this room' : 'the delete request failed']
     }
     
-    
+    List freed = (deviceIds ?: []).collect { "${it}".toString() }
     if (freed) {
         Map rooms = (state.deviceRooms ?: [:]) as Map
-        (members.ids as List).each { Object devId -> rooms["${devId}"] = '' }
+        freed.each { String devId -> rooms[devId] = '' }
         state.deviceRooms = rooms
     }
-    return [ok: true, freed: freed]
+    return [ok: true, id: roomId, freed: freed.size()]
 }
 
 Map roomPlanGetMapping() {
@@ -13328,8 +15238,11 @@ Map roomPlanSaveMapping() {
                       data: JsonOutput.toJson(roomPlanRenameRoom("${r.id ?: ''}".trim(), "${r.name ?: ''}")))
     }
     if (payload.containsKey('deleteRoom')) {
+        
+        Map del = (payload.deleteRoom instanceof Map) ? (payload.deleteRoom as Map) : [id: payload.deleteRoom]
+        List ids = (del.deviceIds instanceof List) ? (del.deviceIds as List) : []
         return render(status: 200, contentType: 'application/json',
-                      data: JsonOutput.toJson(roomPlanDeleteRoom("${payload.deleteRoom}".trim())))
+                      data: JsonOutput.toJson(roomPlanDeleteRoom("${del.id ?: ''}".trim(), ids)))
     }
 
     Map incoming = (payload.layout instanceof Map) ? (payload.layout as Map) : [:]
@@ -13874,6 +15787,10 @@ String buildMapHtml() {
     Map hubVarInventoryMeta = (state.hubVariableInventory ?: [:]) as Map
     Map scanMeta = [
         exportSchemaVersion: 14,
+        
+        
+        
+        rmConstructVocabularyVersion: 1,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -13888,6 +15805,14 @@ String buildMapHtml() {
         hubVariableInventorySource: hubVarInventoryMeta.source,
     ]
     String scanMetaJsonStr = jsonForScriptEmbed(scanMeta)
+    Map rmConstructVocabulary = RM_CONSTRUCT_DEFINITIONS.collectEntries { String token, String meaning ->
+        Map definition = [category: token.substring(0, token.indexOf(':')), meaning: meaning]
+        String haiCapabilityId = RM_CONSTRUCT_TO_HAI[token]
+        if (haiCapabilityId) definition.haiCapabilityId = haiCapabilityId
+        [(token): definition]
+    }
+    String rmConstructVocabularyJsonStr = jsonForScriptEmbed(rmConstructVocabulary)
+    String hubNameJsonStr = jsonForScriptEmbed("${location.name ?: 'Hubitat'}")
     return """\
 <!doctype html>
 <html>
@@ -14498,6 +16423,7 @@ String buildMapHtml() {
   #migrationReportBody .mrTag { font-size:0.72em; text-transform:uppercase; letter-spacing:0.05em; padding:1px 5px; border-radius:4px; background:rgba(255,255,255,0.08); margin-right:5px; }
   #migrationReportBody .mr_no { color:#ff8a80; } #migrationReportBody .mr_partial { color:#e8d15a; } #migrationReportBody .mr_warning { color:#f06292; } #migrationReportBody .mr_yes { color:#8fd694; }
   #migrationReportBody .mrProgress { color:#f06292; }
+  #migrationReportBody .mrRefresh { display:flex; flex-direction:column; align-items:flex-start; gap:4px; margin:10px 0 0; padding:0 13px; }
   #rmCoverageBody .mrTable { border-collapse:collapse; width:100%; font-size:0.9em; }
   #rmCoverageBody .mrTable th, #rmCoverageBody .mrTable td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.1); }
   #rmCoverageBody h4 { margin:14px 0 6px 0; }
@@ -14613,6 +16539,9 @@ String buildMapHtml() {
   .roomRectName[data-rename] { cursor:text; }
   .roomRectDel { background:none; border:0; color:#5f7883; font-size:13px; line-height:1; padding:0 2px; cursor:pointer; }
   .roomRectDel:hover { color:#e0443e; }
+  .roomRect.rpPending { border-style:dashed; border-color:#4fb3a9; }
+  .roomRect.rpDeleting { opacity:0.45; border-style:dashed; }
+  .rpPendingTag { font-size:10px; font-weight:400; color:#9fb6c0; margin-left:6px; white-space:nowrap; }
   .roomRectCount { color:#7f9aa6; font-size:10px; white-space:nowrap; }
   .roomRectBody { flex:1; min-height:0; overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:4px; }
   .roomRectBody.dropHot { background:rgba(129,188,0,0.16); outline:1px dashed #81BC00; outline-offset:-3px; }
@@ -14845,6 +16774,8 @@ String buildMapHtml() {
       <option value="owns">Ownership only</option>
       <option value="hasComponent">Has component only</option>
       <option value="rulelinks">Rule to rule only</option>
+      <option value="rulelinkslive">Rule to rule, except startup resets</option>
+      <option value="rulelinksstartup">Startup resets only</option>
       <option value="depends">External systems only</option>
       <option value="variables">Variable use only</option>
       <option value="synchronizedWith">Variable connectors only</option>
@@ -14920,6 +16851,8 @@ try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) {
 
 const GRAPH = ${jsonStr};
 const SCAN_META = ${scanMetaJsonStr};
+const RM_CONSTRUCT_VOCABULARY = ${rmConstructVocabularyJsonStr};
+const HUB_NAME = ${hubNameJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0', synchronizedWith: '#999' };
@@ -14962,6 +16895,7 @@ const LEGEND_EDGE_ROWS = [
   { key: 'runs', html: '<span class="line" style="border-color:' + roleColors.runs + '"></span>Runs - rule runs another rule' + "'" + 's actions' },
   { key: 'cancelTimedActions', html: '<span class="line" style="border-color:' + roleColors.cancelTimedActions + '; border-top-style:dashed"></span>Cancel timed actions - rule cancels another rule' + "'" + 's pending Wait/Delay' },
   { key: 'setspb', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted"></span>Private Boolean - rule sets another rule' + "'" + 's Private Boolean' },
+  { key: 'startupReset', html: '<span class="line" style="border-color:' + roleColors.setspb + '; border-top-style:dotted; opacity:0.55"></span>Startup reset - a rule that only runs at hub start, acting on another rule' },
   { key: 'pauseResume', html: '<span class="line ln-pat ln-dashdot" style="color:' + roleColors.pauseResume + '"></span>Pause / resume - rule pauses or resumes another rule' },
   { key: 'depends:RUNTIME', html: '<span class="line ln-pat ln-thick" style="border-color:' + roleColors.depends + '; background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 6px,transparent 6px 9px)"></span>Depends on - needed all the time' },
   { key: 'depends:SETUP', html: '<span class="line ln-pat" style="background:repeating-linear-gradient(to right,' + roleColors.depends + ' 0 2px,transparent 2px 7px)"></span>Depends on - needed only to set up, manage or find devices' }
@@ -14988,6 +16922,9 @@ function updateCompactLegend(nodeList) {
   edges.get().forEach(function (e) {
     kindsShown[e.kind] = true;
     if (e.kind === 'depends') kindsShown['depends:' + (e.crit === 'RUNTIME' ? 'RUNTIME' : 'SETUP')] = true;
+    // Same split-key trick as depends: a startup reset is a rule link by kind
+    // and its own row in the legend, because it is drawn differently.
+    if (e.startup === true) kindsShown['startupReset'] = true;
   });
   let html = '';
   LEGEND_GROUP_ROWS.forEach(function (r) { if (groupsShown[r.group]) html += '<div class="legend-row">' + r.html + '</div>'; });
@@ -15136,6 +17073,11 @@ const PIVOT_PRESETS = [
 function isRuleNode(n) {
   return !!(n && n.appType && n.appType.indexOf('Rule-') === 0);
 }
+// An app whose kind keeps rule steps Automation Map decodes into a flowchart: Rule Machine, Visual Rule
+// Builder and Notifier (see buildRuleFlow).
+function hasRuleSteps(n) {
+  return isRuleNode(n) || !!(n && n.appType && (n.appType.indexOf('Visual Rule') === 0 || n.appType === 'Notifier'));
+}
 function isVariableAutomationNode(n) {
   return isRuleNode(n) || !!(n && n.appType === 'webCoRE Piston');
 }
@@ -15266,6 +17208,7 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.kind === 'owns') dashes = true;
   else if (e.kind === 'exposed') dashes = [2, 4];
   else if (e.kind === 'cancelTimedActions') dashes = [8, 4];
+  else if (e.startup === true) dashes = [1, 6];
   else if (e.kind === 'setspb') dashes = [2, 3];
   else if (e.kind === 'pauseResume') dashes = [12, 4, 2, 4];
   else if (e.kind === 'usesVar') dashes = [5, 4];
@@ -15274,7 +17217,10 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   // operationally: whether losing it stops the automation or merely stops you
   // reconfiguring it.
   else if (e.kind === 'depends') dashes = (e.crit === 'RUNTIME') ? [6, 3] : [2, 5];
-  let width = isRuleLink ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed') ? 1 : 1.6);
+  // A rule link is drawn heavier than a device relationship, except a startup
+  // reset: it is a rule link by kind but housekeeping by effect, so it reads
+  // as present without competing with the links that change behaviour.
+  let width = (isRuleLink && e.startup !== true) ? 2.4 : ((e.kind === 'owns' || e.kind === 'exposed' || e.startup === true) ? 1 : 1.6);
   if (e.kind === 'depends') width = (e.crit === 'RUNTIME') ? 2.2 : 1.2;
   if (deadConstraint) width = 1;
   const edge = {
@@ -15282,6 +17228,10 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     // action, where the command is proven but its lasting state is not. Every
     // consumer tests `=== true` or truthiness, so null still reads as false.
     id: i, from: e.from, to: e.to, kind: e.kind,
+    // Carried explicitly, like every other field here: this object is a fresh
+    // literal, so a flag left out is dropped and the Show filter and legend
+    // both read it off the live edge set.
+    startup: e.startup === true,
     stateful: e.stateful === null ? null : (e.stateful === true),
     crit: e.crit || null,
     // v2.2.8 decode evidence: a deviceRead's attribute, an action's command
@@ -15999,6 +17949,11 @@ function releaseShelfPins(styled) {
 function edgesForKindFilter(kindVal, edges) {
   if (kindVal === 'all') return edges;
   if (kindVal === 'rulelinks') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1; });
+  // A rule that only fires at boot buries the links that change what another
+  // rule does: on this hub it is 43 of 70. These two filters are the way to
+  // read either half on its own.
+  if (kindVal === 'rulelinkslive') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1 && e.startup !== true; });
+  if (kindVal === 'rulelinksstartup') return edges.filter(function (e) { return RULE_LINK_KINDS.indexOf(e.kind) !== -1 && e.startup === true; });
   if (kindVal === 'variables') return edges.filter(function (e) { return VARIABLE_KINDS.indexOf(e.kind) !== -1; });
   return edges.filter(function (e) { return e.kind === kindVal; });
 }
@@ -17145,7 +19100,9 @@ function showFlow(appId) {
         ? 'webCoRE parent device permissions are not shown because they do not prove which piston reads or controls a device. Select a piston to see its supported decoded Hub Variable and device relationships.'
         : (node && node.engine === 'HAI'
           ? 'Hubitat Automation Intelligence published no steps for this rule. Its devices, variables and rule links are on the map as usual, and its own page has the rule itself.'
-          : 'This app has no decoded rule flow to show.')), isWebcoreNotice);
+          // Only an app that has rule steps can lack them. For an integration or a dashboard the line said
+          // nothing and sat above the useful part of the panel (Gordon, 2026-10-10).
+          : (hasRuleSteps(node) ? 'This rule has no decoded flow to show.' : ''))), isWebcoreNotice);
     setFlowWebcoreIndent(node);
     renderEngineLink(node);
     flowChart.innerHTML = '';
@@ -18128,16 +20085,28 @@ function renderMigrationCard(node) {
 
 // Migration report panel (v2.3.1). Rates every webCoRE piston on this hub for Rule Machine and Visual Rule Builder,
 // one piston at a time through the same endpoint the floating panel uses, and shows the construct matrix. Results are
-// kept for this page view; Reassess runs them again. Labels avoid apostrophes and template literals because this
+// kept on the hub and shown without re-rating; Refresh Scan runs them again. Labels avoid apostrophes and template literals because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
 const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix')}', '${getCloudURL('webcore-migration-matrix')}');
 const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
-const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0 };
+const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0, ratedAt: null, versionMoved: false };
 const MR_ENGINES = [['ruleMachine', 'RM 5.1'], ['visualRuleBuilder', 'VRB 2.0'], ['hai', 'HAI-1']];
 const MR_VERDICT = { yes: 'Direct', partial: 'Partial', no: 'No equivalent', warning: 'Warning', unassessed: 'Not assessed' };
 
 function mrName(node) { return String(node.title || node.name || node.label || node.id); }
+
+// dd mmm yyyy at hh:mm, spelled out rather than locale-formatted so it reads
+// the same on every browser that opens this panel. The time is part of it: on
+// a hub that scans daily, the date alone cannot tell this morning's assessment
+// from one taken before the overnight scan.
+function mrDateLabel(ms) {
+  const d = new Date(Number(ms));
+  if (!ms || isNaN(d.getTime())) return '';
+  const two = function (n) { return ('0' + n).slice(-2); };
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return two(d.getDate()) + ' ' + mon + ' ' + d.getFullYear() + ' at ' + two(d.getHours()) + ':' + two(d.getMinutes());
+}
 
 function mrPistons() {
   return ALL_NODES.filter(function (n) { return n.appType === 'webCoRE Piston'; })
@@ -18156,8 +20125,20 @@ function mrOpen() {
   mrRender();
   fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
     .then(function (r) { return r.json(); })
-    .then(function (d) { mrRun(mrCachedResults(d)); })
-    .catch(function () { mrRun([]); });
+    .then(function (d) {
+      MR.ratedAt = (d || {}).lastRatedAt || null;
+      // An upgrade to this app can change the equivalence table under a rating
+      // that still looks current, so that one case re-rates everything. A graph
+      // rebuild does not: it only makes a rating older, and re-rating every
+      // piston to redraw the same numbers is what this panel used to do on
+      // every open.
+      MR.versionMoved = ((d || {}).ratings || []).some(function (r) { return r.appVersionMoved === true; });
+      // Whole-hub or one piston, the rule is the same: rate what needs rating
+      // and nothing else. mrCachedResults drops exactly the ratings an upgrade
+      // invalidated, so mrRun rates those and leaves the rest alone.
+      mrRun(mrCachedResults(d));
+    })
+    .catch(function () { MR.running = false; MR.results = []; mrRender(); });
 }
 
 // Turns the stored ratings into the same shape a fresh assessment returns, so
@@ -18169,7 +20150,12 @@ function mrCachedResults(payload) {
     // level and a label, which would draw a row with no parts and an empty
     // detail. Those are rated again rather than rendered wrong.
     const full = r.ruleMachine && r.ruleMachine.components !== undefined && r.ruleMachine.components !== null;
-    if (r.status === 'complete' && !r.stale && full) byId[String(r.appId)] = r;
+    // Stale is no longer a reason to re-rate. It means the graph moved after
+    // the rating, which usually leaves the rating correct, and the Refresh
+    // Scan button is there for when it does not. A rating taken under an
+    // earlier version of this app is a different matter: the table it was
+    // rated against has changed, so it is withheld and rated again.
+    if (r.status === 'complete' && full && !r.appVersionMoved) byId[String(r.appId)] = r;
   });
   const out = [];
   mrPistons().forEach(function (node) {
@@ -18212,7 +20198,14 @@ function mrRun(known) {
   let i = 0;
   const next = function () {
     if (seq !== MR.runSeq) return;
-    if (i >= pistons.length) { MR.running = false; mrRender(); return; }
+    if (i >= pistons.length) {
+      MR.running = false;
+      // Only when this run actually rated something, so merely opening the
+      // panel never moves the date it reports.
+      if (pistons.length) MR.ratedAt = Date.now();
+      mrRender();
+      return;
+    }
     const node = pistons[i++];
     fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
       .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
@@ -18307,9 +20300,13 @@ function mrRenderPistons() {
   let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
+  h += '<div class="mrRefresh">' +
+    '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Refresh Scan</button>' +
+    '<span class="sub">' + (MR.ratedAt ? 'Previous scan was on ' + extEsc(mrDateLabel(MR.ratedAt))
+      : (MR.versionMoved ? 'Not assessed since this app was upgraded'
+                         : 'No pistons have been assessed on this hub yet')) + '</span></div>';
   h += '<div class="mrHead"><div class="mrFilters"><label>Search <input id="mrText" type="search" placeholder="Piston, part or reason"></label>' +
     '<button type="button" class="rowbtn" id="mrExportPistons"' + (done.length ? '' : ' disabled') + '>Export ratings CSV</button>' +
-    '<button type="button" class="rowbtn" id="mrRerun"' + (MR.running ? ' disabled' : '') + '>Reassess</button>' +
     '<span class="sub">' + rows.length + ' of ' + done.length + ' shown</span></div>' +
     mrEngineHead(done, MR_ENGINES[0], 'mrLevelRm') + mrEngineHead(done, MR_ENGINES[1], 'mrLevelVrb') +
     mrEngineHead(done, MR_ENGINES[2], 'mrLevelHai') + '</div>';
@@ -18407,7 +20404,7 @@ function mrRender() {
     });
   });
   const rerun = document.getElementById('mrRerun');
-  if (rerun) rerun.addEventListener('click', function () { mrRun([]); });
+  if (rerun) rerun.addEventListener('click', function () { MR.ratedAt = Date.now(); MR.versionMoved = false; mrRun([]); });
   const exportPistons = document.getElementById('mrExportPistons');
   if (exportPistons) exportPistons.addEventListener('click', mrExportPistonsCsv);
   const exportMatrix = document.getElementById('mrExportMatrix');
@@ -19127,6 +21124,35 @@ function deriveInsightData() {
     return n.group === 'app' && (n.disabled || n.paused);
   });
 
+  // HAI Issue #44: HAI Rule Containers that never received a rule. Judged from
+  // the facts haiContainerFacts() read out of each container's own state, never
+  // from its name; the name is only compared against them. A container without
+  // those facts - unreadable, or scanned by a build before this check - is
+  // "could not check", never counted as fine. An app the scan could not read
+  // at all has no known type, so it may itself be a container; those are
+  // counted rather than guessed at.
+  const haiContainers = { checked: [], withoutRule: [], nameStateMismatches: [], couldNotCheck: [], appsOfUnknownType: 0 };
+  ALL_NODES.forEach(function (n) {
+    if (n.group !== 'app') return;
+    const type = String(n.appType || '');
+    if (n.unreadable && (!type || type === 'null')) { haiContainers.appsOfUnknownType++; return; }
+    if (type.indexOf('HAI Rule Container') < 0) return;
+    const f = n.haiContainer;
+    if (!f || f.checked !== true) {
+      haiContainers.couldNotCheck.push({ id: n.id, reason: (f && f.reason) ? f.reason
+        : (n.unreadable ? 'the app could not be read' : 'scanned before this check existed; run a scan') });
+      return;
+    }
+    haiContainers.checked.push(n.id);
+    const hasRule = f.ruleId !== null && f.ruleId !== undefined;
+    if (!hasRule && !f.staged && !f.subs) haiContainers.withoutRule.push(n.id);
+    if (f.nameKind === 'rule' && !hasRule) {
+      haiContainers.nameStateMismatches.push({ id: n.id, ruleId: null, problem: 'named-as-rule-without-rule' });
+    } else if (f.nameKind === 'placeholder' && hasRule) {
+      haiContainers.nameStateMismatches.push({ id: n.id, ruleId: String(f.ruleId), problem: 'placeholder-name-with-rule' });
+    }
+  });
+
   return {
     missingIds: missingIds,
     referencesTo: referencesTo,
@@ -19156,6 +21182,7 @@ function deriveInsightData() {
     // Hubitat's own broken marker, not this scan's opinion.
     brokenApps: ALL_NODES.filter(function (n) { return n.broken; }).map(function (n) { return n.id; }),
     disabledDevicesInUse: Object.keys(disabledDeviceUsers),
+    haiContainers: haiContainers,
     unreferencedLocals: ALL_NODES
       .filter(function (n) { return n.group === 'localVariable' && n.unreferencedLocal; })
       .map(function (n) { return n.id; }),
@@ -19273,6 +21300,19 @@ function insightGuidance() {
         normal: 'Schedule-only apps, API integrations and unsupported automation engines can look inactive to this scan.',
         next: 'Open the app and check its status, schedules and external purpose before deciding it is unused.'
       },
+      haiContainerWithoutRule: {
+        meaning: 'This HAI Rule Container never received a rule: its own state holds no rule id and nothing staged, and it has no event subscriptions.',
+        normal: 'HAI creates the container before a rule is committed to it, so an interrupted Run on hub can leave one like this.',
+        next: 'Check in HAI whether a rule is meant to live here before removing the container.'
+      },
+      haiContainerNameStateMismatch: {
+        meaning: 'This HAI Rule Container is named as if it holds a rule while its state holds none, or still carries the placeholder name while its state holds a rule. That disagreement is a defect in HAI, not in the hub.',
+        next: 'Report it to HAI with the container id. Do not rename or remove the container by hand to make the two agree.'
+      },
+      haiContainerNotChecked: {
+        meaning: 'This HAI Rule Container could not be checked for a rule: its state could not be read or was not in the shape this check expects.',
+        next: 'Run the scan again. If it stays unchecked, treat it as unknown rather than as a container that holds a rule.'
+      },
       notificationOnly: {
         meaning: 'These devices receive only momentary notifications, chimes or speech commands.',
         normal: 'This is expected for phones, speakers and notification brokers.',
@@ -19287,6 +21327,16 @@ function insightGuidance() {
         meaning: 'This app organises or owns child apps rather than touching devices directly.',
         normal: 'That is the expected structure for parent apps such as rule containers.',
         next: 'Review its child apps if you need detail. The parent itself is not a cleanup candidate.'
+      },
+      variableUnused: {
+        meaning: 'No decoded rule reads or writes this Hub Variable, and the hub names no app that uses it.',
+        normal: 'It is most likely unused. A dashboard or an outside integration can still read it without the hub listing it.',
+        next: 'Check dashboards and external integrations; if nothing reads it, it can be removed.'
+      },
+      variableUsedByUndecodedApp: {
+        meaning: 'No decoded rule reads or writes this Hub Variable, but the hub says the apps below name it.',
+        normal: 'Those apps use an engine or a part of a rule this scan cannot decode, so the variable is in use.',
+        next: 'Keep it. Open the named apps to see how they use it.'
       },
       variableWithoutDecodedUsage: {
         meaning: 'No decoded rule reads or writes this Hub Variable.',
@@ -19390,9 +21440,10 @@ function buildInsights() {
 
   // --- Needs attention: only things genuinely wrong -----------------------
   const scanBad = D.scan.status !== 'complete';
+  const hc = D.haiContainers;
   const attentionCount = D.brokenTargets.length + (scanBad ? 1 : 0) +
     D.brokenApps.length + D.inactiveInvoked.length + D.disabledDevicesInUse.length +
-    D.hubVar.webcoreDecodeIssues.length;
+    D.hubVar.webcoreDecodeIssues.length + hc.nameStateMismatches.length + hc.couldNotCheck.length;
   let attentionBody = '';
   if (scanBad) {
     const what = D.scan.status === 'failed'
@@ -19422,6 +21473,22 @@ function buildInsights() {
     attentionBody += rows(D.disabledDevicesInUse,
       function (id) { return (D.disabledDeviceUsers[id] || []).length + ' automations'; },
       function (id) { return advice('disabledDeviceInUse') + '<p class="sub"><b>Used by:</b> ' + appLinks(D.disabledDeviceUsers[id]) + '</p>'; });
+  }
+  if (hc.nameStateMismatches.length) {
+    attentionBody += '<p class="insLead">' + amPlural(hc.nameStateMismatches.length, 'HAI Rule Container has a name that disagrees', 'HAI Rule Containers have names that disagree') + ' with its own state. This is a defect in HAI.</p>';
+    attentionBody += rows(hc.nameStateMismatches.map(function (m) { return m.id; }),
+      function (id) {
+        const m = hc.nameStateMismatches.filter(function (x) { return x.id === id; })[0];
+        return (m && m.problem === 'placeholder-name-with-rule') ? 'placeholder name, holds a rule' : 'named as a rule, holds none';
+      }, function () { return advice('haiContainerNameStateMismatch'); });
+  }
+  if (hc.couldNotCheck.length) {
+    attentionBody += '<p class="insLead">' + amPlural(hc.couldNotCheck.length, 'HAI Rule Container', 'HAI Rule Containers') + ' could not be checked for a rule, so whether they hold one is unknown.</p>';
+    attentionBody += rows(hc.couldNotCheck.map(function (c) { return c.id; }),
+      function (id) {
+        const c = hc.couldNotCheck.filter(function (x) { return x.id === id; })[0];
+        return c ? c.reason : 'could not check';
+      }, function () { return advice('haiContainerNotChecked'); });
   }
   if (D.hubVar.webcoreDecodeIssues.length) {
     attentionBody += '<p class="insLead">' + amPlural(D.hubVar.webcoreDecodeIssues.length, 'webCoRE piston has', 'webCoRE pistons have') + ' saved variable configuration that could not be decoded safely.</p>' + advice('webcoreVariableDecodeIssue') + '<ul class="insPlain">';
@@ -19473,8 +21540,12 @@ function buildInsights() {
 
   // --- Possibly unused ----------------------------------------------------
   const orphanApps = D.inertNodes.filter(function (n) { return !n.holds && !(n.kids && n.kids.length); });
-  const cleanupCount = D.untouched.length + orphanApps.length;
+  const cleanupCount = D.untouched.length + orphanApps.length + hc.withoutRule.length;
   let cleanupBody = '';
+  if (hc.withoutRule.length) {
+    cleanupBody += '<p class="insLead">' + amPlural(hc.withoutRule.length, 'HAI Rule Container never received a rule', 'HAI Rule Containers never received a rule') + ', by their own state.</p>';
+    cleanupBody += rows(hc.withoutRule, function () { return 'no rule id, nothing staged'; }, function () { return advice('haiContainerWithoutRule'); });
+  }
   if (D.untouched.length) {
     cleanupBody += '<p class="insLead">' + amPlural(D.untouched.length, 'device is', 'devices are') + ' not referenced by any scanned app.</p>';
     cleanupBody += rows(D.untouched, function () { return 'no mapped references'; }, function () { return advice('unreferencedDevice'); });
@@ -19530,8 +21601,20 @@ function buildInsights() {
       function () { return advice('unreferencedLocalVariable'); });
   }
   if (hv.noDecodedUsage.length) {
-    normalBody += '<p class="insLead">' + amPlural(hv.noDecodedUsage.length, 'hub variable has no decoded reader or writer. It may be unused, or used by an app this scan cannot decode', 'hub variables have no decoded reader or writer. They may be unused, or used by an app this scan cannot decode') + '.</p>';
-    normalBody += rows(hv.noDecodedUsage, function () { return 'no decoded usage'; }, function () { return advice('variableWithoutDecodedUsage'); });
+    // 2.4.18: where the hub's own variables page answered, each row says which of the two it is - no app
+    // names the variable, or an app the decode cannot read does - instead of leaving both open.
+    const hubUsersOf = function (id) { const n = ALL_NODES.find(function (x) { return x.id === id; }); return n && n.hubUsers; };
+    normalBody += '<p class="insLead">' + amPlural(hv.noDecodedUsage.length, 'hub variable has no decoded reader or writer', 'hub variables have no decoded reader or writer') + '. Where the hub says which apps name it, each row says so.</p>';
+    normalBody += rows(hv.noDecodedUsage, function (id) {
+      const u = hubUsersOf(id);
+      if (!u) return 'no decoded usage';
+      return u.length ? 'named by ' + amPlural(u.length, 'app', 'apps') + ' this scan cannot decode' : 'no app uses it';
+    }, function (id) {
+      const u = hubUsersOf(id);
+      if (u && u.length) return advice('variableUsedByUndecodedApp') + '<p class="sub"><b>Named by:</b> ' + appLinks(u.map(function (x) { return x.id; })) + '</p>';
+      if (u) return advice('variableUnused');
+      return advice('variableWithoutDecodedUsage');
+    });
   }
   if (hv.directionUnknownUsage.length) {
     normalBody += '<p class="insLead">' + amPlural(hv.directionUnknownUsage.length, 'hub variable is', 'hub variables are') + ' referenced by webCoRE with direction intentionally left unknown.</p>';
@@ -20078,7 +22161,7 @@ function extRender(message) {
        '<button id="extSave" type="button">Save</button>' +
        '<button id="extExport" type="button">Download backup</button>' +
        '<button id="extImport" type="button">Restore from file</button>' +
-       '<input type="file" id="extFile" accept="application/json" style="display:none">' +
+       '<input type="file" id="extFile" accept=".txt,.json,text/plain,application/json" style="display:none">' +
        '<span class="msg" id="extMsg">' + extEsc(message) + '</span></div>';
   const rm = EXT.registryMeta || {};
   let reg = '';
@@ -20217,11 +22300,11 @@ function extExport() {
     exported: new Date().toISOString(),
     entries: clean
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'automation-map-external-systems.json';
+  a.download = 'automation-map-external-systems.txt';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -20503,22 +22586,84 @@ function roomPlanIdFor(name) {
   return hit ? String(hit.id) : '';
 }
 
+// The pending marker on a room in ROOMPLAN.rooms: 'create', 'delete', or null.
+function roomPlanPendingFor(name) {
+  const want = String(name || '').toLowerCase();
+  const r = (ROOMPLAN.rooms || []).filter(function (x) { return x && String(x.name || '').toLowerCase() === want; })[0];
+  return (r && r.pending) || null;
+}
+
+// Puts the plan back as it was before a create or delete the hub refused or never answered.
+function roomPlanUndoPending(body) {
+  if (body.createRoom) {
+    const want = String(body.createRoom).toLowerCase();
+    ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) { return !(r.pending === 'create' && String(r.name).toLowerCase() === want); });
+  } else if (body.deleteRoom) {
+    (ROOMPLAN.rooms || []).forEach(function (r) { if (String(r.id) === String(body.deleteRoom.id)) delete r.pending; });
+  }
+  roomPlanRedrawAfter('Nothing changed');
+}
+
+// Redraws after a hub change that already succeeded. A redraw problem must never read as the change failing:
+// told a create failed, a person presses it again and gets a second room (Claude HAM's 2.4.20 check, where a
+// create that landed reported "Failed: TypeError"). Without the panel's device list it reloads the panel.
+function roomPlanRedrawAfter(what) {
+  const msg = document.getElementById('roomPlanMsg');
+  if (!ICONS) { roomPlanLoad(); return; }
+  try {
+    roomPlanRender();
+  } catch (e) {
+    msg.textContent = what + ' on the hub, but this page could not redraw it; reloading Room Manager.';
+    roomPlanLoad();
+  }
+}
+
 function roomPlanCrud(body, busy) {
   const msg = document.getElementById('roomPlanMsg');
   const keep = {};
   Object.keys(roomPending).forEach(function (k) { keep[k] = roomPending[k]; });
   msg.textContent = busy;
+  // The catch covers the request only. What happens after the hub has answered is handled apart from it, so a
+  // problem drawing a successful change cannot be reported as the change failing.
   return fetch(ROOMPLAN_URL, {
     method: 'POST', cache: 'no-store', credentials: 'omit',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function (r) { return r.json(); })
+    .catch(function (e) { msg.textContent = 'Failed: ' + e; roomPlanUndoPending(body); return null; })
     .then(function (d) {
-      if (d && d.ok) { msg.textContent = ''; roomPlanRefreshLive(keep); return d; }
-      msg.textContent = (d && d.reason) || 'That did not work.';
+      if (d === null) return null;
+      if (!(d && d.ok)) { msg.textContent = (d && d.reason) || 'That did not work.'; roomPlanUndoPending(body); return d; }
+      msg.textContent = '';
+      // A create answers with the one room it confirmed on the hub. It holds no devices, so it is added and
+      // drawn as it is, with no reload of every device's room - which took about 9 s on a 261-device hub and
+      // drew the room only after it (Gordon, 2026-10-10). Rename still reloads: it carries a room's devices.
+      if (d.room && d.room.name) {
+        const confirmed = String(d.room.name).toLowerCase();
+        ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) {
+          return !(r.pending === 'create' && String(r.name).toLowerCase() === confirmed);
+        }).concat([d.room]).sort(function (a, b) {
+          return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
+        });
+        roomPlanRedrawAfter('Created');
+      } else if (body.deleteRoom && d.id) {
+        // A delete the hub confirmed: drop the room and put the devices it held in Not Allocated, as the hub has.
+        const gone = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) === String(d.id); })[0];
+        ROOMPLAN.rooms = (ROOMPLAN.rooms || []).filter(function (r) { return String(r.id) !== String(d.id); });
+        const live = ROOMPLAN.deviceRooms || {};
+        ((body.deleteRoom && body.deleteRoom.deviceIds) || []).forEach(function (id) { live[String(id)] = ''; });
+        if (gone) Object.keys(live).forEach(function (id) { if (live[id] === gone.name) live[id] = ''; });
+        ROOMPLAN.deviceRooms = live;
+        // A staged move into the deleted room has nowhere to go now.
+        if (gone) Object.keys(roomPending).forEach(function (k) {
+          if (String(roomPending[k] || '').toLowerCase() === String(gone.name).toLowerCase()) delete roomPending[k];
+        });
+        roomPlanRedrawAfter('Deleted');
+      } else {
+        roomPlanRefreshLive(keep);
+      }
       return d;
-    })
-    .catch(function (e) { msg.textContent = 'Failed: ' + e; });
+    });
 }
 
 // The live hub answer wins. d.room is scan state and can be a scan old, which
@@ -20608,16 +22753,22 @@ function roomPlanRender() {
     // cannot drop into, which is the one thing a search must not take away.
     const list = roomSearch ? all.filter(roomPlanMatches) : all;
     const isUnassigned = name === RP_UNASSIGNED;
-    h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') + '" data-room="' + extEsc(key) + '"' +
+    // A create or delete the hub has not confirmed yet is drawn at once, marked as pending (Gordon, 2026-10-10:
+    // the hub's own room save takes about 11 s, so waiting for it showed nothing for that long).
+    const pending = isUnassigned ? null : roomPlanPendingFor(name);
+    h += '<div class="roomRect' + (isUnassigned ? ' rpUnassigned' : '') +
+         (pending === 'create' ? ' rpPending' : pending === 'delete' ? ' rpDeleting' : '') + '" data-room="' + extEsc(key) + '"' +
          ' style="left:' + g.x + 'px; top:' + g.y + 'px; width:' + g.w + 'px; height:' + g.h + 'px;">';
     const roomId = isUnassigned ? '' : roomPlanIdFor(name);
     h += '<div class="roomRectHead" title="Drag to move this room. Drag the corner to resize it.' +
          (isUnassigned ? '' : ' Double-click the name to rename.') + '">' +
-         '<span class="roomRectName"' + (isUnassigned ? '' : ' data-rename="' + extEsc(roomId) + '"') + '>' +
+         '<span class="roomRectName"' + (isUnassigned || pending ? '' : ' data-rename="' + extEsc(roomId) + '"') + '>' +
          extEsc(isUnassigned ? 'Not Allocated' : name) + '</span>' +
-         (isUnassigned || !roomId ? '' : '<button class="roomRectDel" type="button" data-del="' + extEsc(roomId) + '" title="Delete this room">&times;</button>') +
+         (pending ? '<span class="rpPendingTag">' + (pending === 'create' ? 'Saving to hub...' : 'Deleting...') + '</span>' : '') +
+         (isUnassigned || !roomId || pending ? '' : '<button class="roomRectDel" type="button" data-del="' + extEsc(roomId) + '" title="Delete this room">&times;</button>') +
          '<span class="roomRectCount">' + (roomSearch ? (list.length + ' of ' + all.length) : all.length) + '</span></div>';
-    h += '<div class="roomRectBody" data-drop="' + extEsc(name) + '">';
+    // Nothing can be dropped into a room the hub has not confirmed, or is deleting.
+    h += '<div class="roomRectBody"' + (pending ? '' : ' data-drop="' + extEsc(name) + '"') + '>';
     if (!list.length) h += '<div class="roomRectEmpty">' + (roomSearch && all.length ? 'no match' : 'empty') + '</div>';
     list.forEach(function (d) {
       const staged = Object.prototype.hasOwnProperty.call(roomPending, String(d.id));
@@ -20761,7 +22912,13 @@ function roomPlanWire() {
         ? ('Delete the room ' + nm + '? Its ' + n + (n === 1 ? ' device' : ' devices') + ' will not be deleted, but they will end up in Not Allocated.')
         : ('Delete the room ' + nm + '? It has no devices in it.');
       if (!window.confirm(warn)) return;
-      roomPlanCrud({ deleteRoom: btn.getAttribute('data-del') }, 'Deleting...');
+      // The devices drawn in it, so the hub need not be asked and the page can move them itself.
+      const devIds = Array.prototype.map.call(rect.querySelectorAll('.devChip'), function (c) { return c.getAttribute('data-dev'); })
+        .filter(function (x) { return x; });
+      const delId = btn.getAttribute('data-del');
+      (ROOMPLAN.rooms || []).forEach(function (r) { if (String(r.id) === String(delId)) r.pending = 'delete'; });
+      roomPlanRedrawAfter('Nothing changed');
+      roomPlanCrud({ deleteRoom: { id: delId, deviceIds: devIds } }, 'Deleting ' + nm + ' on the hub...');
     });
   });
   canvas.querySelectorAll('.roomRect').forEach(function (rect) { roomPlanDraggableRect(rect); });
@@ -21018,7 +23175,7 @@ function iconsRender(message, filter) {
   h += '<div class="bar"><button id="iconsSave" type="button">Save</button>' +
        '<button id="iconsExport" type="button">Download backup</button>' +
        '<button id="iconsImport" type="button">Restore from file</button>' +
-       '<input type="file" id="iconsFile" accept="application/json" style="display:none">' +
+       '<input type="file" id="iconsFile" accept=".txt,.json,text/plain,application/json" style="display:none">' +
        '<span class="msg" id="iconsMsg">' + extEsc(message || '') + '</span></div>';
   h += '<p class="sub" style="margin-top:10px">Your overrides and notes live with this app. Removing the app ' +
        'removes them, so download a backup before you do.</p>';
@@ -21113,11 +23270,11 @@ function iconsExport() {
     exported: new Date().toISOString(),
     overrides: overrides
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'automation-map-device-icons.json';
+  a.download = 'automation-map-device-icons.txt';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -21156,6 +23313,25 @@ function iconsImportFile(evt) {
 // are fetched fresh here (cheap GETs, the same endpoints those panels
 // already use) rather than relying on whichever panel the user happens to
 // have already opened this session.
+function exportFilenameHubName(name) {
+  // Windows forbids several punctuation marks, including backslash, and
+  // control characters in a filename.
+  // Replace rather than drop them so words on either side do not run together.
+  const forbidden = '<>:"/|?*' + String.fromCharCode(92);
+  let clean = Array.from(String(name || 'Hubitat')).map(function (ch) {
+    return forbidden.indexOf(ch) !== -1 || ch.charCodeAt(0) < 32 ? ' ' : ch;
+  }).join('').trim();
+  while (clean.indexOf('  ') !== -1) clean = clean.replace('  ', ' ');
+  return clean || 'Hubitat';
+}
+
+function exportFilenameTimestamp(date) {
+  function pad(value) { return String(value).padStart(2, '0'); }
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return pad(date.getDate()) + '-' + months[date.getMonth()] + '-' + date.getFullYear() + ' at ' +
+    pad(date.getHours()) + '-' + pad(date.getMinutes()) + '-' + pad(date.getSeconds());
+}
+
 function exportJSON() {
   const btn = document.getElementById('exportBtn');
   const original = btn.textContent;
@@ -21172,11 +23348,11 @@ function exportJSON() {
     fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
     fetchMigrationRatings(btn, failedFetches)
   ]).then(function (results) {
-    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'automation-map-export-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.download = 'HAM Export for ' + exportFilenameHubName(HUB_NAME) + ' on ' + exportFilenameTimestamp(new Date()) + '.txt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -21314,6 +23490,18 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     };
   });
   const unreferencedLocalVariables = INS.unreferencedLocals.map(function (id) { return ref(id, nameOf); });
+  // HAI Issue #44, additive. Each container is judged from its own state;
+  // couldNotCheck and appsOfUnknownType say where that judgement could not be
+  // made, so an empty withoutRule is never read as "no orphans" on its own.
+  const haiRuleContainers = {
+    checkedCount: INS.haiContainers.checked.length,
+    withoutRule: INS.haiContainers.withoutRule.map(function (id) { return ref(id, nameOf); }),
+    nameStateMismatches: INS.haiContainers.nameStateMismatches.map(function (m) {
+      return { app: ref(m.id, nameOf), ruleId: m.ruleId, problem: m.problem, defectIn: 'HAI' };
+    }),
+    couldNotCheck: INS.haiContainers.couldNotCheck.map(function (c) { return { app: ref(c.id, nameOf), reason: c.reason }; }),
+    appsOfUnknownType: INS.haiContainers.appsOfUnknownType
+  };
 
   // Hub Variable findings (v2.0.14, schema 4 - parent spec 8.3/11.5). Reader/
   // writer/multiple-writer findings are computed from the same GRAPH.edges
@@ -21353,7 +23541,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     };
   });
   const apps = ALL_NODES.filter(function (n) { return n.group === 'app'; }).map(function (n) {
-    return {
+    const out = {
       id: n.id, name: nameOf[n.id], appType: n.appType || null,
       // v2.1.7, schema 8: 'disabled' and 'paused' replace the collapsed
       // 'paused-or-disabled' value - the hub reports these as two distinct
@@ -21379,6 +23567,14 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       deviceRelationshipCoverage: n.appType === 'webCoRE Piston' ? (n.webcoreDeviceRelationshipCoverage || 'none') :
         (n.appType === 'webCoRE' ? 'parent-permissions-omitted' : null)
     };
+    // rmConstructs belongs to the scanned app, not to the existence of a
+    // decoded flow. A valid inert/no-action Rule Machine rule can have no
+    // GRAPH.flows entry at all, but extraction still ran and its explicit []
+    // is meaningful. Keep the ruleFlows copy below as a convenience for
+    // consumers already walking decoded steps; apps[] is the complete
+    // per-scanned-app publication point.
+    if (Array.isArray(n.rmConstructs)) out.rmConstructs = n.rmConstructs.slice().sort();
+    return out;
   });
   const externalSystems = ALL_NODES.filter(function (n) { return n.group === 'external'; }).map(function (n) {
     return { id: n.id, name: nameOf[n.id], kind: n.kindKey || null };
@@ -21540,12 +23736,17 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
         reason: r.reason || null
       };
     });
-    return {
+    const out = {
       appId: appId, appName: nameOf[appId] || appId, engine: n ? (n.appType || null) : null, steps: steps,
       localVariables: localVariables,
       variableReferences: variableReferences,
       nonResolvedVariableReferences: nonResolvedVariableReferences
     };
+    // Only where extraction actually ran. An absent field means not
+    // applicable to this engine; an empty array would mean extraction ran and
+    // found nothing, which is a different claim and must not be synthesized.
+    if (n && Array.isArray(n.rmConstructs)) out.rmConstructs = n.rmConstructs.slice().sort();
+    return out;
   });
 
   // Was a plain boolean, !scanError - technically correct but misleadingly
@@ -21581,6 +23782,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     unreferencedDeviceCount: unreferencedDevices.length,
     inertAppCount: inertApps.length,
     brokenRuleReferenceCount: brokenRuleReferences.length,
+    haiRuleContainerWithoutRuleCount: haiRuleContainers.withoutRule.length,
     // v2.1.4, schema 5 (Gate C): decoded evidence from the rules this export
     // could read, NOT a hub-wide inventory the way hubVariableCount above is
     // - see the limitations entry on this distinction.
@@ -21598,6 +23800,10 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   // consumer can check membership programmatically instead of parsing
   // English out of the schema block.
   const limitations = [
+    // v2.4.3 - ruleFlows[].rmConstructs is rule-scoped, not step-scoped. Said
+    // here as well as in the schema prose because this is where an AI is
+    // already told to look before drawing a conclusion.
+    'apps[].rmConstructs is the complete rule-level inventory produced by the fixed setting families this extractor recognises, including for a recognized Rule Machine app that has no decoded flow. ruleFlows[].rmConstructs repeats it as a convenience only when a decoded flow exists. It may silently omit a construct stored under a Rule Machine setting family this release does not recognise, so absence is not proof that a feature is absent. Proven trigger and action associations also appear on the matching ruleFlows[].steps[].constructs entry; condition, option and structure tokens remain rule-scoped only. These fields report observed saved settings, not proof that every setting is reachable in the current live action path. They do not say which value was configured or whether a construct ever ran - nothing in this export is runtime evidence. Do not use these tokens to reconstruct a rule or to override an unresolved or ambiguous steps[].references record. rmConstructs is present only where extraction ran, so an absent field means the engine is not covered rather than that the rule is empty.',
     'Rules on these engines are never decoded, regardless of hasDecodedFlow: Room Lighting, Basic Rules, Simple Automation. They can still appear with device relationships. webCoRE pistons now carry a decoded flow covering statement order, branching, condition text and task parameters. A condition is transcribed from its own saved spelling and never interpreted: it collapses to an explicitly undecoded step whenever any part of it cannot be named in full, such as a group this decoder cannot read, a device token that did not resolve, an operand kind with no transcription, or a comparison with a time window (was, stays, changed), whose window is not transcribed. A switch case value is not decoded (each case shows as case not decoded, and the default branch as else), and the permitted-device selections on a webCoRE parent app remain omitted as permissions rather than relationships.',
     'Rule-to-rule edges (relationship: runs/cancelTimedActions/setspb/pauseResume) and Local Variable read/write edges are read from Rule Machine 5.1 only. Hub Variable read/write edges can also come from source-backed webCoRE saved-configuration decoding. webCoRE step-by-step flow is reconstructed for statement order and branching only, and never becomes an edge.',
     'Roles/edges reflect how a device is configured into an app, not what happened at runtime - this is a static configuration snapshot from the last scan (see scan.lastScanCompletedAt), not live state.',
@@ -21617,7 +23823,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     'A write/read edge in edges[] whose toId is absent from hubVariables[] is a Local Variable reference, not a data gap - resolve it by flattening ruleFlows[].localVariables[] and matching on identity (see the edges schema entry). Do not treat an unmatched toId as an error before checking there.',
     'A Local Variable with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. The same "may simply be unused" caveat that already applies to a Hub Variable with insights.hubVariables.noDecodedUsage applies here too; these are now also collected in insights.unreferencedLocalVariables.',
     'insights.rulesFlaggedBroken reflects the *BROKEN* marker Hubitat itself puts on an app label, which is the only place that state is exposed. It is read, not judged: absence of the marker is not proof a rule is healthy, and this scan cannot see runtime execution errors, failed actions or exceptions at all - nothing here is evidence about whether a rule actually ran or succeeded.',
-    'insights.inactiveRulesStillCalled and insights.disabledDevicesStillUsed pair a paused/disabled state with a still-live reference, which is static configuration evidence that a step cannot do anything - not evidence that it was ever reached at runtime. The calling rule may itself be paused, conditional, or never triggered.'
+    'insights.inactiveRulesStillCalled and insights.disabledDevicesStillUsed pair a paused/disabled state with a still-live reference, which is static configuration evidence that a step cannot do anything - not evidence that it was ever reached at runtime. The calling rule may itself be paused, conditional, or never triggered.',
+    'insights.haiRuleContainers judges each HAI Rule Container from its own saved state, never its name: withoutRule lists containers whose state holds no rule id and nothing staged and which have no event subscriptions. nameStateMismatches lists containers whose name disagrees with that state (named [HAI] with no rule, or still the HAI rule <id> placeholder while holding one), which is a defect in HAI. couldNotCheck lists containers whose state could not be read or was not in the expected shape, and appsOfUnknownType counts apps the scan could not read at all, any of which may be a container. Neither is evidence that a container holds a rule, so an empty withoutRule is only a clean result when both are empty.'
   ];
   // A failed fetch and a genuinely empty response both collapse to the same
   // null/[] shape below - this is the only place that distinction survives,
@@ -21659,6 +23866,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     generatedAt: new Date().toISOString(),
     generatedBy: 'Automation Map v${APP_VERSION}',
     exportSchemaVersion: SCAN_META.exportSchemaVersion,
+    rmConstructVocabularyVersion: SCAN_META.rmConstructVocabularyVersion,
+    rmConstructVocabulary: RM_CONSTRUCT_VOCABULARY,
     graphSchemaVersion: SCAN_META.graphSchemaVersion,
     scan: {
       lastScanCompletedAt: SCAN_META.scanHeartbeatMs ? new Date(SCAN_META.scanHeartbeatMs).toISOString() : null,
@@ -21693,14 +23902,15 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     privacyNote: 'Device, room and app names below reflect a real home. Treat this file with the same care as the underlying device list - review before sharing it outside a trusted context.',
     schema: {
       devices: 'Every device on the hub. iconCategory is a best-guess classification (lighting, doors, water, motion...), "unknown" if nothing matched. capabilities is the raw Hubitat capability list this device reports (what iconCategory was derived from); null if this device was not present in the same fetch that supplied room/capabilities (a scan run since the page loaded, in the rare case one raced this export). iconCategory "connector" (schema 4, v2.0.14) marks a Hub Variable Connector device - a virtual device Hubitat keeps synchronized with the value of a hubVariables[] entry, not an independent physical device; find the variable it belongs to via that variable connector.deviceId field (hubVariables[]) or the synchronizedWith edge naming this device as its target (edges[]). A Connector device is represented in the same bulk device-enumeration endpoint every other device on this hub is discovered through, but nested inside its "Variable Connectors" parent entry rather than as a top-level device (a live platform finding, corrected v2.1.7) - so on a build before that fix its capabilities/room could read null even though the hub reported them, and on this build they resolve the same as any other device once the whole endpoint tree, not just its top level, is walked. Confirmed live: Hubitat also creates its own single parent device named "Variable Connectors" that lists every per-variable Connector in one place. That parent device is classified iconCategory "connector" too (the same detection rule catches it), but no hubVariables[] entry links to it and no synchronizedWith edge names it as a target - it manages the feature, it is not synchronized with one specific variable. Do not assume every "connector" device resolves to exactly one hubVariables[] entry. disabled (schema 8) reflects the per-device Disabled toggle Hubitat itself reports - true if the device is turned off entirely, independent of any app or rule state; never inferred from missing subscriptions, inactivity, orphan status, driver type or parent-child position (item 18).',
-      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service) or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation). webCoRE pistons carry a decoded flow (v2.3.0). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
+      apps: 'Every installed app, including every automation rule. status: active | disabled | paused | inert (installed but touches nothing) | unscanned (never reached during the scan) | unreadable (hub would not answer for it) | deleted-but-referenced (no longer exists as an app, but another rule still names it - appType is null in this one case, expected, not a decoding gap). disabled and paused (schema 8) are reported separately, not merged into one collapsed value as in schema 7 and earlier - disabled is a hub-level toggle reported for any app type, paused is Rule Machine-specific execution-paused state reported only for a rule that has that concept; disabled wins when both happen to be true, matching the map label precedence. parentId/childIds describe container apps (e.g. Button Controllers holding several Button Rules). hasDecodedFlow: true if this app has a matching entry in ruleFlows - false does not mean broken, it usually means the app is not a rule at all (an integration, a service), is an inert/no-action recognized rule, or is a rule on an engine this app cannot decode (Room Lighting, Basic Rules, Simple Automation). rmConstructs is present on every Rule Machine app for which extraction ran, even when hasDecodedFlow is false; [] means extraction ran and found no recognized saved construct, while absence means this engine was not covered. A matching ruleFlows entry repeats the same array for consumer convenience. webCoRE pistons carry a decoded flow (v2.3.0). hubVariableDecode is present for webCoRE pistons only: status is complete, not-present or error; relationships lists the bounded read/write/usesVar relationship types the decoder can emit; error is a fixed code or null. It reports only saved Hub Variable relationship decoding, not webCoRE flow decoding. deviceRelationshipCoverage (schema 12, v2.2.8) is null for other apps; for a webCoRE piston it is complete (every direct device operand resolved), partial (at least one resolved and at least one did not - see edges[] for what did resolve), none (a clean decode found zero direct device operands), or error (the whole piston decode failed); for the webCoRE container itself it is always parent-permissions-omitted, since its own permission selections are never presented as an actual piston use.',
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
       edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
-      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. steps is the decoded trigger/condition/action sequence for that rule. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, an "a"-prefixed app id, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry.',
+      rmConstructVocabulary: 'Dictionary keyed by the opaque Rule Machine construct tokens that need translation. Each value has category, a plain-language meaning, and haiCapabilityId where the HAI capability catalogue has an explicit mapping. Self-describing condition and trigger tokens are intentionally absent, so absence from this dictionary does not mean a token is unknown or unsupported. rmConstructVocabularyVersion versions token spelling and meaning separately from the export JSON shape.',
+      ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. A recognized inert/no-action Rule Machine app may correctly have no entry here; inspect apps[].rmConstructs for the complete per-scanned-app construct publication. steps is the decoded trigger/condition/action sequence for that rule. A Rule Machine trigger or action step may carry constructs, a sorted array containing the exact normalized token proven for that saved row; other engines and unproven associations omit it. Conditions are not step-associated. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored Rule Machine configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry. rmConstructs (v2.4.3) repeats the matching apps[] rule-level inventory for convenience when a decoded flow exists. It may omit a construct stored under an unrecognised setting family, so absence is not proof that a feature is absent. Trigger and action tokens can be joined to their matching steps[].constructs record; condition, option and structure tokens remain rule-level only. These fields describe observed saved settings, not proven reachability or runtime behavior, do not contain configured values, do not reconstruct the rule, and do not repair an unresolved or ambiguous steps[].references record. Token spelling and meaning are versioned by rmConstructVocabularyVersion. The root rmConstructVocabulary defines only opaque tokens; a token absent from that dictionary may already be plain language and must not be treated as unknown for that reason.',
       migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
-      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
+      insights: 'Pre-computed findings, every device/app/rule reference given as {id,name} rather than a bare name. contested: devices more than one app can leave in a lasting state, so the last app to run decides the outcome - common and often intentional on a hub with many rules (a motion-triggered rule and a manual-override rule both targeting one light, for example), worth confirming is not accidental, not evidence anything is wrong. unreferencedDevices: nothing on the hub owns, watches or drives them. inertApps: installed but touch no device and link to no rule, with why - very often a container holding other apps, or a schedule-only app, both entirely normal. brokenRuleReferences: a rule still names another rule/action/pause target that no longer exists - the action silently does nothing. inactiveRulesStillCalled (v2.2.1) - {rule, state: "paused"|"disabled", calledBy[]} - the rule will not run, yet another rule still invokes it, so that step in the caller silently does nothing; pause/resume links are deliberately excluded from calledBy, since a rule whose job is to resume this one is the mechanism working rather than a failure. rulesFlaggedBroken (v2.2.1) - Hubitat itself marks the rule broken via its own label, not a judgement this scan makes. disabledDevicesStillUsed (v2.2.1) - {device, usedBy[]} - the device is disabled while automations still command it or wait on it as a trigger, so those commands cannot land and those triggers cannot fire; constraint and monitor reads are excluded as a weaker, noisier claim. inactiveRules (v2.2.1) - every paused/disabled rule as plain context, almost always deliberate, and NOT a fault list; the actionable subset is inactiveRulesStillCalled. unreferencedLocalVariables (v2.2.1) - declared in a rule with no decoded read or write anywhere, carrying the same "may simply be unused, or used in a part this scan cannot decode" caveat as hubVariables.noDecodedUsage. haiRuleContainers (2.4.15) - {checkedCount, withoutRule[], nameStateMismatches[{app, ruleId, problem: "named-as-rule-without-rule"|"placeholder-name-with-rule", defectIn: "HAI"}], couldNotCheck[{app, reason}], appsOfUnknownType} - HAI Rule Containers judged by their own saved state, never their name; see limitations for why an empty withoutRule alone is not a clean result. hubVariables (schema 9) - neutral Hub Variable findings, never automatic fault claims (see limitations): noDecodedUsage (no decoded read, write or usesVar edge at all - may simply be unused, or used by an app this scan cannot decode), readersWithoutDecodedWriter (may be set manually, externally, or by an undecoded app), writersWithoutDecodedReader (may be consumed externally, or no longer needed), multipleWriters ({variable, writers} - shared state with more than one writer, not automatically a race), directionUnknownUsage ({variable, usedBy[]} - webCoRE saved references whose read/write direction is intentionally unknown), unresolvedReferences ({name, kind, referencedBy} - a proven structured reference to a name absent from a complete authoritative inventory), and webcoreDecodeIssues ({app,error} - fixed decoder failure codes, with no decoded configuration or values). There is no unresolvedConnectors field - a reported Connector deviceId is always trusted and resolved into hubVariables[].connector; see the limitations entry on orphaned/stale Connector IDs for what this trade-off cannot detect.',
       scan: 'lastScanCompletedAt is when the data behind this whole export was last refreshed from the hub (not when this file was generated - generatedAt above is that). lastScanError is whatever the app itself reported wrong with that scan, if anything. status is "complete" (nothing failed), "complete-with-gaps" (the scan finished but an app/device read, webCoRE variable decode, or webCoRE device-hash reconciliation had a bounded failure), or "failed" (lastScanError is set, the whole scan aborted). appsUnreadable/devicesUnreadable are scan-read counts; webcoreVariableDecodeIssues lists the affected pistons and fixed decoder codes without exposing decoded content. webcoreDeviceReconciliationGaps (schema 12, v2.2.8) counts only genuine device-hash reconciliation failures (unresolved, ambiguous, or a missing parent index) - a variable-backed or runtime-selected device reference is an expected, by-design coverage limit and does not count here or push status away from "complete". hubVariableInventory (schema 4) is kept deliberately separate from the status above - it describes whether the authoritative Hub Variable list the hub itself reports (not app/device scanning) succeeded this scan: status is "complete", "complete-with-gaps", "failed" or "not-supported"; count is how many variables the hub reported. When this status is not "complete" (v2.1.4, schema 5), a structured reference this scan cannot confirm against the incomplete inventory appears in ruleFlows[].nonResolvedVariableReferences with status "unresolved" rather than as a hubVariables[] entry. hubVariableRelationships describes Rule Machine and source-backed webCoRE Hub Variable read/write coverage, plus their limitations, independently of inventory status. webCoRE device relationships (schema 12, v2.2.8) are now decoded directly for physical-device reads and actions - see edges[] deviceRead/action and apps[].deviceRelationshipCoverage; a variable-backed device list, a runtime-selected device, or a non-physical/virtual device reference remain permanently outside what a static decode can ever resolve.',
       summary: 'Plain counts of every array below, for a quick sanity check or a one-line status line - not authoritative over the arrays themselves. hubVariablesWithConnectorCount and unresolvedHubVariableReferenceCount (schema 4) are the same kind of derived count as the others. webcoreHubVariableUseCount and webcoreVariableDecodeIssueCount summarize all webCoRE variable edges and fixed-code decode gaps; schema 10 adds separate read, write and unknown-use counts. localVariableCount (schema 12, v2.2.8) is counted directly from every owner-scoped Local Variable graph node across all supported engines - see the top-level localVariables[] array - not summed from ruleFlows[].localVariables alone, since a webCoRE piston never gets a ruleFlows entry at all. nonResolvedVariableReferenceCount (schema 5, v2.1.4) still totals ruleFlows[].nonResolvedVariableReferences across every decoded rule specifically - decoded evidence from the rules this export could read, not a hub-wide inventory the way hubVariableCount is.',
       limitations: 'Known, structural gaps in what this export can ever contain, independent of any particular hub - read this before concluding a rule is "missing" logic rather than on an engine this app cannot decode.',
@@ -21747,6 +23957,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       disabledDevicesStillUsed: disabledDevicesStillUsed,
       inactiveRules: inactiveRules,
       unreferencedLocalVariables: unreferencedLocalVariables,
+      // HAI Issue #44, additive - see the limitations entry.
+      haiRuleContainers: haiRuleContainers,
       // v2.0.14, schema 4 (parent spec 8.3/11.5). Neutral findings, not fault
       // claims - see recommendedAiBehaviour and this section's own limitations
       // note above.
@@ -21829,7 +24041,17 @@ document.getElementById('roomTipClose').addEventListener('click', roomTipDismiss
 document.getElementById('roomPlanNew').addEventListener('click', function () {
   const name = window.prompt('Name the new room');
   if (name === null || !name.trim()) return;
-  roomPlanCrud({ createRoom: name.trim() }, 'Creating...');
+  // Checked against the live room list loaded when Room Manager opened; the hub is no longer asked again first.
+  const wanted = name.trim().toLowerCase();
+  if ((ROOMPLAN.rooms || []).some(function (r) { return r && String(r.name || '').trim().toLowerCase() === wanted; })) {
+    document.getElementById('roomPlanMsg').textContent = 'There is already a room called ' + name.trim() + '.';
+    return;
+  }
+  ROOMPLAN.rooms = (ROOMPLAN.rooms || []).concat([{ id: '', name: name.trim(), pending: 'create' }]).sort(function (a, b) {
+    return String(a.name).toLowerCase() < String(b.name).toLowerCase() ? -1 : 1;
+  });
+  roomPlanRedrawAfter('Nothing changed');
+  roomPlanCrud({ createRoom: name.trim() }, 'Saving ' + name.trim() + ' to the hub...');
 });
 document.getElementById('roomPlanReset').addEventListener('click', function () {
   // A room the user dragged keeps its saved geometry forever, so a change to
@@ -22900,7 +25122,7 @@ String comparatorHtml() {
 
 <div id="amc-root">
   <p class="amc-note">
-    Select two Automation Map AI-friendly JSON exports. Comparison happens entirely in this browser;
+    Select two Automation Map AI-friendly exports (.txt files; older .json exports also open). Comparison happens entirely in this browser;
     the files are not uploaded to the hub or sent anywhere else. Only discovered apps, devices,
     Connectors, and Hub Variables are compared. A Hub Variable Connector is shown as its own
     Connector category, separate from Devices, since it represents synchronized shared state and
@@ -22912,12 +25134,12 @@ String comparatorHtml() {
   <div class="amc-grid">
     <div class="amc-card">
       <h3>Earlier or baseline export</h3>
-      <input id="amc-left-file" class="amc-file" type="file" accept="application/json,.json">
+      <input id="amc-left-file" class="amc-file" type="file" accept=".txt,.json,text/plain,application/json">
       <div id="amc-left-meta" class="amc-meta">No file selected.</div>
     </div>
     <div class="amc-card">
       <h3>Later or comparison export</h3>
-      <input id="amc-right-file" class="amc-file" type="file" accept="application/json,.json">
+      <input id="amc-right-file" class="amc-file" type="file" accept=".txt,.json,text/plain,application/json">
       <div id="amc-right-meta" class="amc-meta">No file selected.</div>
     </div>
   </div>
