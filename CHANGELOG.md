@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.27
+
+Dev channel. Rule Machine repeat blocks, push button per mode, choose button per mode, and delays taken from a variable are now read for rule flowcharts and Hubitat Automation Intelligence. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
 ## 2.4.26
 
 Dev channel. Rule Machine valves (open and close), HSM arm and disarm, and button hold, double tap and release are now read for rule flowcharts and Hubitat Automation Intelligence. Room Manager places a room it has no saved position for in free space, so a room created elsewhere no longer lands on top of others. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
