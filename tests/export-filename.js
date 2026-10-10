@@ -30,4 +30,21 @@ if (!source.includes("a.download = 'HAM Export for ' + exportFilenameHubName(HUB
     throw new Error('download filename is not wired to the tested helpers');
 }
 
-console.log('3 export filename assertions passed');
+// Gordon, 2026-10-10: every JSON file Automation Map saves ends in .txt, and
+// every picker that reads one back accepts .txt as well as older .json files.
+// Before this the AI export saved as .txt while Baseline Comparison only
+// offered .json files, so a fresh export could not be compared.
+const downloads = source.match(/a\.download = [^;]+;/g) || [];
+downloads.forEach(function (line) {
+    if (/\.json'/.test(line)) throw new Error('a download still saves as .json: ' + line);
+});
+['automation-map-external-systems.txt', 'automation-map-device-icons.txt'].forEach(function (name) {
+    if (!source.includes("a.download = '" + name + "';")) throw new Error('missing .txt download ' + name);
+});
+const accepts = source.match(/accept="[^"]*"/g) || [];
+if (accepts.length < 4) throw new Error('expected four file pickers, found ' + accepts.length);
+accepts.forEach(function (a) {
+    if (a.indexOf('.txt') === -1 || a.indexOf('.json') === -1) throw new Error('picker does not accept both .txt and .json: ' + a);
+});
+
+console.log('6 export filename assertions passed');

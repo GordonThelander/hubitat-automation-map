@@ -1,4 +1,4 @@
-v2.4.23: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+v2.4.24: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
 Changes since v2.4.2:
 
@@ -11,6 +11,7 @@ Changes since v2.4.2:
 - Insights: a hub variable that no rule is seen to use now says whether any app uses it.
 - webCoRE Migration Assessment: ratings are kept and shown at once, with a Refresh button to re-run them.
 - For Hubitat Automation Intelligence users: rules are read in much more detail for migration, and HAI rule apps are checked in Insights.
+- Exports and backups are saved as .txt files, and Baseline Comparison and the Import buttons open them (older .json files still open). On a hub page opened by its local address Chrome may warn about the download, because the page is not HTTPS; choose Keep.
 - No new hub writes: room membership, from Room Manager, is still the only thing it writes.
 
 After upgrading: the settings page asks you to run a scan; the map shows this version's results once it has.
