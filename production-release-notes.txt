@@ -1,15 +1,16 @@
-v2.4.2: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export. It now also groups devices by room.
+v2.4.22: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
-Changes since v2.3.2:
+Changes since v2.4.2:
 
-- Room Manager: Arrange rooms as movable, resizable rectangles with device icons inside them. Devices without a room appear in a "Not Allocated" column. Drag devices into rooms, use Ctrl-click or Shift-click to select several, and create, rename or delete rooms without leaving the page. Changes remain staged until you press Apply. Discard removes staged changes, and failed changes remain staged so you can retry only those items.
-- Hub writes are limited to room membership: Automation Map changes only which room a device belongs to. It does not send any other field of the device record, so nothing else about the device can be altered by a room change. This is Automation Map's first release that writes to the hub. Room Manager does not command devices, edit rules or change other apps. Deleting a room leaves its devices intact and unallocated, with a confirmation showing how many will be affected.
-- Experimental HAI integration: Hubitat Automation Intelligence Engine can now appear on the map. Hubs without HAI continue to use Automation Map normally.
-- HAI RM5 Coverage report: Compare Rule Machine 5.1 and HAI capabilities, see which HAI capabilities have been observed running on a hub, and see which capabilities your own rules use.
-- webCoRE Migration Assessment: Adds an HAI Engine rating alongside Rule Machine and Visual Rule Builder.
-- Read-only relationship API: Other apps can retrieve Automation Map's device relationships.
-- Easier-to-read flowcharts: Diagrams open in a wider panel that adjusts when you zoom or resize the browser.
-- Faster map opening: The flowchart library now loads when you first open a flowchart, removing about 3 MB from the initial map load.
-- Better phone layout: The link to open the map now appears above the Scan button.
+- See how your rules drive each other: set Show to "Rule to rule only" to see just the links where one rule runs another, pauses or resumes it, cancels its timed actions, or sets its Private Boolean, so chains of rules stand out at a glance. New in this release: rules that only reset others at hub start are drawn faintly, with two filters to separate them, "Rule to rule, except startup resets" and "Startup resets only".
+- Visual Rule Builder's repeated action (hub 2.5.2.135) is drawn as the builder describes it, and a device it checks only to decide when to stop is shown as a condition, not a trigger.
+- More reliable scans: a scan that loses the app list partway, as can happen just after a hub restart, is no longer saved as an empty map. It tries again by itself three minutes later.
+- Fixes to the rule flowcharts: rules that test the hub mode are no longer dropped during a scan, renamed modes show their current names, a Certain Time trigger saved in Rule Machine's older format is now read, and settings Rule Machine leaves behind after a trigger is removed are no longer shown as triggers.
+- App tags: apps are tagged [CUS] or [INT] from the hub's own list of apps you installed, so community apps are no longer shown as shipping with the hub.
+- Room Manager: creating or deleting a room is quicker, and the change shows as soon as the hub confirms it, without reloading every device's room.
+- Insights: a hub variable that no rule is seen to use now says whether any app uses it.
+- webCoRE Migration Assessment: ratings are kept and shown at once, with a Refresh button to re-run them.
+- For Hubitat Automation Intelligence users: rules are read in much more detail for migration, and HAI rule apps are checked in Insights.
+- No new hub writes: room membership, from Room Manager, is still the only thing it writes.
 
-After upgrading: Run a rescan to refresh app tags.
+After upgrading: Run a rescan.
