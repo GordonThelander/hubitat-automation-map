@@ -11899,14 +11899,15 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             return o
 
         case 'getPushButton':
-            // pushButNo.<n> the button number; pushButOp.<n> the event, measured as 'push' only.
-            Map o = [type: 'command', command: 'push']
+            // pushButNo.<n> the button number; pushButOp.<n> the event, stored as the command's own name: push,
+            // hold, doubleTap or release (HAI #85). The command is the event, never flattened to push.
+            String evt = "${v["pushButOp.${num}"] ?: 'push'}".trim()
+            Map o = [type: 'command', command: evt in ['push', 'hold', 'doubleTap', 'release'] ? evt : 'push']
             List d = hamDetailDeviceRefs(dev["pushButton.${num}"])
             if (d) o.devices = d
             Integer button = hamDetailNumberOrNull(v["pushButNo.${num}"])
             if (button != null) o.button = button
-            String event = "${v["pushButOp.${num}"] ?: ''}".trim()
-            if (event) o.event = event
+            if (evt) o.event = evt
             return o
 
         case 'getFadeDimmer':
