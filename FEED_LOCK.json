@@ -4,7 +4,7 @@
     {
       "kind": "file",
       "path": "public/hai-capabilities.json",
-      "sha256": "6d752c71a2cb72c3b8c95cb9a557382f714cb0c442ee6df45c53b9f886506cbe"
+      "sha256": "2f1e6364ce40fafc098a7b97ceaf526b89f0089069a93b7e4a05e44361b80787"
     },
     {
       "kind": "line",
@@ -47,6 +47,7 @@
     "Initial pin, 2026-10-06: the feed as production showed it when Gordon asked for it to be protected",
     "Gordon, 2026-10-08, in the cloud session's chat: \"yes\" to the parity feed changing for the Display current values row moving from Scoped to Tested on hub evidence (recorded on HAI #47; hub run HAI 0.5.14, PR #55)",
     "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list c113a153: Disable/Enable devices, HSM alert, push button per mode, Z-Wave polling",
-    "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list 7fb4bc16: required expression on system startup"
+    "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list 7fb4bc16: required expression on system startup",
+    "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list 3a6a7997: Room Lights, 140/140/140"
   ]
 }
