@@ -4,6 +4,78 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.26
+
+Dev channel. Rule Machine valves (open and close), HSM arm and disarm, and button hold, double tap and release are now read for rule flowcharts and Hubitat Automation Intelligence. Room Manager places a room it has no saved position for in free space, so a room created elsewhere no longer lands on top of others. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
+## 2.4.25
+
+Dev channel. Rule flowcharts and Hubitat Automation Intelligence now read almost every Rule Machine action, including the ones no rule had used before: toggle and per-mode switches, push button, toggle, fade and raise/lower for dimmers, colour per mode and toggle colour, colour temperature fades, shades, fans, locks, thermostats, mute, delay per mode, exit, stop repeat, HTTP GET, ping and file actions. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
+## 2.4.24
+
+Dev channel. Every file Automation Map saves for you to keep or reload is now a .txt file: the AI friendly export already was, and the external systems and device icon backups now are too. Baseline Comparison and both Import buttons open .txt files, and still open older .json ones; before this, Baseline Comparison only offered .json files, so a fresh export could not be compared. The contents are unchanged. Nothing here writes to your hub.
+
+## 2.4.23
+
+Dev channel. After upgrading, the settings page asks for a scan before showing the map, as earlier upgrades did. Without this, an upgraded map kept showing the previous version's results with no prompt, and with daily scanning off it could stay that way. Nothing here writes to your hub.
+
+## 2.4.22
+
+Dev channel. A scan keeps its external systems when the shared registry cannot be read and an older copy of the app's data was written back at the same time; one scan had drawn 11 fewer of them. The list of apps a scan enumerated is now restored the same way as the app list itself, so the check that compares the two always has both. Nothing here writes to your hub.
+
+## 2.4.21
+
+Dev channel. Easy Mobile Dashboard instances are no longer added to the map. They turned out to be Hubitat's own room dashboards for its mobile app, which it creates itself and leaves off its Apps list, so adding them made the app count disagree with the hub's Apps page and drew one of them to every device. The scan no longer asks the hub which apps use each device, which also makes it about 15 seconds quicker. Nothing here writes to your hub.
+
+## 2.4.20
+
+Dev channel. A scan is no longer refused because another page or job wrote back an older copy of the app list while the scan was finishing: the scan keeps its own copy and restores it. Apps you installed are tagged [CUS] again; a lookup fault had tagged every app [INT] since 2.4.3. After a refused scan the settings page says when the automatic retry will run. In Room Manager, creating or deleting a room takes two calls to the hub instead of four, and the change shows as soon as the hub confirms it, with no reload of every device's room. An app that is not a rule no longer says it has no decoded rule flow. Nothing here writes to your hub beyond what Room Manager already did.
+
+## 2.4.19
+
+Dev channel. Easy Mobile Dashboard instances now appear on the map with the devices they show: the hub leaves them off its list of apps, so the scan now also asks the hub which apps use each device and adds any it missed, within a time limit. Visual Rule Builder's new repeated action (firmware 2.5.2.135) is drawn as the builder words it, the action, how often, and until when, and a device it only checks to decide when to stop is shown as a condition rather than a trigger. The webCoRE Migration Assessment says why a loop still has no Visual Rule Builder equivalent: its repeat runs one action until a condition, with no count and no device list. Nothing here writes to your hub.
+
+## 2.4.18
+
+Dev channel. When a scan has to refuse to save its result, it now tries once more by itself three minutes later, so the map comes back within minutes instead of staying blank until the next scheduled scan. Insights now says more about a hub variable no rule is seen to use: where your hub reports which apps use each variable, the finding says either that no app uses it, or which apps use it in a way this scan cannot read. Nothing here writes to your hub.
+
+## 2.4.17
+
+Dev channel. A scan whose list of apps is lost partway through, which can happen in the first minutes after a hub restart while pages are slow to load, is no longer published as a complete map with no apps or rules in it: the scan now refuses to save it and the last good map is kept. The sibling engine's rule migration reads that file, so it is no longer told a hub has no Rule Machine rules when it has. The same loss no longer makes external systems from the shared registry disappear from the External Systems page: the last matches are kept and the page says why. Nothing here writes to your hub.
+
+## 2.4.16
+
+Dev channel. The HAI Rule Container check now checks a container that names its rule even when the hub leaves out its event subscriptions, so stopped HAI rules are counted as checked instead of unknown. Nothing here writes to your hub.
+
+## 2.4.15
+
+Dev channel. Insights gains a check on HAI Rule Containers: one whose own saved state shows it never received a rule is listed under Possibly unused, one whose name disagrees with its state is listed under Needs attention as a defect in HAI, and one that could not be checked is said to be unknown rather than counted as fine. The decode file read by the sibling engine's rule migration now lists the devices the scan saw as disabled (contract schema 4), and leaves the list out when the hub did not say. Nothing here writes to your hub.
+
+## 2.4.14
+
+Dev channel. The decode file read by the sibling engine's rule migration now says when an On/Off action commands only switches that are currently on or off, or acts on the switch that triggered the rule, so such an action is left for a person instead of being copied as a plain on/off. One action on this hub uses one. Nothing here writes to your hub.
+
+## 2.4.13
+
+Dev channel. Two fixes to the decode file read by the sibling engine's rule migration, found by comparing it with the map's own reading of each rule. A Certain Time trigger saved under Rule Machine's older label is now read, where before the rule was published with no trigger at all. And the map no longer shows a trigger a rule does not have when Rule Machine has left an old trigger setting behind. 2.4.12 was an internal test build and was not released. Nothing here writes to your hub.
+
+## 2.4.11
+
+Dev channel. A Set Color action using a custom RGB colour is now read in full for the sibling engine's rule migration: its hue, saturation and level, plus the exact colour picked, which until now left those rules to be copied by hand. A setting Rule Machine leaves behind when a trigger is removed is no longer read as a trigger: one rule here was published with a presence trigger it does not have, which would have made a copy run far more often than the original. Nothing in the map changes, and nothing here writes to your hub.
+
+## 2.4.10
+
+Dev channel. The decode file now reads ten more Rule Machine actions for the sibling engine's rule migration: set a dimmer's level and fade, adjust a dimmer, flash, refresh, poll, chime, set mode, comment, HTTP POST, and open or close a garage door, its direction read as measured on the hub, which is the opposite way to its name. A conditional trigger now names the condition it is gated on, and the file lists each hub variable's type as the hub reports it. Mute is still left for a person, until how its direction is stored has been measured. Nothing in the map changes, and nothing here writes to your hub.
+
+## 2.4.8
+
+Dev channel. The decode file read by the sibling engine's rule migration moves to contract 2. A Wait for Expression or Wait for Events now says whether its time is how long the condition must hold or a timeout, which until now it named the wrong way round; Wait for Events is read for the first time, including its events. Devices in rule conditions are published with both their id and name. A rule that still names a rule since deleted no longer passes that link on: it is listed as a finding instead, so you can remove it in Rule Machine. The file now ends with a marker and a rule count, so a reader can tell a complete file from one cut short. Nothing in the map changes, and nothing here writes to your hub.
+
+## 2.4.7
+
+Dev channel. Rule Machine rules are now read in far more detail for the sibling engine's rule migration, which reads the decode file this app writes on your hub: each rule's triggers with their real devices and values, its conditions and Required Expression, IF/ELSE branches, and more than twenty kinds of action, including Set Variable, colour, colour temperature, volume, Capture and Restore, running, pausing and cancelling other rules, and Wait for Expression. If one part of a rule cannot be read, only that part is marked, with the reason, instead of the whole rule being reported as unreadable. A rule Hubitat marks as broken is now detected from Hubitat's own flag rather than from its label text. The webCoRE Migration Assessment no longer shows the date of ratings an upgrade is replacing, and says pistons were assessed under the previous version rather than that none have been. A message action now reports a volume only when it speaks and a volume is set. Nothing here writes to your hub. 2.4.5 and 2.4.6 were internal test builds and were not released.
+
 ## 2.4.4
 
 Dev channel. The webCoRE Migration Assessment rated every piston on this hub each time the panel was opened. Ratings were already cached on the hub, but a rating goes stale the moment the graph is rebuilt and the panel treated stale as a reason to rate again, so a hub that scans daily re-rated everything on every open: 22 of 25 pistons, each costing a hub read and a decode, to redraw numbers it already held. A cached rating is now shown however old it is. Only two things cause a rating to be taken: a piston that has never been rated, and an upgrade of this app, which can change the equivalence table a rating was made against and is detected by storing the app version beside each rating. A graph rebuild still reports the rating as stale, which the export reads, but no longer drives re-rating. Refresh Scan replaces Reassess, above the search row, with the date of the previous assessment beneath it.
@@ -128,6 +200,22 @@ hub-wide insights still come from the last full scan.
   predates the last graph rebuild, and `not-rated` for a piston nobody has assessed yet.
 
 The community thread link on the app's settings page now opens the newest post.
+
+## 2.3.1
+
+Dev channel. New webCoRE migration assessment. Selecting a webCoRE piston shows a magenta Migration assessment button on the map; pressing it rates how directly the piston maps onto Rule Machine and onto Visual Rule Builder, from 1 (direct equivalent, simple) to 5 (easier to rebuild from scratch). The rating names every part that needs rework and the change it needs. Where the only difference is that a repeated device event could run the rule again, and the piston only sends fixed-value commands such as turning lights on or setting a level, it is shown as a warning instead of rework. A piston with a part the assessment does not recognise is shown as Not assessed rather than given a guessed rating. Whether this app can convert the piston automatically is shown separately, and only for parts proven on a hub. The new webCoRE Migration Assessment button in the control panel opens a report for every piston on the hub, with a summary bar for each engine, level filters, a construct matrix, and CSV downloads of both. The panels can be dragged anywhere. The assessment only reads the piston's saved structure: no variable value, message or device label is read, and nothing is created or changed on the hub.\n\n2.3.0 - Dev channel. A webCoRE piston now draws as a flowchart on the map, the same way Rule Machine, Notifier and Visual Rule Builder rules already do: statement order, branching, condition text composed from the piston's own saved spelling, nested condition groups as bracketed sub-sentences, and each task's saved parameters beside its command name. A device the piston reads in an event or a condition now takes the same trigger or constraint relationship Rule Machine uses, decided by which of webCoRE's own two comparison blocks the operator belongs to, so the map and the chart agree with each other. Where that cannot be told with certainty the read stays an unattributed device read rather than being given a role that might be false. Graph schema moves to 15 and export schema to 13, so a cached graph is rebuilt rather than silently shown without roles. No piston variable value is ever read: a variable operand prints its name, not its contents, and the decoded piston document and raw chunks are never logged or exported. Constants a piston saved are transcribed where they appear in a task parameter or a condition, for example setLevel(40), so those labels do reach the chart and the export. Separately, the decode coverage check reports what a piston's saved statements mean, kept separate from structure: the order in which an if tests its then, else-if and else branches, condition negation, or groups, followed-by groups kept opaque as timed sequences rather than read as and, do as a block that runs its steps once in order, and the default statement settings. Every other statement type, restriction, policy and condition comparison is reported as a named gap on the statement it affects, so no piston is yet shown as fully explained, and the result never changes a structural level or the coverage percentage. The coverage card adds a Meaning line and a Meaning not yet proven list. Each proven meaning cites the webCoRE wiki where it documents the construct, and the pinned webCoRE source, and is withdrawn automatically if that source changes. Quick Search and the Focus dropdowns also match the tags shown on each row, such as [WCP].\n\n2.2.9 - Dev channel. Adds a read-only decode coverage assessment for an individual webCoRE piston, reached through a new authenticated endpoint. It walks the piston's whole saved configuration, accounts for every object, array, field, element and value, and reports which constructs it positively identified against a registry pinned to a specific webCoRE source commit, which it could not, and where the gaps sit as structural paths. Recognition is measured over construct candidates only, so complete traversal never implies complete understanding, and the question of whether a missing relationship is genuinely absent or was simply never looked for stops being a guess. Structure only: no piston literal, message, URL, variable value or device label is read into the result, an unknown object key is replaced by an ordinal placeholder, and every reason code is fixed in source. The assessment runs on request, never during a relationship scan, and refuses while a scan is active. There is no user interface for it yet, and no existing relationship, graph or export behaviour changes.\n\n2.2.8 - Dev channel. Removes the blanket exclusion of webCoRE piston device relationships and restores them at the individual piston level: a physical-device read (its saved compiled operand) resolves to a new deviceRead relationship, and a direct device action resolves to the existing action relationship, both reconciled against the owning webCoRE parent's own permitted-device hash index (verified live: a real piston resolved to the correct switch-attribute read and setColor action). webCoRE piston-local variables are also now first-class owner-scoped Local Variable nodes, matching Rule Machine's own locals, decoded from the piston's own saved chunk:N configuration the same way Hub Variable reads/writes already were. The webCoRE parent app itself still shows no device edges - its permission selections remain a permission list, not proof of piston use. Graph schema bumped 13->14, export schema 11->12.\n\n2.2.7 - Dev containment release. webCoRE parent device permissions and partial piston subscriptions are no longer presented as operational device relationships. Piston Hub Variable reads and writes remain visible, device-only pistons are not labelled inert, and the map and export disclose that piston-to-device relationships are not decoded yet.\n\n2.2.6 - Dev channel. webCoRE saved piston configuration now classifies source-proven Hub Variable reads and writes separately. Explicit assignment targets are writes, evaluated variable operands are reads, and one piston can carry both relationships to the same variable. Dynamically constructed target names remain invisible rather than being guessed.
+
+## 2.2.5
+
+Local-only working build, not pushed to GitHub - kept off the shared dev branch so existing testers stay on 2.2.4. Continues backlog item 1 Phase 3: Insights, External systems, Pivot tables, Device icons and Hubitat release activity now share one modern draggable panel shell at a large display area; the rule flowchart/inert-app/unreferenced-variable panel keeps its original small, content-sized shape and opens below the legend instead of hiding it, since it was never one of the unified panels. Compact legend is now contextual, showing only what the current view actually contains. Several live-found UI fixes on top of that: Focus combobox popups no longer lose to open panels (a CSS stacking-context issue affecting the whole #controls rail, not just the popup's own z-index), the release-activity chart panel no longer shows an unwanted scrollbar, the rule flowchart panel no longer overlaps the legend or renders far wider than its own content needs, its scrollbar for tall flowcharts works again, and the hub watermark image no longer sits partly behind the Focus control panel - halved in size again on top of that. Rollback anchor: git tag dev-v2.2.4-rollback.
+
+## 2.2.3
+
+Focusing an app, device or variable now frames the view reliably. Previously the inert-node shelf was rebuilt into the focused view and the zoom fitted around it, the reframing often did not run at all, and when it did it measured node centres only, so labels were cut off and the map could run underneath the legend, the controls menu or an open panel. The view is now sized from the nodes and their labels against the area actually free to draw in. The whole-hub map is unchanged.
+
+## 2.2.2
+
+Fixes narrowed views rendering too small to read. Focusing an app, device or variable left the map at a fraction of its usable scale, because the inert-node shelf was being rebuilt into the focused view and the zoom was then fitted around it. The shelf now appears only on the whole-hub map, and a narrowed view is allowed to magnify.
 
 ## 2.2.1
 
