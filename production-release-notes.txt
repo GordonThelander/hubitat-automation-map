@@ -6,7 +6,7 @@ Changes since v2.4.2:
 * Visual Rule Builder’s repeated action (hub 2.5.2.135) is drawn as the builder describes it, and a device it checks only to decide when to stop is shown as a condition, not a trigger.
 * More reliable scans: a scan that loses the app list partway, as can happen if a scan starts immediately after a hub restart, is no longer saved as an empty map. It will now try again by itself three minutes later.
 * Room Manager: creating or deleting a room is quicker, and the change shows as soon as the hub confirms it, without reloading every device’s room.
-* Insights: a hub variable that no rule is seen to use now declares that no app uses it.
+* Insights: a hub variable that no rule is seen to use now shows that nothing uses it.
 * webCoRE Migration Assessment: ratings are cached after first run, with a Refresh button to re-run them.
 * For Hubitat Automation Intelligence [HAI] users: rules are read in much more detail for migration, and HAI rule apps are included in Insights.
 * Exports and backups are saved as .txt files, and Baseline Comparison and the Import buttons open them (older .json files still open). On a hub page opened by its local address Chrome may warn about the download, because the page is not HTTPS; choose Keep.
