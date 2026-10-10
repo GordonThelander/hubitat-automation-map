@@ -1,4 +1,4 @@
-v2.4.22: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+v2.4.23: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
 Changes since v2.4.2:
 
@@ -13,4 +13,4 @@ Changes since v2.4.2:
 - For Hubitat Automation Intelligence users: rules are read in much more detail for migration, and HAI rule apps are checked in Insights.
 - No new hub writes: room membership, from Room Manager, is still the only thing it writes.
 
-After upgrading: Run a rescan.
+After upgrading: the settings page asks you to run a scan; the map shows this version's results once it has.

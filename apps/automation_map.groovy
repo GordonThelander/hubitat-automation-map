@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.22'
+@Field static final String APP_VERSION = '2.4.23'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -163,7 +163,11 @@ boolean isDevBuild() {
 // the read, so a schema-14 cache has no roles at all: every read in it would
 // fall back to deviceRead and the map would keep contradicting the piston's own
 // flowchart, with nothing telling the user a rescan would fix it.
-@Field static final String GRAPH_SCHEMA = '15'
+// Bumped 15->16 (v2.4.23): no change of shape, but a 2.4.2-era map carries every app tagged built-in, the
+// older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
+// instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
+// way indefinitely (Gordon, 2026-10-10).
+@Field static final String GRAPH_SCHEMA = '16'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
