@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit b10e3e17a03feb35288c1e369f2365b9243b2dca; developer
+ * builder from the annotated Dev source at commit bb116052fceac62f5b0cfc0d8e3e304dad3459d3; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/b10e3e17a03feb35288c1e369f2365b9243b2dca/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/bb116052fceac62f5b0cfc0d8e3e304dad3459d3/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.22'
+@Field static final String APP_VERSION = '2.4.23'
 
 
 
@@ -120,7 +120,11 @@ boolean isDevBuild() {
 
 
 
-@Field static final String GRAPH_SCHEMA = '15'
+
+
+
+
+@Field static final String GRAPH_SCHEMA = '16'
 
 
 
