@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.29
+
+Dev channel. The Rule Machine coverage table now recognises the action names Rule Machine actually stores for HSM, locks, thermostats, switches and buttons per mode, scenes, shades, fans, music players, disable and enable devices, Z-Wave polling, HTTP GET, delay per mode and cancel delayed actions, and counts Simple Conditional actions. Before this, rules using them were not counted. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
 ## 2.4.28
 
 Dev channel. More Rule Machine actions are now read for rule flowcharts and Hubitat Automation Intelligence: Repeat While and Repeat Until, Simple Conditional actions, set dimmers from a variable, stop fades, cancel delayed actions, colour temperature per mode, scenes, disable and enable devices, every music player command and siren. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.

@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.28'
+@Field static final String APP_VERSION = '2.4.29'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '20'
+@Field static final String GRAPH_SCHEMA = '21'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -10717,6 +10717,30 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'action:getWaitRule'          : 'control.delay-wait-exit-wait-for-expression-timeout-dura',
     'action:getExitRule'          : 'control.delay-wait-exit-exit-rule',
     'action:getComment'           : 'control.delay-wait-exit-comment',
+    // The subtype names Rule Machine actually stores, measured on HAI #85 (2026-10-10/11). Several entries above
+    // use names it never stores (getArmHSM, getLockUnlock, getDisableDevice, ...), so without these a rule's use
+    // of HSM, locks, thermostats, per-mode switches and more was never matched to its capability.
+    'action:getModeSwitch'         : 'action.switches-set-switches-per-mode-choose-switches-p',
+    'action:getChooseSwitch'       : 'action.switches-set-switches-per-mode-choose-switches-p',
+    'action:getPushButtonPerMode'  : 'action.switches-push-button-push-button-per-mode-choose',
+    'action:getChooseButton'       : 'action.switches-push-button-push-button-per-mode-choose',
+    'action:getRLShade'            : 'action.shades-and-fans-open-close-shades-set-position-s',
+    'action:getStopShade'          : 'action.shades-and-fans-open-close-shades-set-position-s',
+    'action:getAdjustFan'          : 'action.shades-and-fans-set-fan-speed-cycle-fans',
+    'action:getActivateScene'      : 'action.scenes-activate-scenes-activate-scenes-per-mode',
+    'action:getActivateScenePerMode': 'action.scenes-activate-scenes-activate-scenes-per-mode',
+    'action:getSetHSM'             : 'action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari',
+    'action:getLULock'             : 'action.hsm-doors-locks-valves-lock-unlock-locks',
+    'action:getSetThermostat'      : 'action.thermostats-set-thermostats-thermostat-scheduler',
+    'action:getHTTPGet'            : 'action.messages-send-http-get-send-http-post',
+    'action:getSetMusicPlayer'     : 'action.music-and-sounds-control-music-player',
+    'action:getTone'               : 'action.music-and-sounds-sound-tone-sound-chime',
+    'action:getDisable'            : 'action.devices-disable-enable-devices',
+    'action:getStartStopZPoll'     : 'action.devices-start-stop-z-wave-polling',
+    'action:getEndRepeat'          : 'control.repeat-repeat-actions-every-n-n-times-stoppable',
+    'action:getDelayPerMode'      : 'control.delay-wait-exit-delay-actions-per-mode',
+    'action:getCondAct'           : 'control.conditional-simple-conditional-action-one-action',
+    'action:getCancelDelay'        : 'control.delay-wait-exit-cancel-delayed-actions',
     // Triggers, keyed by Rule Machine's own tCapab value.
     'trigger:Custom Attribute'    : 'trigger.custom-attribute',
     'trigger:Presence'            : 'trigger.presence-arrives-leaves',
@@ -10869,6 +10893,13 @@ List extractRuleConstructs(Map data) {
         else if (name.startsWith('reqExp') && v == 'true') out << 'structure:requiredExpression'.toString()
     }
     if (anyDelay) out << 'structure:actionDelay'.toString()
+    // A Simple Conditional Action stores as its THEN action's own subtype; only state.actions `cond` says
+    // it is conditional (measured on HAI #85). Read from state so the rule's use of it is counted.
+    Map stActions = [:]
+    (data.appState ?: []).each { Object e ->
+        if (e instanceof Map && (e as Map).name == 'actions' && (e as Map).value instanceof Map) stActions = (e as Map).value as Map
+    }
+    if (stActions.values().any { it instanceof Map && (it as Map).cond != null && "${(it as Map).cond}" != '' }) out << 'action:getCondAct'.toString()
     return out.sort()
 }
 
