@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.28
+
+Dev channel. More Rule Machine actions are now read for rule flowcharts and Hubitat Automation Intelligence: Repeat While and Repeat Until, Simple Conditional actions, set dimmers from a variable, stop fades, cancel delayed actions, colour temperature per mode, scenes, disable and enable devices, every music player command and siren. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
 ## 2.4.27
 
 Dev channel. Rule Machine repeat blocks, push button per mode, choose button per mode, and delays taken from a variable are now read for rule flowcharts and Hubitat Automation Intelligence. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.

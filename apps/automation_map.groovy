@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.27'
+@Field static final String APP_VERSION = '2.4.28'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '19'
+@Field static final String GRAPH_SCHEMA = '20'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -10708,6 +10708,8 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'action:getSimpleConditional' : 'control.conditional-simple-conditional-action-one-action',
     'action:getRepeat'            : 'control.repeat-repeat-actions-every-n-n-times-stoppable',
     'action:getRepeatWhile'       : 'control.repeat-repeat-while-expression-repeat-until-expr',
+    'action:getWhile'             : 'control.repeat-repeat-while-expression-repeat-until-expr',
+    'action:getUntil'             : 'control.repeat-repeat-while-expression-repeat-until-expr',
     'action:getStopRepeat'        : 'control.repeat-stop-repeating-actions',
     'action:getDelay'             : 'control.delay-wait-exit-delay-actions-blocking-with-canc',
     'action:getCancelDelayed'     : 'control.delay-wait-exit-cancel-delayed-actions',
@@ -11603,6 +11605,91 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
         case 'getEndRepeat':
             return [type: 'repeatEnd']
 
+        case 'getStopFade':
+        case 'getStopCTFade':
+            // No keys (HAI #85): stop this rule's level fade, or its colour temperature fade.
+            return [type: 'stopFade', attribute: method == 'getStopFade' ? 'level' : 'colorTemperature']
+
+        case 'getDisable':
+            // devDisable.<n> devices; disEn.<n> false = Disable, true = Enable (measured on HAI #85).
+            Map o = [type: 'deviceEnabled', enabled: hamDetailBool(v["disEn.${num}"])]
+            List d = hamDetailDeviceRefs(dev["devDisable.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getActivateScene':
+            // sceneAct.<n> a list of Scene Activator device ids; RM activates each with on() (HAI #85).
+            List ids = hamDetailJsonList(v["sceneAct.${num}"])
+            Map o = [type: 'activateScenes']
+            if (ids) o.devices = ids.collect { [id: "${it}".toString()] }
+            return o
+
+        case 'getActivateScenePerMode':
+            // sceneModes.<n> mode ids, scene<modeId>.<n> the scene device ids for that mode (HAI #85).
+            Map o = [type: 'activateScenesPerMode']
+            o.modes = hamDetailPerMode(v["sceneModes.${num}"]) { String id, String name ->
+                List ids = hamDetailJsonList(v["scene${id}.${num}"])
+                return ids ? [devices: ids.collect { [id: "${it}".toString()] }] : null
+            }
+            return o
+
+        case 'getCancelDelay':
+            // Cancel Delayed Actions, no keys (HAI #85).
+            return [type: 'cancelDelays']
+
+        case 'getColorTempPerMode':
+            // ctM.<n> devices, ctModes.<n> mode ids, then ctMode<modeId>.<n> kelvin and ctMode<modeId>.<n>Level,
+            // the index inside the key as on butM (measured on HAI #85).
+            Map o = [type: 'colorTemperaturePerMode']
+            List d = hamDetailDeviceRefs(dev["ctM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["ctModes.${num}"]) { String id, String name ->
+                Integer k = hamDetailNumberOrNull(v["ctMode${id}.${num}"])
+                if (k == null) return null
+                Map e = [kelvin: k]
+                Integer l = hamDetailNumberOrNull(v["ctMode${id}.${num}Level"])
+                if (l != null) e.level = l
+                return e
+            }
+            return o
+
+        case 'getSetMusicPlayer':
+            // player.<n> devices, playerCommand.<n> one of 17 words, playerTrack.<n> for play/set track,
+            // playerLevel.<n> for set volume (HAI #85). The word travels as stored.
+            Map o = [type: 'musicPlayer', action: "${v["playerCommand.${num}"] ?: ''}".trim()]
+            List d = hamDetailDeviceRefs(dev["player.${num}"])
+            if (d) o.devices = d
+            String track = "${v["playerTrack.${num}"] ?: ''}"
+            if (track) o.track = track
+            String text = "${v["playerText.${num}"] ?: ''}"
+            if (text) o.text = text
+            Integer pl = hamDetailNumberOrNull(v["playerLevel.${num}"])
+            if (pl != null) o.level = pl
+            if (hamDetailBool(v["uVar.${num}"]) && "${v["xVar.${num}"] ?: ''}".trim()) o.variable = "${v["xVar.${num}"]}".trim()
+            return o
+
+        case 'getSiren':
+            // siren.<n> devices, sirenAct.<n> siren / strobe / both / off (HAI #85).
+            Map o = [type: 'siren', action: "${v["sirenAct.${num}"] ?: ''}".trim()]
+            List d = hamDetailDeviceRefs(dev["siren.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getWhile':
+            // Repeat While (HAI #85): the interval as on a plain Repeat; the expression it tests is the
+            // step's expressionGroup, from state.actions `rule`, never in settings. Closed by END-REP.
+            Integer wh = hamDetailNumberOrNull(v["repeatHour.${num}"])
+            Integer wm = hamDetailNumberOrNull(v["repeatMinute.${num}"])
+            Integer ws = hamDetailNumberOrNull(v["repeatSecond.${num}"])
+            Map w = [type: 'repeatWhile']
+            if (wh != null || wm != null || ws != null) w.everySeconds = ((wh ?: 0) * 3600) + ((wm ?: 0) * 60) + (ws ?: 0)
+            return w
+
+        case 'getUntil':
+            // Repeat Until closes the Repeat above it with no END-REP; nothing in settings, the expression is
+            // the step's expressionGroup (HAI #85).
+            return [type: 'repeatUntil']
+
         case 'getDefinedAction':
             // A custom command. cCmd is the method, myCapab the capability it
             // belongs to. Parameters live in cpVal<i>.<n> with their declared
@@ -11704,6 +11791,9 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (lvl != null) o.level = lvl
             Integer fade = hamDetailNumberOrNull(v["dimRA.${num}"])
             if (fade != null) o.fadeSeconds = fade
+            // Level from a variable (HAI #85): uVar true, the variable in xVar, and no dimLA.
+            String lvar = "${v["xVar.${num}"] ?: ''}".trim()
+            if (lvar && hamDetailBool(v["uVar.${num}"])) { o.remove('level'); o.variable = lvar }
             return o
 
         case 'getAdjustDimmer':
@@ -12129,6 +12219,11 @@ List extractRuleActions(Map data) {
         // an action's own branch.
         Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
         if (evalGroup != null) step.expressionGroup = "${evalGroup}"
+        // A Simple Conditional Action stores as its THEN action with ordinary keys; the condition it is
+        // gated by is only state.actions `cond`, a condition slot (measured on HAI #85). Without this a
+        // consumer sees an unconditional action.
+        Object condSlot = ((storedActions[num] ?: [:]) as Map).cond
+        if (condSlot != null && !WAIT_METHODS.contains(method)) step.condition = "${condSlot}"
 
         Map ops
         if (method == 'getWaitRule') {
