@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.30'
+@Field static final String APP_VERSION = '2.4.31'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '22'
+@Field static final String GRAPH_SCHEMA = '23'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -12330,7 +12330,10 @@ List extractRuleActions(Map data) {
 // spelling read as a device family with no devices.
 @Field static final List<String> DEVICELESS_TRIGGERS = [
     'Certain Time (and optional date)', 'Certain Time', 'Periodic Schedule', 'Variable',
-    'Location Event', 'Mode', 'Hub Variable'
+    'Location Event', 'Mode', 'Hub Variable',
+    // Its target is a rule, stored as a bare id list in tDev<n> rather than a device map (measured 2026-10-11),
+    // so the device test dropped the whole trigger and nothing said so.
+    'Rule paused'
 ]
 
 // Trigger settings carry NO dot - tCapab1, tDev1, ReltDev1 - where action
@@ -12407,6 +12410,11 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
             break
         case 'Location Event':
             // tstate holds the event name, already captured as value above.
+            break
+        case 'Rule paused':
+            // tDev<n> holds the watched rules' ids as a plain list, ["1234"], not a device map; tstate<n> 'true'
+            // fires on paused. Published even with no rule, so a consumer refuses it instead of never seeing it.
+            o.rules = hamDetailJsonList(v["tDev${num}"]).collect { "${it}" }
             break
         case 'Certain Time (and optional date)':
         case 'Certain Time':

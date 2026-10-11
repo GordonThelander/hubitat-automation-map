@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.31
+
+Dev channel. Rule Machine rules with a Rule paused trigger now keep that trigger when decoded for flowcharts and Hubitat Automation Intelligence. Before this the trigger was left out without a warning. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
 ## 2.4.30
 
 Dev channel. Rule Machine rules now decode more completely for flowcharts and Hubitat Automation Intelligence: periodic schedules keep their interval and start time, On a Day keeps its date, Days of week keeps its days, Custom Attribute conditions keep their attribute, and Set Variable from another variable or a device reading is no longer misread as a number. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
