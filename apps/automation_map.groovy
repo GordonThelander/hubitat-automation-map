@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.29'
+@Field static final String APP_VERSION = '2.4.30'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '21'
+@Field static final String GRAPH_SCHEMA = '22'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -10676,6 +10676,7 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'condition:Between two times' : 'condition.between-two-times-fixed-sunrise-sunset-offsets-v',
     'condition:Between two dates' : 'condition.between-two-dates',
     'condition:On a Day'          : 'condition.on-a-day',
+    'condition:Days of week'      : 'condition.days-of-week-as-condition',
     'condition:Days of Week'      : 'condition.days-of-week-as-condition',
     'condition:Private Boolean'   : 'condition.private-boolean',
     'condition:Custom Attribute'  : 'condition.custom-attribute',
@@ -11190,9 +11191,13 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
         operands.from = hamDetailDateOperand('Start', num, settingValues)
         operands.to = hamDetailDateOperand('End', num, settingValues)
     } else if (capability == 'On a Day') {
-        // No rule on this hub has one configured, so the stored shape is
-        // unobserved. Resolving nothing is honest; inventing a day list from
-        // a guessed setting name would not be.
+        // One month and day, not a weekday list: monthStart<n>, dayStart<n>,
+        // startDateType<n> (measured on HAI #85, 2026-10-11). Unset, it
+        // resolves to nothing rather than a guessed date.
+        Map date = hamDetailDateOperand('Start', num, settingValues)
+        if (date) operands.date = date
+    } else if (capability == 'Days of week' || capability == 'Days of Week') {
+        // The weekday list lives in days<n>, e.g. ["Thursday"] (HAI #85).
         operands.days = hamDetailJsonList(settingValues["days${num}"])
     } else if (capability == 'Mode') {
         List ids = hamDetailJsonList(settingValues["modes${num}"])
@@ -11219,6 +11224,12 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
         if (comparator) operands.comparator = comparator
         String state = "${settingValues["state_${num}"] ?: ''}"
         if (state) operands.value = [literal: state]
+        // A Custom Attribute condition names its attribute in rCustomAttr_<n> (measured on HAI #85); without it
+        // a consumer is told what to compare but not which attribute.
+        if (capability == 'Custom Attribute') {
+            String attr = "${settingValues["rCustomAttr_${num}"] ?: settingValues["rCustomAttr${num}"] ?: ''}".trim()
+            if (attr) operands.attribute = attr
+        }
     }
 
     // Devices live in a setting's deviceList, never in its value, so they are
@@ -11781,19 +11792,40 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
                            left: "${v["xVar3.${num}"] ?: ''}",
                            operator: "${v["valMathOp.${num}"] ?: ''}",
                            right: rightOperand]
-            } else if (numOp) {
+            } else if (numOp == 'number' || numOp == 'add number') {
                 // 'add number' adds to the current value; 'number' replaces it.
                 // Different operations, so the distinction is kept rather than
                 // both becoming a plain assignment.
                 o.value = [kind: (numOp == 'add number') ? 'addNumber' : 'number',
                            value: "${v["valNumber.${num}"] ?: ''}"]
+            } else if (numOp == 'variable') {
+                // Copy another variable, plus an offset (measured on HAI #85): xVar3 the source, valOffset.
+                // Until 2026-10-11 this fell into the 'number' branch and read as a blank constant.
+                Map cv = [kind: 'variable', variable: "${v["xVar3.${num}"] ?: ''}".trim()]
+                String off = "${v["valOffset.${num}"] ?: ''}".trim()
+                if (off) cv.offset = off
+                o.value = cv
+            } else if (numOp == 'device attribute') {
+                // A device's attribute into a number variable: customDev and tCustomAttr, as on the string side.
+                Map av = [kind: 'deviceAttribute', attribute: "${v["tCustomAttr.${num}"] ?: ''}"]
+                List d = hamDetailDeviceRefs(dev["customDev.${num}"])
+                if (d) av.devices = d
+                o.value = av
+            } else if (numOp) {
+                // A numeric mode not measured: unsupported, never a guessed constant.
+                return null
             } else if (strOp == 'Device attribute') {
                 Map av = [kind: 'deviceAttribute', attribute: "${v["tCustomAttr.${num}"] ?: ''}"]
                 List d = hamDetailDeviceRefs(dev["customDev.${num}"])
                 if (d) av.devices = d
                 o.value = av
-            } else if (strOp) {
+            } else if (strOp == 'Set string') {
                 o.value = [kind: 'string', value: "${v["valString.${num}"] ?: ''}"]
+            } else if (strOp) {
+                // Every other string operation (Replace string and the rest) reads more fields than valString;
+                // read as 'set' it would put the search text in the variable (measured on HAI #85). Unsupported
+                // until each is decoded, never a wrong assignment.
+                return null
             } else if (boolRaw) {
                 o.value = [kind: 'boolean', value: (boolRaw == 'true')]
             }
@@ -12353,8 +12385,15 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
         case 'Periodic Schedule':
             String period = "${v["whichPeriod${num}"] ?: ''}".trim()
             if (period) o.period = period
-            Integer every = hamDetailInt(v["everyNSecs${num}"])
+            // The interval is stored per unit (measured on HAI #85): everyNSecs<n> seconds, everyNC<n> minutes,
+            // everyNHC<n> hours with its start in startingHC<n>, everyNDC<n> days with startingDC<n>.
+            String everyKey = ['Seconds': 'everyNSecs', 'Minutes': 'everyNC', 'Hourly': 'everyNHC', 'Daily': 'everyNDC'][period] ?: 'everyNSecs'
+            String everyRaw = "${v["${everyKey}${num}"] ?: ''}".trim()
+            Integer every = everyRaw.isInteger() ? (everyRaw as Integer) : null
             if (every != null) o.every = every
+            String startKey = ['Hourly': 'startingHC', 'Daily': 'startingDC'][period]
+            String start = startKey ? "${v["${startKey}${num}"] ?: ''}".trim() : ''
+            if (start) o.startingTime = start
             // startingTime is what an Hourly schedule's minute lives in, and
             // publishing period without it invites a consumer to assume the
             // top of the hour. Absent is not zero. The rest are carried raw
