@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.32'
+@Field static final String APP_VERSION = '2.4.33'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -1473,7 +1473,7 @@ if (document.readyState !== 'loading') { amStartScan(); }
 boolean graphIsStale() {
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
-    return state.graph && (atomicState.graphVersion ?: state.graphVersion) != GRAPH_SCHEMA
+    return state.graph && ((state.graph.schema ?: atomicState.graphVersion ?: state.graphVersion) as String) != GRAPH_SCHEMA
 }
 
 // A scan that stops without finishing leaves scanRunning set, which disables the
@@ -2137,6 +2137,7 @@ boolean finishGeneration(String token, String error = null, String logicalGen = 
         state.scanError = "${ex.message}"
     } finally {
         genTrace('generation-terminated', [claimant: finishingValue, logical: (logicalGen ?: token)])
+        atomicState.lastScanOutcome = (error != null || state.scanError) ? 'failed' : 'completed'
         TERMINAL_TOMBSTONES.put(tombstoneKey, now())
         state.scanRunning = false
         // Before the lock goes, or currentGenerationToken() can no longer
@@ -2294,6 +2295,7 @@ Map startScan(String entry = 'unknown') {
     // accumulator disappeared on a code reload". Recovery may build a graph
     // only after this marker is committed true by finalizeAppPhase.
     state.appResultsReady = false
+    atomicState.lastScanOutcome = 'running'
     atomicState.graphVersion = null
     // Dropped, not merely marked stale. Holding the previous graph while
     // appInfo fills doubles peak state for the whole scan - this is Gordon's
@@ -14738,7 +14740,9 @@ Map buildGraph() {
     // mid-loop where a later app's classification could not yet be trusted.
     correctFlowVariableLabels(flows, ruleVariables)
 
-    return [nodes: nodes.values().toList(), edges: edges, flows: flows,
+    // The schema travels inside the graph (2.4.33): the separate graphVersion marker was nulled again after
+    // a good scan by another execution's stale write-back, so the page called a fresh graph out of date.
+    return [schema: GRAPH_SCHEMA, nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
             webcoreVariableDecodeIssues: webcoreVariableDecodeIssues,
             webcoreDeviceRelationshipIssues: webcoreDeviceRelationshipIssues,
@@ -16199,6 +16203,8 @@ String scanStatusJson(boolean forceRunning = false) {
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     return JsonOutput.toJson([
         running: forceRunning || scanEffectivelyActive(),
+        // 'running' with running:false means the last scan was abandoned, not finished (2.4.33).
+        lastScanOutcome: atomicState.lastScanOutcome,
         alreadyStarting: forceRunning,
         phase: progPhase ?: null,
         done: done,

@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.33
+
+Fixes the map sometimes saying it is out of date and asking for a scan right after a scan had finished. The graph now carries its own format version, so another part of the app saving older data can no longer mark a fresh map as stale.
+
 ## 2.4.32
 
 Dev channel. The map now shows what starts a rule when no device does: a clock badge on the rule, with its time, schedule, mode, variable, location event or Rule paused triggers listed when the rule is focused and on hover. A Rule paused trigger also draws a line from the watched rule. A rule flowchart now puts all its triggers in one Starts when box, since any one of them starts the rule. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
