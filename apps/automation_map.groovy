@@ -791,7 +791,7 @@ Map main() {
                 // replaced. Reporting that as an unreadable saved format is
                 // what put a corruption warning on a healthy first scan.
                 boolean graphStale = graphIsStale() && !scanActive && !scanProgressIsLive()
-                if (graphData() && !scanActive && !graphStale) {
+                if (!scanActive && !graphStale && graphData()) {
                     paragraph '''<style type="text/css">
 a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
 a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
@@ -1023,20 +1023,64 @@ button[name^="_action_href_baselineComparisonBack|"] span { color:#121214 !impor
 @Field static final ConcurrentHashMap<String, Boolean> GRAPH_VERSION_MIGRATED = new ConcurrentHashMap<>()
 
 void migrateGraphVersionIfNeeded() {
-    if (GRAPH_VERSION_MIGRATED.containsKey("${app.id}".toString())) return
-    if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
-        atomicState.graphVersion = state.graphVersion
+    String key = "${app.id}".toString()
+    if (!GRAPH_VERSION_MIGRATED.containsKey(key)) {
+        if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
+            atomicState.graphVersion = state.graphVersion
+        }
+        GRAPH_VERSION_MIGRATED.put(key, true)
     }
-    // 2.4.34: a map saved in state by an earlier version moves to its file once, so an upgrade keeps it.
-    if (state.graph instanceof Map && !scanEffectivelyActive()) {
-        try {
-            commitPublishedScan(state.graph as Map, (state.appInfo ?: [:]) as Map,
-                                ((state.graphCommittedAtLocal ?: now()) as Long))
-        } catch (Exception e) {
-            log.warn "${app.label}: the saved map could not be moved to its file yet, it stays where it is: ${e.message}"
+    // 2.4.34: a map saved in state by an earlier version moves to its file, but never here. This runs inside
+    // page renders and status polls, and moving 1 MB in them made every one of them slow, while a concurrent
+    // execution holding the old snapshot could write the map straight back. Only scheduled from here, at
+    // most once a minute; migratePublishedScanJob() does the move in an execution of its own. Readers keep
+    // using state.graph until then (see publishedScan()).
+    if (state.graph instanceof Map) {
+        Long last = MIGRATION_SCHEDULED_AT.get(key)
+        if (last == null || now() - last > 60000L) {
+            MIGRATION_SCHEDULED_AT.put(key, now())
+            runIn(2, 'migratePublishedScanJob', [overwrite: true])
         }
     }
-    GRAPH_VERSION_MIGRATED.put("${app.id}".toString(), true)
+}
+
+@Field static final ConcurrentHashMap<String, Long> MIGRATION_SCHEDULED_AT = new ConcurrentHashMap<>()
+
+// The one place a map saved in state is moved to its file (2.4.34). Idempotent and cheap when repeated: when
+// the file already holds this commit, which is what a stale write-back of the old state looks like, the
+// file is not written again and only the copies in state are dropped.
+void migratePublishedScanJob() {
+    if (!(state.graph instanceof Map)) return
+    // A running scan publishes its own map and drops these keys itself.
+    if (scanEffectivelyActive()) return
+    try {
+        Long pointer = state.graphCommittedAtLocal != null ? (state.graphCommittedAtLocal as Long) : null
+        if (pointer != null && publishedScanFileCommittedAt() == pointer) {
+            if (state.publishedAppCount == null) state.publishedAppCount = ((state.appInfo ?: [:]) as Map).size()
+            state.remove('graph')
+            if (state.containsKey('appInfo')) state.remove('appInfo')
+            return
+        }
+        commitPublishedScan(state.graph as Map, (state.appInfo ?: [:]) as Map, (pointer ?: now()) as Long)
+    } catch (Exception e) {
+        log.warn "${app.label}: the saved map could not be moved to its file yet, it stays where it is: ${e.message}"
+    }
+}
+
+// The commit the saved file holds, read from its first bytes without parsing the rest, or null.
+Long publishedScanFileCommittedAt() {
+    try {
+        byte[] bytes = downloadHubFile(publishedScanFileName())
+        if (!bytes) return null
+        String head = new String(bytes, 0, Math.min(bytes.length, 64), 'UTF-8')
+        String prefix = '{"committedAt":'
+        if (!head.startsWith(prefix)) return null
+        int end = prefix.length()
+        while (end < head.length() && Character.isDigit(head.charAt(end))) end++
+        return end > prefix.length() ? (head.substring(prefix.length(), end) as Long) : null
+    } catch (Exception ignored) {
+        return null
+    }
 }
 
 // ===================================================================================================================
@@ -1056,33 +1100,46 @@ String publishedScanFileName() {
 }
 
 // [committedAt, graph, appInfo] for the last published scan, or null when there is none to read.
+// The file is read and parsed at most once per commit per code load, by the first reader; every later
+// reader gets the copy in memory. A code reload clears it, and the next reader reads the file once again.
+// A missing file is remembered for the pointer it was missing at, so a request that calls this several
+// times, or a stream of status polls, does not ask the hub for it again until the pointer moves.
+@Field static final ConcurrentHashMap<String, Long> PUBLISHED_SCAN_MISSING = new ConcurrentHashMap<>()
+
 Map publishedScan() {
     String key = "${app.id}".toString()
     Long pointer = (state.graphCommittedAtLocal ?: 0) as Long
     Map hit = PUBLISHED_SCAN.get(key)
-    // At least as new as the pointer: a stale snapshot can carry an older pointer, never a newer file.
-    if (hit && ((hit.committedAt ?: 0) as Long) >= pointer) return hit
+    // At least as new as the pointer: a stale snapshot can carry an older pointer, never a newer file. A copy
+    // already read for this pointer is the newest there is, even if older than it.
+    if (hit && (((hit.committedAt ?: 0) as Long) >= pointer || hit.readFor == pointer)) return hit
     Map loaded = null
-    try {
-        byte[] bytes = downloadHubFile(publishedScanFileName())
-        if (bytes) {
-            Object parsed = new groovy.json.JsonSlurper().parseText(new String(bytes, 'UTF-8'))
-            if (parsed instanceof Map && (parsed as Map).graph instanceof Map) {
-                Map p = parsed as Map
-                loaded = [committedAt: ((p.committedAt ?: 0) as Long), graph: p.graph as Map,
-                          appInfo: ((p.appInfo ?: [:]) as Map)]
+    if (PUBLISHED_SCAN_MISSING.get(key) != pointer) {
+        try {
+            byte[] bytes = downloadHubFile(publishedScanFileName())
+            if (bytes) {
+                Object parsed = new groovy.json.JsonSlurper().parseText(new String(bytes, 'UTF-8'))
+                if (parsed instanceof Map && (parsed as Map).graph instanceof Map) {
+                    Map p = parsed as Map
+                    loaded = [committedAt: ((p.committedAt ?: 0) as Long), graph: p.graph as Map,
+                              appInfo: ((p.appInfo ?: [:]) as Map), readFor: pointer]
+                }
             }
+        } catch (Exception e) {
+            if (diagOn()) log.info "${app.label}: no saved map file to read (${e.message})"
         }
-    } catch (Exception e) {
-        if (diagOn()) log.info "${app.label}: no saved map file to read (${e.message})"
+        if (loaded) {
+            PUBLISHED_SCAN.put(key, loaded)
+            PUBLISHED_SCAN_MISSING.remove(key)
+        } else {
+            PUBLISHED_SCAN_MISSING.put(key, pointer)
+        }
     }
-    if (loaded) {
-        PUBLISHED_SCAN.put(key, loaded)
-        return loaded
+    // Saved by an earlier version and not moved yet (see migratePublishedScanJob()).
+    if ((loaded == null || ((loaded.committedAt ?: 0) as Long) < pointer) && state.graph instanceof Map) {
+        return [committedAt: pointer, graph: state.graph as Map, appInfo: ((state.appInfo ?: [:]) as Map)]
     }
-    // Saved by an earlier version and not moved yet (see migrateGraphVersionIfNeeded()).
-    if (state.graph instanceof Map) return [committedAt: pointer, graph: state.graph as Map, appInfo: ((state.appInfo ?: [:]) as Map)]
-    return null
+    return loaded ?: hit
 }
 
 Map graphData() {
@@ -1107,6 +1164,7 @@ void commitPublishedScan(Map graph, Map appInfo, Long committedAt) {
     String body = JsonOutput.toJson([committedAt: committedAt, schema: GRAPH_SCHEMA, graph: graph, appInfo: appInfo])
     uploadHubFile(publishedScanFileName(), body.getBytes('UTF-8'))
     PUBLISHED_SCAN.put("${app.id}".toString(), [committedAt: committedAt, graph: graph, appInfo: appInfo])
+    PUBLISHED_SCAN_MISSING.remove("${app.id}".toString())
     state.graphCommittedAtLocal = committedAt
     atomicState.graphCommittedAt = committedAt
     state.publishedAppCount = appInfo.size()
@@ -1537,6 +1595,9 @@ if (document.readyState !== 'loading') { amStartScan(); }
 
 boolean graphIsStale() {
     migrateGraphVersionIfNeeded()
+    // Every caller already treats a running scan as not stale, and reading the saved map here would load the
+    // copy startScan() let go of back into memory for the whole scan (2.4.34).
+    if (scanEffectivelyActive()) return false
     selfHealGraphIfNeeded()
     Map graph = graphData()
     return graph && ((graph.schema ?: atomicState.graphVersion ?: state.graphVersion) as String) != GRAPH_SCHEMA
@@ -16480,10 +16541,11 @@ String jsonForScriptEmbed(Object obj) {
 }
 
 String buildMapHtml() {
-    Map graph = (graphData() ?: [nodes: [], edges: []]) as Map
+    Map published = publishedScan()
+    Map graph = (published?.graph ?: [nodes: [], edges: []]) as Map
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
-    String jsonStr = cachedGraphJson(graph)
+    String jsonStr = cachedGraphJson(graph, (published?.committedAt ?: 0) as Long)
     // For the AI friendly export feature - scan provenance the client-side GRAPH
     // blob above does not carry on its own. Built the same safe way GRAPH
     // is (JsonOutput, not manual string splicing) so an exception message
@@ -16571,19 +16633,6 @@ String buildMapHtml() {
     }
     String rmConstructVocabularyJsonStr = jsonForScriptEmbed(rmConstructVocabulary)
     String hubNameJsonStr = jsonForScriptEmbed("${location.name ?: 'Hubitat'}")
-    Map slotValues = [jsonStr: jsonStr, scanMetaJsonStr: scanMetaJsonStr,
-                      rmConstructVocabularyJsonStr: rmConstructVocabularyJsonStr, hubNameJsonStr: hubNameJsonStr,
-                      deviceCount: deviceCount, appCount: appCount,
-                      watermarkClass: showSanta() ? '' : 'hubPhoto',
-                      watermarkImage: showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png',
-                      localOrigin: getLocalOrigin(), appId: app.id]
-    return assembleMapPage(slotValues)
-}
-
-// The map page itself. Every per-request value is a slot (see mapSlot()), so the text can be stripped of its
-// comments once per code load rather than on every request (2.4.34). The comments stay here for whoever
-// reads this file; the browser no longer downloads them.
-String mapPageTemplate() {
     return """\
 <!doctype html>
 <html>
@@ -17480,7 +17529,7 @@ String mapPageTemplate() {
 </style>
 </head>
 <body>
-<div id="status">Devices: ${mapSlot('deviceCount')} &nbsp; Apps: ${mapSlot('appCount')}</div>
+<div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
 <div id="legend">
   <div id="legendCompactBody"></div>
   <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
@@ -17595,7 +17644,7 @@ String mapPageTemplate() {
     <button class="pillBtn" type="button" id="hubTipGot">Got it</button>
   </div>
 </div>
-<img id="hubWatermark" class="${mapSlot('watermarkClass')}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${mapSlot('watermarkImage')}" alt="">
+<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -17620,10 +17669,10 @@ if (typeof window.vis === 'undefined') {
 // entry already open, not a new one.
 try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) { }
 
-const GRAPH = ${mapSlot('jsonStr')};
-const SCAN_META = ${mapSlot('scanMetaJsonStr')};
-const RM_CONSTRUCT_VOCABULARY = ${mapSlot('rmConstructVocabularyJsonStr')};
-const HUB_NAME = ${mapSlot('hubNameJsonStr')};
+const GRAPH = ${jsonStr};
+const SCAN_META = ${scanMetaJsonStr};
+const RM_CONSTRUCT_VOCABULARY = ${rmConstructVocabularyJsonStr};
+const HUB_NAME = ${hubNameJsonStr};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0', synchronizedWith: '#999' };
@@ -20408,7 +20457,7 @@ function ccApplyClickable(box, url) {
 // button and nothing else, and one press makes one request. Every label is plain
 // ASCII with no apostrophes, because this script lives inside a Groovy GString and
 // a stray quote has broken this page before. Dynamic text goes through extEsc.
-const COVERAGE_URL = amPickURL('${mapSlot('local:webcore-decode-coverage')}', '${mapSlot('cloud:webcore-decode-coverage')}');
+const COVERAGE_URL = amPickURL('${getLocalURL('webcore-decode-coverage')}', '${getCloudURL('webcore-decode-coverage')}');
 let coverageRequestSeq = 0;
 let coverageAppId = null;
 let coverageInFlight = false;
@@ -20501,8 +20550,8 @@ function requestDecodeCoverage() {
 // one rating for each engine assessed; a click expands the reasons and the parts
 // that need manual work. Silent when the assessment cannot run. Labels avoid apostrophes because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
-const MIGRATION_URL = amPickURL('${mapSlot('local:webcore-migration-assessment')}', '${mapSlot('cloud:webcore-migration-assessment')}');
-const RM_COVERAGE_URL = amPickURL('${mapSlot('local:rm-coverage')}', '${mapSlot('cloud:rm-coverage')}');
+const MIGRATION_URL = amPickURL('${getLocalURL('webcore-migration-assessment')}', '${getCloudURL('webcore-migration-assessment')}');
+const RM_COVERAGE_URL = amPickURL('${getLocalURL('rm-coverage')}', '${getCloudURL('rm-coverage')}');
 const rmCoveragePanel = document.getElementById('rmCoverage');
 const RMC = { body: null, loading: false };
 
@@ -20896,7 +20945,7 @@ function renderMigrationCard(node) {
 // one piston at a time through the same endpoint the floating panel uses, and shows the construct matrix. Results are
 // kept on the hub and shown without re-rating; Refresh Scan runs them again. Labels avoid apostrophes and template literals because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
-const MIGRATION_MATRIX_URL = amPickURL('${mapSlot('local:webcore-migration-matrix')}', '${mapSlot('cloud:webcore-migration-matrix')}');
+const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix')}', '${getCloudURL('webcore-migration-matrix')}');
 const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
 const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0, ratedAt: null, versionMoved: false };
@@ -22563,13 +22612,13 @@ flowChart.addEventListener('click', function (ev) {
 // the hub's own origin, which is not true through Remote Admin.
 function amPickURL(localPath, cloudUrl) {
   try {
-    if (new URL('${mapSlot('localOrigin')}').hostname === window.location.hostname) return localPath;
+    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
   } catch (ignore) { }
   return cloudUrl;
 }
-const EXT_URL = amPickURL('${mapSlot('local:externals')}', '${mapSlot('cloud:externals')}');
-const RESCAN_URL = amPickURL('${mapSlot('local:rescan')}', '${mapSlot('cloud:rescan')}');
-const MIGRATION_RATINGS_URL = amPickURL('${mapSlot('local:webcore-migration-ratings')}', '${mapSlot('cloud:webcore-migration-ratings')}');
+const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
+const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
+const MIGRATION_RATINGS_URL = amPickURL('${getLocalURL('webcore-migration-ratings')}', '${getCloudURL('webcore-migration-ratings')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
 let EXT = null;
@@ -23145,8 +23194,8 @@ function extImport(evt) {
 // different drivers will occasionally pick the wrong one for a specific
 // device. This is where that gets corrected - one override per device,
 // saved here, applied the next time the graph is built.
-const ICONS_URL = amPickURL('${mapSlot('local:icon-overrides')}', '${mapSlot('cloud:icon-overrides')}');
-const ROOMPLAN_URL = amPickURL('${mapSlot('local:rooms')}', '${mapSlot('cloud:rooms')}');
+const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
+const ROOMPLAN_URL = amPickURL('${getLocalURL('rooms')}', '${getCloudURL('rooms')}');
 // Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
 // published contract). A read-only iframe preview of Community Utilities'
 // releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
@@ -25875,10 +25924,10 @@ document.getElementById('communityUtilitiesBtn').addEventListener('click', funct
 // works for anyone with LAN access to it, which a cloud-opened link does not
 // rule out, rather than guaranteed-wrong navigation on the relay's own host.
 document.getElementById('exitMapBtn').addEventListener('click', function () {
-  var localOrigin = '${mapSlot('localOrigin')}';
+  var localOrigin = '${getLocalOrigin()}';
   var onLocalOrigin = false;
   try { onLocalOrigin = (new URL(localOrigin).hostname === window.location.hostname); } catch (ignore) { }
-  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${mapSlot('appId')}';
+  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${app.id}';
 });
 </script>
 </body>
@@ -25886,67 +25935,15 @@ document.getElementById('exitMapBtn').addEventListener('click', function () {
 """
 }
 
-// --- map page assembly (2.4.34): start ---
-// The page template is about 557 KB and roughly a third of it is comments written for this file's readers.
-// They are stripped once per code load, with the per-request values left as slots, and the result kept in a
-// static. A request then only fills the slots. The graph's JSON is kept the same way, keyed by the commit
-// that produced it, so an unchanged map is not serialised again on every open. If stripping ever loses a
-// slot the template is served whole instead: a larger page, never a broken one.
-@Field static final String MAP_SLOT_OPEN = String.valueOf((char) 1)
-@Field static final String MAP_SLOT_CLOSE = String.valueOf((char) 2)
+// --- graph JSON cache (2.4.34): start ---
+// The graph's page JSON, kept per committed graph so an unchanged map is not serialised again on every open.
+// A static lookup: a code reload clears it, and the next map open serialises the graph once.
 @Field static final ConcurrentHashMap<String, Object> MAP_PAGE_CACHE = new ConcurrentHashMap<>()
-@Field static final List PAGE_REGEX_KEYWORDS = ['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new',
-                                                'delete', 'void', 'throw', 'instanceof', 'yield', 'await']
-
-String mapSlot(String key) {
-    return MAP_SLOT_OPEN + key + MAP_SLOT_CLOSE
-}
-
-String assembleMapPage(Map values) {
-    List parts = mapPageParts()
-    StringBuilder out = new StringBuilder(((parts[0] as String).length() as int) + 600000 +
-                                          "${values.jsonStr ?: ''}".length())
-    for (int i = 0; i < parts.size(); i++) {
-        String part = parts[i] as String
-        if (i % 2 == 0) out.append(part)
-        else if (part.startsWith('local:')) out.append(getLocalURL(part.substring(6)))
-        else if (part.startsWith('cloud:')) out.append(getCloudURL(part.substring(6)))
-        else out.append("${values[part]}")
-    }
-    return out.toString()
-}
-
-// The stripped template split at its slots: even entries are text, odd entries are slot names.
-List mapPageParts() {
-    String cacheKey = "parts|${APP_VERSION}".toString()
-    Object hit = MAP_PAGE_CACHE.get(cacheKey)
-    if (hit instanceof List) return hit as List
-    String raw = mapPageTemplate()
-    String text = raw
-    try {
-        String stripped = stripPageComments(raw)
-        if (stripped.count(MAP_SLOT_OPEN) == raw.count(MAP_SLOT_OPEN)) text = stripped
-        else log.warn "${app.label}: the map page lost a value while its comments were removed, so it is served with them"
-    } catch (Exception e) {
-        log.warn "${app.label}: the map page's comments could not be removed, so it is served with them: ${e.message}"
-    }
-    List parts = []
-    int pos = 0
-    while (true) {
-        int open = text.indexOf(MAP_SLOT_OPEN, pos)
-        if (open < 0) { parts << text.substring(pos); break }
-        int close = text.indexOf(MAP_SLOT_CLOSE, open)
-        parts << text.substring(pos, open)
-        parts << text.substring(open + 1, close)
-        pos = close + 1
-    }
-    MAP_PAGE_CACHE.put(cacheKey, parts)
-    return parts
-}
 
 // The graph as page JSON, serialised once per committed graph rather than on every open.
-String cachedGraphJson(Map graph) {
-    Long committedAt = (state.graphCommittedAtLocal ?: 0) as Long
+// Keyed by the commit the graph itself came from, not by the state pointer, so a graph is never filed
+// under another commit's key.
+String cachedGraphJson(Map graph, Long committedAt) {
     Map hit = MAP_PAGE_CACHE.get("graph|${app.id}".toString()) as Map
     if (committedAt && hit && hit.key == "${committedAt}|${GRAPH_SCHEMA}".toString()) return hit.json as String
     String json = jsonForScriptEmbed(graph)
@@ -25959,165 +25956,7 @@ void rememberGraphJson(Long committedAt, String json) {
                        [key: "${committedAt}|${GRAPH_SCHEMA}".toString(), committedAt: committedAt, json: json])
 }
 
-// Removes HTML, CSS and JavaScript comments from the page template. A small lexer rather than patterns:
-// it knows which of the three languages it is in, steps over string and regular expression literals whole,
-// so a '//' inside a URL or a '/*' inside a regex is never taken for a comment, and keeps a line break
-// wherever removing a comment would otherwise join two lines of script.
-// Character codes: 9 tab, 10 newline, 13 return, 32 space, 34 double quote, 39 apostrophe, 42 '*',
-// 47 '/', 60 '<', 91 '[', 92 backslash, 93 ']', 96 backtick.
-String stripPageComments(String src) {
-    int n = src.length()
-    StringBuilder out = new StringBuilder(n)
-    int mode = 0   // 0 HTML, 1 script, 2 style
-    int i = 0
-    while (i < n) {
-        int c = (int) src.charAt(i)
-        if (c == 60) {
-            if (mode == 0) {
-                if (src.startsWith('<!--', i)) {
-                    int e = src.indexOf('-->', i + 4)
-                    i = pageDropComment(src, out, i, e < 0 ? n : e + 3)
-                    continue
-                }
-                int opened = pageTagAt(src, i, 'script') ? 1 : (pageTagAt(src, i, 'style') ? 2 : 0)
-                if (opened) {
-                    int gt = src.indexOf('>', i)
-                    if (gt < 0) gt = n - 1
-                    out.append(src, i, gt + 1)
-                    i = gt + 1
-                    mode = opened
-                    continue
-                }
-            } else if (src.startsWith('</', i) && pageTagAt(src, i + 1, mode == 1 ? 'script' : 'style')) {
-                mode = 0
-            }
-            out.append((char) c)
-            i++
-            continue
-        }
-        if (mode != 0 && c == 47 && i + 1 < n) {
-            int d = (int) src.charAt(i + 1)
-            if (d == 42) {
-                int e = src.indexOf('*/', i + 2)
-                i = pageDropComment(src, out, i, e < 0 ? n : e + 2)
-                continue
-            }
-            if (mode == 1 && d == 47) {
-                int e = src.indexOf(String.valueOf((char) 10), i)
-                i = pageDropComment(src, out, i, e < 0 ? n : e)
-                continue
-            }
-            if (mode == 1 && pageRegexAllowed(out)) {
-                int e = pageRegexEnd(src, i)
-                if (e > 0) {
-                    out.append(src, i, e)
-                    i = e
-                    continue
-                }
-            }
-        }
-        if (mode != 0 && (c == 34 || c == 39 || (mode == 1 && c == 96))) {
-            int e = pageStringEnd(src, i, c)
-            out.append(src, i, e)
-            i = e
-            continue
-        }
-        out.append((char) c)
-        i++
-    }
-    return out.toString()
-}
-
-boolean pageTagAt(String src, int i, String tag) {
-    if (!src.regionMatches(true, i, '<' + tag, 0, tag.length() + 1)) return false
-    int after = i + tag.length() + 1
-    if (after >= src.length()) return false
-    int c = (int) src.charAt(after)
-    return c == 62 || c == 32 || c == 9 || c == 10 || c == 13
-}
-
-// Index just past a string literal opened at start, or at the line end when it never closes there.
-int pageStringEnd(String src, int start, int quote) {
-    int n = src.length()
-    int i = start + 1
-    while (i < n) {
-        int c = (int) src.charAt(i)
-        if (c == 92) { i += 2; continue }
-        if (c == quote) return i + 1
-        if (c == 10 && quote != 96) return i
-        i++
-    }
-    return n
-}
-
-// Index just past a regex literal starting at start (flags included), or -1 when it is not one.
-int pageRegexEnd(String src, int start) {
-    int n = src.length()
-    int i = start + 1
-    boolean inClass = false
-    while (i < n) {
-        int c = (int) src.charAt(i)
-        if (c == 10 || c == 13) return -1
-        if (c == 92) { i += 2; continue }
-        if (c == 91) inClass = true
-        else if (c == 93) inClass = false
-        else if (c == 47 && !inClass) {
-            i++
-            while (i < n && Character.isLetter(src.charAt(i))) i++
-            return i
-        }
-        i++
-    }
-    return -1
-}
-
-// Whether a '/' here starts a regex rather than dividing: decided from the last thing already written.
-boolean pageRegexAllowed(StringBuilder out) {
-    int k = out.length() - 1
-    while (k >= 0 && Character.isWhitespace(out.charAt(k))) k--
-    if (k < 0) return true
-    int c = (int) out.charAt(k)
-    if ('(,=:[!&|?{};+-*%<>~^'.indexOf(c) >= 0) return true
-    if (!pageWordChar(c)) return false
-    int end = k + 1
-    while (k >= 0 && pageWordChar((int) out.charAt(k))) k--
-    return PAGE_REGEX_KEYWORDS.contains(out.substring(k + 1, end))
-}
-
-boolean pageWordChar(int c) {
-    return Character.isLetterOrDigit(c) || c == 95 || c == 36 || c == 1 || c == 2
-}
-
-// Drops src[start, end) and returns where to continue. A comment alone on its lines takes those lines with
-// it. One after code takes the spaces before it. One with code after it on the same line leaves a space, or
-// a line break when it spanned lines, so two tokens or two statements are never joined.
-int pageDropComment(String src, StringBuilder out, int start, int end) {
-    int n = src.length()
-    int lineStart = out.lastIndexOf(String.valueOf((char) 10)) + 1
-    boolean blankBefore = true
-    for (int k = lineStart; k < out.length(); k++) {
-        int c = (int) out.charAt(k)
-        if (c != 32 && c != 9 && c != 13) { blankBefore = false; break }
-    }
-    int j = end
-    while (j < n && ((int) src.charAt(j) == 32 || (int) src.charAt(j) == 9 || (int) src.charAt(j) == 13)) j++
-    boolean blankAfter = j >= n || (int) src.charAt(j) == 10
-    if (blankBefore && blankAfter) {
-        out.setLength(lineStart)
-        return j < n ? j + 1 : j
-    }
-    if (blankAfter) {
-        int k = out.length()
-        while (k > 0 && ((int) out.charAt(k - 1) == 32 || (int) out.charAt(k - 1) == 9)) k--
-        out.setLength(k)
-        return j
-    }
-    boolean spansLines = src.indexOf(String.valueOf((char) 10), start) in start..<end
-    if (spansLines) out.append((char) 10)
-    else if (out.length() > 0 && !Character.isWhitespace(out.charAt(out.length() - 1))) out.append((char) 32)
-    return end
-}
-// --- map page assembly (2.4.34): end ---
+// --- graph JSON cache (2.4.34): end ---
 
 String comparatorFrameHtml() {
     // Hubitat inserts paragraph HTML after the host page has loaded. Browsers do
