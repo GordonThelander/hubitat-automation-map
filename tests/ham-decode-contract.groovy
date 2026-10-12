@@ -65,7 +65,7 @@ script.setState([
 Map summary = script.hamDecodeSummary()
 check(summary.contract == 'ham.decode/1', 'envelope names the contract')
 check(summary.contractSchemaVersion == 4, 'contract schema version is published, 4 since 2.4.15')
-check(summary.rmConstructVocabularyVersion == 1, 'construct vocabulary version is published separately')
+check(summary.rmConstructVocabularyVersion == 2, 'construct vocabulary version is published separately')
 check(summary.supportedEngine == 'Rule-5.1', 'supported engine is published separately')
 check(summary.ok == true, 'a served response is ok')
 check(summary.issue == null, 'a served response carries no issue code')

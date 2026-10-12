@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.32
+
+Dev channel. The map now shows what starts a rule when no device does: a clock badge on the rule, with its time, schedule, mode, variable, location event or Rule paused triggers listed when the rule is focused and on hover. A Rule paused trigger also draws a line from the watched rule. A rule flowchart now puts all its triggers in one Starts when box, since any one of them starts the rule. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
+
 ## 2.4.31
 
 Dev channel. Rule Machine rules with a Rule paused trigger now keep that trigger when decoded for flowcharts and Hubitat Automation Intelligence. Before this the trigger was left out without a warning. After upgrading, the settings page asks for a scan. Nothing here writes to your hub.
