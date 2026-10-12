@@ -29,6 +29,9 @@ import groovy.transform.Field
 @Field Map app = [id: 3547]
 @Field Map settings = [:]
 long now() { return System.currentTimeMillis() }
+// The saved scan's File Manager file (2.4.34) is a hub boundary; state stands in for it here.
+Map graphData() { state.graph as Map }
+Map appInfoData() { (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:] }
 ''' + fromApp + block + '''
 void setState(Map s) { state.clear(); state.putAll(s) }
 void setSettings(Map s) { settings.clear(); settings.putAll(s) }
@@ -268,7 +271,7 @@ check(source.contains("'ham.decode/1'") && source.contains("'ham.decode.detail/1
 int summaryName = source.count("'ham.decode/1'")
 int detailName = source.count("'ham.decode.detail/1'")
 check(summaryName >= 1 && detailName >= 1, 'both contract names are present')
-check(source.contains('state.graph = graph') && source.indexOf('hamDecodeWriteFile()', source.indexOf('state.graph = graph')) - source.indexOf('state.graph = graph') < 400,
+check(source.contains('commitPublishedScan(graph, appInfo, graphCommittedAt)') && source.indexOf('hamDecodeWriteFile()', source.indexOf('commitPublishedScan(graph, appInfo, graphCommittedAt)')) - source.indexOf('commitPublishedScan(graph, appInfo, graphCommittedAt)') < 400,
       'the writer runs on scan completion, beside the graph commit')
 
 println "${tally.passed} HAM decode contract assertions passed"

@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.33'
+@Field static final String APP_VERSION = '2.4.34'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -286,6 +286,8 @@ void updated() {
     // v2.4.0: the engine is detected, not configured, so the address field is
     // gone - see migrateRemoveHaiFeedSetting().
     migrateRemoveHaiFeedSetting()
+    // 2.4.34: keys nothing reads any more.
+    ['scanQueue', 'roomIdCache'].each { String key -> if (state.containsKey(key)) state.remove(key) }
     // Rescheduled on every updated() so any change to the enabled toggle or
     // chosen time takes effect immediately.
     scheduleAutoScan()
@@ -422,7 +424,7 @@ String lockVsState() {
     return "lock=${lock ? lock.tokenize('-').last() : 'none'}" +
            " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
            " running=${state.scanRunning == true} phase=${scanProgress().phase ?: '-'}" +
-           " graph=${state.graph != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
+           " graph=${state.graphCommittedAtLocal != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
            " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
            " appResultsReady=${state.appResultsReady == true}"
 }
@@ -458,7 +460,7 @@ int phaseElapsedSeconds(Object startedAt) {
 // appInfo into graph.flows, so a count at the log site would depend on that
 // ordering. Four numbers that can be stood behind beat five with a guess in it.
 String webcoreDecodeSummary() {
-    Map appInfo = (state.appInfo instanceof Map) ? state.appInfo as Map : [:]
+    Map appInfo = appInfoData()
     int pistons = 0
     int errored = 0
     int withReads = 0
@@ -486,8 +488,12 @@ String webcoreDecodeSummary() {
 // already on (with an existing deadline and job) leaves both alone.
 void scheduleDiagnosticLoggingExpiry() {
     if (settings.diagnosticLoggingEnabled != true) {
-        unschedule('disableDiagnosticLogging')
-        state.remove('diagnosticLoggingExpiresAt')
+        // Only when there is something to undo: every settings render reaches here, and an unconditional
+        // remove marked state changed on each one, so the render wrote its whole snapshot back (2.4.34).
+        if (state.containsKey('diagnosticLoggingExpiresAt')) {
+            unschedule('disableDiagnosticLogging')
+            state.remove('diagnosticLoggingExpiresAt')
+        }
         return
     }
     if (!state.diagnosticLoggingExpiresAt) {
@@ -785,7 +791,7 @@ Map main() {
                 // replaced. Reporting that as an unreadable saved format is
                 // what put a corruption warning on a healthy first scan.
                 boolean graphStale = graphIsStale() && !scanActive && !scanProgressIsLive()
-                if (state.graph && !scanActive && !graphStale) {
+                if (graphData() && !scanActive && !graphStale) {
                     paragraph '''<style type="text/css">
 a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
 a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
@@ -860,8 +866,8 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                     String retryLine = refusalRetryNotice(atomicState.refusalRetry as Map, now(), location.timeZone)
                     if (retryLine) paragraph "<span style='color:#555'>${retryLine}</span>"
                 }
-                if (state.graph) {
-                    Map g = state.graph as Map
+                Map g = scanActive ? null : graphData()
+                if (g || (scanActive && atomicState.graphCommittedAt)) {
                     if (scanActive) {
                         // Nothing here while a scan is running. startScan clears
                         // graphVersion but keeps the old graph, so graphIsStale()
@@ -1008,21 +1014,104 @@ button[name^="_action_href_baselineComparisonBack|"] span { color:#121214 !impor
     }
 }
 
-// Kept so an existing installation with the old button still works, but the
-// page no longer renders that button - see scanButtonHtml().
-void appButtonHandler(String btn) {
-    if (btn == 'runScan') startScan('button')
-}
-
 // One-time migration (added 2026-08-29, graphVersion moved to atomicState to
 // close the race below): backfills atomicState.graphVersion from the legacy
 // state.graphVersion an existing install already has on disk, so a graph
 // stored before this fix deployed is not mistaken for missing or stale.
 // Idempotent - a no-op once atomicState.graphVersion is set for real.
+// Once per code load: it ran on every page render and status poll, an atomicState read each time (2.4.34).
+@Field static final ConcurrentHashMap<String, Boolean> GRAPH_VERSION_MIGRATED = new ConcurrentHashMap<>()
+
 void migrateGraphVersionIfNeeded() {
+    if (GRAPH_VERSION_MIGRATED.containsKey("${app.id}".toString())) return
     if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
         atomicState.graphVersion = state.graphVersion
     }
+    // 2.4.34: a map saved in state by an earlier version moves to its file once, so an upgrade keeps it.
+    if (state.graph instanceof Map && !scanEffectivelyActive()) {
+        try {
+            commitPublishedScan(state.graph as Map, (state.appInfo ?: [:]) as Map,
+                                ((state.graphCommittedAtLocal ?: now()) as Long))
+        } catch (Exception e) {
+            log.warn "${app.label}: the saved map could not be moved to its file yet, it stays where it is: ${e.message}"
+        }
+    }
+    GRAPH_VERSION_MIGRATED.put("${app.id}".toString(), true)
+}
+
+// ===================================================================================================================
+// The published scan: graph and app list in File Manager (2.4.34)
+//
+// Together they were 1.1 MB of a 1.23 MB state, and Hubitat loads an app's whole state for every execution,
+// so even a 384-byte /scan-status cost 7-12 s on the hub. They now live in one File Manager file, read once
+// per commit and kept in memory, so an execution that does not need them never pays for them. State keeps
+// only the pointer (graphCommittedAtLocal, mirrored in atomicState.graphCommittedAt) and the app count. The
+// file is written before the pointer moves, so a reader never follows a pointer to a file not yet there.
+// During a scan the app list being collected stays in state, where the scan's own integrity checks read it.
+// ===================================================================================================================
+@Field static final ConcurrentHashMap<String, Map> PUBLISHED_SCAN = new ConcurrentHashMap<>()
+
+String publishedScanFileName() {
+    return "automation-map-${app.id}-scan.json".toString()
+}
+
+// [committedAt, graph, appInfo] for the last published scan, or null when there is none to read.
+Map publishedScan() {
+    String key = "${app.id}".toString()
+    Long pointer = (state.graphCommittedAtLocal ?: 0) as Long
+    Map hit = PUBLISHED_SCAN.get(key)
+    // At least as new as the pointer: a stale snapshot can carry an older pointer, never a newer file.
+    if (hit && ((hit.committedAt ?: 0) as Long) >= pointer) return hit
+    Map loaded = null
+    try {
+        byte[] bytes = downloadHubFile(publishedScanFileName())
+        if (bytes) {
+            Object parsed = new groovy.json.JsonSlurper().parseText(new String(bytes, 'UTF-8'))
+            if (parsed instanceof Map && (parsed as Map).graph instanceof Map) {
+                Map p = parsed as Map
+                loaded = [committedAt: ((p.committedAt ?: 0) as Long), graph: p.graph as Map,
+                          appInfo: ((p.appInfo ?: [:]) as Map)]
+            }
+        }
+    } catch (Exception e) {
+        if (diagOn()) log.info "${app.label}: no saved map file to read (${e.message})"
+    }
+    if (loaded) {
+        PUBLISHED_SCAN.put(key, loaded)
+        return loaded
+    }
+    // Saved by an earlier version and not moved yet (see migrateGraphVersionIfNeeded()).
+    if (state.graph instanceof Map) return [committedAt: pointer, graph: state.graph as Map, appInfo: ((state.appInfo ?: [:]) as Map)]
+    return null
+}
+
+Map graphData() {
+    return publishedScan()?.graph as Map
+}
+
+// The app list: the one being collected while a scan runs, the published one otherwise.
+Map appInfoData() {
+    if (scanEffectivelyActive()) return (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Map published = publishedScan()
+    if (published != null) return (published.appInfo ?: [:]) as Map
+    return (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+}
+
+// For pages that only show the count, so they never read the file.
+int appCountForDisplay() {
+    if (scanEffectivelyActive() || state.publishedAppCount == null) return ((state.appInfo ?: [:]) as Map).size()
+    return state.publishedAppCount as Integer
+}
+
+void commitPublishedScan(Map graph, Map appInfo, Long committedAt) {
+    String body = JsonOutput.toJson([committedAt: committedAt, schema: GRAPH_SCHEMA, graph: graph, appInfo: appInfo])
+    uploadHubFile(publishedScanFileName(), body.getBytes('UTF-8'))
+    PUBLISHED_SCAN.put("${app.id}".toString(), [committedAt: committedAt, graph: graph, appInfo: appInfo])
+    state.graphCommittedAtLocal = committedAt
+    atomicState.graphCommittedAt = committedAt
+    state.publishedAppCount = appInfo.size()
+    if (state.containsKey('graph')) state.remove('graph')
+    if (state.containsKey('appInfo')) state.remove('appInfo')
 }
 
 // Self-heals a race confirmed live 2026-08-30: state.graph can be clobbered
@@ -1043,48 +1132,24 @@ void migrateGraphVersionIfNeeded() {
 // buildGraph() input written in the same late closure as state.graph and so
 // could itself be one generation stale here.
 void selfHealGraphIfNeeded() {
-    if (state.graph != null) return
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
-    if (!(state.appInfo)) {
-        // The same late write-back can erase the app list with the graph; rebuild from the last scan's kept copy.
-        Map kept = latestAppResults()
-        if (!(kept?.appInfo)) return
-        state.appInfo = new LinkedHashMap(kept.appInfo as Map)
-        state.appIds = new ArrayList((kept.appIds ?: []) as List)
-    }
-    // Backlog item 30: this fires after most scans, and the log gave no way to
-    // tell WHICH re-render raced the commit. The snapshot below is the evidence
-    // that question needs.
-    // Backlog item 30, answered from the hub log on 2026-09-12: the usual cause
-    // is a page render whose snapshot was taken before finishScan committed and
-    // which ends after it, so its own write-back nulls the graph and this
-    // rebuild puts it straight back. Hubitat writes the whole snapshot at end of
-    // run, so that cannot be prevented from inside the render, and rebuilding IS
-    // the right response. What was wrong was the level: a mitigation working as
-    // designed was logging at WARN and reading as a fault. Proven staleness now
-    // logs at info; anything else keeps the warning, because a graph that went
-    // missing for some OTHER reason is still worth shouting about.
-    boolean staleSnapshot = snapshotPredatesGraphCommit()
+    // 2.4.34: the graph and app list live in a File Manager file, out of reach of a stale state write-back,
+    // so the race this was written for no longer empties them. What is left is a missing or unreadable
+    // file; the last scan's app list kept in memory can still rebuild it without a rescan.
+    if (graphData() != null) return
+    Map kept = latestAppResults()
+    if (!(kept?.appInfo)) return
+    log.warn "${app.label}: the saved map could not be read - rebuilding it from the last scan's results instead of requiring a fresh scan"
     if (diagOn()) log.info "${app.label}: self-heal rebuilding the graph - ${lockVsState()}"
-    if (staleSnapshot) {
-        if (diagOn()) {
-            log.info "${app.label}: rebuilding after a stale snapshot raced the graph commit - expected, not a fault"
-        }
-    } else {
-        log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
-    }
     state.hubVariableInventory = fetchHubVariableInventory()
-    state.graph = buildGraph()
+    Map healedInfo = new LinkedHashMap(kept.appInfo as Map)
+    // As finishScan does: the flowcharts now live in the graph, so the app list does not keep a second copy.
+    Map graph = buildGraph(healedInfo)
+    healedInfo.each { String appId, info -> if (info instanceof Map) (info as Map).remove('flow') }
+    commitPublishedScan(graph, healedInfo, now())
     atomicState.graphVersion = GRAPH_SCHEMA
     state.graphVersion = GRAPH_SCHEMA
-    // As finishScan does: the flowcharts now live in the graph, so the app list does not keep a second copy.
-    Map healedInfo = (state.appInfo ?: [:]) as Map
-    healedInfo.each { String appId, info -> if (info instanceof Map) (info as Map).remove('flow') }
-    state.appInfo = healedInfo
-    Long healedAt = now()
-    state.graphCommittedAtLocal = healedAt
-    atomicState.graphCommittedAt = healedAt
 }
 
 // True when the app is ready to work but has never produced a map. Opening it in
@@ -1473,7 +1538,8 @@ if (document.readyState !== 'loading') { amStartScan(); }
 boolean graphIsStale() {
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
-    return state.graph && ((state.graph.schema ?: atomicState.graphVersion ?: state.graphVersion) as String) != GRAPH_SCHEMA
+    Map graph = graphData()
+    return graph && ((graph.schema ?: atomicState.graphVersion ?: state.graphVersion) as String) != GRAPH_SCHEMA
 }
 
 // A scan that stops without finishing leaves scanRunning set, which disables the
@@ -1688,7 +1754,7 @@ String compatibilitySummary(Map graph) {
     if (devUnreadable > 0) {
         s << "<b style='color:#c0392b'>${devUnreadable} ${devUnreadable == 1 ? 'device' : 'devices'} could not be read</b> and are missing from this map, along with any app only discoverable through them. "
     }
-    int appCount = (state.appInfo ?: [:]).size()
+    int appCount = appCountForDisplay()
     int deviceCount = (state.deviceLabels ?: [:]).size()
     int nodeCount = (graph.nodes ?: []).size()
     int relationshipCount = (graph.edges ?: []).size()
@@ -1980,13 +2046,23 @@ String publishRefusal(Integer enumerated, Integer held, Integer witnessed) {
 // construction - tokens, counts, phase and entry-path names only. No device
 // name, app label, variable, room or hub identifier is ever written here.
 @Field static final int GEN_TRACE_MAX = 60
+@Field static final ConcurrentHashMap<String, List> GEN_TRACE_MEMORY = new ConcurrentHashMap<>()
 
-void genTrace(String event, Map fields = [:]) {
+void genTrace(String event, Map fields = [:], boolean durable = true) {
     try {
         String gen = "${currentGenerationToken() ?: 'none'}"
         String detail = (fields ?: [:]).collect { k, v -> "${k}=${v}" }.join(' ')
+        String line = "${now()}|${gen}|${event}${detail ? ' ' + detail : ''}".toString()
+        if (!durable) {
+            // An execution that lost the scan lock holds a snapshot from before the scan; writing state here
+            // would write that snapshot back over the scan's (2.4.34). Kept in memory instead.
+            List mem = GEN_TRACE_MEMORY.get("${app.id}".toString()) ?: []
+            mem = (mem + [line]).takeRight(GEN_TRACE_MAX)
+            GEN_TRACE_MEMORY.put("${app.id}".toString(), mem)
+            return
+        }
         List trail = (state.genTrace ?: []) as List
-        trail << "${now()}|${gen}|${event}${detail ? ' ' + detail : ''}".toString()
+        trail << line
         if (trail.size() > GEN_TRACE_MAX) trail = trail.takeRight(GEN_TRACE_MAX)
         state.genTrace = trail
     } catch (Exception ignored) {
@@ -2186,7 +2262,7 @@ Map startScan(String entry = 'unknown') {
     // see markScanFinished()'s comment for the full reasoning.
     String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
     if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) {
-        genTrace('lock-refused', [entry: entry, wanted: lockToken])
+        genTrace('lock-refused', [entry: entry, wanted: lockToken], false)
         return [acquired: false]
     }
     genTrace('lock-acquired', [entry: entry, gen: lockToken])
@@ -2270,7 +2346,6 @@ Map startScan(String entry = 'unknown') {
     // safe (capabilities are a driver property, verified identical within a
     // driver on this hub).
     List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
-    state.scanQueue = []
     // state.scanTotal is the representative/driver-type count dispatchDeviceOne
     // actually iterates over (34 on this hub, not 194) - correct for the
     // dispatch/invariant machinery, but showing it labelled as a device count
@@ -2315,7 +2390,10 @@ Map startScan(String entry = 'unknown') {
     // it - not because this hub is too small to have exercised the old
     // failure at all, but because nothing here has re-tested holding two
     // copies since the fix that stopped doing that.
-    state.graph = null
+    // 2.4.34: the saved map stays in its file; only the in-memory copy is let go, for the reason above.
+    PUBLISHED_SCAN.remove("${app.id}".toString())
+    MAP_PAGE_CACHE.remove("graph|${app.id}".toString())
+    if (state.containsKey('graph')) state.remove('graph')
     unschedule('fetchRegistry')
     unschedule('finishScan')
 
@@ -2774,7 +2852,9 @@ void finalizeDevicePhase(String scanId) {
 // could then legitimately release a scan it has nothing to do with.
 // Carrying the caller's own remembered token instead closes that.
 void startAppPhase(String lockToken) {
-    Set appIds = new LinkedHashSet(state.appIds as List)
+    // Empty, not state.appIds: that list is always empty here in a healthy scan, and when it is not, it is a
+    // stale snapshot written back by another execution, whose ids would join this scan's enumeration (2.4.34).
+    Set appIds = new LinkedHashSet()
     // Best-effort, not fatal - see fetchAppTypeNamespaces()'s own comment.
     // Fetched once here rather than per-app, same reasoning as appsList.
     Map appTypeNamespaceResult = fetchAppTypeNamespaces()
@@ -2806,7 +2886,6 @@ void startAppPhase(String lockToken) {
     // which runs in a later execution, can report the phase duration.
     state.appPhaseStartedAt = now()
     setScanProgress('apps', appIds.size(), 0)
-    state.scanQueue = []
 
     if (appIds.isEmpty()) {
         // A genuinely app-less hub has a complete empty result. Commit the
@@ -3381,8 +3460,11 @@ void finishScan(data = null) {
         // a version string that does not move between builds.
         Map fetchedFeed = new LinkedHashMap(fetchHaiFeed())
         fetchedFeed.remove('capabilities')
-        state.haiFeed = fetchedFeed
-        Map haiFeed = (state.haiFeed ?: [:]) as Map
+        // 2.4.34: its rules go into the graph below and are not kept in state a second time. buildGraph()
+        // reads them from memory, or from the feed again after a reload (see haiFeedForGraph()).
+        HAI_FEED_RULES.put("${app.id}".toString(), fetchedFeed)
+        state.haiFeed = haiFeedSummary(fetchedFeed)
+        Map haiFeed = fetchedFeed
         if (haiFeed.state == 'FAILED') {
             log.warn "${app.label}: the Automation Intelligence feed could not be read, continuing without it: ${haiFeed.error}"
         } else if (haiFeed.state == 'OK' && diagOn()) {
@@ -3469,19 +3551,6 @@ void finishScan(data = null) {
         atomicState.refusalRetry = null
         Map graph = buildGraph()
         state.scanHeartbeat = now()
-        state.graph = graph
-        atomicState.graphVersion = GRAPH_SCHEMA
-        state.graphVersion = GRAPH_SCHEMA  // also in state: a stale write-back nulled the atomic one (2.4.32)
-        // Sibling decode contract, written from the graph just committed.
-        hamDecodeWriteFile()
-        hamDecodeWriteDetailFile()
-        // Paired marker, same value to both halves: a later execution comparing
-        // them can prove whether its own snapshot predates this commit. See
-        // snapshotPredatesGraphCommit().
-        Long graphCommittedAt = now()
-        state.graphCommittedAtLocal = graphCommittedAt
-        atomicState.graphCommittedAt = graphCommittedAt
-
         // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
         // 61KB of a 244KB state on this hub, a quarter of everything stored, held
         // twice for no reason. buildGraph falls back to the existing graph.flows on
@@ -3490,7 +3559,19 @@ void finishScan(data = null) {
         appInfo.each { String appId, info ->
             if (info instanceof Map) (info as Map).remove('flow')
         }
-        state.appInfo = appInfo
+        // Paired marker, same value to both halves: a later execution comparing
+        // them can prove whether its own snapshot predates this commit. See
+        // snapshotPredatesGraphCommit(). 2.4.34: graph and app list go to their
+        // file first, and the marker moves only once it is written.
+        Long graphCommittedAt = now()
+        commitPublishedScan(graph, appInfo, graphCommittedAt)
+        atomicState.graphVersion = GRAPH_SCHEMA
+        state.graphVersion = GRAPH_SCHEMA  // also in state: a stale write-back nulled the atomic one (2.4.32)
+        // Sibling decode contract, written from the graph just committed.
+        hamDecodeWriteFile()
+        hamDecodeWriteDetailFile()
+        // Serialised once here: the map page reuses it (2.4.34).
+        rememberGraphJson(graphCommittedAt, jsonForScriptEmbed(graph))
         // Counted from the finished graph rather than tallied during the scan.
         // A rule that sets another rule's Private Boolean both true and false is
         // two actions but one relationship, so a running tally reported 8 where
@@ -3530,7 +3611,7 @@ void finishScan(data = null) {
 
         if (diagOn()) {
             log.info "${app.label}: scan complete in ${state.lastScanDurationSeconds}s - " +
-                     "${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+                     "${appInfo.size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
             log.info "${app.label}: webCoRE decode - ${webcoreDecodeSummary()}"
         }
     }
@@ -6843,7 +6924,7 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
 
     // The ID must be one this app already scanned AND a piston, so the route
     // cannot become an arbitrary installed-app status reader.
-    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Map appInfo = appInfoData()
     Object entry = appInfo[appId]
     if (!(entry instanceof Map)) return webcoreCoverageOutcome('invalid-request', 'unknown-app-id', 400, appId)
     if ("${(entry as Map).type ?: ''}".trim() != 'webCoRE Piston') {
@@ -7330,7 +7411,6 @@ Map webcoreMigrationAssessmentMapping() {
 @Field static final int MIGRATION_CACHE_MAX = 200
 
 void cacheMigrationRating(String appId, Map rating) {
-    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
     Closure side = { Object engine ->
         if (!(engine instanceof Map)) return null
         Map e = engine as Map
@@ -7354,10 +7434,38 @@ void cacheMigrationRating(String appId, Map rating) {
     // appVersion too: the equivalence table lives in this app, so an upgrade can
     // change a rating even when nothing on the hub moved. It is the one event
     // that re-rates everything without being asked.
-    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
-                    hai: side(rating.hai),
-                    engineVersion: ((rating.hai ?: [:]) as Map).version,
-                    appVersion: APP_VERSION]
+    Map entry = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
+                 hai: side(rating.hai),
+                 engineVersion: ((rating.hai ?: [:]) as Map).version,
+                 appVersion: APP_VERSION]
+    // 2.4.34: held in memory and written to state in batches. Writing the whole cache once per piston
+    // rewrote up to 200 entries for each of a hub's pistons in a single panel run.
+    String key = "${app.id}".toString()
+    MIGRATION_RATINGS_PENDING.putIfAbsent(key, new ConcurrentHashMap<String, Map>())
+    Map pending = MIGRATION_RATINGS_PENDING.get(key) as Map
+    pending[appId] = entry
+    Long oldest = (pending.values().collect { ((it as Map).ratedAt ?: 0) as Long }.min() ?: 0) as Long
+    if (pending.size() >= MIGRATION_CACHE_FLUSH_EVERY || now() - oldest > 60000L) flushMigrationRatingCache()
+}
+
+@Field static final int MIGRATION_CACHE_FLUSH_EVERY = 10
+@Field static final ConcurrentHashMap<String, Map> MIGRATION_RATINGS_PENDING = new ConcurrentHashMap<>()
+
+// The stored ratings with any not yet written, newest winning. Read-only.
+Map migrationRatingCacheView() {
+    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
+    Map pending = MIGRATION_RATINGS_PENDING.get("${app.id}".toString()) as Map
+    if (pending) cache.putAll(pending)
+    return cache
+}
+
+void flushMigrationRatingCache() {
+    // Never beside a scan: this execution's state snapshot would be written back over the scan's.
+    if (scanEffectivelyActive()) return
+    Map pending = MIGRATION_RATINGS_PENDING.remove("${app.id}".toString()) as Map
+    if (!pending) return
+    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
+    cache.putAll(pending)
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -7389,12 +7497,14 @@ String haiStatusesNote(boolean noCapabilities, String feedState) {
 }
 
 Map migrationRatingsMapping() {
-    Map cache = (state.migrationRatingCache ?: [:]) as Map
+    // Writes what a run has rated so far, so the stored copy catches up whenever the list is read.
+    flushMigrationRatingCache()
+    Map cache = migrationRatingCacheView()
     Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
     // One read of the feed, not one per piston: this is only used to decide
     // whether the cached ratings still describe the engine as it is now.
     String engineVersion = haiFeedVersionForCache()
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     Map liveFeed = (state.haiFeed ?: [:]) as Map
     // capabilityCount, not capabilities: the scan deliberately strips the list
     // before storing the feed and keeps the count beside it, so testing the
@@ -7445,7 +7555,7 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
     if (!appId || appId.length() > (limits.maxAppIdLength as Integer) || !(appId ==~ /^[0-9]+$/)) {
         return [http: 400, body: [status: 'invalid-request', error: 'invalid-app-id']]
     }
-    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Map appInfo = appInfoData()
     Object entry = appInfo[appId]
     if (!(entry instanceof Map) || webcoreMigrationStr((entry as Map).type ?: '').trim() != 'webCoRE Piston') {
         return [http: 400, body: [status: 'invalid-request', error: 'not-a-piston']]
@@ -7464,7 +7574,7 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
         Map hubVariableTypes = [:]
         inventory.each { k, v -> hubVariableTypes[webcoreMigrationStr(k)] = normalizeHubVariableType((v instanceof Map) ? webcoreMigrationStr((v as Map).type) : null) }
         String parentId = webcoreMigrationStr((entry as Map).parent ?: '')
-        Map indexes = buildWebcoreDeviceHashIndexes(appInfo)
+        Map indexes = webcoreDeviceHashIndexesForScan(appInfo)
         Map parentIndex = (((indexes.resolvable ?: [:]) as Map)[parentId] ?: [:]) as Map
         Set knownTokens = parentIndex.keySet().collect { webcoreMigrationStr(it) } as Set
         Map tokenToDeviceId = [:]
@@ -8602,6 +8712,40 @@ Object webcoreMigrationLive(Object node) {
     return node
 }
 
+// The feed as a piston rating needs it, read once for a whole run of ratings rather than once per piston
+// (2.4.34). The panel rates pistons one request after another, so a minute covers a run and still answers
+// for the engine as it is now. The capability list itself is kept per hash by haiCapabilitySource().
+@Field static final ConcurrentHashMap<String, Map> HAI_FEED_FOR_RATING = new ConcurrentHashMap<>()
+@Field static final long HAI_FEED_FOR_RATING_MS = 60000L
+
+Map haiFeedForRating() {
+    String key = "${app.id}".toString()
+    Map hit = HAI_FEED_FOR_RATING.get(key)
+    if (hit && now() - (hit.at as Long) < HAI_FEED_FOR_RATING_MS) return hit
+    Map feed = fetchHaiFeed()
+    Map caps = [:]
+    ((feed.capabilities ?: []) as List).each { Object raw ->
+        if (raw instanceof Map && (raw as Map).id) caps["${(raw as Map).id}"] = raw as Map
+    }
+    Map memo = [at: now(), state: feed.state, engine: feed.engine, caps: caps]
+    HAI_FEED_FOR_RATING.put(key, memo)
+    return memo
+}
+
+// One index set per committed scan, not one per rated piston: the panel used to rebuild every webCoRE
+// parent's index, an MD5 per permitted device, for each piston it rated (2.4.34).
+@Field static final ConcurrentHashMap<String, Map> WEBCORE_HASH_INDEXES = new ConcurrentHashMap<>()
+
+Map webcoreDeviceHashIndexesForScan(Map appInfo) {
+    String key = "${app.id}".toString()
+    String scan = "${state.graphCommittedAtLocal ?: 0}".toString()
+    Map hit = WEBCORE_HASH_INDEXES.get(key)
+    if (hit && hit.scan == scan && scan != '0') return hit.indexes as Map
+    Map indexes = buildWebcoreDeviceHashIndexes(appInfo)
+    WEBCORE_HASH_INDEXES.put(key, [scan: scan, indexes: indexes])
+    return indexes
+}
+
 Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenToDeviceId) {
     Map piston = new LinkedHashMap(originalPiston)
     piston.s = webcoreMigrationLive(originalPiston.s instanceof List ? originalPiston.s : [])
@@ -8631,11 +8775,8 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     Map vrb = webcoreRateEngine(components, 'vrb', problems)
     // Read now, not from the scan: a rating shown today should answer for that
     // engine as it is today, and its statuses change week to week.
-    Map haiFeed = fetchHaiFeed()
-    Map haiCaps = [:]
-    ((haiFeed.capabilities ?: []) as List).each { Object raw ->
-        if (raw instanceof Map && (raw as Map).id) haiCaps["${(raw as Map).id}"] = raw as Map
-    }
+    Map haiFeed = haiFeedForRating()
+    Map haiCaps = (haiFeed.caps ?: [:]) as Map
     Map hai = webcoreRateEngine(components, 'hai', problems, haiCaps)
     hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
     hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
@@ -11016,13 +11157,13 @@ Map rmCoverageReport() {
             ? "${feed.engine ?: 'The rule engine'} published no capability list: ${feed.capabilitiesError}"
             : "${feed.engine ?: 'The rule engine'} published no capability list, so there is nothing to compare Rule Machine against."]
     }
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     // Variable use is decoded separately from rule constructs (Gate C), and
     // extractRuleConstructs() never emitted a token for it, so every rule that
     // reads or writes a variable was invisible to this report and the Variables
     // row could only ever read "None detected". Only what the decoder actually
     // resolved is claimed here: a hub read, a hub write, and a declared local.
-    Map ruleVars = ((state.graph ?: [:]) as Map).ruleVariables as Map ?: [:]
+    Map ruleVars = ((graphData() ?: [:]) as Map).ruleVariables as Map ?: [:]
     List rules = []
     Map constructUse = [:]
     appInfo.each { String appId, Object info ->
@@ -12591,7 +12732,7 @@ Map hamDecodeScan() {
 }
 
 List hamDecodeRuleNodes() {
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     Object rawNodes = graph.nodes
     List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList()
                                            : ((rawNodes ?: []) as List)
@@ -12614,9 +12755,9 @@ Map hamDecodeSummary() {
     // Presence of the graph, not of any nodes in it: a hub with no Rule
     // Machine rules has scanned successfully and must answer with an empty
     // list, not with a failure that reads as 'this instance is broken'.
-    if (state.graph == null) return hamDecodeFailure(HAM_SUMMARY_CONTRACT, 'no-scan',
+    if (graphData() == null) return hamDecodeFailure(HAM_SUMMARY_CONTRACT, 'no-scan',
         'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
     List rules = hamDecodeRuleNodes().collect { Object raw ->
         Map n = raw as Map
@@ -12668,11 +12809,11 @@ String hamDecodeDetailFileName() {
 // Keyed the same way the summary keys rules ('a<appId>') so the two files join
 // without a rule.
 Map hamDecodeDetail() {
-    if (state.graph == null) return hamDecodeFailure(HAM_DETAIL_CONTRACT, 'no-scan',
+    if (graphData() == null) return hamDecodeFailure(HAM_DETAIL_CONTRACT, 'no-scan',
         'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     Set deleted = hamDecodeDeletedRuleIds()
     List rules = hamDecodeRuleNodes().collect { Object rawNode ->
         Map n = rawNode as Map
@@ -12770,7 +12911,7 @@ Map hamDecodeComplete(List rules) {
 // such a target missing when its id resolves to nothing (deleted, not merely
 // unscanned). Bare ids, as the links carry them.
 Set hamDecodeDeletedRuleIds() {
-    Object rawNodes = ((state.graph ?: [:]) as Map).nodes
+    Object rawNodes = ((graphData() ?: [:]) as Map).nodes
     List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList() : ((rawNodes ?: []) as List)
     return nodes.findAll { it instanceof Map && (it as Map).missing }.collect {
         String nid = "${(it as Map).id}"
@@ -12826,7 +12967,7 @@ void hamDecodeWriteDetailFile() {
 // --- HAI decode contract: end ---
 
 Map edgesMapping() {
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     List nodes = (graph.nodes ?: []) as List
     Map appsById = [:]
     Map devicesById = [:]
@@ -13515,7 +13656,7 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
 // already holds, so there is nothing to configure: no address, no token, and
 // no field inviting a user to paste one app's credentials into another.
 boolean haiParentInstalled() {
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     return appInfo.any { Object id, Object raw ->
         if (!(raw instanceof Map)) return false
         String type = "${(raw as Map).type ?: ''}".toLowerCase()
@@ -13561,8 +13702,16 @@ Map haiCapsById(Object parsed) {
 // published list. It corrected itself only once a later scan had committed the
 // new hash, which made it look like a warm-up rather than a fault: measured
 // 2026-09-27 as three calls before the live list was served.
+// 2.4.34: one list per hash, kept in memory. A declaration matching a list already verified against it is
+// answered without reading, hashing or parsing the file again; a scan, the coverage report and every piston
+// rating used to do all three. A new hash still reads and verifies the file first.
+@Field static final ConcurrentHashMap<String, Map> HAI_CAPS_BY_HASH = new ConcurrentHashMap<>()
+
 Map haiCapabilitySource(String declaredHash) {
     if (haiParentInstalled()) {
+        String declared = "${declaredHash ?: ''}"
+        Map known = declared ? HAI_CAPS_BY_HASH.get(declared) : null
+        if (known) return [caps: known, hash: declared, verified: true]
         // Text rather than parsed JSON: the declared hash covers the bytes as
         // served, so the body must be hashed before anything interprets it.
         Map fetched = httpFetch("${LOOPBACK_BASE}/local/${HAI_CAPABILITIES_FILE}",
@@ -13572,11 +13721,18 @@ Map haiCapabilitySource(String declaredHash) {
             String actual = sha256Hex(body)
             // Declared nothing is an older engine build, not a disagreement,
             // so the list is still used - unverified rather than refused.
-            String declared = "${declaredHash ?: ''}"
             if (!declared || declared == actual) {
-                Map caps = [:]
-                try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
-                catch (Exception ignored) { caps = [:] }
+                // Parsed only when this hash has not been seen: an older build that
+                // declares nothing is still hashed every time, but not parsed.
+                Map caps = HAI_CAPS_BY_HASH.get(actual)
+                if (caps == null) {
+                    try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
+                    catch (Exception ignored) { caps = [:] }
+                    if (caps) {
+                        HAI_CAPS_BY_HASH.clear()
+                        HAI_CAPS_BY_HASH.put(actual, caps)
+                    }
+                }
                 if (caps) return [caps: caps, hash: actual, verified: (declared as boolean)]
             }
         }
@@ -13658,6 +13814,30 @@ Map fetchHaiFeed() {
             capabilities: capList,
             capabilityCount: capList.size(),
             capabilitiesError: feed.capabilitiesError ? "${feed.capabilitiesError}" : null]
+}
+
+// The feed's rules for buildGraph(), held in memory from the last scan rather than in state, where they
+// were a second copy of what the graph already holds (2.4.34). A feed stored by an earlier version still
+// carries them. Read again only when neither has them, which is after a code reload or a reboot.
+@Field static final ConcurrentHashMap<String, Map> HAI_FEED_RULES = new ConcurrentHashMap<>()
+
+Map haiFeedSummary(Map feed) {
+    Map summary = new LinkedHashMap(feed ?: [:])
+    summary.remove('nodes')
+    summary.remove('edges')
+    summary.remove('flows')
+    return summary
+}
+
+Map haiFeedForGraph() {
+    Map kept = HAI_FEED_RULES.get("${app.id}".toString()) as Map
+    if (kept) return kept
+    Map stored = (state.haiFeed ?: [:]) as Map
+    if (stored.nodes != null || "${stored.state ?: ''}" != 'OK') return stored
+    Map fresh = new LinkedHashMap(fetchHaiFeed())
+    fresh.remove('capabilities')
+    HAI_FEED_RULES.put("${app.id}".toString(), fresh)
+    return fresh
 }
 
 // Merges the HAI feed's rules into the graph this scan just built. The feed
@@ -13768,14 +13948,14 @@ void mergeHaiFeed(Map feed, Map<String, Map> nodes, List<Map> edges, Map flows, 
     }
 }
 
-Map buildGraph() {
+Map buildGraph(Map appInfoIn = null) {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
     Map deviceTypes = (state.deviceTypes ?: [:]) as Map
     Set disabledDevices = (state.deviceDisabled ?: []) as Set
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoIn != null ? appInfoIn : appInfoData()
     // v2.2.8: built once per scan from each webCoRE parent's own retained
     // permitted-device selection (see processAppRelationships) - never
     // recomputed per piston, never merged across separate parents.
@@ -13788,7 +13968,8 @@ Map buildGraph() {
     Set<String> seen = new LinkedHashSet<>()
     Map flows = [:]
     Map nameCache = [:]
-    Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
+    // Not while a scan builds: the previous graph is not held then (see startScan()).
+    Map priorFlows = scanEffectivelyActive() ? [:] : (((graphData() ?: [:]) as Map).flows as Map ?: [:])
 
     Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
     Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
@@ -13917,7 +14098,7 @@ Map buildGraph() {
     Map hubVarUsersState = (state.hubVariableUsers ?: [:]) as Map
     boolean hubVarUsersKnown = hubVarUsersState.status == 'complete'
     Map hubVarUsers = (hubVarUsersState.users ?: [:]) as Map
-    Set haiParentAppIds = ((state.appInfo ?: [:]) as Map).findAll { Object id, Object raw ->
+    Set haiParentAppIds = appInfo.findAll { Object id, Object raw ->
         raw instanceof Map && HAI_PARENT_TYPE_PREFIXES.any { "${(raw as Map).type ?: ''}".toLowerCase().startsWith(it.toLowerCase()) }
     }.keySet().collect { it.toString() } as Set
     hubVarInventoryVars.each { String varName, meta ->
@@ -14733,7 +14914,7 @@ Map buildGraph() {
 
     // Last, so every node and edge the hub scan found is already in place and
     // wins any collision with the feed's account of the same thing.
-    mergeHaiFeed((state.haiFeed ?: [:]) as Map, nodes, edges, flows, seen, labels, disabledDevices)
+    mergeHaiFeed(haiFeedForGraph(), nodes, edges, flows, seen, labels, disabledDevices)
 
     // Both flows and ruleVariables are fully populated by every app at this
     // point - safe to run the label join now, once, rather than per-app
@@ -14762,14 +14943,20 @@ Map buildGraph() {
 // Runs by handler name, so two saves close together simply reschedule the
 // same job rather than queuing two rebuilds.
 void rebuildStoredGraph() {
-    state.graph = buildGraph()
-    atomicState.graphVersion = GRAPH_SCHEMA
-    state.graphVersion = GRAPH_SCHEMA
+    // A scan in progress publishes its own graph. Rebuilding beside it wrote this execution's whole state
+    // snapshot, app list included, back over the scan's (2.4.34).
+    if (scanEffectivelyActive()) return
+    rebuildStoredGraphFrom(appInfoData())
+}
+
+// The rebuild with the app list it should hold: a single-app rescan passes its refreshed list.
+void rebuildStoredGraphFrom(Map appInfo) {
+    Map graph = buildGraph(appInfo)
     // Kept in step with the other two commit sites, or every later render would
     // read as stale against a marker this one never advanced.
-    Long rebuiltAt = now()
-    state.graphCommittedAtLocal = rebuiltAt
-    atomicState.graphCommittedAt = rebuiltAt
+    commitPublishedScan(graph, appInfo, now())
+    atomicState.graphVersion = GRAPH_SCHEMA
+    state.graphVersion = GRAPH_SCHEMA
 }
 
 // ===================================================================================================================
@@ -15056,7 +15243,7 @@ String registryEntryState(Map entry, String appType) {
 // between visits.
 List discoveredAppTypes() {
     List types = []
-    ((state.appInfo ?: [:]) as Map).each { String appId, info ->
+    appInfoData().each { String appId, info ->
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
         if (!t || t == 'null') return
@@ -15076,7 +15263,7 @@ List discoveredAppTypes() {
 //
 // Returns type -> [type, namespace, count, rootType, isRoot, identities].
 Map appTypeIdentities() {
-    Map info = (state.appInfo ?: [:]) as Map
+    Map info = appInfoData()
     Map byIdentity = [:]
     info.each { String appId, v ->
         if (!(v instanceof Map)) return
@@ -15450,7 +15637,6 @@ Map roomPlanApplyMoves(Map moves) {
             rooms[key] = wantRoom ? (nameById[wantRoom.toString()] ?: '').toString() : ''
         }
         state.deviceRooms = rooms
-        state.roomIdCache = [:]
     }
 
     timings.compareMs = now() - tCompare
@@ -15641,7 +15827,6 @@ Map roomPlanPostRoom(Map payload) {
     if (!failure && (status == null || status < 200 || status >= 300)) {
         failure = "the hub answered ${status ?: 'nothing'}, so the request was not accepted"
     }
-    state.roomIdCache = [:]
     return [status: status, failure: failure]
 }
 
@@ -15696,7 +15881,6 @@ Map roomPlanRenameRoom(String roomId, String name) {
 Map roomPlanDeleteRoom(String roomId, List deviceIds = []) {
     if (!roomId) return [ok: false, reason: 'no room id']
     Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
-    state.roomIdCache = [:]
     boolean gone = !hubRoomList().any { "${(it as Map).id}" == roomId }
     if (!gone) {
         return [ok: false, reason: fetched.ok ? 'the hub still lists this room' : 'the delete request failed']
@@ -15746,7 +15930,6 @@ String roomPlanJson(String message) {
                                    room: "${roomName}"]
             }
         }
-        state.roomIdCache = snap.idByName
     } else {
         // Fall back rather than show nothing, and say so, so the panel can warn
         // instead of silently presenting scan state as if it were the hub.
@@ -15978,7 +16161,7 @@ Map refreshDeviceFacts(Set<String> deviceIds) {
 // leaving them, the nodes those edges reach, and their decoded flows. The page
 // replaces exactly that much, so an edge the refresh removed disappears too.
 Map rescanSlice(List refreshed) {
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     List appNodeIds = refreshed.collect { "a${it}".toString() }
     List sliceEdges = ((graph.edges ?: []) as List).findAll { edge ->
         edge instanceof Map && appNodeIds.contains("${(edge as Map).from}".toString())
@@ -16010,7 +16193,7 @@ Map rescanMapping() {
                 data: JsonOutput.toJson([ok: false, reason: 'badNode']))
         }
         String hubId = idPart
-        Map appInfo = new LinkedHashMap((state.appInfo ?: [:]) as Map)
+        Map appInfo = new LinkedHashMap(appInfoData())
         List<String> targets = []
         if (nodeId.startsWith('a')) {
             if (appInfo.containsKey(hubId)) targets << hubId
@@ -16070,8 +16253,7 @@ Map rescanMapping() {
 
         Map slice = [:]
         if (refreshed) {
-            state.appInfo = appInfo
-            rebuildStoredGraph()
+            rebuildStoredGraphFrom(appInfo)
             slice = rescanSlice(refreshed)
         }
         return render(status: 200, contentType: 'application/json',
@@ -16172,7 +16354,7 @@ Map scanStatusMapping() {
 // truthfully-wrong "nothing is happening" while a scan genuinely starts.
 String scanStatusJson(boolean forceRunning = false) {
     migrateGraphVersionIfNeeded()
-    selfHealGraphIfNeeded()
+    // No selfHealGraphIfNeeded() here (2.4.34): a status poll never reads the saved map.
     // state.scanQueue/scanDone/scanHeartbeat are only ever written once, by
     // the phase-starting execution itself - never by a callback or reaper,
     // which must stay entirely state-free. During an active phase the true
@@ -16188,7 +16370,7 @@ String scanStatusJson(boolean forceRunning = false) {
     ConcurrentHashMap liveScan = null
     if (progPhase == 'devices') liveScan = liveDeviceScan()
     else if (progPhase == 'apps') liveScan = liveAppScan()
-    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
+    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : 0
     // liveScan null while state.scanRunning is still true, for this SAME
     // phase, means finalizeXPhase() already removed the accumulator - which
     // only happens after that phase's own completion invariant was already
@@ -16210,7 +16392,7 @@ String scanStatusJson(boolean forceRunning = false) {
         done: done,
         total: progTotal,
         queued: queued,
-        apps: (state.appInfo ?: [:]).size(),
+        apps: appCountForDisplay(),
         devices: (state.deviceLabels ?: [:]).size(),
         error: state.scanError,
         compatOk: state.compatOk,
@@ -16268,6 +16450,18 @@ Relationship types have changed since then, so the graph would render without ro
 </body></html>"""
        )
     }
+    if (graphData() == null) {
+        // 2.4.34: the saved map is a file now. Missing or unreadable, it is a scan to run, not an empty map.
+        return render(
+            status: 200,
+            contentType: 'text/html',
+            data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
+<body style="background:#062733; color:#eee; font-family:ui-sans-serif, system-ui, sans-serif; padding:2em; line-height:1.5">
+<h2>No saved map</h2>
+<p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
+</body></html>"""
+       )
+    }
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
 
@@ -16286,10 +16480,10 @@ String jsonForScriptEmbed(Object obj) {
 }
 
 String buildMapHtml() {
-    Map graph = (state.graph ?: [nodes: [], edges: []]) as Map
+    Map graph = (graphData() ?: [nodes: [], edges: []]) as Map
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
-    String jsonStr = jsonForScriptEmbed(graph)
+    String jsonStr = cachedGraphJson(graph)
     // For the AI friendly export feature - scan provenance the client-side GRAPH
     // blob above does not carry on its own. Built the same safe way GRAPH
     // is (JsonOutput, not manual string splicing) so an exception message
@@ -16377,6 +16571,19 @@ String buildMapHtml() {
     }
     String rmConstructVocabularyJsonStr = jsonForScriptEmbed(rmConstructVocabulary)
     String hubNameJsonStr = jsonForScriptEmbed("${location.name ?: 'Hubitat'}")
+    Map slotValues = [jsonStr: jsonStr, scanMetaJsonStr: scanMetaJsonStr,
+                      rmConstructVocabularyJsonStr: rmConstructVocabularyJsonStr, hubNameJsonStr: hubNameJsonStr,
+                      deviceCount: deviceCount, appCount: appCount,
+                      watermarkClass: showSanta() ? '' : 'hubPhoto',
+                      watermarkImage: showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png',
+                      localOrigin: getLocalOrigin(), appId: app.id]
+    return assembleMapPage(slotValues)
+}
+
+// The map page itself. Every per-request value is a slot (see mapSlot()), so the text can be stripped of its
+// comments once per code load rather than on every request (2.4.34). The comments stay here for whoever
+// reads this file; the browser no longer downloads them.
+String mapPageTemplate() {
     return """\
 <!doctype html>
 <html>
@@ -17273,7 +17480,7 @@ String buildMapHtml() {
 </style>
 </head>
 <body>
-<div id="status">Devices: ${deviceCount} &nbsp; Apps: ${appCount}</div>
+<div id="status">Devices: ${mapSlot('deviceCount')} &nbsp; Apps: ${mapSlot('appCount')}</div>
 <div id="legend">
   <div id="legendCompactBody"></div>
   <button type="button" id="legendMoreBtn" class="pillBtn">Full legend</button>
@@ -17388,7 +17595,7 @@ String buildMapHtml() {
     <button class="pillBtn" type="button" id="hubTipGot">Got it</button>
   </div>
 </div>
-<img id="hubWatermark" class="${showSanta() ? '' : 'hubPhoto'}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${showSanta() ? 'Merry%20Christmas.png' : 'hub-from-side.png'}" alt="">
+<img id="hubWatermark" class="${mapSlot('watermarkClass')}" src="https://raw.githubusercontent.com/GordonThelander/hubitat-automation-map/${isDevBuild() ? 'dev' : 'main'}/Images/${mapSlot('watermarkImage')}" alt="">
 <div id="network"></div>
 <div id="offline" style="display:none; position:absolute; top:40%; left:0; right:0; text-align:center; padding:0 2em">
   <h2>Could not load the drawing libraries</h2>
@@ -17413,10 +17620,10 @@ if (typeof window.vis === 'undefined') {
 // entry already open, not a new one.
 try { history.replaceState({ amFocus: null, cameFrom: null }, ''); } catch (e) { }
 
-const GRAPH = ${jsonStr};
-const SCAN_META = ${scanMetaJsonStr};
-const RM_CONSTRUCT_VOCABULARY = ${rmConstructVocabularyJsonStr};
-const HUB_NAME = ${hubNameJsonStr};
+const GRAPH = ${mapSlot('jsonStr')};
+const SCAN_META = ${mapSlot('scanMetaJsonStr')};
+const RM_CONSTRUCT_VOCABULARY = ${mapSlot('rmConstructVocabularyJsonStr')};
+const HUB_NAME = ${mapSlot('hubNameJsonStr')};
 const roleColors = { trigger: '#9b59b6', constraint: '#16a085', monitor: '#3d7ea6', action: '#7fae42', owns: '#8090a0', exposed: '#c98b6b',
                      runs: '#d9534f', cancelTimedActions: '#d9534f', setspb: '#d9534f', pauseResume: '#d9534f',
                      depends: '#cfd8dc', write: '#4fb3a9', read: '#8fd6cc', usesVar: '#f0c36e', deviceRead: '#5c9bd6', hasComponent: '#5c6bc0', synchronizedWith: '#999' };
@@ -20201,7 +20408,7 @@ function ccApplyClickable(box, url) {
 // button and nothing else, and one press makes one request. Every label is plain
 // ASCII with no apostrophes, because this script lives inside a Groovy GString and
 // a stray quote has broken this page before. Dynamic text goes through extEsc.
-const COVERAGE_URL = amPickURL('${getLocalURL('webcore-decode-coverage')}', '${getCloudURL('webcore-decode-coverage')}');
+const COVERAGE_URL = amPickURL('${mapSlot('local:webcore-decode-coverage')}', '${mapSlot('cloud:webcore-decode-coverage')}');
 let coverageRequestSeq = 0;
 let coverageAppId = null;
 let coverageInFlight = false;
@@ -20294,8 +20501,8 @@ function requestDecodeCoverage() {
 // one rating for each engine assessed; a click expands the reasons and the parts
 // that need manual work. Silent when the assessment cannot run. Labels avoid apostrophes because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
-const MIGRATION_URL = amPickURL('${getLocalURL('webcore-migration-assessment')}', '${getCloudURL('webcore-migration-assessment')}');
-const RM_COVERAGE_URL = amPickURL('${getLocalURL('rm-coverage')}', '${getCloudURL('rm-coverage')}');
+const MIGRATION_URL = amPickURL('${mapSlot('local:webcore-migration-assessment')}', '${mapSlot('cloud:webcore-migration-assessment')}');
+const RM_COVERAGE_URL = amPickURL('${mapSlot('local:rm-coverage')}', '${mapSlot('cloud:rm-coverage')}');
 const rmCoveragePanel = document.getElementById('rmCoverage');
 const RMC = { body: null, loading: false };
 
@@ -20689,7 +20896,7 @@ function renderMigrationCard(node) {
 // one piston at a time through the same endpoint the floating panel uses, and shows the construct matrix. Results are
 // kept on the hub and shown without re-rating; Refresh Scan runs them again. Labels avoid apostrophes and template literals because this
 // script lives inside a Groovy GString; dynamic text goes through extEsc.
-const MIGRATION_MATRIX_URL = amPickURL('${getLocalURL('webcore-migration-matrix')}', '${getCloudURL('webcore-migration-matrix')}');
+const MIGRATION_MATRIX_URL = amPickURL('${mapSlot('local:webcore-migration-matrix')}', '${mapSlot('cloud:webcore-migration-matrix')}');
 const migrationReportPanel = document.getElementById('migrationReport');
 const migrationReportBody = document.getElementById('migrationReportBody');
 const MR = { results: null, running: false, matrix: null, tab: 'pistons', runSeq: 0, ratedAt: null, versionMoved: false };
@@ -22356,13 +22563,13 @@ flowChart.addEventListener('click', function (ev) {
 // the hub's own origin, which is not true through Remote Admin.
 function amPickURL(localPath, cloudUrl) {
   try {
-    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+    if (new URL('${mapSlot('localOrigin')}').hostname === window.location.hostname) return localPath;
   } catch (ignore) { }
   return cloudUrl;
 }
-const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
-const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
-const MIGRATION_RATINGS_URL = amPickURL('${getLocalURL('webcore-migration-ratings')}', '${getCloudURL('webcore-migration-ratings')}');
+const EXT_URL = amPickURL('${mapSlot('local:externals')}', '${mapSlot('cloud:externals')}');
+const RESCAN_URL = amPickURL('${mapSlot('local:rescan')}', '${mapSlot('cloud:rescan')}');
+const MIGRATION_RATINGS_URL = amPickURL('${mapSlot('local:webcore-migration-ratings')}', '${mapSlot('cloud:webcore-migration-ratings')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
 let EXT = null;
@@ -22938,8 +23145,8 @@ function extImport(evt) {
 // different drivers will occasionally pick the wrong one for a specific
 // device. This is where that gets corrected - one override per device,
 // saved here, applied the next time the graph is built.
-const ICONS_URL = amPickURL('${getLocalURL('icon-overrides')}', '${getCloudURL('icon-overrides')}');
-const ROOMPLAN_URL = amPickURL('${getLocalURL('rooms')}', '${getCloudURL('rooms')}');
+const ICONS_URL = amPickURL('${mapSlot('local:icon-overrides')}', '${mapSlot('cloud:icon-overrides')}');
+const ROOMPLAN_URL = amPickURL('${mapSlot('local:rooms')}', '${mapSlot('cloud:rooms')}');
 // Community Release Activity embed (Supporting Docs/community_release_activity_embed_spec.md,
 // published contract). A read-only iframe preview of Community Utilities'
 // releases-over-time chart - never told which app/device/hub is in use, never affects scanning,
@@ -25668,16 +25875,249 @@ document.getElementById('communityUtilitiesBtn').addEventListener('click', funct
 // works for anyone with LAN access to it, which a cloud-opened link does not
 // rule out, rather than guaranteed-wrong navigation on the relay's own host.
 document.getElementById('exitMapBtn').addEventListener('click', function () {
-  var localOrigin = '${getLocalOrigin()}';
+  var localOrigin = '${mapSlot('localOrigin')}';
   var onLocalOrigin = false;
   try { onLocalOrigin = (new URL(localOrigin).hostname === window.location.hostname); } catch (ignore) { }
-  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${app.id}';
+  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${mapSlot('appId')}';
 });
 </script>
 </body>
 </html>
 """
 }
+
+// --- map page assembly (2.4.34): start ---
+// The page template is about 557 KB and roughly a third of it is comments written for this file's readers.
+// They are stripped once per code load, with the per-request values left as slots, and the result kept in a
+// static. A request then only fills the slots. The graph's JSON is kept the same way, keyed by the commit
+// that produced it, so an unchanged map is not serialised again on every open. If stripping ever loses a
+// slot the template is served whole instead: a larger page, never a broken one.
+@Field static final String MAP_SLOT_OPEN = String.valueOf((char) 1)
+@Field static final String MAP_SLOT_CLOSE = String.valueOf((char) 2)
+@Field static final ConcurrentHashMap<String, Object> MAP_PAGE_CACHE = new ConcurrentHashMap<>()
+@Field static final List PAGE_REGEX_KEYWORDS = ['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new',
+                                                'delete', 'void', 'throw', 'instanceof', 'yield', 'await']
+
+String mapSlot(String key) {
+    return MAP_SLOT_OPEN + key + MAP_SLOT_CLOSE
+}
+
+String assembleMapPage(Map values) {
+    List parts = mapPageParts()
+    StringBuilder out = new StringBuilder(((parts[0] as String).length() as int) + 600000 +
+                                          "${values.jsonStr ?: ''}".length())
+    for (int i = 0; i < parts.size(); i++) {
+        String part = parts[i] as String
+        if (i % 2 == 0) out.append(part)
+        else if (part.startsWith('local:')) out.append(getLocalURL(part.substring(6)))
+        else if (part.startsWith('cloud:')) out.append(getCloudURL(part.substring(6)))
+        else out.append("${values[part]}")
+    }
+    return out.toString()
+}
+
+// The stripped template split at its slots: even entries are text, odd entries are slot names.
+List mapPageParts() {
+    String cacheKey = "parts|${APP_VERSION}".toString()
+    Object hit = MAP_PAGE_CACHE.get(cacheKey)
+    if (hit instanceof List) return hit as List
+    String raw = mapPageTemplate()
+    String text = raw
+    try {
+        String stripped = stripPageComments(raw)
+        if (stripped.count(MAP_SLOT_OPEN) == raw.count(MAP_SLOT_OPEN)) text = stripped
+        else log.warn "${app.label}: the map page lost a value while its comments were removed, so it is served with them"
+    } catch (Exception e) {
+        log.warn "${app.label}: the map page's comments could not be removed, so it is served with them: ${e.message}"
+    }
+    List parts = []
+    int pos = 0
+    while (true) {
+        int open = text.indexOf(MAP_SLOT_OPEN, pos)
+        if (open < 0) { parts << text.substring(pos); break }
+        int close = text.indexOf(MAP_SLOT_CLOSE, open)
+        parts << text.substring(pos, open)
+        parts << text.substring(open + 1, close)
+        pos = close + 1
+    }
+    MAP_PAGE_CACHE.put(cacheKey, parts)
+    return parts
+}
+
+// The graph as page JSON, serialised once per committed graph rather than on every open.
+String cachedGraphJson(Map graph) {
+    Long committedAt = (state.graphCommittedAtLocal ?: 0) as Long
+    Map hit = MAP_PAGE_CACHE.get("graph|${app.id}".toString()) as Map
+    if (committedAt && hit && hit.key == "${committedAt}|${GRAPH_SCHEMA}".toString()) return hit.json as String
+    String json = jsonForScriptEmbed(graph)
+    if (committedAt) rememberGraphJson(committedAt, json)
+    return json
+}
+
+void rememberGraphJson(Long committedAt, String json) {
+    MAP_PAGE_CACHE.put("graph|${app.id}".toString(),
+                       [key: "${committedAt}|${GRAPH_SCHEMA}".toString(), committedAt: committedAt, json: json])
+}
+
+// Removes HTML, CSS and JavaScript comments from the page template. A small lexer rather than patterns:
+// it knows which of the three languages it is in, steps over string and regular expression literals whole,
+// so a '//' inside a URL or a '/*' inside a regex is never taken for a comment, and keeps a line break
+// wherever removing a comment would otherwise join two lines of script.
+// Character codes: 9 tab, 10 newline, 13 return, 32 space, 34 double quote, 39 apostrophe, 42 '*',
+// 47 '/', 60 '<', 91 '[', 92 backslash, 93 ']', 96 backtick.
+String stripPageComments(String src) {
+    int n = src.length()
+    StringBuilder out = new StringBuilder(n)
+    int mode = 0   // 0 HTML, 1 script, 2 style
+    int i = 0
+    while (i < n) {
+        int c = (int) src.charAt(i)
+        if (c == 60) {
+            if (mode == 0) {
+                if (src.startsWith('<!--', i)) {
+                    int e = src.indexOf('-->', i + 4)
+                    i = pageDropComment(src, out, i, e < 0 ? n : e + 3)
+                    continue
+                }
+                int opened = pageTagAt(src, i, 'script') ? 1 : (pageTagAt(src, i, 'style') ? 2 : 0)
+                if (opened) {
+                    int gt = src.indexOf('>', i)
+                    if (gt < 0) gt = n - 1
+                    out.append(src, i, gt + 1)
+                    i = gt + 1
+                    mode = opened
+                    continue
+                }
+            } else if (src.startsWith('</', i) && pageTagAt(src, i + 1, mode == 1 ? 'script' : 'style')) {
+                mode = 0
+            }
+            out.append((char) c)
+            i++
+            continue
+        }
+        if (mode != 0 && c == 47 && i + 1 < n) {
+            int d = (int) src.charAt(i + 1)
+            if (d == 42) {
+                int e = src.indexOf('*/', i + 2)
+                i = pageDropComment(src, out, i, e < 0 ? n : e + 2)
+                continue
+            }
+            if (mode == 1 && d == 47) {
+                int e = src.indexOf(String.valueOf((char) 10), i)
+                i = pageDropComment(src, out, i, e < 0 ? n : e)
+                continue
+            }
+            if (mode == 1 && pageRegexAllowed(out)) {
+                int e = pageRegexEnd(src, i)
+                if (e > 0) {
+                    out.append(src, i, e)
+                    i = e
+                    continue
+                }
+            }
+        }
+        if (mode != 0 && (c == 34 || c == 39 || (mode == 1 && c == 96))) {
+            int e = pageStringEnd(src, i, c)
+            out.append(src, i, e)
+            i = e
+            continue
+        }
+        out.append((char) c)
+        i++
+    }
+    return out.toString()
+}
+
+boolean pageTagAt(String src, int i, String tag) {
+    if (!src.regionMatches(true, i, '<' + tag, 0, tag.length() + 1)) return false
+    int after = i + tag.length() + 1
+    if (after >= src.length()) return false
+    int c = (int) src.charAt(after)
+    return c == 62 || c == 32 || c == 9 || c == 10 || c == 13
+}
+
+// Index just past a string literal opened at start, or at the line end when it never closes there.
+int pageStringEnd(String src, int start, int quote) {
+    int n = src.length()
+    int i = start + 1
+    while (i < n) {
+        int c = (int) src.charAt(i)
+        if (c == 92) { i += 2; continue }
+        if (c == quote) return i + 1
+        if (c == 10 && quote != 96) return i
+        i++
+    }
+    return n
+}
+
+// Index just past a regex literal starting at start (flags included), or -1 when it is not one.
+int pageRegexEnd(String src, int start) {
+    int n = src.length()
+    int i = start + 1
+    boolean inClass = false
+    while (i < n) {
+        int c = (int) src.charAt(i)
+        if (c == 10 || c == 13) return -1
+        if (c == 92) { i += 2; continue }
+        if (c == 91) inClass = true
+        else if (c == 93) inClass = false
+        else if (c == 47 && !inClass) {
+            i++
+            while (i < n && Character.isLetter(src.charAt(i))) i++
+            return i
+        }
+        i++
+    }
+    return -1
+}
+
+// Whether a '/' here starts a regex rather than dividing: decided from the last thing already written.
+boolean pageRegexAllowed(StringBuilder out) {
+    int k = out.length() - 1
+    while (k >= 0 && Character.isWhitespace(out.charAt(k))) k--
+    if (k < 0) return true
+    int c = (int) out.charAt(k)
+    if ('(,=:[!&|?{};+-*%<>~^'.indexOf(c) >= 0) return true
+    if (!pageWordChar(c)) return false
+    int end = k + 1
+    while (k >= 0 && pageWordChar((int) out.charAt(k))) k--
+    return PAGE_REGEX_KEYWORDS.contains(out.substring(k + 1, end))
+}
+
+boolean pageWordChar(int c) {
+    return Character.isLetterOrDigit(c) || c == 95 || c == 36 || c == 1 || c == 2
+}
+
+// Drops src[start, end) and returns where to continue. A comment alone on its lines takes those lines with
+// it. One after code takes the spaces before it. One with code after it on the same line leaves a space, or
+// a line break when it spanned lines, so two tokens or two statements are never joined.
+int pageDropComment(String src, StringBuilder out, int start, int end) {
+    int n = src.length()
+    int lineStart = out.lastIndexOf(String.valueOf((char) 10)) + 1
+    boolean blankBefore = true
+    for (int k = lineStart; k < out.length(); k++) {
+        int c = (int) out.charAt(k)
+        if (c != 32 && c != 9 && c != 13) { blankBefore = false; break }
+    }
+    int j = end
+    while (j < n && ((int) src.charAt(j) == 32 || (int) src.charAt(j) == 9 || (int) src.charAt(j) == 13)) j++
+    boolean blankAfter = j >= n || (int) src.charAt(j) == 10
+    if (blankBefore && blankAfter) {
+        out.setLength(lineStart)
+        return j < n ? j + 1 : j
+    }
+    if (blankAfter) {
+        int k = out.length()
+        while (k > 0 && ((int) out.charAt(k - 1) == 32 || (int) out.charAt(k - 1) == 9)) k--
+        out.setLength(k)
+        return j
+    }
+    boolean spansLines = src.indexOf(String.valueOf((char) 10), start) in start..<end
+    if (spansLines) out.append((char) 10)
+    else if (out.length() > 0 && !Character.isWhitespace(out.charAt(out.length() - 1))) out.append((char) 32)
+    return end
+}
+// --- map page assembly (2.4.34): end ---
 
 String comparatorFrameHtml() {
     // Hubitat inserts paragraph HTML after the host page has loaded. Browsers do

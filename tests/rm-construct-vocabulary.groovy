@@ -31,7 +31,7 @@ assert !definitions.keySet().any { it.startsWith('trigger:') || it.startsWith('c
 
 // Export wiring and the fixed-family caveat are part of the contract, not
 // merely an in-memory dictionary that never reaches the downloaded file.
-assert source.contains('const RM_CONSTRUCT_VOCABULARY = ${rmConstructVocabularyJsonStr};')
+assert source.contains("const RM_CONSTRUCT_VOCABULARY = \${mapSlot('rmConstructVocabularyJsonStr')};")
 assert source.contains('rmConstructVocabulary: RM_CONSTRUCT_VOCABULARY')
 assert source.contains("appMap.containsKey('rmConstructs')")
 assert source.contains('if (Array.isArray(n.rmConstructs)) out.rmConstructs = n.rmConstructs.slice().sort();')
