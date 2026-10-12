@@ -261,9 +261,9 @@ try {
     if ($null -eq $saved -or $savedHash -ne $localHash -or [int]$saved.version -le [int]$current.version) {
         $detail = if ($updateError) { " $updateError" } else { '' }
         if ($null -eq $saved) {
-            throw "OUTCOME UNKNOWN: the app's code could not be read back.$detail Do not deploy again; read it back later (the write may still land). Backup: $backupPath"
+            throw "OUTCOME UNKNOWN: the app's code could not be read back.$detail Do not deploy again: re-run this script later; if the write landed it reports 'Nothing to deploy'. Backup: $backupPath"
         }
-        throw "NOT SAVED (yet): the hub holds revision $($saved.version), hash $savedHash, not the requested source.$detail If the update timed out it may still land: read back again before any redeploy. Backup: $backupPath"
+        throw "NOT SAVED (yet): the hub holds revision $($saved.version), hash $savedHash, not the requested source.$detail If the update timed out it may still land: re-run this script later; if it landed it reports 'Nothing to deploy'. Backup: $backupPath"
     }
 
     Write-Host "Deployed and verified revision $($current.version) -> $($saved.version)."
