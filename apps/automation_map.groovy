@@ -613,11 +613,8 @@ boolean autoScanEffectivelyEnabled() {
     return settings.autoScanEnabled == true
 }
 
-// On by default (see defaultAutoScanTime()) when the time is left blank -
-// the app-wide scan-first-then-explore experience this app is built around
-// is better served by a map that keeps itself current than by one that goes
-// stale until someone remembers to press Scan. The toggle below is still
-// there to opt out entirely. Rescheduled (not just scheduled once) every
+// Off unless switched on (2.4.37); once on, a blank time means the default
+// (see defaultAutoScanTime()). Rescheduled (not just scheduled once) every
 // time this runs, so turning the toggle off actually cancels a
 // previously-running schedule rather than leaving it firing.
 void scheduleAutoScan() {
@@ -678,6 +675,15 @@ void retryScanAfterRefusal() {
 
 void scheduledScanHandler() {
     ensureHaiAssessSubscription()
+    // 2.4.37 made daily scanning off unless the setting is an explicit true, but a schedule made by an earlier
+    // version stays until updated() runs, and a code update does not run it. Without this an install that never
+    // saved the setting kept scanning every night while its page and its decode said automatic scanning was off.
+    // The first firing after the upgrade drops the schedule instead. One settings read, no state written.
+    if (!autoScanEffectivelyEnabled()) {
+        unschedule('scheduledScanHandler')
+        if (diagOn()) log.info "${app.label}: automatic scanning is off, so the old daily schedule is removed"
+        return
+    }
     if (state.scanRunning) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
         return
