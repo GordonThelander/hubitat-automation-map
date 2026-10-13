@@ -821,6 +821,18 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                         url: "${getLocalURL('automation-map.html')}&scan=${state.scanHeartbeat ?: 0}",
                         style: 'embedded', state: 'complete', required: false,
                    )
+                    // A deep link from HAI Migration: this page opened as /installedapp/configure/<id>#focus=a<rule id>
+                    // goes straight on to the map focused on that rule. HAI holds no token for this app, so it links
+                    // here and the map link, which carries the token, takes the focus with it. Read only in the browser.
+                    paragraph '''<script>(function () {
+  var h = window.location.hash || '';
+  if (h.indexOf('#focus=') !== 0) return;
+  var id = decodeURIComponent(h.substring(7));
+  if (!/^[a-z]?[0-9]+$/.test(id)) return;
+  var a = document.querySelector('a.hrefElem[href*="automation-map.html"]');
+  if (!a) return;
+  window.location.replace(a.getAttribute('href') + '&focus=' + encodeURIComponent(id));
+})();</script>'''
                 }
                 paragraph scanButtonHtml(scanActive, autoStarting)
                 Map pageProg = scanProgress()
@@ -19193,6 +19205,16 @@ network.once('stabilizationIterationsDone', function () {
   setTimeout(function () {
     // A focus picked before the first settle finished is kept, not reset.
     if (currentFocus()) return;
+    // A deep link: ?focus=<node id> (an app is a<app id>), from HAI Migration's rule links through this app's
+    // settings page. Opened like a Focus panel pick; an id the map does not hold falls through to the whole map.
+    var wanted = null;
+    try { wanted = new URLSearchParams(window.location.search).get('focus'); } catch (e) { wanted = null; }
+    if (wanted) {
+      poppingHistory = true;
+      var found = focusNode(wanted);
+      poppingHistory = false;
+      if (found !== false) return;
+    }
     poppingHistory = true;
     exitToWholeMap();
     poppingHistory = false;
