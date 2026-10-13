@@ -67,6 +67,9 @@ class CoverageUnderTest {
     Map app = [id: '3083']
     Map stubFetch = [ok: false, data: null, error: 'not configured', timedOut: false]
     List<String> fetchedUris = []
+    // The saved scan's File Manager file (2.4.34) is a hub boundary; state stands in for it here.
+    Map graphData() { state.graph as Map }
+    Map appInfoData() { (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:] }
     int clearAbandonedScanCalls = 0
     // A controllable clock, so the cooperative deadline can be forced instead of
     // raced. A script plays back exact values in order; otherwise a step of zero

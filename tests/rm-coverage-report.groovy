@@ -13,6 +13,9 @@ String mapper = 'import groovy.transform.Field\n' +
     AppSource.function(source, 'haiCapabilityIdFor') + '\n'
 def script = new GroovyShell().parse(mapper + report + '\n' + categories + '\n' + varConstructs + '''
 Map fetchHaiFeed() { binding.getVariable('feed') }
+// The saved scan's File Manager file (2.4.34) is a hub boundary; state stands in for it here.
+Map graphData() { state.graph as Map }
+Map appInfoData() { (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:] }
 long now() { 1L }
 ''')
 assert AppSource.function(source, 'fetchHaiFeed').readLines()[0] == 'Map fetchHaiFeed() {' :

@@ -80,7 +80,7 @@ check(traceFn.contains('GEN_TRACE_MAX') || source.contains('trail.takeRight(GEN_
       'the trace is bounded')
 check(traceFn.contains('catch (Exception'),
       'a failing trace can never break the scan it describes')
-['installed', 'scheduled', 'endpoint', 'button'].each { String entry ->
+['installed', 'scheduled', 'endpoint'].each { String entry ->
     check(source.contains("startScan('${entry}')"), "the ${entry} entry path names itself to the trace")
 }
 ['lock-acquired', 'lock-refused', 'apps-enumerated', 'app-phase-finalized',

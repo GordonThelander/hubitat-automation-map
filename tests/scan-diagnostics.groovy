@@ -43,6 +43,9 @@ class ScanDiagnosticsUnderTest {
     Map app = [id: '3083']
     long stubNow = 1_000_000L
     long now() { return stubNow }
+    // The saved scan's File Manager file (2.4.34) is a hub boundary; state stands in for it here.
+    Map graphData() { state.graph as Map }
+    Map appInfoData() { (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:] }
 ''' + progress + '\n' + block + '''
 }
 '''
@@ -177,7 +180,7 @@ Map<Object, String> gstringKeyed = [:]
 gstringKeyed.put("${lockKeyId}", 'lock-1789200000000-482913')
 diag.SCAN_LOCKS = gstringKeyed
 diag.state = [activeGenerationToken: 'lock-1789200000000-117755', scanRunning: true,
-              scanPhase: 'apps', graph: [nodes: []], appInfo: ['a': 1, 'b': 2],
+              scanPhase: 'apps', graphCommittedAtLocal: 1L, appInfo: ['a': 1, 'b': 2],
               appResultsReady: true]
 diag.atomicState = [graphVersion: '15']
 String live = String.valueOf(diag.lockVsState())
