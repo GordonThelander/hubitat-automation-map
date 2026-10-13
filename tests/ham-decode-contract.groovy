@@ -157,7 +157,8 @@ check((script.hamDecodeSummary().scan as Map).status == 'failed', 'a scan error 
 
 // --- freshness policy ------------------------------------------------------
 
-script.setSettings([:])
+// Automatic scanning is on only when switched on (2.4.37); an unsaved setting is off, checked below.
+script.setSettings([autoScanEnabled: true])
 script.setState([graph: graphWith([], [:]), scanHeartbeat: 1790000000000L, scanError: null])
 Map freshOn = script.hamDecodeSummary().scan as Map
 check(freshOn.autoScanEnabled == true, 'the scan block states whether automatic scanning is on')
@@ -166,6 +167,8 @@ check(freshOn.staleAfterSeconds == 90000, 'with a daily scan the policy is state
 script.setSettings([autoScanEnabled: false])
 Map freshOff = script.hamDecodeSummary().scan as Map
 check(freshOff.autoScanEnabled == false, 'automatic scanning off is stated')
+script.setSettings([:])
+check((script.hamDecodeSummary().scan as Map).autoScanEnabled == false, 'a setting never saved means automatic scanning is off')
 check(freshOff.staleAfterSeconds == null,
       'with no schedule there is no policy, so none is invented')
 script.setSettings([:])

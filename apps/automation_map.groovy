@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.36'
+@Field static final String APP_VERSION = '2.4.37'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -603,8 +603,12 @@ String defaultAutoScanCron() {
 // matching the toggle's own displayed default. Used everywhere this
 // setting is read, not just the scheduler, so the page and the schedule
 // can never disagree about what "on" means.
+//
+// 2.4.37 (hub-cost review, 2026-10-13): OFF unless switched on. A full-hub scan every night whether or not anything
+// changed is the kind of load the project refuses unless it must, and the project's own rules already said daily
+// scanning is off by default. Only an explicit true is on.
 boolean autoScanEffectivelyEnabled() {
-    return settings.autoScanEnabled != false
+    return settings.autoScanEnabled == true
 }
 
 // On by default (see defaultAutoScanTime()) when the time is left blank -
@@ -947,7 +951,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                 paragraph "Separately, once a day this app reads a small file from its own GitHub repository to see whether a newer version has been published, and shows the version number at the top of this page if so. Nothing is sent, and it never installs anything - updates are still made through Hubitat Package Manager."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    defaultValue: true, submitOnChange: true
+                    defaultValue: false, submitOnChange: true
                 if (autoScanEffectivelyEnabled()) {
                     // review 392: "that display updates once you press
                     // Done" was inaccurate - the field already shows the
@@ -1496,6 +1500,18 @@ function amReconcileRunning() {
   if (warn) warn.hidden = true;
 }
 
+function amPollLater() {
+  if (document.hidden) {
+    document.addEventListener('visibilitychange', function again() {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', again);
+      amProgressPoll();
+    });
+    return;
+  }
+  setTimeout(amProgressPoll, 4000);
+}
+
 function amProgressPoll() {
   if (amPolling) return;
   amPolling = true;
@@ -1534,7 +1550,9 @@ function amProgressPoll() {
           el.textContent = phaseLabel + ': ' + d.done + ' of ' + d.total + deviceContext +
                             ' (' + pct + '%) - updating live, no need to reload.';
         }
-        setTimeout(amProgressPoll, 1500);
+        // Every 4 s, and not while the tab is hidden: each poll is an execution of this app on the hub, at the
+        // hub's busiest time (hub-cost review, 2026-10-13).
+        amPollLater();
       } else if (amSawRunning) {
         // Live-updating this one span cannot reveal the map link/insights
         // sections, which only render at all when state.graph exists in the
