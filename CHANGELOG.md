@@ -6,7 +6,7 @@ stays easy to review.
 
 ## 2.4.35
 
-Dev channel. Status checks stay fast during a scan. Between reading the apps and saving the map, the scan used to hold its whole app list in the app's state, so every status check in that stretch loaded it and was slow. The list now stays in memory, with a second File Manager file so the scan can still finish if the app is updated part way through. Apart from that file, nothing here writes to your hub.
+Dev channel. Status checks stay fast during a scan. Between reading the apps and saving the map, the scan used to hold its whole app list in the app's state, so every status check in that stretch loaded it and was slow. The list now stays in memory, with a second File Manager file so the scan can still finish if the app is updated part way through. On the map, a device used by more apps than Rescan this object re-reads used to end on a greyed Used by too many apps; it now offers Run a full scan, which starts the same scan as the settings page's Scan button and shows its progress in the map's status line. Apart from that file, nothing here writes to your hub.
 
 ## 2.4.34
 

@@ -22704,6 +22704,9 @@ function amPickURL(localPath, cloudUrl) {
 }
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
+// The settings page's Scan button and progress poll, for the full scan a device menu can offer (2.4.35).
+const SCAN_URL = amPickURL('${getLocalURL('scan')}', '${getCloudURL('scan')}');
+const SCAN_STATUS_URL = amPickURL('${getLocalURL('scan-status')}', '${getCloudURL('scan-status')}');
 const MIGRATION_RATINGS_URL = amPickURL('${getLocalURL('webcore-migration-ratings')}', '${getCloudURL('webcore-migration-ratings')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
@@ -25750,8 +25753,8 @@ function rescanNode(nodeId, item) {
         return;
       }
       const why = (j && j.reason) || 'failed';
+      if (why === 'tooMany') { offerFullScan(item, j.apps); return; }
       item.textContent = why === 'scanRunning' ? 'A full scan is running'
-                       : why === 'tooMany' ? 'Used by too many apps'
                        : why === 'noOwner' ? 'Nothing to re-read'
                        : 'Rescan failed';
       setTimeout(function () { item.textContent = original; item.disabled = false; }, 2500);
@@ -25760,6 +25763,79 @@ function rescanNode(nodeId, item) {
       item.textContent = 'Rescan failed';
       setTimeout(function () { item.textContent = original; item.disabled = false; }, 2500);
     });
+}
+
+// A device used by more apps than a rescan re-reads (2.4.35). It used to end on a greyed "Used by too many
+// apps"; a full scan reads them all in one pass, so that is what the item now offers.
+function offerFullScan(item, apps) {
+  const offer = item.cloneNode(false);
+  offer.disabled = false;
+  offer.textContent = 'Run a full scan';
+  offer.title = 'Used by ' + (apps || 'many') + ' apps, so a full scan is quicker than rescanning each one';
+  offer.addEventListener('click', function () { startFullScan(offer); });
+  item.parentNode.replaceChild(offer, item);
+  offer.focus();
+}
+
+// The same /scan endpoint and guards as the settings page's Scan button: the hub refuses to start a second
+// scan while one is running and answers with that scan's status instead, which is then followed here.
+function startFullScan(item) {
+  item.disabled = true;
+  item.textContent = 'Starting scan...';
+  const statusEl = document.getElementById('status');
+  if (SCAN_URL.indexOf('http') === 0) {
+    // Remote access: as on the settings page, the cloud API cannot be read cross-origin, so the request goes
+    // as a hidden navigation and the page reloads into the map's scan-in-progress page.
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = SCAN_URL;
+    document.body.appendChild(f);
+    if (statusEl) statusEl.textContent = 'Full scan started - this page will reload.';
+    setTimeout(function () { window.location.reload(); }, 4000);
+    return;
+  }
+  fetch(SCAN_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      hideNodeMenu();
+      if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
+      if (statusEl) statusEl.textContent = 'The scan could not start' + (d && d.error ? ': ' + d.error : '.');
+    })
+    .catch(function () {
+      item.textContent = 'Scan failed to start';
+      setTimeout(function () { item.textContent = 'Run a full scan'; item.disabled = false; }, 2500);
+    });
+}
+
+// Same wording as the settings page's progress line.
+function showScanProgress(statusEl, d) {
+  if (!statusEl) return;
+  const isDevicePhase = d.phase !== 'apps';
+  if (!isDevicePhase && d.total > 0 && d.done >= d.total) {
+    statusEl.textContent = 'Full scan: building map - please wait...';
+    return;
+  }
+  const pct = d.total > 0 ? Math.floor((d.done * 100) / d.total) : 0;
+  statusEl.textContent = 'Full scan: ' + (isDevicePhase ? 'reading device types' : 'reading apps') + ', ' +
+                         d.done + ' of ' + d.total + ' (' + pct + '%). The map reloads when it is done.';
+}
+
+// One /scan-status read every 5 seconds while the scan runs, then one reload.
+function followFullScan(statusEl) {
+  setTimeout(function () {
+    fetch(SCAN_STATUS_URL, { cache: 'no-store', credentials: 'omit' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
+        if (d && d.lastScanOutcome === 'failed') {
+          if (statusEl) statusEl.textContent = 'The full scan failed' + (d.error ? ': ' + d.error : '.');
+          return;
+        }
+        if (statusEl) statusEl.textContent = 'Scan complete - reloading...';
+        window.location.reload();
+      })
+      .catch(function () { followFullScan(statusEl); });
+  }, 5000);
 }
 
 // Comes back to where the user was. sessionStorage rather than the URL: the
