@@ -46,7 +46,7 @@ check('a refusal schedules one retry, recorded in atomicState') {
 check('a refused retry is not retried again') {
     assert retryFn.indexOf('.pending)') < retryFn.indexOf('runIn(')
 }
-String finish = source.substring(source.indexOf('String why = publishRefusal('), source.indexOf('Map graph = buildGraph()', source.indexOf('String why = publishRefusal(')))
+String finish = source.substring(source.indexOf('String why = publishRefusal('), source.indexOf('Map graph = buildGraph(', source.indexOf('String why = publishRefusal(')))
 check('the refusal branch schedules the retry, and a publish clears it') {
     assert finish.contains('scheduleRetryAfterRefusal()') && finish.contains('atomicState.refusalRetry = null')
 }
