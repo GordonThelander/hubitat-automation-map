@@ -2,6 +2,7 @@
 // build (measured 2026-10-10 on 2.4.19: 216 apps at finalize, 0 at publish). Since 2.4.35 the finished list is
 // never in state: the finalize keeps it in a static store keyed by generation, which no write-back reaches, and
 // in a pending File Manager file, which a code reload does not wipe. These run the app's own functions.
+int passed = 0  // a failed assert stops the run with exit 1, so reaching the end means none failed
 String source = new File('apps/automation_map.groovy').getText('UTF-8')
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 String fns = AppSource.functions(source, ['genKey', 'pendingAppResultsFileName', 'keepAppResults', 'heldAppResults',
@@ -30,7 +31,7 @@ Map held = script.heldAppResults('tok1')
 assert held != null && (held.appInfo as Map).size() == 216 && (held.appIds as List).size() == 216 :
     'a stale state write-back reached the kept app list'
 assert ((held.appInfo as Map)['5'] as Map).flow : 'the kept list lost its flowcharts'
-println 'ok   a stale state write-back cannot shorten the kept app list or its enumeration'
+passed++; println 'ok   a stale state write-back cannot shorten the kept app list or its enumeration'
 
 // A code reload wipes every static. A status poll never reads the file; the registry step and the publish do,
 // and clearAbandonedScan()'s recovery finishes under a fresh token, so the file is matched on the generation.
@@ -41,12 +42,12 @@ assert reloaded != null && (reloaded.appInfo as Map).size() == 216 && (reloaded.
     'after a code reload the app list was not read back from the pending file'
 assert script.heldAppResults('recovered-1') != null && script.heldAppResults('tok1') != null :
     'the list read back from the file was not kept in memory for the steps after it'
-println 'ok   after a code reload the publish reads the list back from the pending file'
+passed++; println 'ok   after a code reload the publish reads the list back from the pending file'
 
 // Never another generation's list.
 script.APP_RESULTS.clear()
 assert script.heldAppResults('tok2', null, true) == null : 'a different generation picked up the pending file'
-println 'ok   the pending file never crosses generations'
+passed++; println 'ok   the pending file never crosses generations'
 
 // The zero-app incident: with the list lost from memory and file alike, nothing is held, and the publish guard
 // refuses rather than publishing an empty map, whether or not the enumeration and witness survived.
@@ -55,7 +56,7 @@ assert script.heldAppResults('tok1', null, true) == null
 assert script.publishRefusal(216, 0, 216) != null
 assert script.publishRefusal(0, 0, 216) != null
 assert script.publishRefusal(0, 0, null) != null
-println 'ok   a lost list is never published as a zero-app map'
+passed++; println 'ok   a lost list is never published as a zero-app map'
 
 // The kept copy is the JSON round trip, the plain types the graph build read back from state before 2.4.35.
 script.APP_RESULTS.clear()
@@ -63,7 +64,7 @@ String gKey = "${'4'}"
 script.keepAppResults('tok3', [(gKey): [type: "${'Rule'}-5.1"]], [gKey])
 Map rt = script.heldAppResults('tok3').appInfo as Map
 assert rt.keySet().every { it instanceof String } && (rt['4'] as Map).type instanceof String
-println 'ok   the kept list has the same plain types the graph build read from state'
+passed++; println 'ok   the kept list has the same plain types the graph build read from state'
 
 // The readers of an active scan find their generation through the lock, including during the publish.
 script.SCAN_LOCKS.put("${77}", 'finishing:lock-123-456:999')
@@ -71,18 +72,18 @@ assert script.scanGenerationToken() == 'lock-123-456'
 script.SCAN_LOCKS.clear()
 state.activeGenerationToken = 'lock-9-9'
 assert script.scanGenerationToken() == 'lock-9-9'
-println 'ok   readers of an active scan resolve its generation, publish included'
+passed++; println 'ok   readers of an active scan resolve its generation, publish included'
 
 // The self-heal finds the latest generation of THIS app only.
 script.APP_RESULTS.put('88:tokX', [appInfo: [a: 1], createdAt: clock + 50])
 script.APP_RESULTS.put(script.genKey('tok2'), [appInfo: [b: 1], createdAt: clock + 10])
 assert script.latestAppResults().appInfo == [b: 1]
-println 'ok   the self-heal takes the latest kept list of this app'
+passed++; println 'ok   the self-heal takes the latest kept list of this app'
 
 clock += 16 * 60 * 1000L
 script.sweepGenerationRecords()
 assert script.APP_RESULTS.isEmpty() : 'kept lists outlived the retention window'
-println 'ok   kept lists are swept with the other generation records'
+passed++; println 'ok   kept lists are swept with the other generation records'
 
 // Wiring: the finalize keeps the list and writes none of it to state; the registry step and the publish read the
 // kept list (file allowed) before they count it; the publish strips flowcharts from copies; the self-heal reads
@@ -97,11 +98,12 @@ assert fin.contains('buildGraph(heldInfo)') && !fin.contains('state.appInfo')
 String reg = AppSource.function(source, 'fetchRegistry')
 assert reg.indexOf('heldAppResults(lockToken, null, true)') in 0..reg.indexOf('int heldApps =')
 assert AppSource.function(source, 'selfHealGraphIfNeeded').contains('Map kept = latestAppResults()')
-println 'ok   finalize keeps it out of state; registry, publish and self-heal read the kept list'
+passed++; println 'ok   finalize keeps it out of state; registry, publish and self-heal read the kept list'
 
 // Registry: the last good matches live in atomicState too, and fill in when state has lost them on a failed read.
 int fs = source.indexOf('void finishScan(')
 assert source.indexOf('atomicState.registryMatchesLastGood = (regResult.matches as List)', fs) > 0
 assert source.indexOf('if (!(state.registryMatches) && atomicState.registryMatchesLastGood)', fs) > 0
 assert source.indexOf('atomicState.registryMatchesLastGood = matches', source.indexOf('void fetchRegistry(')) > 0
-println 'ok   last good registry matches survive a stale write-back'
+passed++; println 'ok   last good registry matches survive a stale write-back'
+println "${passed} passed, 0 failed"

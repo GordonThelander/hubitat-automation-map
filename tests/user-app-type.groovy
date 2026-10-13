@@ -1,6 +1,7 @@
 // The hub's userAppTypes table decides [CUS] against [INT]. From 2.4.3 a GString containsKey against its String
 // keys answered false for every app, so every app on the hub was tagged [INT] (Gordon, 2026-10-10).
 // Runs on Groovy 2.4, the hub's version, where the defect reproduced.
+int passed = 0  // a failed assert stops the run with exit 1, so reaching the end means none failed
 String source = new File('apps/automation_map.groovy').getText('UTF-8')
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 def script = new GroovyShell().parse(AppSource.functions(source, ['isUserAppType']) + '\n')
@@ -15,4 +16,5 @@ assert !script.isUserAppType(scanCopy, null)
 // The defect itself, so this file fails if the call site goes back to it.
 assert !scanCopy.containsKey("${1143}") : 'Groovy changed: a GString now matches a String key'
 assert !source.contains('appTypeNamespaces.containsKey("${') : 'the GString containsKey is back'
-println 'ok   user-installed app types are recognised, built-in ones are not'
+passed++; println 'ok   user-installed app types are recognised, built-in ones are not'
+println "${passed} passed, 0 failed"
