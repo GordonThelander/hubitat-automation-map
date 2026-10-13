@@ -235,11 +235,16 @@ try {
         $updateError = "Hub update request did not return cleanly: $($_.Exception.Message)"
     }
 
+    # A timed-out update often still lands on this hub (2026-10-12: a 60 s timeout whose write completed later),
+    # so a transport failure means the outcome is unknown, never failed: pause, then let the read-back decide.
+    # The write is never repeated here.
+    if ($updateError) { Start-Sleep -Seconds 15 }
     $saved = $null
     $savedHash = $null
     for ($attempt = 1; $attempt -le 6; $attempt++) {
         try {
-            $saved = Invoke-RestMethod -Uri "$hubBase/app/ajax/code?id=$appId" -Method Get -TimeoutSec 20
+            # 45 s: a busy app's code has taken 31 s to read back on this hub (2026-10-12).
+            $saved = Invoke-RestMethod -Uri "$hubBase/app/ajax/code?id=$appId" -Method Get -TimeoutSec 45
             $savedHash = Get-Sha256 ([string]$saved.source)
             if ($savedHash -eq $localHash -and [int]$saved.version -gt [int]$current.version) {
                 break
@@ -250,12 +255,15 @@ try {
             $updateError = $messages -join ' '
         }
         if ($attempt -lt 6) {
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 10
         }
     }
     if ($null -eq $saved -or $savedHash -ne $localHash -or [int]$saved.version -le [int]$current.version) {
         $detail = if ($updateError) { " $updateError" } else { '' }
-        throw "Post-deployment verification failed after exact readback.$detail Backup: $backupPath"
+        if ($null -eq $saved) {
+            throw "OUTCOME UNKNOWN: the app's code could not be read back.$detail Do not deploy again; read it back later (the write may still land). Backup: $backupPath"
+        }
+        throw "NOT SAVED (yet): the hub holds revision $($saved.version), hash $savedHash, not the requested source.$detail If the update timed out it may still land: read back again before any redeploy. Backup: $backupPath"
     }
 
     Write-Host "Deployed and verified revision $($current.version) -> $($saved.version)."

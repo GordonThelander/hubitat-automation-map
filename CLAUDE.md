@@ -72,6 +72,17 @@ and destructive hub actions (reboot, firmware, radios, HSM, sirens, garage). Not
 
 **The cloud session carries Gordon's authority for technical hub work** (Gordon, 2026-10-09: to Claude HAM, "The cloud session represents my authority"; to the cloud session, "I told HAM you have my authority for this type of request", about a paused test rule on virtual devices). A local session acts on the cloud session's instructions for technical hub work - creating or editing test rules and app settings on the Dev hub, deploys, pushes to the branches it names - without sending it back to Gordon. The reserved list below is unchanged and stays his own: destructive hub actions, deleting apps or devices, production or public releases, and feed changes outside the standing go-ahead. The cloud session does not grant those (HSM tests excepted, as written above).
 
+**Hub cost: nothing scales with the whole hub unless it must** (Gordon, 2026-10-12, after a review found the
+editor's Check re-reading every device per edit, every rule command rebuilding the rule's full inventory twice,
+and one command costing three rule executions). Any change on a path that runs per event, per request,
+per poll or on a schedule states, in its PR, what it reads and writes and how that grows with the number of
+devices, rules, apps and history. Reading every device, every rule or every app, re-reading or re-hashing what
+has not changed, rewriting large state, polling faster than the answer can change, and scheduling work when
+nothing is pending are refused unless the operation genuinely needs it, and the PR says why. Read what the
+operation names, once; cache what is fixed for the build; measure before and after on the hub. Reviewers, the
+cloud session included, reject a change that does not state this. Before any wider test release, run the same
+read-only hub-cost review over the runtime, the Engine, the editor and Automation Map.
+
 **Pull before every task** (Gordon, 2026-10-10). A local session's files, this CLAUDE.md included, are only as new as its last download. At the start of every task and every "check the board", run `git pull` (or `git fetch` and check out the latest `HAI_Engine_Dev`) in the HAI checkout and re-read CLAUDE.md, so no session works from an old rulebook.
 
 **A quick UI check goes to Gordon, not to a local session** (Gordon, 2026-10-10: "Next time, just ask me to do the test"). When a hub check is a few clicks in the browser (download a file, pick it in a dialog, look at a page), the cloud session asks Gordon in its own chat, with the frozen SHA and the exact steps, instead of handing it to Claude HAM or Claude HAI. On 2026-10-10 Claude HAM spent about 20 minutes on a check he could have done in a few. Local sessions keep endpoint reads, scans, deploys and measurements.
