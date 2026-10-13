@@ -167,7 +167,9 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '24'
+// Bumped 24->25 (next AM release): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
+// rmConstructs, nor reaches the detail decode as `condition: "0"`.
+@Field static final String GRAPH_SCHEMA = '25'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -11224,8 +11226,18 @@ List extractRuleConstructs(Map data) {
     (data.appState ?: []).each { Object e ->
         if (e instanceof Map && (e as Map).name == 'actions' && (e as Map).value instanceof Map) stActions = (e as Map).value as Map
     }
-    if (stActions.values().any { it instanceof Map && (it as Map).cond != null && "${(it as Map).cond}" != '' }) out << 'action:getCondAct'.toString()
+    if (stActions.values().any { it instanceof Map && rmCondSlot((it as Map).cond) != null }) out << 'action:getCondAct'.toString()
     return out.sort()
+}
+
+// The condition slot a Simple Conditional Action is gated by, or null when the row is not one. RM stores
+// `cond: 0` on ordinary rows as a "no condition" placeholder (measured on a hub sweep: every `cond` seen was 0,
+// including on getEndIf, getDelay and getMsg rows), and condition slots are numbered from 1, so only a whole
+// number above zero is a binding. A committed Simple Conditional on a probe rule stored `cond: 1`.
+String rmCondSlot(Object raw) {
+    String t = raw == null ? '' : "${raw}".trim()
+    if (!(t ==~ /\d+/)) return null
+    return (t as BigInteger) > 0 ? t.replaceFirst(/^0+/, '') : null
 }
 
 // Variable constructs for one rule, from the Gate C decode rather than from
@@ -11491,12 +11503,28 @@ Map hamDetailDateOperand(String side, String num, Map settingValues) {
     return out
 }
 
+// The settings prefixes a Rule Machine condition stores under its own number (rCapab_8, not8, starting8 ...),
+// as read by hamDetailCondition and its operand helpers and as seen in the captured decode files.
+@Field static final Set<String> RM_CONDITION_KEY_PREFIXES = ([
+    'rCapab_', 'rDev_', 'rDev', 'state_', 'not', 'RelrDev_', 'AllrDev_', 'AllrDev', 'isDev_', 'isVar_',
+    'xVar_', 'xVar', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
+    'starting', 'startingA', 'ending', 'endingA', 'startSunriseOffset', 'startSunsetOffset',
+    'endSunriseOffset', 'endSunsetOffset', 'monthStart', 'dayStart', 'monthEnd', 'dayEnd',
+    'timeStart', 'timeEnd', 'startDateType', 'endDateType'
+] as Set<String>)
+
 Map hamDetailCondition(Map settingDevices, String num, String capability, Map settingValues) {
     Map operands = [:]
+    // Only this condition's own keys. Rule Machine numbers conditions, actions and triggers in one settings
+    // namespace, so a suffix match also collected action N's actSubType.N / pvTF.N, a trigger's tCapabN, and
+    // condition 18's keys under condition 8. A key belongs here when it is a condition-family prefix followed
+    // by exactly this number.
     Map raw = [:]
     settingValues.each { Object k, Object v ->
         String name = "${k}"
-        if (name.endsWith(num) || name.endsWith("_${num}")) raw[name] = "${v ?: ''}"
+        def m = name =~ /^([A-Za-z]+_?)(\d+)$/
+        if (!m.matches() || m.group(2) != num) return
+        if (RM_CONDITION_KEY_PREFIXES.contains(m.group(1))) raw[name] = "${v ?: ''}"
     }
     String comparator = "${settingValues["RelrDev_${num}"] ?: ''}".trim()
 
@@ -12609,8 +12637,9 @@ List extractRuleActions(Map data) {
         // A Simple Conditional Action stores as its THEN action with ordinary keys; the condition it is
         // gated by is only state.actions `cond`, a condition slot (measured on HAI #85). Without this a
         // consumer sees an unconditional action.
-        Object condSlot = ((storedActions[num] ?: [:]) as Map).cond
-        if (condSlot != null && !WAIT_METHODS.contains(method)) step.condition = "${condSlot}"
+        // `cond: 0` is RM's placeholder for "no condition", not slot 0 (HAI #85), so it is not emitted.
+        String condSlot = rmCondSlot(((storedActions[num] ?: [:]) as Map).cond)
+        if (condSlot != null && !WAIT_METHODS.contains(method)) step.condition = condSlot
 
         Map ops
         if (method == 'getWaitRule') {
