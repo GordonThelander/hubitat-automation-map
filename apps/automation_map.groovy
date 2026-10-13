@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.35'
+@Field static final String APP_VERSION = '2.4.36'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -271,6 +271,7 @@ void installed() {
     // though the install did not take.
     if (diagOn()) log.info "${app.label}: starting first scan"
     startScan('installed')
+    ensureHaiAssessSubscription(true)
     scheduleAutoScan()
     scheduleUpdateCheck()
     // One check straight away, so a fresh install is not silent until 3am.
@@ -288,6 +289,7 @@ void updated() {
     migrateRemoveHaiFeedSetting()
     // 2.4.34: keys nothing reads any more.
     ['scanQueue', 'roomIdCache'].each { String key -> if (state.containsKey(key)) state.remove(key) }
+    ensureHaiAssessSubscription(true)
     // Rescheduled on every updated() so any change to the enabled toggle or
     // chosen time takes effect immediately.
     scheduleAutoScan()
@@ -669,6 +671,7 @@ void retryScanAfterRefusal() {
 }
 
 void scheduledScanHandler() {
+    ensureHaiAssessSubscription()
     if (state.scanRunning) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
         return
@@ -683,6 +686,8 @@ void scheduledScanHandler() {
 }
 
 Map main() {
+    // An upgrade does not run updated(), so the first page open after one subscribes (one state read otherwise).
+    ensureHaiAssessSubscription()
     // Until Done is pressed the instance does not exist yet, and Hubitat cannot
     // schedule work for it: runIn() silently does nothing, so a scan started
     // from this page would set itself running and then never execute a single
@@ -3681,6 +3686,7 @@ void finishScan(data = null) {
             state.scanError = why
             state.scanHeartbeat = now()
             scheduleRetryAfterRefusal()
+            haiAssessFinishPending(false, 'scanRefused', null)
             return
         }
         genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
@@ -3713,6 +3719,8 @@ void finishScan(data = null) {
         // Sibling decode contract, written from the graph just committed.
         hamDecodeWriteFile()
         hamDecodeWriteDetailFile()
+        // A full scan HAI asked for answers it now, with the decode just written.
+        haiAssessFinishPending(true, null, appInfo.size())
         // Serialised once here: the map page reuses it (2.4.34).
         rememberGraphJson(graphCommittedAt, jsonForScriptEmbed(graph))
         // Counted from the finished graph rather than tallied during the scan.
@@ -12832,7 +12840,10 @@ Map hamDecodeEnvelope(String contract) {
             rmConstructVocabularyVersion: 2,
             supportedEngine: SUPPORTED_RULE_ENGINE,
             instance: [appId: app.id, appName: APP_NAME, appVersion: APP_VERSION,
-                       buildChannel: BUILD_CHANNEL]]
+                       buildChannel: BUILD_CHANNEL],
+            // 2.4.36: when this document was built. A targeted rescan for HAI rewrites the decode without
+            // a full scan, so lastScanCompletedAt does not move; this does.
+            generatedAt: new Date(now()).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))]
 }
 
 Map hamDecodeFailure(String contract, String issue, String message) {
@@ -16408,6 +16419,203 @@ Map rescanMapping() {
         return render(status: 200, contentType: 'application/json',
             data: JsonOutput.toJson([ok: false, reason: 'error', error: "${ex.class.simpleName}"]))
     }
+}
+
+// ===================================================================================================================
+// Assess now, for HAI (2.4.36)
+//
+// HAI's Migration page asks for a fresh decode of one rule, several, or all of them. It sends one location
+// event, haiAssessRequest, whose value is JSON: {requestId, ids: [app ids]} or {requestId, all: true}. It is a
+// local hub event between two apps on the same hub, so there is no token to hold or provision.
+//
+// all:true starts the ordinary full scan, through startScan() and its lock; the scan answers when it publishes.
+// ids re-reads just those apps in this one execution: one statusJson read per id, one hub-wide device-facts read,
+// one graph build, one commit of the published file, and one rewrite of each decode file, which a single-app
+// rescan from the map does not do. More ids than a full scan is worth (see haiAssessCap()) start a full scan
+// instead. Either way the answer is one location event, haiAssessDone, carrying the requestId.
+//
+// Hub cost: nothing runs without a request; the subscription is one row. Per request: N loopback reads for N ids,
+// one device list read, one buildGraph over the stored app list (as any map rebuild), one published-file write
+// and two decode-file writes. It never reads every app; a request too big for that becomes the normal scan.
+// ===================================================================================================================
+
+@Field static final String HAI_ASSESS_REQUEST_EVENT = 'haiAssessRequest'
+@Field static final String HAI_ASSESS_DONE_EVENT = 'haiAssessDone'
+// Raised when the subscription changes, so an upgraded instance subscribes again.
+@Field static final int HAI_ASSESS_SUBSCRIPTION = 1
+// Above this share of the hub's Rule Machine rules a full scan is the cheaper honest answer.
+@Field static final double HAI_ASSESS_FULL_SCAN_SHARE = 0.4
+// One targeted rescan at a time per instance; a second request is answered 'busy' rather than queued.
+@Field static final ConcurrentHashMap<String, String> HAI_ASSESS_RUNNING = new ConcurrentHashMap<>()
+// Requests already handled, so a duplicate delivery does no work twice.
+@Field static final ConcurrentHashMap<String, Long> HAI_ASSESS_SEEN = new ConcurrentHashMap<>()
+
+// The one subscription this app holds. Checked against atomicState, which a stale state write-back cannot
+// undo; force re-subscribes (installed/updated). The app holds no other subscriptions, so unsubscribe()
+// first leaves exactly one, whatever an earlier version or a lost marker left behind.
+void ensureHaiAssessSubscription(boolean force = false) {
+    try {
+        if (!force && atomicState.haiAssessSubscribed == HAI_ASSESS_SUBSCRIPTION) return
+        unsubscribe()
+        subscribe(location, HAI_ASSESS_REQUEST_EVENT, 'haiAssessRequestHandler')
+        atomicState.haiAssessSubscribed = HAI_ASSESS_SUBSCRIPTION
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not subscribe to HAI's assess requests (${ex.message})"
+    }
+}
+
+// {requestId, all} or {requestId, ids}, or null for anything else. Ids are kept only when they are whole numbers.
+Map haiAssessParse(Object raw) {
+    Object parsed = null
+    try { parsed = new groovy.json.JsonSlurper().parseText("${raw ?: ''}") } catch (Exception ex) { return null }
+    if (!(parsed instanceof Map)) return null
+    Map p = parsed as Map
+    String rid = "${p.requestId ?: ''}".trim()
+    if (!rid || rid.length() > 64) return null
+    if (p.all == true) return [requestId: rid, all: true]
+    if (!(p.ids instanceof List)) return [requestId: rid, ids: []]
+    List ids = ((p.ids as List).collect { "${it}".trim() }.findAll { String s -> s.isLong() }).unique()
+    return [requestId: rid, ids: ids]
+}
+
+// How many ids a targeted rescan takes before a full scan is the better answer: 40% of the Rule Machine
+// rules in the published map, never fewer than the map's own single-object limit.
+int haiAssessCap() {
+    int rules = hamDecodeRuleNodes().size()
+    return Math.max(RESCAN_MAX_APPS, (int) Math.ceil(rules * HAI_ASSESS_FULL_SCAN_SHARE))
+}
+
+void haiAssessReply(String requestId, Map body) {
+    Map out = [requestId: requestId, appVersion: APP_VERSION] + body
+    try {
+        sendLocationEvent(name: HAI_ASSESS_DONE_EVENT, value: JsonOutput.toJson(out), isStateChange: true,
+                          descriptionText: "${app.label} answered HAI's assess request ${requestId}")
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not answer HAI's assess request ${requestId} (${ex.message})"
+    }
+    if (diagOn()) log.info "${app.label}: HAI assess ${requestId}: ${out}"
+}
+
+void haiAssessRequestHandler(evt) {
+    Map req = haiAssessParse(evt?.value)
+    if (req == null) return
+    String rid = req.requestId as String
+    String key = "${app.id}:${rid}".toString()
+    if (HAI_ASSESS_SEEN.putIfAbsent(key, now()) != null) return
+    if (HAI_ASSESS_SEEN.size() > 50) {
+        Long cutoff = now() - 3600000L
+        HAI_ASSESS_SEEN.each { String k, Long at -> if (at < cutoff) HAI_ASSESS_SEEN.remove(k) }
+    }
+    clearAbandonedScan()
+    if (scanEffectivelyActive()) {
+        haiAssessReply(rid, [ok: false, reason: 'scanRunning',
+                             message: 'Automation Map is already scanning. Assess again when the scan has finished.'])
+        return
+    }
+    if (req.all == true) {
+        haiAssessStartFullScan(rid, 'all', null)
+        return
+    }
+    List ids = (req.ids ?: []) as List
+    if (!ids) {
+        haiAssessReply(rid, [ok: false, reason: 'badRequest', message: 'The request named no rules.'])
+        return
+    }
+    int cap = haiAssessCap()
+    if (ids.size() > cap) {
+        haiAssessStartFullScan(rid, 'fullScanFallback', ids.size())
+        return
+    }
+    if (HAI_ASSESS_RUNNING.putIfAbsent("${app.id}".toString(), rid) != null) {
+        haiAssessReply(rid, [ok: false, reason: 'busy',
+                             message: 'Automation Map is assessing other rules. Try again in a few seconds.'])
+        return
+    }
+    try {
+        haiAssessRescan(rid, ids)
+    } catch (Exception ex) {
+        log.warn "${app.label}: HAI assess ${rid} failed: ${ex.message}"
+        haiAssessReply(rid, [ok: false, reason: 'error', message: "${ex.class.simpleName}".toString()])
+    } finally {
+        HAI_ASSESS_RUNNING.remove("${app.id}".toString())
+    }
+}
+
+// The ordinary scan, answered by finishScan() through haiAssessFinishPending().
+void haiAssessStartFullScan(String rid, String mode, Integer requested) {
+    Map started = startScan('hai')
+    if (!started.acquired) {
+        haiAssessReply(rid, [ok: false, reason: 'scanRunning',
+                             message: 'Automation Map is already scanning. Assess again when the scan has finished.'])
+        return
+    }
+    atomicState.haiAssessPending = [requestId: rid, mode: mode, requested: requested, startedAt: now()]
+    if (diagOn()) log.info "${app.label}: HAI assess ${rid}: full scan started (${mode})"
+}
+
+// Called by finishScan() once it has published, or refused to. Nothing to do unless HAI asked for this scan.
+void haiAssessFinishPending(boolean ok, String reason, Integer apps) {
+    Map pending = atomicState.haiAssessPending as Map
+    if (!pending?.requestId) return
+    atomicState.haiAssessPending = null
+    Map body = [ok: ok, mode: pending.mode, requested: pending.requested, scanned: apps,
+                ms: now() - ((pending.startedAt ?: now()) as Long)]
+    if (ok) {
+        body.generatedAt = new Date(now()).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))
+    } else {
+        body.reason = reason
+        body.message = "The scan finished without publishing: ${state.scanError ?: reason}".toString()
+    }
+    haiAssessReply(pending.requestId as String, body)
+}
+
+// One execution: read each named app, then one build, one commit and one decode rewrite.
+void haiAssessRescan(String rid, List ids) {
+    Long started = now()
+    Map appInfo = new LinkedHashMap(appInfoData())
+    Map labels = (state.deviceLabels ?: [:]) as Map
+    Set<String> scope = new LinkedHashSet<String>()
+    List refreshed = []
+    List failed = []
+    ids.each { Object raw ->
+        String appId = "${raw}".toString()
+        Map prior = (appInfo[appId] ?: [:]) as Map
+        ((prior.roles ?: [:]) as Map).keySet().each { scope << "${it}".toString() }
+        Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
+                                RESCAN_TIMEOUT_SEC, [contentType: 'application/json'])
+        if (!fetched.ok || !(fetched.data instanceof Map)) { failed << appId; return }
+        Map info = processAppRelationships(appId, fetched.data as Map, labels)
+        // As rescanMapping(): the namespace comes from the full scan's table, so carry the known one over.
+        if (!info.namespace && prior.namespace) info.namespace = prior.namespace
+        appInfo[appId] = info
+        ((info.roles ?: [:]) as Map).keySet().each { scope << "${it}".toString() }
+        refreshed << appId
+    }
+    if (!refreshed) {
+        haiAssessReply(rid, [ok: false, reason: 'unreadable', requested: ids.size(), refreshed: 0, failed: failed,
+                             message: 'Automation Map could not read any of those rules.'])
+        return
+    }
+    // Devices the refreshed apps use, old and new, from one hub-wide list.
+    Map deviceFacts = refreshDeviceFacts(scope)
+    // A full scan that started meanwhile owns the published map; it publishes these apps too.
+    if (scanEffectivelyActive()) {
+        haiAssessReply(rid, [ok: false, reason: 'scanRunning',
+                             message: 'A full scan started while these rules were read; it will publish them.'])
+        return
+    }
+    Map graph = buildGraph(appInfo)
+    // As finishScan(): the flowcharts live in the graph, so the app list keeps no second copy.
+    refreshed.each { String appId -> Object info = appInfo[appId]; if (info instanceof Map) (info as Map).remove('flow') }
+    commitPublishedScan(graph, appInfo, now())
+    atomicState.graphVersion = GRAPH_SCHEMA
+    state.graphVersion = GRAPH_SCHEMA
+    hamDecodeWriteFile()
+    hamDecodeWriteDetailFile()
+    haiAssessReply(rid, [ok: true, mode: 'ids', requested: ids.size(), refreshed: refreshed.size(), failed: failed,
+                         devicesChanged: ((deviceFacts.changed ?: []) as List).size(),
+                         ms: now() - started,
+                         generatedAt: new Date(now()).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))])
 }
 
 Map scanMapping() {

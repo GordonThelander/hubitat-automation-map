@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.36
+
+Assess now, for HAI. HAI's Migration page sends one local location event, `haiAssessRequest`, naming rule ids or all rules. Named rules are re-read in one execution (one read per rule, one device list read, one map build, one commit, one rewrite of each decode file); all rules, or more than 40% of the hub's Rule Machine rules, start the normal scan. Automation Map answers with `haiAssessDone` carrying the request id, counts and the decode's new `generatedAt`. Refused politely while a scan runs. The decode envelope gains `generatedAt`. Nothing runs without a request.
+
 ## 2.4.35
 
 Dev channel. Status checks stay fast during a scan. Between reading the apps and saving the map, the scan used to hold its whole app list in the app's state, so every status check in that stretch loaded it and was slow. The list now stays in memory, with a second File Manager file so the scan can still finish if the app is updated part way through. On the map, a device used by more apps than Rescan this object re-reads used to end on a greyed Used by too many apps; it now offers Run a full scan, which starts the same scan as the settings page's Scan button and shows its progress in the map's status line. Apart from that file, nothing here writes to your hub.
