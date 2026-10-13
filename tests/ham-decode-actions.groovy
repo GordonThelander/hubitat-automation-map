@@ -21,7 +21,7 @@ String stubs = 'import groovy.transform.Field\n' + AppSource.field(source, 'RULE
     'class HubMode { Integer id; String name }\n' +
     "@Field Map location = [modes: [new HubMode(id: 5, name: 'Home'), new HubMode(id: 2, name: 'Away')]]\n" +
     AppSource.functions(source, ['stripTags', 'hamDetailInt', 'hamDetailBool', 'hamDetailJsonList',
-                                 'hamDetailModeNames']) + '\n'
+                                 'hamDetailModeNames', 'rmCondSlot']) + '\n'
 def script = new GroovyShell().parse(stubs + block + '\nvoid noop() { }\n')
 
 // The slices are the app's, not a stub's: each returns what only the real one returns.

@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.36'
+@Field static final String APP_VERSION = '2.4.38'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,9 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-@Field static final String GRAPH_SCHEMA = '24'
+// Bumped 24->25 (v2.4.38): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
+// rmConstructs, nor reaches the detail decode as `condition: "0"`.
+@Field static final String GRAPH_SCHEMA = '25'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -11206,8 +11208,18 @@ List extractRuleConstructs(Map data) {
     (data.appState ?: []).each { Object e ->
         if (e instanceof Map && (e as Map).name == 'actions' && (e as Map).value instanceof Map) stActions = (e as Map).value as Map
     }
-    if (stActions.values().any { it instanceof Map && (it as Map).cond != null && "${(it as Map).cond}" != '' }) out << 'action:getCondAct'.toString()
+    if (stActions.values().any { it instanceof Map && rmCondSlot((it as Map).cond) != null }) out << 'action:getCondAct'.toString()
     return out.sort()
+}
+
+// The condition slot a Simple Conditional Action is gated by, or null when the row is not one. RM stores
+// `cond: 0` on ordinary rows as a "no condition" placeholder (measured on a hub sweep: every `cond` seen was 0,
+// including on getEndIf, getDelay and getMsg rows), and condition slots are numbered from 1, so only a whole
+// number above zero is a binding. A committed Simple Conditional on a probe rule stored `cond: 1`.
+String rmCondSlot(Object raw) {
+    String t = raw == null ? '' : "${raw}".trim()
+    if (!(t ==~ /\d+/)) return null
+    return (t as BigInteger) > 0 ? t.replaceFirst(/^0+/, '') : null
 }
 
 // Variable constructs for one rule, from the Gate C decode rather than from
@@ -12591,8 +12603,9 @@ List extractRuleActions(Map data) {
         // A Simple Conditional Action stores as its THEN action with ordinary keys; the condition it is
         // gated by is only state.actions `cond`, a condition slot (measured on HAI #85). Without this a
         // consumer sees an unconditional action.
-        Object condSlot = ((storedActions[num] ?: [:]) as Map).cond
-        if (condSlot != null && !WAIT_METHODS.contains(method)) step.condition = "${condSlot}"
+        // `cond: 0` is RM's placeholder for "no condition", not slot 0 (HAI #85), so it is not emitted.
+        String condSlot = rmCondSlot(((storedActions[num] ?: [:]) as Map).cond)
+        if (condSlot != null && !WAIT_METHODS.contains(method)) step.condition = condSlot
 
         Map ops
         if (method == 'getWaitRule') {
