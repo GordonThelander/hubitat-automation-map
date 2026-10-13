@@ -191,6 +191,21 @@ check((dp.from as Map).dateType == 'mm-dd', 'the date type is named, since Rule 
 check((script.hamDetailCondition(DEV, '5', 'Mode', S([:])).operands as Map).ids == [],
       'an unconfigured mode condition resolves to empty rather than inventing a mode')
 
+// --- raw keys are the condition's own (HAI #147) ---------------------------
+// Rule Machine numbers conditions, actions and triggers in one settings namespace. A suffix match gave
+// condition 8 the keys of action 8 (actSubType.8, pvTF.8), trigger 8 (tCapab8, tDev8) and condition 18.
+Map crowded = S(['rCapab_8': 'Switch', 'rDev_8': '[1]', 'state_8': 'on', 'not8': '', 'RelrDev_8': '=',
+                 'actSubType.8': 'getSetPrivateBoolean', 'pvTF.8': 'true', 'tCapab8': 'Motion', 'tDev8': '[2]',
+                 'rCapab_18': 'Mode', 'not18': 'true', 'modes18': '["5"]', 'state_80': 'off'])
+Map own = script.hamDetailCondition(DEV, '8', 'Switch', crowded).raw as Map
+check(own.keySet() == (['rCapab_8', 'rDev_8', 'state_8', 'not8', 'RelrDev_8'] as Set),
+      "condition 8's raw holds its own keys only, not an action's, a trigger's or condition 18's: ${own.keySet()}")
+check(!own.keySet().any { it.contains('.') }, 'no dotted action key reaches a condition raw')
+Map eighteen = script.hamDetailCondition(DEV, '18', 'Mode', crowded).raw as Map
+check(eighteen.keySet() == (['rCapab_18', 'not18', 'modes18'] as Set), "condition 18 keeps its own keys: ${eighteen.keySet()}")
+check(script.hamDetailCondition(DEV, '18', 'Mode', crowded).negated == true,
+      'operands are read as before: condition 18 is still negated')
+
 // --- the block resolves, it does not interpret ----------------------------
 
 check(!block.contains('capabstrue') && !block.contains('capabsfalse'),

@@ -104,5 +104,80 @@ check('Room Manager no longer reads d.room outside the fallback function', funct
     assert(!/\bd\.room\b|\bdev\.room\b/.test(codeOnly(apply)), 'apply cost still reads a scan room');
 });
 
+// --- Placement of rooms with no saved position (#91, AM #54) ----------------------------------------------
+// The real geometry, and the real placement lines of roomPlanRender (from its room index to the first use of a
+// box), run over invented rooms. Not Allocated can be dragged and resized like any room; when it was moved onto
+// the grid a room created on the hub could still land under it.
+function placer(layout) {
+    const render = extractFunction('roomPlanRender');
+    const from = render.indexOf('  let roomIndex = -1;');
+    const to = render.indexOf('    maxBottom = Math.max(maxBottom');
+    if (from < 0 || to < from) throw new Error('roomPlanRender placement block not found');
+    const sandbox = { ROOMPLAN: { layout: layout || {} } };
+    vm.createContext(sandbox);
+    const consts = ['RP_UNASSIGNED', 'RP_W', 'RP_UNALLOC_W'].map(function (n) {
+        const at = source.indexOf('const ' + n + ' =');
+        return source.slice(at, source.indexOf('\n', at));
+    }).join('\n');
+    vm.runInContext(consts + '\n' + extractFunction('roomPlanLayoutKey') + '\n' + extractFunction('roomPlanGeom') + '\n' +
+        'function place(buckets, perRow, columnHeight) {\n  const out = {};\n' + render.slice(from, to) +
+        '    out[key] = g;\n  });\n  return out;\n}', sandbox);
+    return sandbox;
+}
+function overlaps(a, b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+function noOverlaps(boxes) {
+    const keys = Object.keys(boxes);
+    for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) {
+        if (overlaps(boxes[keys[i]], boxes[keys[j]])) return keys[i] + ' overlaps ' + keys[j];
+    }
+    return null;
+}
+const ROOMS = ['', 'Attic', 'Hall', 'Kitchen', 'Office', 'Porch'];
+
+check('with nothing saved, Not Allocated leads and rooms fill the grid in reading order', function () {
+    const sb = placer({});
+    const b = sb.place(ROOMS, 3, 600);
+    const left = 215 + 10;
+    assert(b.__unallocated__.x === 0 && b.__unallocated__.y === 0, 'Not Allocated moved');
+    assert(b.Attic.x === left && b.Attic.y === 0, 'first room not in the first slot');
+    assert(b.Hall.x === left + 188 && b.Kitchen.x === left + 376 && b.Office.x === left && b.Office.y === 114,
+           'rooms are not in reading order: ' + JSON.stringify(b));
+    const why = noOverlaps(b);
+    assert(!why, why);
+});
+
+check('a saved room keeps its saved geometry exactly', function () {
+    const saved = { x: 640, y: 300, w: 250, h: 180 };
+    const b = placer({ Kitchen: saved }).place(ROOMS, 3, 600);
+    assert(JSON.stringify(b.Kitchen) === JSON.stringify(saved), 'saved geometry changed: ' + JSON.stringify(b.Kitchen));
+});
+
+check('a new room avoids rooms dragged onto its slot', function () {
+    const left = 215 + 10;
+    const b = placer({ Attic: { x: left, y: 0, w: 178, h: 104 }, Hall: { x: left + 188, y: 0, w: 178, h: 104 } })
+        .place(ROOMS, 3, 600);
+    const why = noOverlaps(b);
+    assert(!why, why);
+});
+
+check('a new room never lands under a Not Allocated box moved onto the grid', function () {
+    // Not Allocated dragged right and widened over the first two slots of the top row.
+    const b = placer({ __unallocated__: { x: 230, y: 0, w: 360, h: 220 } }).place(ROOMS, 3, 600);
+    assert(JSON.stringify(b.__unallocated__) === JSON.stringify({ x: 230, y: 0, w: 360, h: 220 }), 'Not Allocated moved');
+    const why = noOverlaps(b);
+    assert(!why, why);
+});
+
+check('an unmoved Not Allocated places rooms exactly as before it counted', function () {
+    // Its default column ends before the first grid slot, so taking it into account changes nothing.
+    const sb = placer({});
+    const b = sb.place(ROOMS, 2, 600);
+    const left = 215 + 10;
+    ROOMS.slice(1).forEach(function (n, i) {
+        const want = { x: left + (i % 2) * 188, y: Math.floor(i / 2) * 114, w: 178, h: 104 };
+        assert(JSON.stringify(b[n]) === JSON.stringify(want), n + ' is at ' + JSON.stringify(b[n]));
+    });
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -141,3 +141,18 @@ assert triggerConstructs.containsAll([
 assert !triggerConstructs.contains('trigger:Motion')
 
 println '23 Rule Machine trigger flow and construct assertions passed'
+
+// Rule Machine's `cond: 0` is the empty default on every ordinary state.actions row (HAI #85, #147), so it is not
+// a Simple Conditional Action. Counting it put action:getCondAct on every rule with an action.
+Closure condRule = { Map actions ->
+    [appSettings: [[name: 'actSubType.1', value: 'getOnOffSwitch'], [name: 'actSubType.2', value: 'getDelay']],
+     appState: [[name: 'actions', value: actions]]]
+}
+List placeholder = script.extractRuleConstructs(condRule(['1': [cond: 0, wait: null, rule: null, modes: [:]], '2': [cond: '0']]))
+assert !placeholder.contains('action:getCondAct') : "cond 0 on every row was counted as a Simple Conditional Action: ${placeholder}"
+assert placeholder.contains('action:getOnOffSwitch') : placeholder
+List gated = script.extractRuleConstructs(condRule(['1': [cond: 0], '2': [cond: 3]]))
+assert gated.contains('action:getCondAct') : "a row gated by condition 3 was not counted: ${gated}"
+assert !script.extractRuleConstructs(condRule(['1': [:], '2': [cond: '']])).contains('action:getCondAct')
+println '3 condition-slot construct assertions passed'
+

@@ -412,4 +412,34 @@ check(ops('41', 'getMuteUnmute', [mU: 'true'])?.command == 'unmute' &&
       ops('41', 'getMuteUnmute', [mU: 'false'])?.command == 'mute',
       'mute follows Rule Machine\'s rendering: mU true is unmute, false is mute')
 
+// --- Rule Machine's cond 0 is no condition (HAI #85, #147) -------------------
+// Rule Machine stores `cond: 0` on every ordinary row of state.actions as an empty default; condition slots
+// are numbered from 1. Published as condition "0", every such action read as gated by a condition that
+// does not exist.
+check(script.rmCondSlot(null) == null && script.rmCondSlot('') == null && script.rmCondSlot(' ') == null,
+      'no cond is no condition slot')
+check(script.rmCondSlot(0) == null && script.rmCondSlot('0') == null && script.rmCondSlot('00') == null,
+      'cond 0 is the no-condition placeholder, not slot 0')
+check(script.rmCondSlot(7) == '7' && script.rmCondSlot('7') == '7' && script.rmCondSlot(' 7 ') == '7',
+      'a whole number above zero is the slot')
+check(script.rmCondSlot('07') == '7', 'leading zeros name the same slot')
+check(script.rmCondSlot('x') == null && script.rmCondSlot('-1') == null && script.rmCondSlot('1.5') == null,
+      'anything that is not a whole number is not a slot')
+Map conds = [
+  appSettings: [[name: 'actSubType.1', value: 'getOnOffSwitch'], [name: 'onOff.1', value: 'true'],
+                [name: 'actSubType.2', value: 'getOnOffSwitch'], [name: 'onOff.2', value: 'true'],
+                [name: 'actSubType.3', value: 'getOnOffSwitch'], [name: 'onOff.3', value: 'true'],
+                [name: 'actSubType.4', value: 'getDelay'], [name: 'delaySec.4', value: '5'],
+                [name: 'actSubType.5', value: 'getEndIf']],
+  appState: [[name: 'actionList', value: ['1', '2', '3', '4', '5']],
+             [name: 'actions', value: ['1': [cond: 0, wait: null, rule: null, modes: [:]], '2': [cond: '0'],
+                                       '3': [cond: 7], '4': [cond: 0], '5': [cond: 0]]]]
+]
+List cs = script.extractRuleActions(conds)
+check(!cs[0].containsKey('condition') && !cs[1].containsKey('condition'),
+      'an action stored with cond 0 carries no condition')
+check(cs[2].condition == '7', 'an action gated by condition 7 carries condition "7"')
+check(!cs[3].containsKey('condition') && !cs[4].containsKey('condition'),
+      'a delay or END IF with cond 0 carries no condition')
+
 println "${passed} HAM decode action assertions passed"
