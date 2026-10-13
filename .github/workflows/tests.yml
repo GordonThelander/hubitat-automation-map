@@ -1,0 +1,52 @@
+name: Suites on Groovy 2.4
+
+# Every suite in tests/, through tests/run-all.ps1, on the hub's language level: Groovy 2.4.21 on Java 8.
+# Newer Groovy accepts code the hub rejects and parses JSON the hub parses differently, so a green run on
+# anything newer says little. Mirrors the HAI repository's engine-tests.yml.
+on:
+  # Once per change: pull requests, plus pushes to the branches that release.
+  push:
+    branches: [dev, main, preprod]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '8'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Cache Groovy 2.4.21
+        id: groovy-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/groovy
+          key: groovy-all-2.4.21
+      - name: Download Groovy 2.4.21
+        if: steps.groovy-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/groovy
+          curl -sSLf --retry 4 -o ~/groovy/groovy-all-2.4.21.jar \
+            https://repo1.maven.org/maven2/org/codehaus/groovy/groovy-all/2.4.21/groovy-all-2.4.21.jar
+      - name: Groovy runner
+        # run-all.ps1 calls "<groovy> tests/<suite>.groovy". UTF-8 is set explicitly because the runner's
+        # default encoding breaks suites that read non-ASCII text (node-entry-status.groovy).
+        run: |
+          cat > ~/groovy/groovy <<'SH'
+          #!/usr/bin/env bash
+          exec java -Dfile.encoding=UTF-8 -cp "$HOME/groovy/groovy-all-2.4.21.jar" groovy.ui.GroovyMain "$@"
+          SH
+          chmod +x ~/groovy/groovy
+      - name: Run every suite
+        shell: pwsh
+        run: ./tests/run-all.ps1 -Groovy "$HOME/groovy/groovy" -Node node
