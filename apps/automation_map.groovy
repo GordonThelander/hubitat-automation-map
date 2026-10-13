@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.38'
+@Field static final String APP_VERSION = '2.4.39'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-// Bumped 24->25 (v2.4.38): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
+// Bumped 24->25 (v2.4.39): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
 // rmConstructs, nor reaches the detail decode as `condition: "0"`.
 @Field static final String GRAPH_SCHEMA = '25'
 
@@ -11485,12 +11485,28 @@ Map hamDetailDateOperand(String side, String num, Map settingValues) {
     return out
 }
 
+// The settings prefixes a Rule Machine condition stores under its own number (rCapab_8, not8, starting8 ...),
+// as read by hamDetailCondition and its operand helpers and as seen in the captured decode files.
+@Field static final Set<String> RM_CONDITION_KEY_PREFIXES = ([
+    'rCapab_', 'rDev_', 'rDev', 'state_', 'not', 'RelrDev_', 'AllrDev_', 'AllrDev', 'isDev_', 'isVar_',
+    'xVar_', 'xVar', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
+    'starting', 'startingA', 'ending', 'endingA', 'startSunriseOffset', 'startSunsetOffset',
+    'endSunriseOffset', 'endSunsetOffset', 'monthStart', 'dayStart', 'monthEnd', 'dayEnd',
+    'timeStart', 'timeEnd', 'startDateType', 'endDateType'
+] as Set<String>)
+
 Map hamDetailCondition(Map settingDevices, String num, String capability, Map settingValues) {
     Map operands = [:]
+    // Only this condition's own keys. Rule Machine numbers conditions, actions and triggers in one settings
+    // namespace, so a suffix match also collected action N's actSubType.N / pvTF.N, a trigger's tCapabN, and
+    // condition 18's keys under condition 8. A key belongs here when it is a condition-family prefix followed
+    // by exactly this number.
     Map raw = [:]
     settingValues.each { Object k, Object v ->
         String name = "${k}"
-        if (name.endsWith(num) || name.endsWith("_${num}")) raw[name] = "${v ?: ''}"
+        def m = name =~ /^([A-Za-z]+_?)(\d+)$/
+        if (!m.matches() || m.group(2) != num) return
+        if (RM_CONDITION_KEY_PREFIXES.contains(m.group(1))) raw[name] = "${v ?: ''}"
     }
     String comparator = "${settingValues["RelrDev_${num}"] ?: ''}".trim()
 

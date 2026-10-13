@@ -4,9 +4,12 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
-## 2.4.38
+## 2.4.39
 
-Rule Machine's `cond: 0` is a "no condition" placeholder, not condition slot 0. RM stores it on many ordinary action rows in `state.actions` (block ends, delays and messages among them), while condition slots are numbered from 1 and a real Simple Conditional Action stores its slot, for example `cond: 1`. Both readers of `cond` treated any non-empty value as a binding: `extractRuleConstructs` counted `action:getCondAct` for every rule carrying a placeholder, and `extractRuleActions` published `condition: "0"` in the HAI detail decode, which HAI then refused as a gate on a condition it did not hold. A new `rmCondSlot` accepts only a whole number above zero, and both readers use it. GRAPH_SCHEMA 24 to 25, because the saved map's `rmConstructs` change. Hub cost: none added; the same `state.actions` map already read per rule during a scan is tested with one regex per row.
+Version 2.4.38 is left to the scan-outcome change being made beside this one.
+
+
+Rule Machine's `cond: 0` is a "no condition" placeholder, not condition slot 0. RM stores it on many ordinary action rows in `state.actions` (block ends, delays and messages among them), while condition slots are numbered from 1 and a real Simple Conditional Action stores its slot, for example `cond: 1`. Both readers of `cond` treated any non-empty value as a binding: `extractRuleConstructs` counted `action:getCondAct` for every rule carrying a placeholder, and `extractRuleActions` published `condition: "0"` in the HAI detail decode, which HAI then refused as a gate on a condition it did not hold. A new `rmCondSlot` accepts only a whole number above zero, and both readers use it. GRAPH_SCHEMA 24 to 25, because the saved map's `rmConstructs` change. Second fix, same release: a condition's `raw` keys in the detail decode were collected by suffix, so condition 8 picked up action 8's `actSubType.8` and `pvTF.8`, trigger keys such as `tCapab8`, and condition 18's keys. Rule Machine numbers conditions, actions and triggers in one settings namespace. `raw` now holds only keys that are a condition-family prefix (`RM_CONDITION_KEY_PREFIXES`) followed by exactly that number. Hub cost: none added; the same `state.actions` map already read per rule during a scan is tested with one regex per row, and the condition collector does one regex per setting it already walked.
 
 ## 2.4.36
 
