@@ -23986,10 +23986,13 @@ function roomPlanRender() {
   let h = '';
   let roomIndex = -1;
   // Every saved room's place is known before any unsaved room is placed, so a free slot means free of all of them.
-  const taken = buckets.filter(function (n) { return n !== RP_UNASSIGNED; }).map(function (n) {
-    const sv = (ROOMPLAN.layout || {})[roomPlanLayoutKey(n)];
-    return sv && sv.w ? { x: sv.x, y: sv.y, w: sv.w, h: sv.h } : null;
-  }).filter(function (r) { return r; });
+  // Not Allocated counts too: it can be dragged and resized like any room, and left out it could still sit on top
+  // of a new room's slot (#91). Its default column stops short of the grid, so an unmoved one changes nothing.
+  const taken = [roomPlanGeom(RP_UNASSIGNED, -1, perRow, columnHeight, [])].concat(
+    buckets.filter(function (n) { return n !== RP_UNASSIGNED; }).map(function (n) {
+      const sv = (ROOMPLAN.layout || {})[roomPlanLayoutKey(n)];
+      return sv && sv.w ? { x: sv.x, y: sv.y, w: sv.w, h: sv.h } : null;
+    }).filter(function (r) { return r; }));
   buckets.forEach(function (name, i) {
     const key = roomPlanLayoutKey(name);
     if (name !== RP_UNASSIGNED) roomIndex += 1;
