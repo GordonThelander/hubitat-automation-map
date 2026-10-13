@@ -4,6 +4,10 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.35
+
+Dev channel. Status checks stay fast during a scan. Between reading the apps and saving the map, the scan used to hold its whole app list in the app's state, so every status check in that stretch loaded it and was slow. The list now stays in memory, with a second File Manager file so the scan can still finish if the app is updated part way through. Apart from that file, nothing here writes to your hub.
+
 ## 2.4.34
 
 Dev channel. Faster map and endpoints; scan state fixes. The saved map and app list move from the app's state to one File Manager file, so a status check or settings page no longer loads about 1.1 MB on every call; an existing map moves to it in a background job shortly after the first page or status check, no scan needed. An unchanged map is not serialised again on every open. The Rule Machine coverage report and the webCoRE migration ratings read the HAI capability list once per version instead of on every request, and a piston rating run builds its device index once per scan. A settings page, a status poll or a refused scan no longer writes state that a running scan could lose its app list to. Apart from that file, nothing here writes to your hub.

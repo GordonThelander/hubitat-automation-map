@@ -63,11 +63,13 @@ check(source.contains('boolean graphStale = graphIsStale() && !scanActive && !sc
 // 5. Publication fails closed on an impossible collapse.
 String finishSlice = slice('Integer enumeratedApps =', 'atomicState.graphVersion = GRAPH_SCHEMA')
 check(finishSlice.contains('publishRefusal(enumeratedApps, collectedApps, witnessedApps)') &&
-      finishSlice.contains('appPhaseWitnessCount(lockToken)'),
-      'the publish decision reads the atomicState witness beside the two state lists (HAI #58)')
+      finishSlice.contains('appPhaseWitnessCount(logicalGen)'),
+      'the publish decision reads the atomicState witness of its generation beside the kept list (HAI #58)')
+check(finishSlice.contains('Integer collectedApps = heldInfo.size()') && !finishSlice.contains('state.appInfo'),
+      'the publish counts the kept list (memory or pending file), never a state copy a write-back can shorten')
 check(finishSlice.contains('state.scanError = why'),
       'the refusal surfaces an error rather than failing silently')
-check(finishSlice.indexOf('return') in 0..finishSlice.indexOf('Map graph = buildGraph()'),
+check(finishSlice.indexOf('return') in 0..finishSlice.indexOf('Map graph = buildGraph('),
       'the refusal returns before the graph is built or the version is stamped')
 check(!finishSlice.contains('partial'),
       'no partial graph is published, per the ruling in queue 891')
@@ -110,7 +112,7 @@ check(source.contains('recordAppPhaseWitness(scan.lockToken as String, (scan.app
 check(source.contains('recordAppPhaseWitness(lockToken, 0)'),
       'the empty-app-list path records that it read none')
 
-// The registry step, the other reader of state.appInfo (HAI #59).
+// The registry step, the other reader of the kept app list (HAI #59).
 String registryFn = slice('void fetchRegistry(jobData = null)', "runIn(1, 'finishScan'")
 check(registryFn.contains('appPhaseWitnessCount(lockToken)') && registryFn.contains('heldApps < witnessedApps'),
       'registry matching compares the app list it can see with the witness')

@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.34'
+@Field static final String APP_VERSION = '2.4.35'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -425,7 +425,7 @@ String lockVsState() {
            " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
            " running=${state.scanRunning == true} phase=${scanProgress().phase ?: '-'}" +
            " graph=${state.graphCommittedAtLocal != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
-           " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
+           " appInfo=${appInfoData().size()}" +
            " appResultsReady=${state.appResultsReady == true}"
 }
 
@@ -1148,7 +1148,12 @@ Map graphData() {
 
 // The app list: the one being collected while a scan runs, the published one otherwise.
 Map appInfoData() {
-    if (scanEffectivelyActive()) return (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    if (scanEffectivelyActive()) {
+        // 2.4.35: the in-progress list is in memory (APP_RESULTS), not state; empty until the app phase finishes.
+        String gen = scanGenerationToken()
+        Map held = gen ? heldAppResults(gen, state.activeGenerationToken as String) : null
+        return held ? ((held.appInfo ?: [:]) as Map) : [:]
+    }
     Map published = publishedScan()
     if (published != null) return (published.appInfo ?: [:]) as Map
     return (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
@@ -1156,7 +1161,8 @@ Map appInfoData() {
 
 // For pages that only show the count, so they never read the file.
 int appCountForDisplay() {
-    if (scanEffectivelyActive() || state.publishedAppCount == null) return ((state.appInfo ?: [:]) as Map).size()
+    if (scanEffectivelyActive()) return appInfoData().size()
+    if (state.publishedAppCount == null) return ((state.appInfo ?: [:]) as Map).size()
     return state.publishedAppCount as Integer
 }
 
@@ -2067,8 +2073,9 @@ ConcurrentHashMap liveAppScan() {
 // by the steps after it. state.appInfo can be erased between them: any execution that loaded state before the
 // finalize and ends after it writes its whole older snapshot back. Measured 2026-10-10 on 2.4.19 - finalize
 // held 216 apps at 07:01:59, the registry step still saw 216 at 07:02:07, and the graph build a second later
-// saw 0 and refused to publish. Static, so that write-back cannot reach it; a code reload wipes it, and then
-// the publish guard and its retry remain the fallback.
+// saw 0 and refused to publish. Static, so that write-back cannot reach it. Since 2.4.35 it is the only
+// in-memory copy (state no longer holds the list mid-scan), and the pending file keepAppResults() writes covers
+// a code reload; with both gone the publish guard refuses and its retry remains the fallback.
 @Field static final ConcurrentHashMap<String, Map> APP_RESULTS = new ConcurrentHashMap<>()
 @Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
 
@@ -2169,30 +2176,79 @@ void sweepGenerationRecords() {
     }
 }
 
-// Puts this generation's app list back into state when a stale write-back has erased it since the app phase
-// finished, from the copy the finalize kept in APP_RESULTS. Returns true when it restored anything. Only ever
-// restores a LARGER list than state holds, so it can never shrink what a later execution wrote.
-boolean restoreAppResultsIfLost(String lockToken) {
-    Map held = APP_RESULTS.get(genKey(lockToken)) as Map
-    if (held == null) return false
-    boolean restored = false
-    Map heldInfo = (held.appInfo ?: [:]) as Map
-    int inState = ((state.appInfo ?: [:]) as Map).size()
-    if (heldInfo.size() > inState) {
-        state.appInfo = new LinkedHashMap(heldInfo)
-        log.info "${app.label}: another page or job had overwritten the app list this scan had just read (${inState} of ${heldInfo.size()}); restored it"
-        restored = true
+// 2.4.35: the finished app list no longer goes into state at all. Between the app phase's finalize and the
+// publish it used to sit in state.appInfo (every rule's flowchart included), so every execution in that
+// window - fetchRegistry, finishScan and each /scan-status poll - loaded and wrote it, and a poll in that window
+// was many times slower than an idle one. It is kept here instead:
+//   - APP_RESULTS, keyed by generation: static, so a stale whole-snapshot write-back cannot reach it (HAI #58,
+//     #59 - the reason restoreAppResultsIfLost() existed, now nothing in state to restore);
+//   - a pending File Manager file, written once by the finalize, so a code reload (which wipes every static)
+//     between the finalize and the publish still finds the list. clearAbandonedScan()'s recovery reaches
+//     finishScan() with a fresh lock token, so the file is matched on the generation, not on that token.
+String pendingAppResultsFileName() {
+    return "automation-map-${app.id}-scan-pending.json".toString()
+}
+
+void keepAppResults(String lockToken, Map appInfo, List appIds) {
+    Long createdAt = now()
+    APP_RESULTS.put(genKey(lockToken), [appInfo: new LinkedHashMap(appInfo ?: [:]),
+                                        appIds: new ArrayList(appIds ?: []), createdAt: createdAt])
+    try {
+        String body = JsonOutput.toJson([gen: genKey(lockToken), createdAt: createdAt,
+                                         appIds: (appIds ?: []), appInfo: (appInfo ?: [:])])
+        // The kept copy is the JSON round trip, the same plain types the graph build read back from state
+        // before 2.4.35 (GStrings become Strings and so on), so the published map is built from identical data.
+        Object roundTrip = new groovy.json.JsonSlurper().parseText(body)
+        if (roundTrip instanceof Map) {
+            Map rt = roundTrip as Map
+            APP_RESULTS.put(genKey(lockToken), [appInfo: new LinkedHashMap((rt.appInfo ?: [:]) as Map),
+                                                appIds: new ArrayList((rt.appIds ?: []) as List), createdAt: createdAt])
+        }
+        uploadHubFile(pendingAppResultsFileName(), body.getBytes('UTF-8'))
+    } catch (Exception e) {
+        // Memory still holds it; only a code reload before the publish would now lose it, and the publish
+        // guard refuses an empty or short list rather than publishing it.
+        log.warn "${app.label}: the scan's app list could not be saved to its file, keeping it in memory only: ${e.message}"
     }
-    // The enumerated list separately: Claude HAM's 2.4.21 check saw it erased while the app list survived
-    // (enumerated 0, collected 188), which left the publish guard with nothing to compare.
-    List heldIds = (held.appIds ?: []) as List
-    int idsInState = ((state.appIds ?: []) as List).size()
-    if (heldIds.size() > idsInState) {
-        state.appIds = new ArrayList(heldIds)
-        log.info "${app.label}: another page or job had overwritten the list of apps this scan enumerated (${idsInState} of ${heldIds.size()}); restored it"
-        restored = true
+}
+
+// This generation's kept app list, [appInfo:, appIds:], or null. Memory first; the pending file only when
+// fromFile is true (the registry step and the publish, never a status poll), and only when the file was
+// written by the same generation (lockToken or the logical generation a recovery passes).
+Map heldAppResults(String lockToken, String logicalGen = null, boolean fromFile = false) {
+    List<String> keys = ([lockToken, logicalGen].findAll { it } as List<String>).collect { genKey(it as String) }.unique()
+    for (String k : keys) {
+        Map held = APP_RESULTS.get(k) as Map
+        if (held != null) return held
     }
-    return restored
+    if (!fromFile || keys.isEmpty()) return null
+    try {
+        byte[] bytes = downloadHubFile(pendingAppResultsFileName())
+        if (!bytes) return null
+        Object parsed = new groovy.json.JsonSlurper().parseText(new String(bytes, 'UTF-8'))
+        if (!(parsed instanceof Map) || !keys.contains("${(parsed as Map).gen}".toString())) return null
+        Map p = parsed as Map
+        Map held = [appInfo: new LinkedHashMap((p.appInfo ?: [:]) as Map), appIds: new ArrayList((p.appIds ?: []) as List),
+                    createdAt: ((p.createdAt ?: now()) as Long)]
+        keys.each { String k -> APP_RESULTS.put(k, held) }
+        log.info "${app.label}: read this scan's app list back from its file (${(held.appInfo as Map).size()} apps)"
+        return held
+    } catch (Exception e) {
+        if (diagOn()) log.info "${app.label}: no saved app list for this scan (${e.message})"
+        return null
+    }
+}
+
+// The generation an active scan's readers belong to: the live lock (unwrapped from finishGeneration()'s
+// "finishing:<token>:<since>" marker), else the durable generation token.
+String scanGenerationToken() {
+    String live = SCAN_LOCKS.get("${app.id}") as String
+    if (live != null && live.startsWith('finishing:')) {
+        String inner = live.substring('finishing:'.length())
+        int cut = inner.lastIndexOf(':')
+        live = cut > 0 ? inner.substring(0, cut) : inner
+    }
+    return live ?: (state.activeGenerationToken as String)
 }
 
 // The most recent generation's kept app list for this app, or null. Used by the self-heal after a publish,
@@ -2436,7 +2492,8 @@ Map startScan(String entry = 'unknown') {
     // clearAbandonedScan to age out.
     state.scanHeartbeat = now()
     state.appIds = []
-    state.appInfo = [:]
+    // 2.4.35: the scan's app list never lives in state (see keepAppResults()); drop any legacy key.
+    if (state.containsKey('appInfo')) state.remove('appInfo')
     // Durable proof that the async app accumulator has been published in
     // full. state.scanQueue is deliberately always empty in the async design,
     // so it cannot distinguish "all apps committed" from "the @Field static
@@ -2963,6 +3020,7 @@ void startAppPhase(String lockToken) {
     if (appIds.isEmpty()) {
         // A genuinely app-less hub has a complete empty result. Commit the
         // same invariant finalizeAppPhase sets for a non-empty app scan.
+        keepAppResults(lockToken, [:], [])
         state.appResultsReady = true
         recordAppPhaseWitness(lockToken, 0)
         beginRegistryAndFinish(lockToken)
@@ -3006,6 +3064,7 @@ void startAppPhase(String lockToken) {
     // The caller's own remembered token, carried forward - see this
     // function's own comment for why it is deliberately never read back
     // from anywhere shared/mutable instead.
+    scan.appIds = new ArrayList(appIds)
     scan.lockToken = lockToken
     APP_SCANS[scanId] = scan
     state.appScanId = scanId
@@ -3300,22 +3359,22 @@ void finalizeAppPhase(String scanId) {
     unschedule('appClaimReaper')
 
     try {
-        state.appInfo = new LinkedHashMap(scan.appInfo as Map)
-        APP_RESULTS.put(genKey(scan.lockToken as String), [appInfo: new LinkedHashMap(scan.appInfo as Map),
-                                                         appIds: new ArrayList((state.appIds ?: []) as List), createdAt: now()])
+        // 2.4.35: kept in memory and in the pending file, not in state - see keepAppResults().
+        List enumeratedIds = (scan.appIds ?: state.appIds ?: []) as List
+        keepAppResults(scan.lockToken as String, scan.appInfo as Map, enumeratedIds)
         // The independent witness the publish guard and the registry step read
-        // (HAI #58, #59). state.appIds and state.appInfo live in the same
-        // snapshot, so a stale whole-snapshot write-back from a concurrent
-        // execution (normally a slow page render) erases both together and they
-        // still agree. atomicState is written at once and that write-back cannot
-        // move it, so it records what this generation actually read.
+        // (HAI #58, #59). It used to be the only defence against a stale
+        // whole-snapshot write-back erasing state.appIds and state.appInfo
+        // together; the list is no longer in state, but the witness stays as an
+        // independent count of what this generation actually read, in
+        // atomicState where no write-back can move it.
         recordAppPhaseWitness(scan.lockToken as String, (scan.appInfo as Map).size())
         // After the write, not before it. Traced before, this read the
         // execution's pre-commit snapshot and reported collected=0 on a
         // healthy scan - true of that snapshot, and badly misleading about
         // the generation. Measured on the 2026-10-01 fresh install.
-        genTrace('app-phase-finalized', [collected: ((state.appInfo ?: [:]) as Map).size(),
-                                         enumerated: ((state.appIds ?: []) as List).size()])
+        genTrace('app-phase-finalized', [collected: (scan.appInfo as Map).size(),
+                                         enumerated: enumeratedIds.size()])
         state.deviceLabels = new LinkedHashMap(scan.labels as Map)
 
         // Plain values, not accumulation - scan.decoded.get() etc. are
@@ -3403,15 +3462,15 @@ void fetchRegistry(jobData = null) {
     List types = discoveredAppTypes()
     List matches = []
     Map meta = [state: 'OK', fetched: null, entries: 0, matched: 0, error: null, schemaVersion: null]
-    // Matching joins the registry against the app types in state.appInfo. If a
-    // stale write-back has emptied that since the app phase, every entry
-    // matches nothing and the last good set would be replaced by an empty one
-    // with no error to stop it (HAI #59). Compared with the app phase's own
-    // witness, which that write-back cannot reach; on a loss the matching is
-    // skipped and recorded as an error, so the last good set is kept.
-    restoreAppResultsIfLost(lockToken)
+    // Matching joins the registry against the app types the app phase kept
+    // (2.4.35: memory or its pending file, no longer state.appInfo). If that
+    // list is missing or short, every entry matches nothing and the last good
+    // set would be replaced by an empty one with no error to stop it
+    // (HAI #59). Compared with the app phase's own witness; on a loss the
+    // matching is skipped and recorded as an error, so the last good set is kept.
+    Map heldResults = heldAppResults(lockToken, null, true)
     Integer witnessedApps = appPhaseWitnessCount(lockToken)
-    int heldApps = ((state.appInfo ?: [:]) as Map).size()
+    int heldApps = heldResults ? ((heldResults.appInfo ?: [:]) as Map).size() : 0
     String inventoryLost = (witnessedApps != null && heldApps < witnessedApps) ?
         "this step could not see the app list the scan had just read (${heldApps} of ${witnessedApps}), so the last matches were kept" : null
 
@@ -3505,9 +3564,10 @@ void finishScan(data = null) {
     // own comment.
     String logicalGen = (data?.logicalGen ?: lockToken) as String
     boolean finished = finishGeneration(lockToken, null, logicalGen) {
-        // First, before the feed lookup and the publish guard read it: put back an app list a stale
-        // write-back erased after the app phase (see APP_RESULTS).
-        restoreAppResultsIfLost(lockToken)
+        // The app list the app phase kept (memory, else the pending file after a code reload) - see
+        // keepAppResults(). Never state, so no stale write-back can have shortened it.
+        Map heldResults = heldAppResults(lockToken, logicalGen, true)
+        Map heldInfo = heldResults ? ((heldResults.appInfo ?: [:]) as Map) : [:]
         // v2.0.14: authoritative Hub Variable inventory. A synchronous,
         // in-process call (getAllGlobalVars()) with no
         // async round trip of its own, so it is called and published here,
@@ -3605,12 +3665,15 @@ void finishScan(data = null) {
         // reaching this line with an unequal pair has lost records between
         // finalize and here - which is the failure this guard exists for.
         //
-        // Both of those lists are in state, so a stale write-back erases them as
-        // a pair and they still agree (HAI #58). The witness is read from
-        // atomicState, which that write-back cannot reach.
-        Integer enumeratedApps = ((state.appIds ?: []) as List).size()
-        Integer collectedApps = ((state.appInfo ?: [:]) as Map).size()
-        Integer witnessedApps = appPhaseWitnessCount(lockToken)
+        // 2.4.35: both counts come from the kept list (memory, else the pending
+        // file), which no stale write-back reaches; state.appIds still counts as
+        // an enumeration if the kept list was lost entirely. The witness is read
+        // from atomicState, independent of both (HAI #58).
+        Integer enumeratedApps = Math.max(((heldResults?.appIds ?: []) as List).size(), ((state.appIds ?: []) as List).size())
+        Integer collectedApps = heldInfo.size()
+        // logicalGen, not lockToken: equal on a normal finish, and the generation the witness was written
+        // for when clearAbandonedScan()'s recovery finishes under a fresh token.
+        Integer witnessedApps = appPhaseWitnessCount(logicalGen)
         String why = publishRefusal(enumeratedApps, collectedApps, witnessedApps)
         if (why != null) {
             log.warn "${app.label}: refusing to publish - ${why}"
@@ -3622,15 +3685,22 @@ void finishScan(data = null) {
         }
         genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
         atomicState.refusalRetry = null
-        Map graph = buildGraph()
+        Map graph = buildGraph(heldInfo)
         state.scanHeartbeat = now()
         // Flowcharts are now in graph.flows, so drop the copy in appInfo. They were
         // 61KB of a 244KB state on this hub, a quarter of everything stored, held
         // twice for no reason. buildGraph falls back to the existing graph.flows on
         // a rebuild, so nothing is lost when the graph is rebuilt without a rescan.
-        Map appInfo = (state.appInfo ?: [:]) as Map
-        appInfo.each { String appId, info ->
-            if (info instanceof Map) (info as Map).remove('flow')
+        // Copies, so the kept list (and the self-heal that rebuilds from it) keeps its flowcharts.
+        Map appInfo = new LinkedHashMap()
+        heldInfo.each { String appId, info ->
+            if (info instanceof Map) {
+                Map copy = new LinkedHashMap(info as Map)
+                copy.remove('flow')
+                appInfo[appId] = copy
+            } else {
+                appInfo[appId] = info
+            }
         }
         // Paired marker, same value to both halves: a later execution comparing
         // them can prove whether its own snapshot predates this commit. See
@@ -16456,10 +16526,14 @@ String scanStatusJson(boolean forceRunning = false) {
     // for state's own current phase, so total is the correct fallback.
     def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (progDone ?: progTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
+    boolean scanLockHeld = SCAN_LOCKS.get("${app.id}") != null
     return JsonOutput.toJson([
         running: forceRunning || scanEffectivelyActive(),
         // 'running' with running:false means the last scan was abandoned, not finished (2.4.33).
-        lastScanOutcome: atomicState.lastScanOutcome,
+        // 2.4.35: while this app holds the scan lock both answers are fixed ('running', and no graph version
+        // until the publish), so the poll reads them without touching atomicState, which shares the app's
+        // stored state and may load all of it on each read.
+        lastScanOutcome: scanLockHeld ? 'running' : atomicState.lastScanOutcome,
         alreadyStarting: forceRunning,
         phase: progPhase ?: null,
         done: done,
@@ -16477,7 +16551,7 @@ String scanStatusJson(boolean forceRunning = false) {
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
         heartbeat: heartbeat,
-        graphVersion: graphVersionNow(),
+        graphVersion: scanLockHeld ? null : graphVersionNow(),
     ])
 }
 
