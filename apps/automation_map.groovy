@@ -2094,6 +2094,12 @@ ConcurrentHashMap liveAppScan() {
 // not replaced by this.
 @Field static final ConcurrentHashMap<String, Map> REGISTRY_RESULTS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> TERMINAL_TOMBSTONES = new ConcurrentHashMap<>()
+// The last scan's outcome ('running', 'completed', 'failed'), by app id. atomicState.lastScanOutcome
+// alone was not enough: like atomicState.graphVersion (2.4.34), another execution's stale state write-back can
+// null it after a scan has finished, and /scan-status then reported no outcome for a scan that had plainly
+// completed (seen on a hub 2026-10-13, reported on HAI). Static, so no state commit can
+// reach it; atomicState is kept as the fallback after a code reload, which wipes every static. See scanOutcomeNow().
+@Field static final ConcurrentHashMap<String, String> SCAN_OUTCOMES = new ConcurrentHashMap<>()
 // Each generation's finished app list (appInfo and appIds), written by the app phase's finalize and read back
 // by the steps after it. state.appInfo can be erased between them: any execution that loaded state before the
 // finalize and ends after it writes its whole older snapshot back. Measured 2026-10-10 on 2.4.19 - finalize
@@ -2367,7 +2373,9 @@ boolean finishGeneration(String token, String error = null, String logicalGen = 
         state.scanError = "${ex.message}"
     } finally {
         genTrace('generation-terminated', [claimant: finishingValue, logical: (logicalGen ?: token)])
-        atomicState.lastScanOutcome = (error != null || state.scanError) ? 'failed' : 'completed'
+        String outcome = (error != null || state.scanError) ? 'failed' : 'completed'
+        SCAN_OUTCOMES.put("${app.id}".toString(), outcome)
+        atomicState.lastScanOutcome = outcome
         TERMINAL_TOMBSTONES.put(tombstoneKey, now())
         state.scanRunning = false
         // Before the lock goes, or currentGenerationToken() can no longer
@@ -2525,6 +2533,7 @@ Map startScan(String entry = 'unknown') {
     // accumulator disappeared on a code reload". Recovery may build a graph
     // only after this marker is committed true by finalizeAppPhase.
     state.appResultsReady = false
+    SCAN_OUTCOMES.put("${app.id}".toString(), 'running')
     atomicState.lastScanOutcome = 'running'
     atomicState.graphVersion = null
     // Dropped, not merely marked stale. Holding the previous graph while
@@ -16787,13 +16796,17 @@ String scanStatusJson(boolean forceRunning = false) {
     def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (progDone ?: progTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
     boolean scanLockHeld = SCAN_LOCKS.get("${app.id}") != null
+    String outcome = scanOutcomeNow(scanLockHeld)
     return JsonOutput.toJson([
         running: forceRunning || scanEffectivelyActive(),
         // 'running' with running:false means the last scan was abandoned, not finished (2.4.33).
         // 2.4.35: while this app holds the scan lock both answers are fixed ('running', and no graph version
         // until the publish), so the poll reads them without touching atomicState, which shares the app's
         // stored state and may load all of it on each read.
-        lastScanOutcome: scanLockHeld ? 'running' : atomicState.lastScanOutcome,
+        lastScanOutcome: outcome,
+        // The same value under the name callers poll for (HAI's endpoint scans): 'running' while the
+        // scan runs, then 'completed' or 'failed'. 'running' with running:false is a scan that was abandoned.
+        outcome: outcome,
         alreadyStarting: forceRunning,
         phase: progPhase ?: null,
         done: done,
@@ -16813,6 +16826,21 @@ String scanStatusJson(boolean forceRunning = false) {
         heartbeat: heartbeat,
         graphVersion: scanLockHeld ? null : graphVersionNow(),
     ])
+}
+
+// The last scan's outcome for /scan-status. While this app holds the scan lock it is 'running' without a read of
+// atomicState (2.4.35). Otherwise the static record of this code load, then atomicState; when both are gone (a code
+// reload, then a stale write-back) a finished scan is still told apart from none: a scan error is 'failed', a map
+// with a version is 'completed', and nothing at all is null.
+String scanOutcomeNow(boolean scanLockHeld) {
+    if (scanLockHeld) return 'running'
+    String kept = SCAN_OUTCOMES.get("${app.id}".toString())
+    if (kept != null) return kept
+    def stored = atomicState.lastScanOutcome
+    if (stored != null) return stored as String
+    if (state.scanRunning == true) return 'running'
+    if (state.scanError) return 'failed'
+    return graphVersionNow() != null ? 'completed' : null
 }
 
 Map renderMapMapping() {
