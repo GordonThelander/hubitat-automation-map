@@ -73,7 +73,9 @@ const EDGES = [
     { from: 'a1', to: 'd2', kind: 'constraint' },
     { from: 'a1', to: 'd4', kind: 'action', stateful: true },
     { from: 'a1', to: 'lv2', kind: 'read' },
-    { from: 'a7', to: 'v1', kind: 'usesVar' }
+    { from: 'a7', to: 'v1', kind: 'usesVar' },
+    // HAI #60: named only by the hub's own variable list, never decoded.
+    { from: 'a9', to: 'v2', kind: 'usesVar', direction: 'unknown', source: 'hub-variables' }
 ];
 
 global.ALL_NODES = NODES;
@@ -82,7 +84,9 @@ global.SCAN_META = { appsUnreadable: 0, devicesUnreadable: 0, scanError: null };
 global.RM_CONSTRUCT_VOCABULARY = {};
 global.GRAPH = {
     hubVariableUnresolvedReferences: [],
-    webcoreVariableDecodeIssues: [{ appId: 'a8', error: 'invalid-json' }]
+    webcoreVariableDecodeIssues: [{ appId: 'a8', error: 'invalid-json' }],
+    hubVariableReconciliation: { status: 'complete', compared: 2, agreeing: 1, hubListedEdges: 1,
+        hubOnlyNotInMap: [], decodedOnly: [{ variable: 'Used Direction Unknown', app: 'a7' }] }
 };
 // Evaluated as an expression: a strict-mode eval keeps function declarations in
 // its own scope, so the declaration form would not be visible here.
@@ -214,6 +218,21 @@ check('export summary, scan gap and neutral insight match the relationship data'
     if (payload.scan.status !== 'complete-with-gaps') throw new Error('export scan gap missing');
     if (payload.scan.webcoreVariableDecodeIssues.length !== 1) throw new Error('export decode issue missing');
     if (payload.insights.hubVariables.directionUnknownUsage.length !== 1) throw new Error('unknown-use insight missing');
+});
+
+check('a use named only by the hub list is kept apart from every decoded finding', function () {
+    if (D.hubVar.noDecodedUsage.indexOf('v2') < 0) throw new Error('v2 left noDecodedUsage, but nothing decoded uses it');
+    if (D.hubVar.directionUnknownUsage.indexOf('v2') >= 0) throw new Error('v2 counted as a webCoRE direction-unknown use');
+    if (JSON.stringify(D.hubVar.listed['v2']) !== JSON.stringify(['a9'])) throw new Error('hub-listed use not recorded');
+});
+check('the export marks the hub-listed edge, counts it, and carries the comparison', function () {
+    const e = payload.edges.filter(function (x) { return x.fromId === 'a9' && x.toId === 'v2'; })[0];
+    if (!e || e.source !== 'hub-variables' || e.direction !== 'unknown') throw new Error('hub-listed edge not marked');
+    if (payload.edges.some(function (x) { return x !== e && x.source !== null; })) throw new Error('a decoded edge gained a source');
+    if (payload.summary.hubListedVariableUseCount !== 1) throw new Error('hub-listed count wrong');
+    const r = payload.insights.hubVariables.hubListReconciliation;
+    if (!r || r.variablesCompared !== 2 || r.variablesAgreeing !== 1 || r.hubListedEdgeCount !== 1) throw new Error('comparison missing');
+    if (r.decodedOnly.length !== 1 || r.decodedOnly[0].app.id !== 'a7') throw new Error('decoded-only use missing');
 });
 
 console.log(pass + ' passed, ' + fail + ' failed');
