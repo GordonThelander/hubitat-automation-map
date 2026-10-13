@@ -127,6 +127,70 @@ function Find-SuspectDollarSigns([string]$Text) {
     return $findings
 }
 
+# Lines holding a backslash that sits inside a triple-quoted ("""...""" or
+# '''...''') region - the HTML/JavaScript templates, where Groovy consumes
+# the escape before the browser sees it. Code outside those regions is plain
+# Groovy, so a slashy regex there (~/\d+/, ==~ /\d+/, =~ /\d+/) is safe and
+# is not reported. The scan tracks triple-quoted regions and /* */ comments
+# across lines; single- and double-quoted strings, slashy strings and //
+# comments are skipped within their own line so a """ inside them does not
+# toggle a region. An unterminated region is itself reported, so a misparse
+# fails loudly instead of passing the rest of the file silently. Kept in step
+# with check_template.sh, which applies the same rule.
+function Find-TemplateBackslashLines([string[]]$Lines) {
+    $findings = New-Object 'System.Collections.Generic.List[object]'
+    $state = ''
+    $openedAt = 0
+    $slashyAfter = '~(,=!&|?:[{;+-*%<>'
+    for ($n = 0; $n -lt $Lines.Count; $n++) {
+        $line = $Lines[$n]
+        $len = $line.Length
+        $flagged = $false
+        $i = 0
+        while ($i -lt $len) {
+            $c = $line[$i]
+            if ($state -eq '/*') {
+                if ($c -eq '*' -and ($i + 1) -lt $len -and $line[$i + 1] -eq '/') { $state = ''; $i += 2 } else { $i++ }
+                continue
+            }
+            if ($state -ne '') {
+                if ($c -eq '\') { $flagged = $true; $i += 2; continue }
+                if (($i + 2) -lt $len -and $line.Substring($i, 3) -eq $state) { $state = ''; $i += 3; continue }
+                $i++
+                continue
+            }
+            if (($i + 2) -lt $len -and ($line.Substring($i, 3) -eq '"""' -or $line.Substring($i, 3) -eq "'''")) {
+                $state = $line.Substring($i, 3); $openedAt = $n + 1; $i += 3; continue
+            }
+            if ($c -eq '"' -or $c -eq "'") {
+                $j = $i + 1
+                while ($j -lt $len -and $line[$j] -ne $c) { if ($line[$j] -eq '\') { $j += 2 } else { $j++ } }
+                $i = $j + 1
+                continue
+            }
+            if ($c -eq '/' -and ($i + 1) -lt $len -and $line[$i + 1] -eq '/') { break }
+            if ($c -eq '/' -and ($i + 1) -lt $len -and $line[$i + 1] -eq '*') { $state = '/*'; $i += 2; continue }
+            if ($c -eq '/') {
+                $p = $i - 1
+                while ($p -ge 0 -and [char]::IsWhiteSpace($line[$p])) { $p-- }
+                $before = $line.Substring(0, $p + 1)
+                if ($p -lt 0 -or $slashyAfter.Contains([string]$line[$p]) -or $before -match '\breturn$') {
+                    $j = $i + 1
+                    while ($j -lt $len -and $line[$j] -ne '/') { if ($line[$j] -eq '\') { $j += 2 } else { $j++ } }
+                    $i = $j + 1
+                    continue
+                }
+            }
+            $i++
+        }
+        if ($flagged) { $findings.Add([pscustomobject]@{ Line = $n + 1; Text = $line }) }
+    }
+    if ($state -eq '"""' -or $state -eq "'''") {
+        $findings.Add([pscustomobject]@{ Line = $openedAt; Text = "unterminated $state region opened here; the backslash scan could not tell template from code after it" })
+    }
+    return $findings
+}
+
 # Production-build profile gates (backlog item 16 phase 2b). Factored as
 # plain functions, not inlined into the main flow, so -SelfTest can exercise
 # each one directly against a fixture the same way every other gate here is
@@ -595,40 +659,34 @@ try {
         Add-ValidationError 'git is unavailable, so branch URLs and tracked compiler artefacts could not be checked.'
     }
 
-    # Backslashes inside the HTML/JavaScript GStrings require deliberate
-    # escaping. Each known-safe source form is listed explicitly.
+    # Backslashes inside the triple-quoted HTML/JavaScript templates require
+    # deliberate escaping, because Groovy consumes them before the browser
+    # sees them. Code outside those regions (slashy regexes such as
+    # ==~ /\d+/) is plain Groovy and is not checked - see
+    # Find-TemplateBackslashLines. Each known-safe template form is listed
+    # explicitly below.
     $allowedBackslashPatterns = @(
-        'Pattern URL_PATTERN',
-        'Pattern ORIGIN_PATTERN',
-        'replaceAll\(/\\\(\[\^\)\]\*\\\)/',
-        'replaceAll\(/\\s\+/',
-        'replaceAll\(/\\\.\$/',
-        '==~ /\^tCapab\\d\+\$/',
         '^\s*return """\\\s*$',
         "join\('\\\\n'\)",
         '\[",\\\\n\]',
         'replace\(/\\\\s\+/g',
         'access_token=\[\^&\\\\s\]',
         "^\s*[a-z]+:\s*'\\[ue][0-9a-f]{4}'",
-        'u003c',
         'replace\(/\\\\r\?\\\\n/g',
         "'\\\\ufeff'.*join\('\\\\r\\\\n'\)"
     )
 
     $suspectBackslashes = New-Object 'System.Collections.Generic.List[string]'
-    $lineNumber = 0
-    foreach ($line in Get-Content -LiteralPath $AppFile) {
-        $lineNumber++
-        if (-not $line.Contains('\')) { continue }
+    foreach ($finding in (Find-TemplateBackslashLines @(Get-Content -LiteralPath $AppFile))) {
         $allowed = $false
         foreach ($pattern in $allowedBackslashPatterns) {
-            if ($line -match $pattern) {
+            if ($finding.Text -match $pattern) {
                 $allowed = $true
                 break
             }
         }
         if (-not $allowed) {
-            $suspectBackslashes.Add("$($lineNumber):$line")
+            $suspectBackslashes.Add("$($finding.Line):$($finding.Text)")
         }
     }
     if ($suspectBackslashes.Count -gt 0) {
