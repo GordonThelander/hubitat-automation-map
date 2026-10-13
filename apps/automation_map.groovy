@@ -889,7 +889,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                         // the Scan button.
                         paragraph compatibilitySummary(g)
                     }
-                } else if (!scanActive && atomicState.graphVersion != null) {
+                } else if (!scanActive && graphVersionNow() != null) {
                     // Confirmed live 2026-08-30: state.graph can read null for one request
                     // immediately after a scan completes - the same per-execution commit-
                     // timing gap graphVersion's own move to atomicState (2026-08-29) closed
@@ -1189,6 +1189,18 @@ void commitPublishedScan(Map graph, Map appInfo, Long committedAt) {
 // refetched too (a cheap in-process call, no HTTP) since it is the one
 // buildGraph() input written in the same late closure as state.graph and so
 // could itself be one generation stale here.
+// Whether a map exists, by its version. The marker alone is not enough: another execution's stale state
+// write-back can null it after a good scan, and once the map lives in its file nothing repairs it, so
+// opening the app would start an unasked-for scan (2.4.34, found on the hub). The published map carries
+// its own schema, so that answers when the marker is missing. Read from the in-memory copy after the
+// first read per code load; a scan in progress has no version.
+def graphVersionNow() {
+    def v = atomicState.graphVersion
+    if (v != null) return v
+    if (scanEffectivelyActive()) return null
+    return graphData()?.schema
+}
+
 void selfHealGraphIfNeeded() {
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
@@ -1231,7 +1243,7 @@ boolean shouldAutoScan() {
     // commits on every write, so this signal cannot go stale that way.
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
-    boolean noGraph = (atomicState.graphVersion == null)
+    boolean noGraph = (graphVersionNow() == null)
     boolean noLiveLock = SCAN_LOCKS.get("${app.id}") == null
     boolean noDurableRunning = !state.scanRunning
     boolean noScanError = !state.scanError
@@ -16465,7 +16477,7 @@ String scanStatusJson(boolean forceRunning = false) {
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
         heartbeat: heartbeat,
-        graphVersion: atomicState.graphVersion,
+        graphVersion: graphVersionNow(),
     ])
 }
 
