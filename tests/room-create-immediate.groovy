@@ -1,5 +1,6 @@
 // Creating a room makes two hub calls and no full reload (Gordon, 2026-10-10): the page checks the name against
 // the room list it already holds, the app saves the room and confirms that one room, and the page draws it.
+int passed = 0  // a failed assert stops the run with exit 1, so reaching the end means none failed
 String source = new File('apps/automation_map.groovy').getText('UTF-8')
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 String create = AppSource.function(source, 'roomPlanCreateRoom')
@@ -17,7 +18,7 @@ assert crudBody.indexOf(".catch(function (e) { msg.textContent = 'Failed: ' + e;
 assert !crudBody.contains('roomPlanRender();') : 'roomPlanCrud redraws without the guard'
 String redraw = source.substring(source.indexOf('function roomPlanRedrawAfter('), source.indexOf('function roomPlanCrud('))
 assert redraw.contains('if (!ICONS) { roomPlanLoad(); return; }') && redraw.contains('catch (e)')
-println 'ok   a create is two hub calls, and the room is drawn from the one it confirmed'
+passed++; println 'ok   a create is two hub calls, and the room is drawn from the one it confirmed'
 
 // Delete, the same way: the delete and one read confirming the room is gone; the page moves its devices.
 String del = AppSource.function(source, 'roomPlanDeleteRoom')
@@ -26,7 +27,7 @@ assert del.count('hubRoomList()') == 1 && del.indexOf('/room/delete/') < del.ind
 int delBtn = source.indexOf("querySelectorAll('.roomRectDel')")
 assert source.indexOf('deleteRoom: { id: delId, deviceIds: devIds }', delBtn) > 0 : 'the page no longer sends the devices it holds'
 assert crudBody.indexOf('body.deleteRoom && d.id') < crudBody.indexOf('roomPlanRefreshLive(keep)') : 'a delete reloads every device again'
-println 'ok   a delete is two hub calls, and the page moves the room devices itself'
+passed++; println 'ok   a delete is two hub calls, and the page moves the room devices itself'
 
 // Option A (Gordon, 2026-10-10): the hub's own save takes about 11 s, so a create or delete is drawn at once as
 // pending, confirmed or undone when the hub answers, and a pending room takes no drops.
@@ -36,4 +37,5 @@ assert source.indexOf("r.pending = 'delete'", delBtn) < source.indexOf('roomPlan
 assert crudBody.count('roomPlanUndoPending(body)') == 2 : 'a refused or failed change leaves its pending room behind'
 assert source.contains("(pending ? '' : ' data-drop=")  : 'a pending room accepts drops'
 assert source.contains("'Saving to hub...'") && source.contains(".roomRect.rpPending")
-println 'ok   a create or delete shows at once as pending, and is confirmed or undone by the hub answer'
+passed++; println 'ok   a create or delete shows at once as pending, and is confirmed or undone by the hub answer'
+println "${passed} passed, 0 failed"

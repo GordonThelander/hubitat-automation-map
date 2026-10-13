@@ -1,5 +1,6 @@
 // After a refused scan the settings page says when the automatic retry runs (Gordon, 2026-10-10: the page
 // showed only the error and looked hung for three minutes).
+int passed = 0  // a failed assert stops the run with exit 1, so reaching the end means none failed
 String source = new File('apps/automation_map.groovy').getText('UTF-8')
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 def script = new GroovyShell().parse('import groovy.transform.Field\n' + AppSource.field(source, 'REFUSAL_RETRY_SECONDS') + '\n' +
@@ -13,4 +14,5 @@ assert waiting.contains('at 07:05') : waiting
 assert script.refusalRetryNotice([pending: true, at: refusedAt], refusedAt + 181000L, utc).contains('now')
 assert source.contains("refusalRetryNotice(atomicState.refusalRetry as Map, now(), location.timeZone)")
 assert source.contains("refreshInterval: (ready && (scanActive || (atomicState.refusalRetry as Map)?.pending)) ? 60 : 0)")
-println 'ok   a pending retry is announced with its time, and the page refreshes until it is done'
+passed++; println 'ok   a pending retry is announced with its time, and the page refreshes until it is done'
+println "${passed} passed, 0 failed"
