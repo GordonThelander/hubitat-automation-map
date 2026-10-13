@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.39'
+@Field static final String APP_VERSION = '2.4.36'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -167,7 +167,7 @@ boolean isDevBuild() {
 // older rule decoding and Visual Rule Builder stop conditions drawn as triggers. Without the bump an upgraded
 // instance kept showing that map with no prompt, and daily scanning is off by default, so it could stay that
 // way indefinitely (Gordon, 2026-10-10).
-// Bumped 24->25 (v2.4.39): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
+// Bumped 24->25 (next AM release): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
 // rmConstructs, nor reaches the detail decode as `condition: "0"`.
 @Field static final String GRAPH_SCHEMA = '25'
 
