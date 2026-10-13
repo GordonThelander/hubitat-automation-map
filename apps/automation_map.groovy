@@ -169,7 +169,9 @@ boolean isDevBuild() {
 // way indefinitely (Gordon, 2026-10-10).
 // Bumped 24->25 (next AM release): RM's `cond: 0` placeholder no longer counts as a Simple Conditional Action in
 // rmConstructs, nor reaches the detail decode as `condition: "0"`.
-@Field static final String GRAPH_SCHEMA = '25'
+// Bumped 25->26 (HAI #60): the hub's own variable list adds usesVar edges marked source 'hub-variables' for
+// apps the decode could not see, and the graph carries hubVariableReconciliation.
+@Field static final String GRAPH_SCHEMA = '26'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -10815,9 +10817,10 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
     return 'references nothing'
 }
 
-// Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API,
-// NOT an HTTP endpoint - confirmed live 2026-08-26 after a dedicated search for
-// a loopback endpoint came back seven 404s. Called only
+// Authoritative Hub Variable inventory via Hubitat's in-process SmartApp API.
+// On 2026-08-26 no loopback endpoint existed (seven 404s); firmware 2.5.2.133
+// added /hub2/variables, read separately below for who uses each variable,
+// while the inventory stays on this in-process call. Called only
 // from finishScan()'s finishGeneration() closure, synchronously, so a failed or
 // stale inventory is published or discarded atomically with the rest of that
 // scan generation - never mixed into a different generation's graph.
@@ -10873,6 +10876,76 @@ Map hubVariableUsersByName(List rows) {
 List hubVariableUsersExcept(List users, Set ignoredAppIds) {
     // toString, not "${}": a GString never equals the String in the set, so nothing would be excluded.
     return ((users ?: []) as List).findAll { Map u -> !ignoredAppIds.contains(u.id.toString()) }
+}
+
+// The hub's own list of who names each variable, set beside the decoded read, write and usesVar edges
+// (HAI #60). Neither side is a superset: on a measured hub they agreed on 16 of 22 variables, the hub named 4
+// apps the decode did not (one a rule with no decodable flow) and the decode found 4 the hub did not list
+// (webCoRE and plain Rule Machine reads). So the hub list only ADDS: an app it names, that is on the map and
+// has no decoded edge to that variable, gets a usesVar edge marked source 'hub-variables', direction
+// unknown, because the list is settings membership with no read or write direction. Decoded edges are never
+// removed or relabelled. Things the list must not be trusted for:
+//   - the HAI engine names every variable (its permission list), so its ids come in as ignoredAppIds;
+//   - webCoRE: the hub names the webCoRE parent app where the decode names the piston, so a parent counts
+//     as agreeing when one of its children has a decoded edge, and the other way round;
+//   - an app the hub names that is not on the map (some dashboard apps are absent from /hub2/appsList) gets
+//     no node invented for it; it is reported instead;
+//   - connectorUsedBy is ignored: it lists users of the connector DEVICE, which device edges already carry.
+// Pure, so it is tested with invented data. Returns the new edges and a summary for the coverage report.
+Map reconcileHubVariableUsers(Map usersByName, Set ignoredAppIds, List edges, Map appInfo, Set appNodeIds, Set varNames) {
+    Map<String, Set<String>> decoded = [:]
+    ((edges ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map e = raw as Map
+        // toString, not "${}" alone: a GString is never found in a list of Strings.
+        if (!(e.kind?.toString() in ['read', 'write', 'usesVar']) || e.source?.toString() == 'hub-variables') return
+        String from = "${e.from ?: ''}", to = "${e.to ?: ''}"
+        if (!from.startsWith('a') || !to.startsWith('v')) return
+        String name = to.substring(1)
+        if (!decoded.containsKey(name)) decoded[name] = new LinkedHashSet<String>()
+        decoded[name] << from.substring(1)
+    }
+    Closure parentOf = { String id ->
+        Object info = (appInfo ?: [:])[id]
+        return (info instanceof Map && (info as Map).parent) ? "${(info as Map).parent}".toString() : null
+    }
+    List added = []
+    List notInMap = []
+    List decodedOnly = []
+    int compared = 0
+    int agreeing = 0
+    ((usersByName ?: [:]) as Map).each { Object rawName, Object rawUsers ->
+        String name = "${rawName}"
+        if (!varNames.contains(name)) return
+        compared++
+        Map labelOf = [:]
+        Set<String> hub = new LinkedHashSet<String>()
+        hubVariableUsersExcept((rawUsers ?: []) as List, ignoredAppIds).each { Map u ->
+            hub << u.id.toString()
+            labelOf[u.id.toString()] = u.label
+        }
+        Set<String> dec = ((decoded[name] ?: []) as Set<String>).findAll { !ignoredAppIds.contains(it) } as Set<String>
+        boolean clean = true
+        hub.each { String h ->
+            if (dec.contains(h) || dec.any { parentOf(it) == h }) return
+            clean = false
+            if (appNodeIds.contains("a${h}".toString())) {
+                added << [from: "a${h}".toString(), to: "v${name}".toString(), kind: 'usesVar', direction: 'unknown',
+                          source: 'hub-variables']
+            } else {
+                notInMap << [variable: name, appId: h, label: labelOf[h]]
+            }
+        }
+        dec.each { String d ->
+            if (hub.contains(d) || hub.contains(parentOf(d))) return
+            clean = false
+            decodedOnly << [variable: name, app: "a${d}".toString()]
+        }
+        if (clean) agreeing++
+    }
+    return [edges: added,
+            summary: [status: 'complete', compared: compared, agreeing: agreeing, hubListedEdges: added.size(),
+                      hubOnlyNotInMap: notInMap, decodedOnly: decodedOnly]]
 }
 
 // Map a platform Hub Variable type spelling to the canonical schema-4 value,
@@ -13220,8 +13293,11 @@ Map edgesMapping() {
         } else if (ruleKinds.contains(kind)) {
             ruleEdges << [from: from, to: to, kind: kind]
         } else if (varKinds.contains(kind) && to.startsWith('v')) {
-            variableEdges << [app: from, variable: to.substring(1), kind: kind,
-                              usageRole: e.usageRole ? "${e.usageRole}" : null]
+            Map ve = [app: from, variable: to.substring(1), kind: kind,
+                      usageRole: e.usageRole ? "${e.usageRole}" : null]
+            // HAI #60: named in the hub's own variable list, not decoded. Only present when set.
+            if (e.source) ve.source = "${e.source}"
+            variableEdges << ve
         }
     }
     Long committedAt = (state.graphCommittedAtLocal ?: 0) as Long
@@ -15131,6 +15207,26 @@ Map buildGraph(Map appInfoIn = null) {
     // mid-loop where a later app's classification could not yet be trusted.
     correctFlowVariableLabels(flows, ruleVariables)
 
+    // After every decoded and feed edge is in place (HAI #60): the hub's own variable list adds what the
+    // decode could not see, and the disagreements go to the coverage report. Reads state.hubVariableUsers,
+    // which the scan already fetched once; no request of its own. See reconcileHubVariableUsers().
+    Map hubVarReconciliation = [status: 'unavailable']
+    if (hubVarUsersKnown) {
+        Set appNodeIds = nodes.keySet().findAll { "${it}".startsWith('a') }.collect { "${it}".toString() } as Set
+        Map rec = reconcileHubVariableUsers(hubVarUsers, haiParentAppIds, edges, appInfo, appNodeIds,
+                                            hubVarInventoryVars.keySet().collect { "${it}".toString() } as Set)
+        ((rec.edges ?: []) as List).each { Map e ->
+            String key = "${e.from}|${e.to}|usesVar"
+            if (seen.contains(key)) return
+            seen << key
+            edges << e
+        }
+        hubVarReconciliation = rec.summary as Map
+        if (diagOn()) {
+            log.info "${app.label}: hub variable list agrees with the decode on ${hubVarReconciliation.agreeing} of ${hubVarReconciliation.compared} variable(s); added ${hubVarReconciliation.hubListedEdges} use(s) from it, ${((hubVarReconciliation.hubOnlyNotInMap ?: []) as List).size()} by apps not on the map, ${((hubVarReconciliation.decodedOnly ?: []) as List).size()} decoded use(s) it does not list"
+        }
+    }
+
     // The schema travels inside the graph (2.4.33): the separate graphVersion marker was nulled again after
     // a good scan by another execution's stale write-back, so the page called a fresh graph out of date.
     return [schema: GRAPH_SCHEMA, nodes: nodes.values().toList(), edges: edges, flows: flows,
@@ -15138,6 +15234,7 @@ Map buildGraph(Map appInfoIn = null) {
             webcoreVariableDecodeIssues: webcoreVariableDecodeIssues,
             webcoreDeviceRelationshipIssues: webcoreDeviceRelationshipIssues,
             hubVariableConnectorCount: hubVarConnectorCount,
+            hubVariableReconciliation: hubVarReconciliation,
             // Gate C (v2.1.4): owner-scoped Local Variable definitions and
             // classified references, keyed by the same app node ID as flows -
             // consumed by the focused rule panel and, once Increment 2 wires
@@ -18405,6 +18502,9 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.startup === true) dashes = [1, 6];
   else if (e.kind === 'setspb') dashes = [2, 3];
   else if (e.kind === 'pauseResume') dashes = [12, 4, 2, 4];
+  // HAI #60: a use the hub's own variable list names and the decode could not see. Dotted, so it reads
+  // apart from a decoded webCoRE use.
+  else if (e.kind === 'usesVar' && e.source === 'hub-variables') dashes = [2, 5];
   else if (e.kind === 'usesVar') dashes = [5, 4];
   // Always dashed, because a dependency on an external system is asserted by a
   // person, not read off the hub. Weight carries the part that matters
@@ -18439,6 +18539,8 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     // GRAPH.edges directly).
     usageRole: e.usageRole || null,
     writeSource: e.writeSource || null,
+    // HAI #60: 'hub-variables' when the edge comes from the hub's own variable list, not the decode.
+    source: e.source || null,
     unused: e.unused === true,
     arrows: directionUnknown ? '' : (inbound ? 'from' : 'to'),
     dashes: dashes,
@@ -22305,9 +22407,15 @@ function deriveInsightData() {
   const hubVarReaders = {};
   const hubVarWriters = {};
   const hubVarUsers = {};
+  // HAI #60: uses named only by the hub's own variable list. Kept apart, so every decoded finding below
+  // (no decoded usage, webCoRE direction unknown) still means what it says.
+  const hubVarListed = {};
   ALL_EDGES.forEach(function (e) {
     touched[e.to] = true;
-    if (e.kind === 'read') {
+    if (e.kind === 'usesVar' && e.source === 'hub-variables') {
+      if (!hubVarListed[e.to]) hubVarListed[e.to] = [];
+      if (hubVarListed[e.to].indexOf(e.from) < 0) hubVarListed[e.to].push(e.from);
+    } else if (e.kind === 'read') {
       if (!hubVarReaders[e.to]) hubVarReaders[e.to] = [];
       if (hubVarReaders[e.to].indexOf(e.from) < 0) hubVarReaders[e.to].push(e.from);
     } else if (e.kind === 'write') {
@@ -22422,6 +22530,8 @@ function deriveInsightData() {
       readers: hubVarReaders,
       writers: hubVarWriters,
       users: hubVarUsers,
+      listed: hubVarListed,
+      reconciliation: GRAPH.hubVariableReconciliation || null,
       noDecodedUsage: hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id] && !hubVarUsers[id]; }),
       readersWithoutDecodedWriter: hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; }),
       writersWithoutDecodedReader: hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; }),
@@ -22853,6 +22963,18 @@ function buildInsights() {
     normalBody += rows(hv.directionUnknownUsage,
       function (id) { return hv.users[id].length + ' webCoRE piston' + (hv.users[id].length === 1 ? '' : 's'); },
       function (id) { return advice('variableDirectionUnknown') + '<p class="sub"><b>Used by:</b> ' + appLinks(hv.users[id]) + '</p>'; });
+  }
+  // HAI #60: how the hub's own variable list compares with the decode. Counts only, as context: neither side is
+  // complete, so a difference is not a fault in either.
+  const rec = hv.reconciliation;
+  if (rec && rec.status === 'complete' && rec.compared) {
+    const notInMap = (rec.hubOnlyNotInMap || []).length;
+    const decOnly = (rec.decodedOnly || []).length;
+    let line = 'The hub list of variable users agrees with the decode on ' + rec.agreeing + ' of ' + amPlural(rec.compared, 'variable', 'variables') + '.';
+    if (rec.hubListedEdges) line += ' It names ' + amPlural(rec.hubListedEdges, 'use', 'uses') + ' the decode could not see, drawn as dotted lines.';
+    if (notInMap) line += ' It names ' + amPlural(notInMap, 'use', 'uses') + ' by apps that are not on the map.';
+    if (decOnly) line += ' The decode found ' + amPlural(decOnly, 'use', 'uses') + ' it does not list.';
+    normalBody += '<p class="insLead">' + extEsc(line) + '</p>';
   }
 
   // --- Assemble ------------------------------------------------------------
@@ -24766,6 +24888,18 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   const hubVarWriters = INS.hubVar.writers;
   const hubVarUsers = INS.hubVar.users;
   const noDecodedUsage = INS.hubVar.noDecodedUsage.map(function (id) { return ref(id, nameOf); });
+  const recRaw = INS.hubVar.reconciliation;
+  const hubListReconciliation = (recRaw && recRaw.status === 'complete') ? {
+    variablesCompared: recRaw.compared || 0,
+    variablesAgreeing: recRaw.agreeing || 0,
+    hubListedEdgeCount: recRaw.hubListedEdges || 0,
+    hubOnlyNotOnMap: (recRaw.hubOnlyNotInMap || []).map(function (x) {
+      return { variable: ref('v' + x.variable, nameOf), appId: x.appId, appName: x.label || null };
+    }),
+    decodedOnly: (recRaw.decodedOnly || []).map(function (x) {
+      return { variable: ref('v' + x.variable, nameOf), app: ref(x.app, nameOf) };
+    })
+  } : null;
   const readersWithoutDecodedWriter = INS.hubVar.readersWithoutDecodedWriter.map(function (id) { return ref(id, nameOf); });
   const writersWithoutDecodedReader = INS.hubVar.writersWithoutDecodedReader.map(function (id) { return ref(id, nameOf); });
   const multipleHubVarWriters = INS.hubVar.multipleWriters.map(function (id) {
@@ -24887,6 +25021,9 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       // both fields.
       usageRole: e.usageRole || null,
       writeSource: e.writeSource || null,
+      // HAI #60: 'hub-variables' on a usesVar the hub's own variable list names and the decode did not
+      // find; null on every decoded edge.
+      source: e.source || null,
       // v2.2.8: bounded evidence only - the saved attribute a piston device
       // read decoded, or the command names a webCoRE action decoded. Never task
       // parameter values, never raw hashes. null on every other edge kind. A
@@ -25012,7 +25149,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   const webcoreAppIds = {};
   apps.forEach(function (a) { if (a.appType === 'webCoRE Piston') webcoreAppIds[a.id] = true; });
   const webcoreVariableEdges = edges.filter(function (e) {
-    return webcoreAppIds[e.fromId] &&
+    return webcoreAppIds[e.fromId] && e.source !== 'hub-variables' &&
       (e.relationship === 'read' || e.relationship === 'write' || e.relationship === 'usesVar');
   });
   const summary = {
@@ -25027,6 +25164,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     webcoreHubVariableWriteCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'write'; }).length,
     webcoreHubVariableUnknownUseCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'usesVar'; }).length,
     webcoreVariableDecodeIssueCount: webcoreVariableDecodeIssues.length,
+    // HAI #60: usesVar edges taken from the hub's own variable list rather than decoded.
+    hubListedVariableUseCount: edges.filter(function (e) { return e.source === 'hub-variables'; }).length,
     edgeCount: edges.length,
     decodedRuleFlowCount: ruleFlows.length,
     contestedDeviceCount: contested.length,
@@ -25157,7 +25296,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device (or, for a Rule Machine Rule paused trigger, to this rule). constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device (or, for a Rule Machine Rule paused trigger, to this rule). constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. A usesVar edge with source "hub-variables" (graph schema 26) was not decoded: the variable list the hub itself publishes (firmware 2.5.2.133 and later) names that app as a user of the variable and no decoded read, write or usesVar edge connects them. That list is settings membership with no direction, so it proves a reference, not a read or a write; source is null on every decoded edge. insights.hubVariables.hubListReconciliation compares the two sides. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
       rmConstructVocabulary: 'Dictionary keyed by the opaque Rule Machine construct tokens that need translation. Each value has category, a plain-language meaning, and haiCapabilityId where the HAI capability catalogue has an explicit mapping. Self-describing condition and trigger tokens are intentionally absent, so absence from this dictionary does not mean a token is unknown or unsupported. rmConstructVocabularyVersion versions token spelling and meaning separately from the export JSON shape.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. A recognized inert/no-action Rule Machine app may correctly have no entry here; inspect apps[].rmConstructs for the complete per-scanned-app construct publication. steps is the decoded trigger/condition/action sequence for that rule. A Rule Machine trigger or action step may carry constructs, a sorted array containing the exact normalized token proven for that saved row; other engines and unproven associations omit it. Conditions are not step-associated. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored Rule Machine configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry. rmConstructs (v2.4.3) repeats the matching apps[] rule-level inventory for convenience when a decoded flow exists. It may omit a construct stored under an unrecognised setting family, so absence is not proof that a feature is absent. Trigger and action tokens can be joined to their matching steps[].constructs record; condition, option and structure tokens remain rule-level only. These fields describe observed saved settings, not proven reachability or runtime behavior, do not contain configured values, do not reconstruct the rule, and do not repair an unresolved or ambiguous steps[].references record. Token spelling and meaning are versioned by rmConstructVocabularyVersion. The root rmConstructVocabulary defines only opaque tokens; a token absent from that dictionary may already be plain language and must not be treated as unknown for that reason.',
       migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
@@ -25220,7 +25359,10 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
         multipleWriters: multipleHubVarWriters,
         directionUnknownUsage: directionUnknownHubVarUsage,
         unresolvedReferences: unresolvedHubVarReferences,
-        webcoreDecodeIssues: webcoreVariableDecodeIssues
+        webcoreDecodeIssues: webcoreVariableDecodeIssues,
+        // HAI #60: the hub's own list of variable users against the decode. null when the hub has no such
+        // list (firmware before 2.5.2.133). Counts and names only; neither side is complete.
+        hubListReconciliation: hubListReconciliation
       }
     },
     migrationRatings: migrationRatings || null,
