@@ -6,7 +6,7 @@ stays easy to review.
 
 ## 2.4.36
 
-Assess now, for HAI. HAI's Migration page sends one local location event, `haiAssessRequest`, naming rule ids or all rules. Named rules are re-read in one execution (one read per rule, one device list read, one map build, one commit, one rewrite of each decode file); all rules, or more than 40% of the hub's Rule Machine rules, start the normal scan. Automation Map answers with `haiAssessDone` carrying the request id, counts and the decode's new `generatedAt`. Refused politely while a scan runs. The decode envelope gains `generatedAt`. Nothing runs without a request.
+Assess now, for HAI. HAI's Migration page sends one local location event, `haiAssessRequest`, naming rule ids or all rules. Named rules are re-read in one execution (one read per rule, one device list read, one map build, one commit, one rewrite of each decode file); all rules, or more than 40% of the hub's Rule Machine rules, start the normal scan. Automation Map answers with `haiAssessDone` carrying the request id, counts and the decode's new `generatedAt` (a full scan is acknowledged first with `pending: true`). The request names the Automation Map app id, so a second installed channel ignores it. Refused politely while a scan runs. The decode envelope gains `generatedAt`. Nothing runs without a request.
 
 ## 2.4.35
 

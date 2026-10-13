@@ -16425,7 +16425,8 @@ Map rescanMapping() {
 // Assess now, for HAI (2.4.36)
 //
 // HAI's Migration page asks for a fresh decode of one rule, several, or all of them. It sends one location
-// event, haiAssessRequest, whose value is JSON: {requestId, ids: [app ids]} or {requestId, all: true}. It is a
+// event, haiAssessRequest, whose value is JSON: {requestId, appId, ids: [app ids]} or {requestId, appId, all: true},
+// where appId names this Automation Map (another installed channel ignores it). It is a
 // local hub event between two apps on the same hub, so there is no token to hold or provision.
 //
 // all:true starts the ordinary full scan, through startScan() and its lock; the scan answers when it publishes.
@@ -16470,6 +16471,8 @@ Map haiAssessParse(Object raw) {
     try { parsed = new groovy.json.JsonSlurper().parseText("${raw ?: ''}") } catch (Exception ex) { return null }
     if (!(parsed instanceof Map)) return null
     Map p = parsed as Map
+    // Production and Dev can both be installed and both hear the event; HAI names the one whose decode it reads.
+    if (p.appId != null && "${p.appId}".toString() != "${app.id}".toString()) return null
     String rid = "${p.requestId ?: ''}".trim()
     if (!rid || rid.length() > 64) return null
     if (p.all == true) return [requestId: rid, all: true]
@@ -16550,6 +16553,8 @@ void haiAssessStartFullScan(String rid, String mode, Integer requested) {
         return
     }
     atomicState.haiAssessPending = [requestId: rid, mode: mode, requested: requested, startedAt: now()]
+    // Not the answer: it tells HAI a full scan is running, so it waits for one rather than for a few reads.
+    haiAssessReply(rid, [pending: true, mode: mode, requested: requested])
     if (diagOn()) log.info "${app.label}: HAI assess ${rid}: full scan started (${mode})"
 }
 
