@@ -136,6 +136,18 @@ try {
         throw "App source not found: $AppFile"
     }
 
+    # Calls the hub's sandbox refuses, scanned in the Groovy code of the exact file about to be written.
+    # Always runs, -SkipValidation included, and fails closed: a scan that cannot run stops the deploy too.
+    $pythonPath = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+    if (-not $pythonPath) { $pythonPath = (Get-Command python -ErrorAction SilentlyContinue).Source }
+    if (-not $pythonPath) {
+        throw 'Python is required to run tools/sandbox_scan.py. Nothing was contacted.'
+    }
+    & $pythonPath (Join-Path $repoRoot 'tools/sandbox_scan.py') $AppFile
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Refusing: the app contains a call the Hubitat sandbox forbids, or the scan could not run. Nothing was contacted.'
+    }
+
     if (-not $SkipValidation) {
         & (Join-Path $repoRoot 'validate.ps1') -AppFile $AppFile
         if ($LASTEXITCODE -ne 0) {

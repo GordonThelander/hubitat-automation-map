@@ -19,6 +19,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+      # Calls the hub's sandbox refuses at save time, in the app's Groovy code. First, so it fails in seconds.
+      - name: Sandbox scan of apps/automation_map.groovy
+        shell: bash -o pipefail {0}
+        run: |
+          python3 tools/sandbox_scan.py | sed -E 's/^SANDBOX FORBIDS: /::error title=Sandbox scan::/'
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
