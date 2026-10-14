@@ -16576,7 +16576,7 @@ Map rescanMapping() {
     } catch (Exception ex) {
         log.warn "${app.label}: rescanMapping failed: ${ex.message}"
         return render(status: 200, contentType: 'application/json',
-            data: JsonOutput.toJson([ok: false, reason: 'error', error: "${ex.class.simpleName}"]))
+            data: JsonOutput.toJson([ok: false, reason: 'error', error: ex.toString()]))
     }
 }
 
@@ -16697,7 +16697,7 @@ void haiAssessRequestHandler(evt) {
         haiAssessRescan(rid, ids)
     } catch (Exception ex) {
         log.warn "${app.label}: HAI assess ${rid} failed: ${ex.message}"
-        haiAssessReply(rid, [ok: false, reason: 'error', message: "${ex.class.simpleName}".toString()])
+        haiAssessReply(rid, [ok: false, reason: 'error', message: ex.toString()])
     } finally {
         HAI_ASSESS_RUNNING.remove("${app.id}".toString())
     }
@@ -16844,7 +16844,7 @@ Map scanMapping() {
         // exact parser error this handler exists to prevent. Which would make
         // the 1.8.7 fix invisible rather than wrong. Caught by external review.
         return render(status: 200, contentType: 'application/json',
-            data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))
+            data: JsonOutput.toJson([ok: false, error: ex.toString()]))
     }
 }
 
