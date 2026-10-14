@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.38'
+@Field static final String APP_VERSION = '2.4.39'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -171,7 +171,9 @@ boolean isDevBuild() {
 // rmConstructs, nor reaches the detail decode as `condition: "0"`.
 // Bumped 25->26 (HAI #60): the hub's own variable list adds usesVar edges marked source 'hub-variables' for
 // apps the decode could not see, and the graph carries hubVariableReconciliation.
-@Field static final String GRAPH_SCHEMA = '26'
+// Bumped 26->27 (2.4.39, HAI #157): a Periodic Schedule trigger publishes the hub's own cron, nextRunTime and
+// cronZone, read from the statusJson scheduledJobs the apps phase already fetches.
+@Field static final String GRAPH_SCHEMA = '27'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -3097,6 +3099,9 @@ void startAppPhase(String lockToken) {
     // from whatever an unrelated earlier scan left behind.
     scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
     scan.appTypeNamespaces = new ConcurrentHashMap<String, String>((appTypeNamespaceResult.namespaces ?: [:]) as Map)
+    // Read once per scan, not per app: the zone a Periodic trigger's cron is
+    // evaluated in. Empty, not null, because a ConcurrentHashMap refuses null.
+    scan.hubTimeZone = hubTimeZoneId()
     scan.decoded = new AtomicInteger(0)
     scan.unreadable = new AtomicInteger(0)
     scan.rulesDecoded = new AtomicInteger(0)
@@ -3194,7 +3199,8 @@ void appFetchCb(resp, data) {
     try {
         if (resp?.status == 200) {
             Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
-            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap, scan.appTypeNamespaces as Map)
+            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap, scan.appTypeNamespaces as Map,
+                                           scan.hubTimeZone as String)
         } else {
             info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
                     ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
@@ -4578,7 +4584,7 @@ boolean webcoreFlowIsTrigger(Map condition) {
 // to mutate safely, merged into state.deviceLabels only at finalization, not
 // state.deviceLabels itself (concurrent callbacks racing on state directly
 // is exactly the failure mode this whole rewrite exists to avoid).
-Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
+Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:], String hubTimeZone = null) {
     Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
             Map installedApp = data.installedApp as Map
@@ -4846,7 +4852,10 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 out.conditions = hamDetailSafely('conditions', decodeFailures) { extractRuleConditions(data) } ?: []
                 out.expressions = hamDetailSafely('expressions', decodeFailures) { extractRuleExpressions(data) } ?: [:]
                 out.actions = hamDetailSafely('actions', decodeFailures) { extractRuleActions(data) } ?: []
-                out.triggers = hamDetailSafely('triggers', decodeFailures) { extractRuleTriggers(data) } ?: []
+                // The hub's own Periodic schedules, from scheduledJobs in this
+                // same response: RM's settings hold no cron (HAI #157).
+                List periodicJobs = periodicJobList(data.scheduledJobs)
+                out.triggers = hamDetailSafely('triggers', decodeFailures) { extractRuleTriggers(data, periodicJobs, hubTimeZone) } ?: []
                 if (decodeFailures) out.decodeFailures = decodeFailures
             }
             if ("${out.type}" == 'webCoRE Piston') {
@@ -10580,6 +10589,35 @@ List scheduledJobList(def raw) {
     return []
 }
 
+// A Rule Machine Periodic Schedule trigger's cron is not in the rule's
+// settings at all: RM keeps only whichPeriod/everyN/starting there and the
+// cron exists only as the scheduled job it made, handler periodicHandler, in
+// the same statusJson the apps phase already fetched (HAM, HAI #157). Kept in
+// the hub's order, because a rule can hold more than one periodic trigger.
+// A paused or never-initialised rule has no such job, so this is empty, and
+// empty means "the hub reported no periodic job", never "no schedule".
+List periodicJobList(def raw) {
+    List out = []
+    scheduledJobList(raw).each { Object j ->
+        if (!(j instanceof Map) || "${(j as Map).handler}" != 'periodicHandler') return
+        String cron = "${(j as Map).schedule ?: ''}".trim()
+        if (!cron) return
+        Object next = (j as Map).nextRunTime
+        out << [schedule: cron, nextRunTime: (next == null ? null : "${next}".toString())]
+    }
+    return out
+}
+
+// The hub's timezone id, the zone a Periodic cron is evaluated in. Empty when
+// the hub reports none; a consumer then reads cronZone 'hub local'.
+String hubTimeZoneId() {
+    try {
+        return (location?.timeZone?.ID ?: '') as String
+    } catch (Exception ignored) {
+        return ''
+    }
+}
+
 // One HAI Rule Container's own account of whether it ever received a rule
 // (HAI Issue #44). Keyed on its state, never its name: HAI keeps everything
 // under state.rt, whose ruleId is set when a rule is first staged into it,
@@ -12887,7 +12925,9 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
 // One record per trigger Rule Machine actually has, enumerated from tCapab
 // because a trigger with no device - Certain Time, Periodic Schedule,
 // Variable, Location Event, Mode - has no tDev row to be found by.
-List extractRuleTriggers(Map data) {
+// periodicJobs: periodicJobList() of this app's scheduledJobs, in the hub's
+// order. Null or empty publishes no cron on any Periodic trigger.
+List extractRuleTriggers(Map data, List periodicJobs = null, String hubTimeZone = null) {
     Map values = [:]
     Map devices = [:]
     (data.appSettings ?: []).each { Object raw ->
@@ -12927,7 +12967,28 @@ List extractRuleTriggers(Map data) {
         }
         out << [index: num, capability: cap, operands: ops]
     }
-    return out.sort { Map t -> (t.index as String) as Integer }
+    List sorted = out.sort { Map t -> (t.index as String) as Integer }
+    attachPeriodicCrons(sorted, periodicJobs ?: [], hubTimeZone)
+    return sorted
+}
+
+// The hub's own schedule for each Periodic Schedule trigger, matched to the
+// triggers in index order. The cron is verbatim and evaluated in hub local
+// time; nextRunTime is the hub's UTC instant. Published only when the hub
+// reports exactly one periodic job per Periodic trigger: with a different
+// count the pairing is a guess, and a wrong cron is worse than none. Absent
+// means absent - no key, never an empty or stale value.
+void attachPeriodicCrons(List triggers, List jobs, String hubTimeZone) {
+    List periodic = triggers.findAll { Object t -> (t as Map).capability == 'Periodic Schedule' }
+    if (!periodic || periodic.size() != jobs.size()) return
+    String zone = hubTimeZone ?: 'hub local'
+    periodic.eachWithIndex { Object t, int i ->
+        Map job = jobs[i] as Map
+        Map o = (t as Map).operands as Map
+        o.cron = job.schedule
+        if (job.nextRunTime) o.nextRunTime = job.nextRunTime
+        o.cronZone = zone
+    }
 }
 
 // Runs one half of the rule decode under its own guard. A throw costs that
@@ -16537,6 +16598,7 @@ Map rescanMapping() {
         Map deviceFacts = refreshDeviceFacts(scope)
 
         Map labels = (state.deviceLabels ?: [:]) as Map
+        String hubTimeZone = hubTimeZoneId()
         List refreshed = []
         List failed = []
         targets.each { String appId ->
@@ -16544,7 +16606,7 @@ Map rescanMapping() {
                                     RESCAN_TIMEOUT_SEC, [contentType: 'application/json'])
             if (!fetched.ok || !(fetched.data instanceof Map)) { failed << appId; return }
             Map prior = (appInfo[appId] ?: [:]) as Map
-            Map info = processAppRelationships(appId, fetched.data as Map, labels)
+            Map info = processAppRelationships(appId, fetched.data as Map, labels, [:], hubTimeZone)
             // The namespace comes from the scan's appTypeId table, which a
             // single-app refresh does not rebuild, so carry the known one over.
             if (!info.namespace && prior.namespace) info.namespace = prior.namespace
@@ -16739,6 +16801,7 @@ void haiAssessRescan(String rid, List ids) {
     Map appInfo = new LinkedHashMap(appInfoData())
     Map labels = (state.deviceLabels ?: [:]) as Map
     Set<String> scope = new LinkedHashSet<String>()
+    String hubTimeZone = hubTimeZoneId()
     List refreshed = []
     List failed = []
     ids.each { Object raw ->
@@ -16748,7 +16811,7 @@ void haiAssessRescan(String rid, List ids) {
         Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
                                 RESCAN_TIMEOUT_SEC, [contentType: 'application/json'])
         if (!fetched.ok || !(fetched.data instanceof Map)) { failed << appId; return }
-        Map info = processAppRelationships(appId, fetched.data as Map, labels)
+        Map info = processAppRelationships(appId, fetched.data as Map, labels, [:], hubTimeZone)
         // As rescanMapping(): the namespace comes from the full scan's table, so carry the known one over.
         if (!info.namespace && prior.namespace) info.namespace = prior.namespace
         appInfo[appId] = info
