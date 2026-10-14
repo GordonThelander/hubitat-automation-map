@@ -62,20 +62,6 @@ ALLOW = [
     {'file': 'automation_map.groovy', 'rule': '.class',
      'line': """String kind = (REGISTRY_CLASS_TO_KIND["${d.class}"] ?: 'internet') as String""",
      'why': 'Map key read on a declared Map'},
-    # The next three ARE getClass() on an exception, inside catch blocks. The hub accepts them at save (they
-    # are in the released app), so they are not a save-time refusal, but on the hub the call may itself throw
-    # and take the error reply with it (HAI met exactly that on 2026-09-25). Allowed so the scan passes on
-    # the current release without an app change; replace each with ex.toString() in the next apps/ release
-    # and delete these entries. An entry matches its exact line only, so editing a line removes its pass.
-    {'file': 'automation_map.groovy', 'rule': '.class',
-     'line': """data: JsonOutput.toJson([ok: false, reason: 'error', error: "${ex.class.simpleName}"]))""",
-     'why': 'in the released app; runtime getClass() risk, to be replaced with ex.toString()'},
-    {'file': 'automation_map.groovy', 'rule': '.class',
-     'line': """haiAssessReply(rid, [ok: false, reason: 'error', message: "${ex.class.simpleName}".toString()])""",
-     'why': 'in the released app; runtime getClass() risk, to be replaced with ex.toString()'},
-    {'file': 'automation_map.groovy', 'rule': '.class',
-     'line': """data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))""",
-     'why': 'in the released app; runtime getClass() risk, to be replaced with ex.toString()'},
 ]
 
 SLASHY_AFTER = '~(,=!&|?:[{;+-*%<>'

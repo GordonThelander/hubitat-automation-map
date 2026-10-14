@@ -4,6 +4,14 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.39
+
+Periodic Schedule triggers publish the hub's own schedule (HAI #157). Rule Machine stores no cron in a rule's settings, only `whichPeriod`, the interval and an optional start time, and without a start time the hour the schedule is anchored to appears in no setting at all. The cron exists only as the rule's scheduled job, handler `periodicHandler`, in the `/installedapp/statusJson` response the apps phase already fetches. Each Periodic trigger's operands now carry `cron` (the job's `schedule`, verbatim), `nextRunTime` (the hub's UTC instant) and `cronZone` (the hub's timezone id, or `hub local` when the hub reports none). The cron is evaluated in hub local time, so reading it as UTC is wrong by the hub's offset. Jobs pair with Periodic triggers in index order, and only when the counts match. A paused or never-initialised rule has no job and publishes no `cron` key. No new hub call: the jobs come from a response already in hand, and the timezone is read once per scan.
+
+Error replies use `ex.toString()` instead of `getClass()`, which the hub's sandbox refuses (HAI #192).
+
+`GRAPH_SCHEMA` 26 to 27, so an upgraded map asks for one scan.
+
 ## 2.4.38
 
 Daily scanning off unless switched on (2.4.37) now also stops a schedule an earlier version made. A code update does not run `updated()`, so that schedule stayed, and an install that never saved the setting kept scanning every night while its page said automatic scanning was off. `scheduledScanHandler` now checks the setting first and, when it is off, removes the schedule and returns. Hub cost: one settings read per firing, and only the first firing after an upgrade.
