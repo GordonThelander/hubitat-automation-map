@@ -4,6 +4,11 @@ Complete Automation Map development history previously carried in the HPM manife
 The manifest now contains only the current Dev-channel summary so package metadata
 stays easy to review.
 
+## 2.4.40
+
+- Periodic triggers: Rule Machine's unset start-time placeholder (2016-03-23T12:00) is no longer published as `startingTime`; the published `cron` carries the real anchor.
+- deploy-hub.ps1 prefers Git Bash over WSL's bash launcher for check_template.sh.
+
 ## 2.4.39
 
 Periodic Schedule triggers publish the hub's own schedule (HAI #157). Rule Machine stores no cron in a rule's settings, only `whichPeriod`, the interval and an optional start time, and without a start time the hour the schedule is anchored to appears in no setting at all. The cron exists only as the rule's scheduled job, handler `periodicHandler`, in the `/installedapp/statusJson` response the apps phase already fetches. Each Periodic trigger's operands now carry `cron` (the job's `schedule`, verbatim), `nextRunTime` (the hub's UTC instant) and `cronZone` (the hub's timezone id, or `hub local` when the hub reports none). The cron is evaluated in hub local time, so reading it as UTC is wrong by the hub's offset. Jobs pair with Periodic triggers in index order, and only when the counts match. A paused or never-initialised rule has no job and publishes no `cron` key. No new hub call: the jobs come from a response already in hand, and the timezone is read once per scan.

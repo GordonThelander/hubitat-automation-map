@@ -154,8 +154,10 @@ try {
             throw 'validate.ps1 failed.'
         }
 
-        $bashPath = (Get-Command bash -ErrorAction SilentlyContinue).Source
-        if (-not $bashPath) {
+        # Git Bash first: on Windows, the bash on PATH is often WSL's launcher (system32\bash.exe), which cannot run
+        # check_template.sh (it dies on `set -o pipefail`), so the PATH bash is used only when Git Bash is absent.
+        $bashPath = $null
+        if ($true) {
             $gitCommand = Get-Command git -ErrorAction SilentlyContinue
             if ($null -ne $gitCommand) {
                 $gitRoot = Split-Path (Split-Path $gitCommand.Source -Parent) -Parent
@@ -164,6 +166,10 @@ try {
                     $bashPath = $gitBash
                 }
             }
+        }
+        if (-not $bashPath) {
+            $found = (Get-Command bash -ErrorAction SilentlyContinue).Source
+            if ($found -and $found -notmatch '(?i)\\system32\\bash\.exe$') { $bashPath = $found }
         }
         if (-not $bashPath) {
             throw 'bash is required to run check_template.sh. Use -SkipValidation only after running both validators separately.'

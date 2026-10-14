@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.39'
+@Field static final String APP_VERSION = '2.4.40'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -173,7 +173,7 @@ boolean isDevBuild() {
 // apps the decode could not see, and the graph carries hubVariableReconciliation.
 // Bumped 26->27 (2.4.39, HAI #157): a Periodic Schedule trigger publishes the hub's own cron, nextRunTime and
 // cronZone, read from the statusJson scheduledJobs the apps phase already fetches.
-@Field static final String GRAPH_SCHEMA = '27'
+@Field static final String GRAPH_SCHEMA = '28'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -12875,7 +12875,9 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
             if (every != null) o.every = every
             String startKey = ['Hourly': 'startingHC', 'Daily': 'startingDC'][period]
             String start = startKey ? "${v["${startKey}${num}"] ?: ''}".trim() : ''
-            if (start) o.startingTime = start
+            // Rule Machine always stores startingHC<n>; unset, it holds the placeholder 2016-03-23T12:00:00.000+0800 (HAI #157,
+            // 2026-10-14). Only a wall-clock time the author chose is a start; the published cron carries the real anchor.
+            if (start && !start.startsWith('2016-03-23T')) o.startingTime = start
             // startingTime is what an Hourly schedule's minute lives in, and
             // publishing period without it invites a consumer to assume the
             // top of the hour. Absent is not zero. The rest are carried raw
