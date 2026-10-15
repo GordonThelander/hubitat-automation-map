@@ -1,5 +1,7 @@
 param(
-    [string]$HubUrl = 'http://192.168.1.50',
+    # The hub's address is not kept in this public repository: set HUBITAT_HUB_URL (for example
+    # 'http://192.168.1.50') or pass -HubUrl.
+    [string]$HubUrl = $env:HUBITAT_HUB_URL,
     [string]$AppFile = 'apps/automation_map.groovy',
     [int]$InstalledAppId = 0,
     [switch]$SkipValidation,
@@ -190,6 +192,7 @@ try {
         throw "Refusing deployment: source is not $expectedAppName."
     }
 
+    if (-not $HubUrl) { throw 'No hub address: set HUBITAT_HUB_URL or pass -HubUrl.' }
     $hubBase = $HubUrl.TrimEnd('/')
     Test-HubMemory $hubBase
     $apps = Invoke-RestMethod -Uri "$hubBase/hub2/appsList" -Method Get -TimeoutSec 20

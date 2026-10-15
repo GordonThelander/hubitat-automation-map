@@ -5,10 +5,12 @@
 // six readable rules published unreadable and empty. The suites sliced a resolver out of the app and
 // asserted on its return value; nothing asserted on the document a rebuild actually reads.
 //
-// These read tests/fixtures/ham-decode-detail.json and tests/fixtures/ham-decode.json - real output
-// captured from Gordon's hub, 76 Rule Machine rules - and assert on their shape and their counts. The
-// fixtures are the evidence. When an assertion here fails, the assertion or the app is in question, never
-// the fixture: do not regenerate or edit them to make this pass.
+// These read tests/fixtures/ham-decode-detail.json and tests/fixtures/ham-decode.json - output captured
+// from a real hub, 81 Rule Machine rules, with every rule, device and variable name, message and address
+// replaced by an invented one (2026-10-15: this repository is public, and a home's names do not belong in
+// it). Structure, counts, ids' cross-references and every decoded value other than those names are as
+// captured. The fixtures are the evidence. When an assertion here fails, the assertion or the app is in
+// question, never the fixture: do not regenerate or edit them to make this pass.
 //
 // Run with: groovy tests/ham-published-documents.groovy
 
@@ -51,28 +53,26 @@ check(rules*.id.sort() == ((List<Map>) summary.rules)*.id.sort(),
 // Exact for this capture. A change here means the app now publishes something different from the same
 // hub state, which is exactly what this suite exists to notice.
 
-// Captured from 2.4.11 on the Dev hub (contract 3). The 76 include five paused probe rules Claude HAM
-// built, the only examples of their cases on this hub: 3594 (Use Duration beside a Timeout), 3595 and 3597
-// (several events, with and without a stays clause), 3596 (carries on after a timeout), 3598 (Wait for
-// Events with a timeout). Deleting one moves these counts. 2.4.11 dropped two phantom triggers, 814's 27
-// and 2816's 13: leftover tCapab settings the condition namespace used to fill in. 2.4.12 restored
-// 1230's trigger 26, Certain Time at 21:05, stored under the older label and dropped until then. 2.4.14's
-// capture adds Claude HAM's three paused Meter probes (3601-3603) and two empty rules made in Rule Machine's
-// UI during the session (3599, 3600).
+// Captured from 2.4.14 on a Dev hub (contract 3). The 81 include paused probe rules, the only examples of
+// their cases in the capture (Use Duration beside a Timeout; several events with and without a stays
+// clause; carrying on after a timeout; Wait for Events with a timeout; three Meter probes; two empty rules).
+// Deleting one moves these counts. 2.4.11 dropped two phantom triggers, 5001's 27 and 5039's 13: leftover
+// tCapab settings the condition namespace used to fill in. 2.4.12 restored 5003's trigger 26, Certain Time
+// at 21:05, stored under the older label and dropped until then.
 check(rules.size() == 81, 'the capture holds 81 rules', rules.size())
 check(actions.size() == 525, 'the rules publish 525 actions', actions.size())
 check(actions.count { it.a.supported == true } == 524, '524 actions are supported', actions.count { it.a.supported == true })
 check(triggers.size() == 111, 'the rules publish 111 triggers', triggers.size())
-List phantoms = triggers.findAll { ("${it.rule}".replaceFirst(/^a/, '') + '#' + it.t.index) in ['814#27', '2816#13'] }
-check(triggers.any { "${it.rule}".replaceFirst(/^a/, '') == '1230' && it.t.index == '26' },
-      "rule 1230's Certain Time trigger is published (stored under the older label 'Certain Time')")
-Map chime66 = actions.find { "${it.rule}".replaceFirst(/^a/, '') == '2816' && it.a.index == '66' }?.a
-check(chime66 != null && ((List) ((Map) chime66.operands).devices)*.name == ['Hall Siren'],
-      "rule 2816 action 66 chimes Hall Siren only: siren.66 (Garage) is residue, as Rule Machine's page shows")
+List phantoms = triggers.findAll { ("${it.rule}".replaceFirst(/^a/, '') + '#' + it.t.index) in ['5001#27', '5039#13'] }
+check(triggers.any { "${it.rule}".replaceFirst(/^a/, '') == '5003' && it.t.index == '26' },
+      "rule 5003's Certain Time trigger is published (stored under the older label 'Certain Time')")
+Map chime66 = actions.find { "${it.rule}".replaceFirst(/^a/, '') == '5039' && it.a.index == '66' }?.a
+check(chime66 != null && ((List) ((Map) chime66.operands).devices)*.name == ['Device 088'],
+      "rule 5039 action 66 chimes one siren only: a second stored siren.66 is residue, as Rule Machine's page shows")
 List switchOpts = actions.findAll { Map o = (it.a.operands ?: [:]) as Map; it.a.method == 'getOnOffSwitch' && (o.containsKey('onlyIfCurrently') || o.containsKey('trackEventSwitch') || o.containsKey('useLastDevice')) }
-check(switchOpts.size() == 1 && "${switchOpts[0].rule}".replaceFirst(/^a/, '') == '2096' && ((Map) switchOpts[0].a.operands).onlyIfCurrently == 'on',
-      "exactly one On/Off carries an option: rule 2096 action 16, an Off only to switches that are on (storage format 14)", switchOpts.collect { "${it.rule}#${it.a.index}" })
-check(phantoms.isEmpty(), "rule 814's trigger 27 and rule 2816's trigger 13 are leftovers, not triggers", phantoms)
+check(switchOpts.size() == 1 && "${switchOpts[0].rule}".replaceFirst(/^a/, '') == '5015' && ((Map) switchOpts[0].a.operands).onlyIfCurrently == 'on',
+      "exactly one On/Off carries an option: rule 5015 action 16, an Off only to switches that are on (storage format 14)", switchOpts.collect { "${it.rule}#${it.a.index}" })
+check(phantoms.isEmpty(), "rule 5001's trigger 27 and rule 5039's trigger 13 are leftovers, not triggers", phantoms)
 check(conditions.size() == 169, 'the rules publish 169 conditions', conditions.size())
 
 // ---- every rule ----------------------------------------------------------------------------------
@@ -133,7 +133,7 @@ List triggersThin = triggers.findAll { it.t.index == null || !it.t.capability }.
 check(triggersThin.isEmpty(), 'every trigger carries index and capability', triggersThin)
 
 // ---- device references ----------------------------------------------------------------------------
-// A name cannot bind: two devices can share a label, and one on this hub carries a trailing space. So
+// A name cannot bind: two devices can share a label, and one in the capture carries a trailing space. So
 // every device reference is {id, name} with a non-empty id. Checked per place it is published, because
 // the places are built by different code and fail independently.
 
@@ -169,7 +169,7 @@ Set ruleIds = rules.collect { "${it.id}".replaceFirst(/^a/, '') } as Set
 List targets = rules.collectMany { Map r -> ((List<Map>) r.steps).collectMany { Map st -> ((List) (st.ruleTargets ?: [])).collect { [rule: r.id, t: it] } } }
 check(targets.size() == 68, 'the capture holds 68 rule links in steps', targets.size())
 List badTargets = targets.findAll { !("${it.t}" ==~ /\d+/) || !ruleIds.contains(it.t.toString()) }.collect { "${it.rule} -> ${it.t}" }
-// Backlog 56, closed by contract 2: 2096's link to the deleted rule 2354 is dropped and listed as a
+// Backlog 56, closed by contract 2: 5015's link to the deleted rule 4901 is dropped and listed as a
 // finding (deletedRuleReferences) rather than handed to a consumer that cannot resolve it.
 check(badTargets.isEmpty(), 'every step ruleTarget is a bare rule id naming a rule in this document', badTargets)
 

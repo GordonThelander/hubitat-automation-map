@@ -18,8 +18,14 @@ note `docs/2026-10-05-handover-from-cloud-session.md` has the exact checks for I
 `pwsh tests/run-all.ps1` runs every suite in `tests/` and exits non-zero on any failure. Run them on
 Groovy 2.4 (the hub's version): several behaviours differ on newer Groovy. Suites slice real functions from
 `apps/automation_map.groovy` through `tests/support/AppSource.groovy`; do not add a stub for a function the
-app defines. `tests/fixtures/ham-decode*.json` are captured hub output - never regenerate or edit them to
-make a test pass.
+app defines. `tests/fixtures/ham-decode*.json` are captured hub output with every name, message and address
+replaced by an invented one - never regenerate or edit them to make a test pass.
+
+**No capture, real name or hub address ever goes into this repository, test fixtures included** (Gordon,
+2026-10-15). Until that day the two decode fixtures held a full capture of his rules, and his rule and device
+names had spread into comments, tests and docs; the history was rewritten to remove them. Invent the example
+("Hall Light", "Front Door"); a real capture lives only in the private HAI repository. The deploy script
+reads the hub address from `HUBITAT_HUB_URL`.
 
 ## Working together: cloud, Claude HAM and Claude HAI (Gordon, 2026-10-06)
 
