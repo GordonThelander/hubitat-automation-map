@@ -1,8 +1,8 @@
 {
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
- "capabilitiesHash": "aadbb32751850f02a188b3d5b345a70f203b1224a8231935ebdb5ca190785b6d",
- "generatedAt": "2026-10-15T00:29:16+00:00",
+ "capabilitiesHash": "abc2372fdac4fa8cf98f3c434c3ff0505fa40533f4263acddaa723f7830d4efc",
+ "generatedAt": "2026-10-15T04:28:44+00:00",
  "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means observed HAI runtime execution using virtual or physical hub devices; \"simulated\" means modelled execution only for that row. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
   "Runs": "Implementation status, not a claim that this row has been watched on a hub: built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run. Rows share mechanisms - several features run through one command, subscription or evaluation path - so the number of hub-observed rows is not a completeness score.",
@@ -18,8 +18,8 @@
  "counts": {
   "total": 171,
   "byEvidence": {
-   "hub": 160,
-   "simulated": 11
+   "hub": 170,
+   "simulated": 1
   }
  },
  "capabilities": [
@@ -2156,8 +2156,8 @@
    "feature": "Freshness: a condition can require a reading no older than a set time",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2197,8 +2197,8 @@
    "feature": "Failure handling: carry on, stop, or run separate failure steps",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2275,8 +2275,8 @@
    "feature": "A condition on which trigger started the run, instead of copying the steps per trigger",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2290,8 +2290,8 @@
    "feature": "A condition on how the last wait ended, so a rule can take one path when the thing it waited for happened and another when it gave up",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2320,8 +2320,8 @@
    "feature": "Match text against a pattern, in any condition or trigger that compares a value",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2335,8 +2335,8 @@
    "feature": "Pull a value out of text with a pattern, into a variable - the missing half of an HTTP response",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2350,8 +2350,8 @@
    "feature": "Counted conditions: at least N of these are true, or exactly one of these is true",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2417,8 +2417,8 @@
    "feature": "Check tips with one-press fixes: misplaced conditions, duplicates, steps that can never run",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2469,8 +2469,8 @@
    "feature": "Device approval: every device at install, and new devices automatically on pairing",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2508,8 +2508,8 @@
    "feature": "Export a rule for another hub and import it with its devices matched",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-15"
    },
    "note": null,
    "rm51": "8. HAI only features",
