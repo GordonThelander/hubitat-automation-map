@@ -1,8 +1,8 @@
 {
  "contract": "hai.capabilities/1",
  "engine": "HAI-1",
- "capabilitiesHash": "3a6a799729f5a46cd17ee510b74ebb26e20ebde0272488d79dea73f86f7f68e3",
- "generatedAt": "2026-10-10T04:50:02+00:00",
+ "capabilitiesHash": "aadbb32751850f02a188b3d5b345a70f203b1224a8231935ebdb5ca190785b6d",
+ "generatedAt": "2026-10-15T00:29:16+00:00",
  "whatThisIs": "What HAI-1 claims it can do, published by HAI so that tools can read it without HAI installed. Every row is the author of HAI describing HAI, not an independent assessment. The evidence field is the part to read: \"hub\" means observed HAI runtime execution using virtual or physical hub devices; \"simulated\" means modelled execution only for that row. Nothing here says anything about your hub, and nothing here is a comment on any other app or engine: it describes HAI and only HAI.",
  "statusMeanings": {
   "Runs": "Implementation status, not a claim that this row has been watched on a hub: built, checked, read back and simulated, and not refused by the runtime. The evidence field says whether anyone has seen it run. Rows share mechanisms - several features run through one command, subscription or evaluation path - so the number of hub-observed rows is not a completeness score.",
@@ -16,9 +16,9 @@
   "simulated": "Checked using modelled state or command effects, without observed HAI runtime execution for this row. Actual execution against a virtual hub device is hub-tested, not simulation."
  },
  "counts": {
-  "total": 158,
+  "total": 171,
   "byEvidence": {
-   "hub": 147,
+   "hub": 160,
    "simulated": 11
   }
  },
@@ -2093,7 +2093,7 @@
    "status": "Runs",
    "evidence": {
     "level": "hub",
-    "date": "2026-09-27"
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2109,7 +2109,7 @@
    "status": "Runs",
    "evidence": {
     "level": "hub",
-    "date": "2026-09-27"
+    "date": "2026-09-23"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2139,7 +2139,7 @@
    "status": "Runs",
    "evidence": {
     "level": "hub",
-    "date": "2026-09-27"
+    "date": "2026-09-29"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2156,8 +2156,8 @@
    "feature": "Freshness: a condition can require a reading no older than a set time",
    "status": "Runs",
    "evidence": {
-    "level": "hub",
-    "date": "2026-09-27"
+    "level": "simulated",
+    "date": null
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2171,8 +2171,8 @@
    "feature": "Unknown states: by default a rule does nothing when a condition cannot be checked",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-10-14"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2184,8 +2184,8 @@
    "feature": "Re-run policy per rule: restart, ignore, queue with a limit, or parallel with a limit",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-20"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2210,8 +2210,8 @@
    "feature": "Simulation: a rule is simulated before it runs, and the result shown with it",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-17"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2223,8 +2223,8 @@
    "feature": "A plain-English read-back generated from the rule itself",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-17"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2236,8 +2236,8 @@
    "feature": "Run timeline, and why a rule did or did not run",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-17"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2249,8 +2249,8 @@
    "feature": "Version history with a diff and restore",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-17"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2259,11 +2259,11 @@
   {
    "id": "beyond.ai-drafting",
    "area": "option",
-   "feature": "AI drafting and MCP tools on the same checked format",
+   "feature": "AI drafting: describe a rule in plain words and AI writes it in the checked format",
    "status": "Runs",
    "evidence": {
-    "level": "simulated",
-    "date": null
+    "level": "hub",
+    "date": "2026-09-17"
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2275,8 +2275,8 @@
    "feature": "A condition on which trigger started the run, instead of copying the steps per trigger",
    "status": "Runs",
    "evidence": {
-    "level": "hub",
-    "date": "2026-09-27"
+    "level": "simulated",
+    "date": null
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2290,8 +2290,8 @@
    "feature": "A condition on how the last wait ended, so a rule can take one path when the thing it waited for happened and another when it gave up",
    "status": "Runs",
    "evidence": {
-    "level": "hub",
-    "date": "2026-09-28"
+    "level": "simulated",
+    "date": null
    },
    "note": null,
    "rm51": "8. HAI only features",
@@ -2343,6 +2343,177 @@
    "hai": [
     "action:setVariable"
    ]
+  },
+  {
+   "id": "beyond.count-conditions",
+   "area": "condition",
+   "feature": "Counted conditions: at least N of these are true, or exactly one of these is true",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": [
+    "condition:count"
+   ]
+  },
+  {
+   "id": "beyond.mcp-tools",
+   "area": "option",
+   "feature": "MCP tools: AI assistants read, check and write rules in the same checked format",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-10"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.automation-map",
+   "area": "option",
+   "feature": "Automation Map draws every HAI rule and describes it in plain words, automatically",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-20"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.everyday-words",
+   "area": "condition",
+   "feature": "Everyday-word conditions: dark, dusk, bright, hot, cold, raining, windy",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-13"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.live-truth",
+   "area": "option",
+   "feature": "Live true or false on every condition, and current device values, while editing",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-08"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.check-tips",
+   "area": "option",
+   "feature": "Check tips with one-press fixes: misplaced conditions, duplicates, steps that can never run",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.restore-devices",
+   "area": "option",
+   "feature": "Remember and put devices back to their full state: level, colour, colour temperature, shade, fan, valve, thermostat",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-09-19"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.duplicate-swap",
+   "area": "option",
+   "feature": "Duplicate a rule, and swap one device for another across a rule",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-14"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.live-state",
+   "area": "option",
+   "feature": "The rule's live state and recent runs beside it while editing",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-08"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.device-approval",
+   "area": "option",
+   "feature": "Device approval: every device at install, and new devices automatically on pairing",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.rm-migration",
+   "area": "option",
+   "feature": "Copy Rule Machine rules: assess, copy, test, switch over and switch back",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-10"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.backups",
+   "area": "option",
+   "feature": "Nightly rule backups: compare with the hub, restore one rule or all, undo",
+   "status": "Runs",
+   "evidence": {
+    "level": "hub",
+    "date": "2026-10-14"
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
+  },
+  {
+   "id": "beyond.export-import",
+   "area": "option",
+   "feature": "Export a rule for another hub and import it with its devices matched",
+   "status": "Runs",
+   "evidence": {
+    "level": "simulated",
+    "date": null
+   },
+   "note": null,
+   "rm51": "8. HAI only features",
+   "hai": []
   }
  ]
 }
