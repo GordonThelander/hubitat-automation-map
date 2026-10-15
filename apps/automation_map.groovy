@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.40'
+@Field static final String APP_VERSION = '2.4.41'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -21236,6 +21236,14 @@ function rmcRender() {
     (showMissing ? '<td><b>' + extEsc(String(tot.missing)) + '</b></td>' : '') +
     (showPartial ? '<td><b>' + extEsc(String(tot.partial)) + '</b></td>' : '') +
     (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '</tr>';
+  // The engine's own capabilities, with no Rule Machine counterpart: one row under the total, outside it, with "-" in
+  // the RM column so no column claims to add them in (Gordon, 2026-10-15: "use this format and add a line for
+  // additional"). Counted, never named.
+  if (extraRuns) {
+    html += '<tr><td>Additional ' + extEsc(eng.name ? String(eng.name).split('-')[0] : 'engine') + ' capabilities (no RM equivalent)</td><td>-</td>' +
+      '<td>' + extEsc(String(extraRuns)) + '</td><td>' + extEsc(String(extraHub)) + '</td><td>' + extEsc(String(extraScoped)) + '</td>' +
+      (showMissing ? '<td>' + extEsc(String(extraMissing)) + '</td>' : '') + (showPartial ? '<td></td>' : '') + (showFormat ? '<td></td>' : '') + '</tr>';
+  }
   html += '</tbody></table>';
 
   const engName = eng.name || 'HAI-1';
@@ -21246,7 +21254,7 @@ function rmcRender() {
     ' passed in the simulator only. ' +
     (tot.scoped ? extEsc(String(tot.scoped)) + ' are scoped, meaning the route is known and nothing is built yet. ' : '') +
     (tot.missing ? extEsc(String(tot.missing)) + (tot.missing === 1 ? ' is not built at all.' : ' are not built at all.') : '') +
-    (extraRuns ? ' Separately, ' + extEsc(String(extraRuns)) + ' capabilities the engine publishes have no Rule Machine counterpart at all, so they are not in this table.' : '') +
+    (extraRuns ? ' The last row counts the ' + extEsc(String(extraRuns)) + ' capabilities the engine publishes that have no Rule Machine counterpart; ' + extEsc(String(extraHub)) + ' of them have been observed running on a hub. They are not in the total.' : '') +
     '</p>';
 
   // The engine publishes what each status means, so this report quotes it
