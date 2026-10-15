@@ -4,7 +4,7 @@
     {
       "kind": "file",
       "path": "public/hai-capabilities.json",
-      "sha256": "df097fe8608745866b93f4b4f7c9bb2ab878c2d33435238cef6d3ac5c5db4556"
+      "sha256": "140821d63978c3926fcf5ceeb79b7c56682e687bdf36ba8a2ba9ed11519a31ce"
     },
     {
       "kind": "line",
@@ -50,6 +50,7 @@
     "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list 7fb4bc16: required expression on system startup",
     "Gordon, 2026-10-09: YES - why is that even a question? (production Table 1 changes as each RM parity gap closes); HAI list 3a6a7997: Room Lights, 140/140/140",
     "Gordon, 2026-10-15 08:25 local: Yes (add the 'Additional HAI capabilities' row to production's table, 31 implemented, 20 hub-tested, with the HAI-only list corrected to the recorded hub evidence)",
-    "Gordon, 2026-10-15: 'Run all the test you need to close out the table' and 'Yes' to the Additional HAI capabilities row; 10 more capabilities hub-tested 2026-10-15"
+    "Gordon, 2026-10-15: 'Run all the test you need to close out the table' and 'Yes' to the Additional HAI capabilities row; 10 more capabilities hub-tested 2026-10-15",
+    "Gordon, 2026-10-15: 'Run all the test you need to close out the table' and 'Yes' to the Additional HAI capabilities row; restart-safe waits hub-tested 2026-10-15 (31 of 31)"
   ]
 }
