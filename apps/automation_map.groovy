@@ -260,6 +260,9 @@ definition(
     category: 'Utility',
     iconUrl: '',
     iconX2Url: '',
+    // Installs the app when its page is first opened, so nothing depends on the person pressing Done first
+    // (Gordon, 17 October, from a community developer's tip).
+    installOnOpen: true,
     singleInstance: true,
     oauth: true,
 )
