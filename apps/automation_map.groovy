@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.45'
+@Field static final String APP_VERSION = '2.4.46'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -17754,7 +17754,8 @@ String buildMapHtml() {
   #migrationCard .maRow { display:flex; align-items:center; gap:8px; margin:3px 0; }
   #migrationCard .maName { min-width:130px; }
   #migrationCard .maBadge { display:inline-block; min-width:22px; text-align:center; border-radius:11px; padding:1px 6px; font-weight:700; color:#111; }
-  #migrationCard .maL1, #migrationCard .maL2 { background:#6cc070; }
+  #migrationCard .maL1 { background:#6cc070; }
+  #migrationCard .maL2 { background:#b3d65c; }
   #migrationCard .maL3 { background:#d9c441; }
   #migrationCard .maL4 { background:#e0913a; }
   #migrationCard .maL5 { background:#e0605a; }
@@ -17765,7 +17766,8 @@ String buildMapHtml() {
   #migrationCard .maBody ul { margin:0 0 4px 18px; padding:0; }
   /* Migration report panel (v2.3.1). */
   #migrationReportBtn { border-color:#c2185b; }
-  #migrationReportBody .maL1, #migrationReportBody .maL2 { background:#6cc070; }
+  #migrationReportBody .maL1 { background:#6cc070; }
+  #migrationReportBody .maL2 { background:#b3d65c; }
   #migrationReportBody .maL3 { background:#d9c441; }
   #migrationReportBody .maL4 { background:#e0913a; }
   #migrationReportBody .maL5 { background:#e0605a; }
