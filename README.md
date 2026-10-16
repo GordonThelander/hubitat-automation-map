@@ -35,11 +35,13 @@ Pick **Rule to rule only** in the Show filter to see the automation chains on th
 
 A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped. If a rule still names another rule that has since been deleted, that is shown too - labelled `deleted`, so the action silently doing nothing is something you can actually see rather than only discover the hard way.
 
-**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them.
+**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them. Where Automation Map cannot tell from an app's settings which variables it uses, the hub's own variable list fills the gap: those links are drawn dotted, with a count in Insights.
 
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
-**Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step.
+**Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step. All of a rule's triggers sit in one **Starts when** box, since any one of them starts it.
+
+**What starts a rule.** A rule that no device starts - a time, a schedule, a mode, a variable, a location event or another rule being paused - carries a clock badge on the map. Focus or hover over the rule to see its triggers listed.
 
 **Device icons.** Every device is drawn with an icon representing what it actually is - a light looks like a light, a door like a door, a water sensor like a water sensor - guessed automatically from the device's own capabilities and, where that alone is not specific enough, its name. Wrong for a particular device? The Device icons panel lists every device with its guessed icon, lets you pick the right one by hand, and lets you leave yourself a short note on anything left unrecognised. Overrides and notes survive future rescans, and can be backed up to a file and restored later.
 
@@ -131,6 +133,8 @@ Child devices, event subscriptions and capability types are platform-level facts
 
 Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1**, **Notifier**, and **Visual Rule Builder 2.0** (Hubitat's newer visual/AI-prompt rule builder, still in beta on Hubitat's side - VRB itself currently allows only one decision node per rule, no nesting, which this decoder matches rather than works around) are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
 
+**For Hubitat Automation Intelligence (HAI) users.** HAI's migration reads the rules from Automation Map's scan. From HAI's Migration page, **Assess now** asks Automation Map to re-read just the rules you choose instead of a full scan. The HAI coverage table also lists HAI's own capabilities that have no Rule Machine equivalent, separately from the total. In the webCoRE Migration Assessment, the HAI column rates each piston against what HAI can do. Keep the daily scan on, or scan before migrating, so HAI reads your rules as they are now.
+
 ## Requirements and limitations
 
 - **OAuth must be enabled on the app**, since the map is served as a web page from your hub. See Install below.
@@ -144,7 +148,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Device icons are a best guess, not a certainty.** Capability and name-based detection cover most devices well, but a handful of categories (appliances, robot vacuums, and a few others) have no reliable Hubitat signal to detect from at all - see the Device icons panel to correct any of these by hand.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
-- On the current Dev build, a scan of roughly 200 devices normally completes well under a minute. The production v2.0.4 serial scanner can take about two minutes on a similarly sized hub. Hub load and app count still affect both figures.
+- A scan of roughly 200 devices normally completes in under a minute. Hub load and app count affect it.
 
 ## Diagnostic logging
 
@@ -189,11 +193,11 @@ The map link contains an access token unique to your installation. Open the map 
 
 Every device on the hub is scanned. There is no device picker: Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.
 
-A daily scan runs automatically by default. Production uses 00:30 and Dev uses 01:00 so parallel installations do not scan at the same moment. The time is changeable in the app's settings page, and automatic scanning can be disabled entirely.
+A daily scan runs automatically by default, at 00:30. The time can be changed on the app's settings page, and the daily scan can be switched off there. The Dev package does not scan daily unless you switch it on (at 01:00 by default), so a parallel Dev install does not scan at the same moment.
 
 ## Re-scanning
 
-The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices.
+The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices. The saved map is kept in a File Manager file, so the map and the settings page open quickly, and an unchanged map is not rebuilt each time it opens. The settings page says when a scan has finished.
 
 If a stored map cannot be drawn correctly by the installed release, the app refuses to show it and asks you to scan again rather than rendering something subtly wrong.
 
