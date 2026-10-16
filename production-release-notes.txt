@@ -1,7 +1,9 @@
-v2.4.47: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+v2.4.48: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
 Changes since v2.4.24:
 
+* Rule Machine delays stored with a decimal point (for example 5.0 seconds) are now read correctly; they were read as no delay, which stopped HAI from copying the rule.
+* Installs as soon as its page is first opened, with no need to press Done.
 * See what starts a rule, even when no device does: a clock badge on the rule shows its time, schedule, mode, variable, location event or rule-paused triggers, listed when you focus or hover over the rule. A rule flowchart now puts all its triggers in one "Starts when" box.
 * Rule Machine rules are read far more completely: nearly every action, including repeat blocks, per-mode actions, fades, shades, fans, locks, valves, thermostats, music players, sirens, HSM and HTTP GET. Periodic schedules keep their timing.
 * Variables: when Automation Map cannot tell which variables an app uses, the hub's own variable list fills the gap. Those links show as dotted, with a count in Insights.
