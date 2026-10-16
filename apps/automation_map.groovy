@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit 5ede78a57ff392b02fd1fd464d1e475e80ef0cdc; developer
+ * builder from the annotated Dev source at commit 40c8486c8ec38cc475f20303d1f88c5af48ce2a8; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/5ede78a57ff392b02fd1fd464d1e475e80ef0cdc/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/40c8486c8ec38cc475f20303d1f88c5af48ce2a8/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.24'
+@Field static final String APP_VERSION = '2.4.46'
 
 
 
@@ -124,7 +124,13 @@ boolean isDevBuild() {
 
 
 
-@Field static final String GRAPH_SCHEMA = '16'
+
+
+
+
+
+
+@Field static final String GRAPH_SCHEMA = '28'
 
 
 
@@ -228,6 +234,7 @@ void installed() {
     
     if (diagOn()) log.info "${app.label}: starting first scan"
     startScan('installed')
+    ensureHaiAssessSubscription(true)
     scheduleAutoScan()
     scheduleUpdateCheck()
     
@@ -243,6 +250,9 @@ void updated() {
     
     
     migrateRemoveHaiFeedSetting()
+    
+    ['scanQueue', 'roomIdCache'].each { String key -> if (state.containsKey(key)) state.remove(key) }
+    ensureHaiAssessSubscription(true)
     
     
     scheduleAutoScan()
@@ -379,8 +389,8 @@ String lockVsState() {
     return "lock=${lock ? lock.tokenize('-').last() : 'none'}" +
            " gen=${gen ? gen.tokenize('-').last() : 'none'}" +
            " running=${state.scanRunning == true} phase=${scanProgress().phase ?: '-'}" +
-           " graph=${state.graph != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
-           " appInfo=${(state.appInfo instanceof Map) ? (state.appInfo as Map).size() : 0}" +
+           " graph=${state.graphCommittedAtLocal != null} graphVersion=${atomicState.graphVersion ?: '-'}" +
+           " appInfo=${appInfoData().size()}" +
            " appResultsReady=${state.appResultsReady == true}"
 }
 
@@ -415,7 +425,7 @@ int phaseElapsedSeconds(Object startedAt) {
 
 
 String webcoreDecodeSummary() {
-    Map appInfo = (state.appInfo instanceof Map) ? state.appInfo as Map : [:]
+    Map appInfo = appInfoData()
     int pistons = 0
     int errored = 0
     int withReads = 0
@@ -443,8 +453,12 @@ String webcoreDecodeSummary() {
 
 void scheduleDiagnosticLoggingExpiry() {
     if (settings.diagnosticLoggingEnabled != true) {
-        unschedule('disableDiagnosticLogging')
-        state.remove('diagnosticLoggingExpiresAt')
+        
+        
+        if (state.containsKey('diagnosticLoggingExpiresAt')) {
+            unschedule('disableDiagnosticLogging')
+            state.remove('diagnosticLoggingExpiresAt')
+        }
         return
     }
     if (!state.diagnosticLoggingExpiresAt) {
@@ -552,12 +566,15 @@ String defaultAutoScanCron() {
 
 
 
+
+
+
+
+
 boolean autoScanEffectivelyEnabled() {
+    if (isDevBuild()) return settings.autoScanEnabled == true
     return settings.autoScanEnabled != false
 }
-
-
-
 
 
 
@@ -620,6 +637,16 @@ void retryScanAfterRefusal() {
 }
 
 void scheduledScanHandler() {
+    ensureHaiAssessSubscription()
+    
+    
+    
+    
+    if (!autoScanEffectivelyEnabled()) {
+        unschedule('scheduledScanHandler')
+        if (diagOn()) log.info "${app.label}: automatic scanning is off, so the old daily schedule is removed"
+        return
+    }
     if (state.scanRunning) {
         if (diagOn()) log.info "${app.label}: scheduled scan skipped, one is already running"
         return
@@ -634,6 +661,8 @@ void scheduledScanHandler() {
 }
 
 Map main() {
+    
+    ensureHaiAssessSubscription()
     
     
     
@@ -742,7 +771,7 @@ Map main() {
                 
                 
                 boolean graphStale = graphIsStale() && !scanActive && !scanProgressIsLive()
-                if (state.graph && !scanActive && !graphStale) {
+                if (!scanActive && !graphStale && graphData()) {
                     paragraph '''<style type="text/css">
 a.hrefElem[href*="automation-map.html"] { background:#81BC00 !important; border-color:#5c8500 !important; }
 a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"] span { color:#121214 !important; }
@@ -817,8 +846,8 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                     String retryLine = refusalRetryNotice(atomicState.refusalRetry as Map, now(), location.timeZone)
                     if (retryLine) paragraph "<span style='color:#555'>${retryLine}</span>"
                 }
-                if (state.graph) {
-                    Map g = state.graph as Map
+                Map g = scanActive ? null : graphData()
+                if (g || (scanActive && atomicState.graphCommittedAt)) {
                     if (scanActive) {
                         
                         
@@ -840,7 +869,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                         
                         paragraph compatibilitySummary(g)
                     }
-                } else if (!scanActive && atomicState.graphVersion != null) {
+                } else if (!scanActive && graphVersionNow() != null) {
                     
                     
                     
@@ -893,7 +922,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                 paragraph "Separately, once a day this app reads a small file from its own GitHub repository to see whether a newer version has been published, and shows the version number at the top of this page if so. Nothing is sent, and it never installs anything - updates are still made through Hubitat Package Manager."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    defaultValue: true, submitOnChange: true
+                    defaultValue: !isDevBuild(), submitOnChange: true
                 if (autoScanEffectivelyEnabled()) {
                     
                     
@@ -967,19 +996,166 @@ button[name^="_action_href_baselineComparisonBack|"] span { color:#121214 !impor
 
 
 
-void appButtonHandler(String btn) {
-    if (btn == 'runScan') startScan('button')
-}
 
 
 
 
-
+@Field static final ConcurrentHashMap<String, Boolean> GRAPH_VERSION_MIGRATED = new ConcurrentHashMap<>()
 
 void migrateGraphVersionIfNeeded() {
-    if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
-        atomicState.graphVersion = state.graphVersion
+    String key = "${app.id}".toString()
+    if (!GRAPH_VERSION_MIGRATED.containsKey(key)) {
+        if (atomicState.graphVersion == null && state.graph != null && state.graphVersion != null) {
+            atomicState.graphVersion = state.graphVersion
+        }
+        GRAPH_VERSION_MIGRATED.put(key, true)
     }
+    
+    
+    
+    
+    
+    if (state.graph instanceof Map) {
+        Long last = MIGRATION_SCHEDULED_AT.get(key)
+        if (last == null || now() - last > 60000L) {
+            MIGRATION_SCHEDULED_AT.put(key, now())
+            runIn(2, 'migratePublishedScanJob', [overwrite: true])
+        }
+    }
+}
+
+@Field static final ConcurrentHashMap<String, Long> MIGRATION_SCHEDULED_AT = new ConcurrentHashMap<>()
+
+
+
+
+void migratePublishedScanJob() {
+    if (!(state.graph instanceof Map)) return
+    
+    if (scanEffectivelyActive()) return
+    try {
+        Long pointer = state.graphCommittedAtLocal != null ? (state.graphCommittedAtLocal as Long) : null
+        if (pointer != null && publishedScanFileCommittedAt() == pointer) {
+            if (state.publishedAppCount == null) state.publishedAppCount = ((state.appInfo ?: [:]) as Map).size()
+            state.remove('graph')
+            if (state.containsKey('appInfo')) state.remove('appInfo')
+            return
+        }
+        commitPublishedScan(state.graph as Map, (state.appInfo ?: [:]) as Map, (pointer ?: now()) as Long)
+    } catch (Exception e) {
+        log.warn "${app.label}: the saved map could not be moved to its file yet, it stays where it is: ${e.message}"
+    }
+}
+
+
+Long publishedScanFileCommittedAt() {
+    try {
+        byte[] bytes = downloadHubFile(publishedScanFileName())
+        if (!bytes) return null
+        String head = new String(bytes, 0, Math.min(bytes.length, 64), 'UTF-8')
+        String prefix = '{"committedAt":'
+        if (!head.startsWith(prefix)) return null
+        int end = prefix.length()
+        while (end < head.length() && Character.isDigit(head.charAt(end))) end++
+        return end > prefix.length() ? (head.substring(prefix.length(), end) as Long) : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+@Field static final ConcurrentHashMap<String, Map> PUBLISHED_SCAN = new ConcurrentHashMap<>()
+
+String publishedScanFileName() {
+    return "automation-map-${app.id}-scan.json".toString()
+}
+
+
+
+
+
+
+@Field static final ConcurrentHashMap<String, Long> PUBLISHED_SCAN_MISSING = new ConcurrentHashMap<>()
+
+Map publishedScan() {
+    String key = "${app.id}".toString()
+    Long pointer = (state.graphCommittedAtLocal ?: 0) as Long
+    Map hit = PUBLISHED_SCAN.get(key)
+    
+    
+    if (hit && (((hit.committedAt ?: 0) as Long) >= pointer || hit.readFor == pointer)) return hit
+    Map loaded = null
+    if (PUBLISHED_SCAN_MISSING.get(key) != pointer) {
+        try {
+            byte[] bytes = downloadHubFile(publishedScanFileName())
+            if (bytes) {
+                Object parsed = new groovy.json.JsonSlurper().parseText(new String(bytes, 'UTF-8'))
+                if (parsed instanceof Map && (parsed as Map).graph instanceof Map) {
+                    Map p = parsed as Map
+                    loaded = [committedAt: ((p.committedAt ?: 0) as Long), graph: p.graph as Map,
+                              appInfo: ((p.appInfo ?: [:]) as Map), readFor: pointer]
+                }
+            }
+        } catch (Exception e) {
+            if (diagOn()) log.info "${app.label}: no saved map file to read (${e.message})"
+        }
+        if (loaded) {
+            PUBLISHED_SCAN.put(key, loaded)
+            PUBLISHED_SCAN_MISSING.remove(key)
+        } else {
+            PUBLISHED_SCAN_MISSING.put(key, pointer)
+        }
+    }
+    
+    if ((loaded == null || ((loaded.committedAt ?: 0) as Long) < pointer) && state.graph instanceof Map) {
+        return [committedAt: pointer, graph: state.graph as Map, appInfo: ((state.appInfo ?: [:]) as Map)]
+    }
+    return loaded ?: hit
+}
+
+Map graphData() {
+    return publishedScan()?.graph as Map
+}
+
+
+Map appInfoData() {
+    if (scanEffectivelyActive()) {
+        
+        String gen = scanGenerationToken()
+        Map held = gen ? heldAppResults(gen, state.activeGenerationToken as String) : null
+        return held ? ((held.appInfo ?: [:]) as Map) : [:]
+    }
+    Map published = publishedScan()
+    if (published != null) return (published.appInfo ?: [:]) as Map
+    return (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+}
+
+
+int appCountForDisplay() {
+    if (scanEffectivelyActive()) return appInfoData().size()
+    if (state.publishedAppCount == null) return ((state.appInfo ?: [:]) as Map).size()
+    return state.publishedAppCount as Integer
+}
+
+void commitPublishedScan(Map graph, Map appInfo, Long committedAt) {
+    String body = JsonOutput.toJson([committedAt: committedAt, schema: GRAPH_SCHEMA, graph: graph, appInfo: appInfo])
+    uploadHubFile(publishedScanFileName(), body.getBytes('UTF-8'))
+    PUBLISHED_SCAN.put("${app.id}".toString(), [committedAt: committedAt, graph: graph, appInfo: appInfo])
+    PUBLISHED_SCAN_MISSING.remove("${app.id}".toString())
+    state.graphCommittedAtLocal = committedAt
+    atomicState.graphCommittedAt = committedAt
+    state.publishedAppCount = appInfo.size()
+    if (state.containsKey('graph')) state.remove('graph')
+    if (state.containsKey('appInfo')) state.remove('appInfo')
 }
 
 
@@ -999,48 +1175,37 @@ void migrateGraphVersionIfNeeded() {
 
 
 
+
+
+
+
+
+def graphVersionNow() {
+    def v = atomicState.graphVersion
+    if (v != null) return v
+    if (scanEffectivelyActive()) return null
+    return graphData()?.schema
+}
+
 void selfHealGraphIfNeeded() {
-    if (state.graph != null) return
     if (atomicState.graphVersion == null) return
     if (scanEffectivelyActive()) return
-    if (!(state.appInfo)) {
-        
-        Map kept = latestAppResults()
-        if (!(kept?.appInfo)) return
-        state.appInfo = new LinkedHashMap(kept.appInfo as Map)
-        state.appIds = new ArrayList((kept.appIds ?: []) as List)
-    }
     
     
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    boolean staleSnapshot = snapshotPredatesGraphCommit()
+    if (graphData() != null) return
+    Map kept = latestAppResults()
+    if (!(kept?.appInfo)) return
+    log.warn "${app.label}: the saved map could not be read - rebuilding it from the last scan's results instead of requiring a fresh scan"
     if (diagOn()) log.info "${app.label}: self-heal rebuilding the graph - ${lockVsState()}"
-    if (staleSnapshot) {
-        if (diagOn()) {
-            log.info "${app.label}: rebuilding after a stale snapshot raced the graph commit - expected, not a fault"
-        }
-    } else {
-        log.warn "${app.label}: state.graph was missing after a completed scan - rebuilding from existing scan data instead of requiring a fresh scan"
-    }
     state.hubVariableInventory = fetchHubVariableInventory()
-    state.graph = buildGraph()
-    atomicState.graphVersion = GRAPH_SCHEMA
+    Map healedInfo = new LinkedHashMap(kept.appInfo as Map)
     
-    Map healedInfo = (state.appInfo ?: [:]) as Map
+    Map graph = buildGraph(healedInfo)
     healedInfo.each { String appId, info -> if (info instanceof Map) (info as Map).remove('flow') }
-    state.appInfo = healedInfo
-    Long healedAt = now()
-    state.graphCommittedAtLocal = healedAt
-    atomicState.graphCommittedAt = healedAt
+    commitPublishedScan(graph, healedInfo, now())
+    atomicState.graphVersion = GRAPH_SCHEMA
+    state.graphVersion = GRAPH_SCHEMA
 }
 
 
@@ -1064,7 +1229,7 @@ boolean shouldAutoScan() {
     
     migrateGraphVersionIfNeeded()
     selfHealGraphIfNeeded()
-    boolean noGraph = (atomicState.graphVersion == null)
+    boolean noGraph = (graphVersionNow() == null)
     boolean noLiveLock = SCAN_LOCKS.get("${app.id}") == null
     boolean noDurableRunning = !state.scanRunning
     boolean noScanError = !state.scanError
@@ -1306,6 +1471,18 @@ function amReconcileRunning() {
   if (warn) warn.hidden = true;
 }
 
+function amPollLater() {
+  if (document.hidden) {
+    document.addEventListener('visibilitychange', function again() {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', again);
+      amProgressPoll();
+    });
+    return;
+  }
+  setTimeout(amProgressPoll, 4000);
+}
+
 function amProgressPoll() {
   if (amPolling) return;
   amPolling = true;
@@ -1344,7 +1521,9 @@ function amProgressPoll() {
           el.textContent = phaseLabel + ': ' + d.done + ' of ' + d.total + deviceContext +
                             ' (' + pct + '%) - updating live, no need to reload.';
         }
-        setTimeout(amProgressPoll, 1500);
+        // Every 4 s, and not while the tab is hidden: each poll is an execution of this app on the hub, at the
+        // hub's busiest time (hub-cost review, 2026-10-13).
+        amPollLater();
       } else if (amSawRunning) {
         // Live-updating this one span cannot reveal the map link/insights
         // sections, which only render at all when state.graph exists in the
@@ -1428,8 +1607,12 @@ if (document.readyState !== 'loading') { amStartScan(); }
 
 boolean graphIsStale() {
     migrateGraphVersionIfNeeded()
+    
+    
+    if (scanEffectivelyActive()) return false
     selfHealGraphIfNeeded()
-    return state.graph && atomicState.graphVersion != GRAPH_SCHEMA
+    Map graph = graphData()
+    return graph && ((graph.schema ?: atomicState.graphVersion ?: state.graphVersion) as String) != GRAPH_SCHEMA
 }
 
 
@@ -1644,7 +1827,7 @@ String compatibilitySummary(Map graph) {
     if (devUnreadable > 0) {
         s << "<b style='color:#c0392b'>${devUnreadable} ${devUnreadable == 1 ? 'device' : 'devices'} could not be read</b> and are missing from this map, along with any app only discoverable through them. "
     }
-    int appCount = (state.appInfo ?: [:]).size()
+    int appCount = appCountForDisplay()
     int deviceCount = (state.deviceLabels ?: [:]).size()
     int nodeCount = (graph.nodes ?: []).size()
     int relationshipCount = (graph.edges ?: []).size()
@@ -1885,6 +2068,13 @@ ConcurrentHashMap liveAppScan() {
 
 
 
+@Field static final ConcurrentHashMap<String, String> SCAN_OUTCOMES = new ConcurrentHashMap<>()
+
+
+
+
+
+
 
 @Field static final ConcurrentHashMap<String, Map> APP_RESULTS = new ConcurrentHashMap<>()
 @Field static final long GENERATION_RECORD_RETENTION_MS = 15 * 60 * 1000L
@@ -1936,13 +2126,23 @@ String publishRefusal(Integer enumerated, Integer held, Integer witnessed) {
 
 
 @Field static final int GEN_TRACE_MAX = 60
+@Field static final ConcurrentHashMap<String, List> GEN_TRACE_MEMORY = new ConcurrentHashMap<>()
 
-void genTrace(String event, Map fields = [:]) {
+void genTrace(String event, Map fields = [:], boolean durable = true) {
     try {
         String gen = "${currentGenerationToken() ?: 'none'}"
         String detail = (fields ?: [:]).collect { k, v -> "${k}=${v}" }.join(' ')
+        String line = "${now()}|${gen}|${event}${detail ? ' ' + detail : ''}".toString()
+        if (!durable) {
+            
+            
+            List mem = GEN_TRACE_MEMORY.get("${app.id}".toString()) ?: []
+            mem = (mem + [line]).takeRight(GEN_TRACE_MAX)
+            GEN_TRACE_MEMORY.put("${app.id}".toString(), mem)
+            return
+        }
         List trail = (state.genTrace ?: []) as List
-        trail << "${now()}|${gen}|${event}${detail ? ' ' + detail : ''}".toString()
+        trail << line
         if (trail.size() > GEN_TRACE_MAX) trail = trail.takeRight(GEN_TRACE_MAX)
         state.genTrace = trail
     } catch (Exception ignored) {
@@ -1979,27 +2179,76 @@ void sweepGenerationRecords() {
 
 
 
-boolean restoreAppResultsIfLost(String lockToken) {
-    Map held = APP_RESULTS.get(genKey(lockToken)) as Map
-    if (held == null) return false
-    boolean restored = false
-    Map heldInfo = (held.appInfo ?: [:]) as Map
-    int inState = ((state.appInfo ?: [:]) as Map).size()
-    if (heldInfo.size() > inState) {
-        state.appInfo = new LinkedHashMap(heldInfo)
-        log.info "${app.label}: another page or job had overwritten the app list this scan had just read (${inState} of ${heldInfo.size()}); restored it"
-        restored = true
+
+
+
+
+
+
+String pendingAppResultsFileName() {
+    return "automation-map-${app.id}-scan-pending.json".toString()
+}
+
+void keepAppResults(String lockToken, Map appInfo, List appIds) {
+    Long createdAt = now()
+    APP_RESULTS.put(genKey(lockToken), [appInfo: new LinkedHashMap(appInfo ?: [:]),
+                                        appIds: new ArrayList(appIds ?: []), createdAt: createdAt])
+    try {
+        String body = JsonOutput.toJson([gen: genKey(lockToken), createdAt: createdAt,
+                                         appIds: (appIds ?: []), appInfo: (appInfo ?: [:])])
+        
+        
+        Object roundTrip = new groovy.json.JsonSlurper().parseText(body)
+        if (roundTrip instanceof Map) {
+            Map rt = roundTrip as Map
+            APP_RESULTS.put(genKey(lockToken), [appInfo: new LinkedHashMap((rt.appInfo ?: [:]) as Map),
+                                                appIds: new ArrayList((rt.appIds ?: []) as List), createdAt: createdAt])
+        }
+        uploadHubFile(pendingAppResultsFileName(), body.getBytes('UTF-8'))
+    } catch (Exception e) {
+        
+        
+        log.warn "${app.label}: the scan's app list could not be saved to its file, keeping it in memory only: ${e.message}"
     }
-    
-    
-    List heldIds = (held.appIds ?: []) as List
-    int idsInState = ((state.appIds ?: []) as List).size()
-    if (heldIds.size() > idsInState) {
-        state.appIds = new ArrayList(heldIds)
-        log.info "${app.label}: another page or job had overwritten the list of apps this scan enumerated (${idsInState} of ${heldIds.size()}); restored it"
-        restored = true
+}
+
+
+
+
+Map heldAppResults(String lockToken, String logicalGen = null, boolean fromFile = false) {
+    List<String> keys = ([lockToken, logicalGen].findAll { it } as List<String>).collect { genKey(it as String) }.unique()
+    for (String k : keys) {
+        Map held = APP_RESULTS.get(k) as Map
+        if (held != null) return held
     }
-    return restored
+    if (!fromFile || keys.isEmpty()) return null
+    try {
+        byte[] bytes = downloadHubFile(pendingAppResultsFileName())
+        if (!bytes) return null
+        Object parsed = new groovy.json.JsonSlurper().parseText(new String(bytes, 'UTF-8'))
+        if (!(parsed instanceof Map) || !keys.contains("${(parsed as Map).gen}".toString())) return null
+        Map p = parsed as Map
+        Map held = [appInfo: new LinkedHashMap((p.appInfo ?: [:]) as Map), appIds: new ArrayList((p.appIds ?: []) as List),
+                    createdAt: ((p.createdAt ?: now()) as Long)]
+        keys.each { String k -> APP_RESULTS.put(k, held) }
+        log.info "${app.label}: read this scan's app list back from its file (${(held.appInfo as Map).size()} apps)"
+        return held
+    } catch (Exception e) {
+        if (diagOn()) log.info "${app.label}: no saved app list for this scan (${e.message})"
+        return null
+    }
+}
+
+
+
+String scanGenerationToken() {
+    String live = SCAN_LOCKS.get("${app.id}") as String
+    if (live != null && live.startsWith('finishing:')) {
+        String inner = live.substring('finishing:'.length())
+        int cut = inner.lastIndexOf(':')
+        live = cut > 0 ? inner.substring(0, cut) : inner
+    }
+    return live ?: (state.activeGenerationToken as String)
 }
 
 
@@ -2093,6 +2342,9 @@ boolean finishGeneration(String token, String error = null, String logicalGen = 
         state.scanError = "${ex.message}"
     } finally {
         genTrace('generation-terminated', [claimant: finishingValue, logical: (logicalGen ?: token)])
+        String outcome = (error != null || state.scanError) ? 'failed' : 'completed'
+        SCAN_OUTCOMES.put("${app.id}".toString(), outcome)
+        atomicState.lastScanOutcome = outcome
         TERMINAL_TOMBSTONES.put(tombstoneKey, now())
         state.scanRunning = false
         
@@ -2141,7 +2393,7 @@ Map startScan(String entry = 'unknown') {
     
     String lockToken = "lock-${now()}-${(int)(Math.random() * 999999)}"
     if (SCAN_LOCKS.putIfAbsent("${app.id}", lockToken) != null) {
-        genTrace('lock-refused', [entry: entry, wanted: lockToken])
+        genTrace('lock-refused', [entry: entry, wanted: lockToken], false)
         return [acquired: false]
     }
     genTrace('lock-acquired', [entry: entry, gen: lockToken])
@@ -2225,7 +2477,6 @@ Map startScan(String entry = 'unknown') {
     
     
     List repIds = (bulk.typeGroups as Map).collect { typeKey, ids -> (ids as List)[0] }
-    state.scanQueue = []
     
     
     
@@ -2243,13 +2494,16 @@ Map startScan(String entry = 'unknown') {
     
     state.scanHeartbeat = now()
     state.appIds = []
-    state.appInfo = [:]
+    
+    if (state.containsKey('appInfo')) state.remove('appInfo')
     
     
     
     
     
     state.appResultsReady = false
+    SCAN_OUTCOMES.put("${app.id}".toString(), 'running')
+    atomicState.lastScanOutcome = 'running'
     atomicState.graphVersion = null
     
     
@@ -2269,7 +2523,10 @@ Map startScan(String entry = 'unknown') {
     
     
     
-    state.graph = null
+    
+    PUBLISHED_SCAN.remove("${app.id}".toString())
+    MAP_PAGE_CACHE.remove("graph|${app.id}".toString())
+    if (state.containsKey('graph')) state.remove('graph')
     unschedule('fetchRegistry')
     unschedule('finishScan')
 
@@ -2728,7 +2985,9 @@ void finalizeDevicePhase(String scanId) {
 
 
 void startAppPhase(String lockToken) {
-    Set appIds = new LinkedHashSet(state.appIds as List)
+    
+    
+    Set appIds = new LinkedHashSet()
     
     
     Map appTypeNamespaceResult = fetchAppTypeNamespaces()
@@ -2760,11 +3019,11 @@ void startAppPhase(String lockToken) {
     
     state.appPhaseStartedAt = now()
     setScanProgress('apps', appIds.size(), 0)
-    state.scanQueue = []
 
     if (appIds.isEmpty()) {
         
         
+        keepAppResults(lockToken, [:], [])
         state.appResultsReady = true
         recordAppPhaseWitness(lockToken, 0)
         beginRegistryAndFinish(lockToken)
@@ -2799,6 +3058,9 @@ void startAppPhase(String lockToken) {
     
     scan.labels = new ConcurrentHashMap<String, String>((state.deviceLabels ?: [:]) as Map)
     scan.appTypeNamespaces = new ConcurrentHashMap<String, String>((appTypeNamespaceResult.namespaces ?: [:]) as Map)
+    
+    
+    scan.hubTimeZone = hubTimeZoneId()
     scan.decoded = new AtomicInteger(0)
     scan.unreadable = new AtomicInteger(0)
     scan.rulesDecoded = new AtomicInteger(0)
@@ -2808,6 +3070,7 @@ void startAppPhase(String lockToken) {
     
     
     
+    scan.appIds = new ArrayList(appIds)
     scan.lockToken = lockToken
     APP_SCANS[scanId] = scan
     state.appScanId = scanId
@@ -2895,7 +3158,8 @@ void appFetchCb(resp, data) {
     try {
         if (resp?.status == 200) {
             Map respData = (resp.json instanceof Map) ? (resp.json as Map) : [:]
-            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap, scan.appTypeNamespaces as Map)
+            info = processAppRelationships(appId, respData, scan.labels as ConcurrentHashMap, scan.appTypeNamespaces as Map,
+                                           scan.hubTimeZone as String)
         } else {
             info = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [],
                     ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [],
@@ -3102,9 +3366,9 @@ void finalizeAppPhase(String scanId) {
     unschedule('appClaimReaper')
 
     try {
-        state.appInfo = new LinkedHashMap(scan.appInfo as Map)
-        APP_RESULTS.put(genKey(scan.lockToken as String), [appInfo: new LinkedHashMap(scan.appInfo as Map),
-                                                         appIds: new ArrayList((state.appIds ?: []) as List), createdAt: now()])
+        
+        List enumeratedIds = (scan.appIds ?: state.appIds ?: []) as List
+        keepAppResults(scan.lockToken as String, scan.appInfo as Map, enumeratedIds)
         
         
         
@@ -3116,8 +3380,8 @@ void finalizeAppPhase(String scanId) {
         
         
         
-        genTrace('app-phase-finalized', [collected: ((state.appInfo ?: [:]) as Map).size(),
-                                         enumerated: ((state.appIds ?: []) as List).size()])
+        genTrace('app-phase-finalized', [collected: (scan.appInfo as Map).size(),
+                                         enumerated: enumeratedIds.size()])
         state.deviceLabels = new LinkedHashMap(scan.labels as Map)
 
         
@@ -3211,9 +3475,9 @@ void fetchRegistry(jobData = null) {
     
     
     
-    restoreAppResultsIfLost(lockToken)
+    Map heldResults = heldAppResults(lockToken, null, true)
     Integer witnessedApps = appPhaseWitnessCount(lockToken)
-    int heldApps = ((state.appInfo ?: [:]) as Map).size()
+    int heldApps = heldResults ? ((heldResults.appInfo ?: [:]) as Map).size() : 0
     String inventoryLost = (witnessedApps != null && heldApps < witnessedApps) ?
         "this step could not see the app list the scan had just read (${heldApps} of ${witnessedApps}), so the last matches were kept" : null
 
@@ -3309,7 +3573,8 @@ void finishScan(data = null) {
     boolean finished = finishGeneration(lockToken, null, logicalGen) {
         
         
-        restoreAppResultsIfLost(lockToken)
+        Map heldResults = heldAppResults(lockToken, logicalGen, true)
+        Map heldInfo = heldResults ? ((heldResults.appInfo ?: [:]) as Map) : [:]
         
         
         
@@ -3335,8 +3600,11 @@ void finishScan(data = null) {
         
         Map fetchedFeed = new LinkedHashMap(fetchHaiFeed())
         fetchedFeed.remove('capabilities')
-        state.haiFeed = fetchedFeed
-        Map haiFeed = (state.haiFeed ?: [:]) as Map
+        
+        
+        HAI_FEED_RULES.put("${app.id}".toString(), fetchedFeed)
+        state.haiFeed = haiFeedSummary(fetchedFeed)
+        Map haiFeed = fetchedFeed
         if (haiFeed.state == 'FAILED') {
             log.warn "${app.label}: the Automation Intelligence feed could not be read, continuing without it: ${haiFeed.error}"
         } else if (haiFeed.state == 'OK' && diagOn()) {
@@ -3407,9 +3675,12 @@ void finishScan(data = null) {
         
         
         
-        Integer enumeratedApps = ((state.appIds ?: []) as List).size()
-        Integer collectedApps = ((state.appInfo ?: [:]) as Map).size()
-        Integer witnessedApps = appPhaseWitnessCount(lockToken)
+        
+        Integer enumeratedApps = Math.max(((heldResults?.appIds ?: []) as List).size(), ((state.appIds ?: []) as List).size())
+        Integer collectedApps = heldInfo.size()
+        
+        
+        Integer witnessedApps = appPhaseWitnessCount(logicalGen)
         String why = publishRefusal(enumeratedApps, collectedApps, witnessedApps)
         if (why != null) {
             log.warn "${app.label}: refusing to publish - ${why}"
@@ -3417,33 +3688,43 @@ void finishScan(data = null) {
             state.scanError = why
             state.scanHeartbeat = now()
             scheduleRetryAfterRefusal()
+            haiAssessFinishPending(false, 'scanRefused', null)
             return
         }
         genTrace('publish-accepted', [enumerated: enumeratedApps, collected: collectedApps, witnessed: witnessedApps])
         atomicState.refusalRetry = null
-        Map graph = buildGraph()
+        Map graph = buildGraph(heldInfo)
         state.scanHeartbeat = now()
-        state.graph = graph
-        atomicState.graphVersion = GRAPH_SCHEMA
         
-        hamDecodeWriteFile()
-        hamDecodeWriteDetailFile()
+        
+        
+        
+        
+        Map appInfo = new LinkedHashMap()
+        heldInfo.each { String appId, info ->
+            if (info instanceof Map) {
+                Map copy = new LinkedHashMap(info as Map)
+                copy.remove('flow')
+                appInfo[appId] = copy
+            } else {
+                appInfo[appId] = info
+            }
+        }
+        
         
         
         
         Long graphCommittedAt = now()
-        state.graphCommittedAtLocal = graphCommittedAt
-        atomicState.graphCommittedAt = graphCommittedAt
-
+        commitPublishedScan(graph, appInfo, graphCommittedAt)
+        atomicState.graphVersion = GRAPH_SCHEMA
+        state.graphVersion = GRAPH_SCHEMA  
         
+        hamDecodeWriteFile()
+        hamDecodeWriteDetailFile()
         
+        haiAssessFinishPending(true, null, appInfo.size())
         
-        
-        Map appInfo = (state.appInfo ?: [:]) as Map
-        appInfo.each { String appId, info ->
-            if (info instanceof Map) (info as Map).remove('flow')
-        }
-        state.appInfo = appInfo
+        rememberGraphJson(graphCommittedAt, jsonForScriptEmbed(graph))
         
         
         
@@ -3483,7 +3764,7 @@ void finishScan(data = null) {
 
         if (diagOn()) {
             log.info "${app.label}: scan complete in ${state.lastScanDurationSeconds}s - " +
-                     "${(state.appInfo as Map).size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
+                     "${appInfo.size()} app(s), ${(state.deviceLabels as Map).size()} device(s)"
             log.info "${app.label}: webCoRE decode - ${webcoreDecodeSummary()}"
         }
     }
@@ -4262,7 +4543,7 @@ boolean webcoreFlowIsTrigger(Map condition) {
 
 
 
-Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:]) {
+Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNamespaces = [:], String hubTimeZone = null) {
     Map out = [id: appId, label: "App ${appId}", type: null, namespace: null, roles: [:], flow: [], stateful: [], ruleLinks: [], endpoints: [], hubVarWrites: [], hubVarReads: [], error: null]
     try {
             Map installedApp = data.installedApp as Map
@@ -4530,7 +4811,10 @@ Map processAppRelationships(String appId, Map data, Map labels, Map appTypeNames
                 out.conditions = hamDetailSafely('conditions', decodeFailures) { extractRuleConditions(data) } ?: []
                 out.expressions = hamDetailSafely('expressions', decodeFailures) { extractRuleExpressions(data) } ?: [:]
                 out.actions = hamDetailSafely('actions', decodeFailures) { extractRuleActions(data) } ?: []
-                out.triggers = hamDetailSafely('triggers', decodeFailures) { extractRuleTriggers(data) } ?: []
+                
+                
+                List periodicJobs = periodicJobList(data.scheduledJobs)
+                out.triggers = hamDetailSafely('triggers', decodeFailures) { extractRuleTriggers(data, periodicJobs, hubTimeZone) } ?: []
                 if (decodeFailures) out.decodeFailures = decodeFailures
             }
             if ("${out.type}" == 'webCoRE Piston') {
@@ -6796,7 +7080,7 @@ Map webcoreDecodeCoverageResult(String rawAppId) {
 
     
     
-    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Map appInfo = appInfoData()
     Object entry = appInfo[appId]
     if (!(entry instanceof Map)) return webcoreCoverageOutcome('invalid-request', 'unknown-app-id', 400, appId)
     if ("${(entry as Map).type ?: ''}".trim() != 'webCoRE Piston') {
@@ -7283,7 +7567,6 @@ Map webcoreMigrationAssessmentMapping() {
 @Field static final int MIGRATION_CACHE_MAX = 200
 
 void cacheMigrationRating(String appId, Map rating) {
-    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
     Closure side = { Object engine ->
         if (!(engine instanceof Map)) return null
         Map e = engine as Map
@@ -7307,10 +7590,38 @@ void cacheMigrationRating(String appId, Map rating) {
     
     
     
-    cache[appId] = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
-                    hai: side(rating.hai),
-                    engineVersion: ((rating.hai ?: [:]) as Map).version,
-                    appVersion: APP_VERSION]
+    Map entry = [ratedAt: now(), ruleMachine: side(rating.ruleMachine), visualRuleBuilder: side(rating.visualRuleBuilder),
+                 hai: side(rating.hai),
+                 engineVersion: ((rating.hai ?: [:]) as Map).version,
+                 appVersion: APP_VERSION]
+    
+    
+    String key = "${app.id}".toString()
+    MIGRATION_RATINGS_PENDING.putIfAbsent(key, new ConcurrentHashMap<String, Map>())
+    Map pending = MIGRATION_RATINGS_PENDING.get(key) as Map
+    pending[appId] = entry
+    Long oldest = (pending.values().collect { ((it as Map).ratedAt ?: 0) as Long }.min() ?: 0) as Long
+    if (pending.size() >= MIGRATION_CACHE_FLUSH_EVERY || now() - oldest > 60000L) flushMigrationRatingCache()
+}
+
+@Field static final int MIGRATION_CACHE_FLUSH_EVERY = 10
+@Field static final ConcurrentHashMap<String, Map> MIGRATION_RATINGS_PENDING = new ConcurrentHashMap<>()
+
+
+Map migrationRatingCacheView() {
+    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
+    Map pending = MIGRATION_RATINGS_PENDING.get("${app.id}".toString()) as Map
+    if (pending) cache.putAll(pending)
+    return cache
+}
+
+void flushMigrationRatingCache() {
+    
+    if (scanEffectivelyActive()) return
+    Map pending = MIGRATION_RATINGS_PENDING.remove("${app.id}".toString()) as Map
+    if (!pending) return
+    Map cache = new LinkedHashMap((state.migrationRatingCache ?: [:]) as Map)
+    cache.putAll(pending)
     if (cache.size() > MIGRATION_CACHE_MAX) {
         List oldest = cache.entrySet().sort { ((it.value as Map).ratedAt ?: 0) as Long }.take(cache.size() - MIGRATION_CACHE_MAX)
         oldest.each { cache.remove(it.key) }
@@ -7336,18 +7647,20 @@ String haiFeedVersionForCache() {
 
 
 String haiStatusesNote(boolean noCapabilities, String feedState) {
-    if (!noCapabilities) return 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
+    if (!noCapabilities) return 'Rated against what HAI-1 publishes it can do, held to the statuses it publishes now'
     if (feedState == 'OFF') return 'That engine is not installed on this hub, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
     return 'Not determined yet'
 }
 
 Map migrationRatingsMapping() {
-    Map cache = (state.migrationRatingCache ?: [:]) as Map
+    
+    flushMigrationRatingCache()
+    Map cache = migrationRatingCacheView()
     Long graphAt = (state.graphCommittedAtLocal ?: 0) as Long
     
     
     String engineVersion = haiFeedVersionForCache()
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     Map liveFeed = (state.haiFeed ?: [:]) as Map
     
     
@@ -7398,7 +7711,7 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
     if (!appId || appId.length() > (limits.maxAppIdLength as Integer) || !(appId ==~ /^[0-9]+$/)) {
         return [http: 400, body: [status: 'invalid-request', error: 'invalid-app-id']]
     }
-    Map appInfo = (state.appInfo instanceof Map) ? (state.appInfo as Map) : [:]
+    Map appInfo = appInfoData()
     Object entry = appInfo[appId]
     if (!(entry instanceof Map) || webcoreMigrationStr((entry as Map).type ?: '').trim() != 'webCoRE Piston') {
         return [http: 400, body: [status: 'invalid-request', error: 'not-a-piston']]
@@ -7417,7 +7730,7 @@ Map webcoreMigrationAssessmentResult(String rawAppId) {
         Map hubVariableTypes = [:]
         inventory.each { k, v -> hubVariableTypes[webcoreMigrationStr(k)] = normalizeHubVariableType((v instanceof Map) ? webcoreMigrationStr((v as Map).type) : null) }
         String parentId = webcoreMigrationStr((entry as Map).parent ?: '')
-        Map indexes = buildWebcoreDeviceHashIndexes(appInfo)
+        Map indexes = webcoreDeviceHashIndexesForScan(appInfo)
         Map parentIndex = (((indexes.resolvable ?: [:]) as Map)[parentId] ?: [:]) as Map
         Set knownTokens = parentIndex.keySet().collect { webcoreMigrationStr(it) } as Set
         Map tokenToDeviceId = [:]
@@ -8476,8 +8789,9 @@ Map webcoreRateEngine(List components, String engine, List sourceProblems, Map h
             List er = extraRun(row, verdict, note)
             verdict = er[0] as String; note = er[1] as String
         } else {
-            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) {
-                verdict = 'partial'; note = hai ? 'rebuild as a between-two-times condition' : 'rebuild as Between two times'
+            
+            if (!hai && row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) {
+                verdict = 'partial'; note = 'rebuild as Between two times'
             }
             if (row in ['stmt.on']) { if (seenDecision) { effectiveRow = 'stmt.on.extra'; verdict = verdictOf(effectiveRow); note = noteOf(effectiveRow) }; seenDecision = true }
         }
@@ -8555,6 +8869,40 @@ Object webcoreMigrationLive(Object node) {
     return node
 }
 
+
+
+
+@Field static final ConcurrentHashMap<String, Map> HAI_FEED_FOR_RATING = new ConcurrentHashMap<>()
+@Field static final long HAI_FEED_FOR_RATING_MS = 60000L
+
+Map haiFeedForRating() {
+    String key = "${app.id}".toString()
+    Map hit = HAI_FEED_FOR_RATING.get(key)
+    if (hit && now() - (hit.at as Long) < HAI_FEED_FOR_RATING_MS) return hit
+    Map feed = fetchHaiFeed()
+    Map caps = [:]
+    ((feed.capabilities ?: []) as List).each { Object raw ->
+        if (raw instanceof Map && (raw as Map).id) caps["${(raw as Map).id}"] = raw as Map
+    }
+    Map memo = [at: now(), state: feed.state, engine: feed.engine, caps: caps]
+    HAI_FEED_FOR_RATING.put(key, memo)
+    return memo
+}
+
+
+
+@Field static final ConcurrentHashMap<String, Map> WEBCORE_HASH_INDEXES = new ConcurrentHashMap<>()
+
+Map webcoreDeviceHashIndexesForScan(Map appInfo) {
+    String key = "${app.id}".toString()
+    String scan = "${state.graphCommittedAtLocal ?: 0}".toString()
+    Map hit = WEBCORE_HASH_INDEXES.get(key)
+    if (hit && hit.scan == scan && scan != '0') return hit.indexes as Map
+    Map indexes = buildWebcoreDeviceHashIndexes(appInfo)
+    WEBCORE_HASH_INDEXES.put(key, [scan: scan, indexes: indexes])
+    return indexes
+}
+
 Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenToDeviceId) {
     Map piston = new LinkedHashMap(originalPiston)
     piston.s = webcoreMigrationLive(originalPiston.s instanceof List ? originalPiston.s : [])
@@ -8584,11 +8932,8 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     Map vrb = webcoreRateEngine(components, 'vrb', problems)
     
     
-    Map haiFeed = fetchHaiFeed()
-    Map haiCaps = [:]
-    ((haiFeed.capabilities ?: []) as List).each { Object raw ->
-        if (raw instanceof Map && (raw as Map).id) haiCaps["${(raw as Map).id}"] = raw as Map
-    }
+    Map haiFeed = haiFeedForRating()
+    Map haiCaps = (haiFeed.caps ?: [:]) as Map
     Map hai = webcoreRateEngine(components, 'hai', problems, haiCaps)
     hai.engineName = "${haiFeed.engine ?: 'HAI-1'}"
     hai.statuses = haiCaps.isEmpty() ? 'unavailable' : 'live'
@@ -8642,7 +8987,9 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     'cond.followedBy'          : ['partial', 'rebuild as a wait for the second event with a timeout'],
     'setting.async'            : ['yes', 'set the rule to run in parallel, with a limit'],
     'setting.taskPolicy'       : ['yes', 'set the rule to restart, ignore, queue or run in parallel'],
-    'setting.pistonOption'     : ['partial', 'check it against the rule settings; HAI-1 has more of them than Rule Machine'],
+    'setting.pistonOption'     : ['yes', 'HAI-1 has a rule setting for it'],
+    'cond.constant'            : ['yes', 'always true or always false; carried as it is, or simply left out'],
+    'trig.locationEvent'       : ['yes', 'HAI-1 has a hub and location event trigger'],
     'stmt.triggersAnd'         : ['partial', 'rebuild as one trigger with the rest as conditions, as in Rule Machine'],
     
     
@@ -8659,14 +9006,32 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     'act.alarm'                : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
     'act.alarmPart'            : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
     
-    'cond.expression'          : ['no', 'HAI-1 has no expression language; rebuild the test from conditions'],
-    'stmt.each'                : ['no', 'HAI-1 has no loop over a device list'],
-    'vact.parseJson'           : ['no', 'HAI-1 does not parse a JSON reply'],
+    
+    
+    'stmt.while'               : ['yes', 'a repeat with a while condition'],
+    'stmt.repeat'              : ['yes', 'a repeat with an until condition'],
+    'stmt.for'                 : ['yes', 'a repeat a set number of times'],
+    'stmt.switch'              : ['partial', 'rebuild as IF / ELSE IF, or as steps by mode when it switches on the mode'],
+    'stmt.each'                : ['partial', 'send one command to all the devices at once; steps that differ per device need one block each'],
+    'trig.device.cross'        : ['yes', 'a trigger fires when the reading changes into the range, not while it stays there'],
+    'trig.device.crossInclusive': ['yes', 'a trigger fires when the reading changes into the range, not while it stays there'],
+    'trig.device.range'        : ['yes', 'a trigger can test between two values'],
+    'trig.device.unchanged'    : ['partial', 'use a time-since-last-report condition on a schedule'],
+    'trig.localVariable'       : ['yes', 'a rule variable can start the rule'],
+    'trig.device.parity'       : ['partial', 'work out the remainder with variable maths, then test the variable'],
+    'cond.device.parity'       : ['partial', 'work out the remainder with variable maths, then test the variable'],
+    'cond.device.history'      : ['partial', 'use a time-since-last-report condition, or a condition that requires a fresh reading'],
+    'cond.expression'          : ['partial', 'rebuild as a condition tree (AND, OR, NOT, XOR, at least N of) with variable maths and comparisons'],
+    'vact.runPiston'           : ['partial', 'rebuild the target piston as an HAI-1 rule; Run rule can wait for it and take back a result'],
+    'vact.http'                : ['yes', 'GET or POST with headers, a body and a content type, keeping the reply in a variable'],
+    'vact.fileRead'            : ['yes', 'a variable can read a File Manager file'],
+    'vact.parseJson'           : ['partial', 'the web request step keeps one field of a JSON reply; pull out more with a pattern'],
+    'mod.dynamicValue'         : ['yes', 'any command value can come from a variable'],
+    'mod.interaction'          : ['yes', 'a trigger can require a physical or a digital event'],
+    
     'vact.wol'                 : ['no', 'HAI-1 has no wake on LAN'],
     'vact.integration'         : ['no', 'HAI-1 has no equivalent for these webCoRE integrations'],
-    'vact.toggleRandom'        : ['no', 'HAI-1 has no random device choice'],
-    'trig.device.parity'       : ['no', 'HAI-1 cannot test even or odd'],
-    'cond.device.parity'       : ['no', 'HAI-1 cannot test even or odd']
+    'vact.toggleRandom'        : ['no', 'HAI-1 has no random device choice']
 ]
 
 
@@ -8810,6 +9175,16 @@ List extractRuleLinks(Map data, String appId) {
                 if (!targetId || targetId == appId) return
                 out << [to: targetId, kind: fam.kind, engine: engine]
             }
+        }
+    }
+    
+    
+    
+    vals.each { String name, String value ->
+        if (!name.matches('^tCapab[0-9]+$') || value != 'Rule paused') return
+        hamDetailJsonList(vals['tDev' + name.substring(6)]).each { Object t ->
+            String targetId = "${t}"
+            if (targetId && targetId != appId) out << [to: targetId, kind: 'trigger', engine: '']
         }
     }
     return out
@@ -10201,6 +10576,35 @@ List scheduledJobList(def raw) {
 
 
 
+List periodicJobList(def raw) {
+    List out = []
+    scheduledJobList(raw).each { Object j ->
+        if (!(j instanceof Map) || "${(j as Map).handler}" != 'periodicHandler') return
+        String cron = "${(j as Map).schedule ?: ''}".trim()
+        if (!cron) return
+        Object next = (j as Map).nextRunTime
+        out << [schedule: cron, nextRunTime: (next == null ? null : "${next}".toString())]
+    }
+    return out
+}
+
+
+
+String hubTimeZoneId() {
+    try {
+        return (location?.timeZone?.ID ?: '') as String
+    } catch (Exception ignored) {
+        return ''
+    }
+}
+
+
+
+
+
+
+
+
 
 
 
@@ -10443,6 +10847,7 @@ String inertReason(Map inert, Map appInfo, String parentId = null) {
 
 
 
+
 Map fetchHubVariableInventory() {
     try {
         Map allVars = getAllGlobalVars()
@@ -10495,6 +10900,76 @@ Map hubVariableUsersByName(List rows) {
 List hubVariableUsersExcept(List users, Set ignoredAppIds) {
     
     return ((users ?: []) as List).findAll { Map u -> !ignoredAppIds.contains(u.id.toString()) }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Map reconcileHubVariableUsers(Map usersByName, Set ignoredAppIds, List edges, Map appInfo, Set appNodeIds, Set varNames) {
+    Map<String, Set<String>> decoded = [:]
+    ((edges ?: []) as List).each { Object raw ->
+        if (!(raw instanceof Map)) return
+        Map e = raw as Map
+        
+        if (!(e.kind?.toString() in ['read', 'write', 'usesVar']) || e.source?.toString() == 'hub-variables') return
+        String from = "${e.from ?: ''}", to = "${e.to ?: ''}"
+        if (!from.startsWith('a') || !to.startsWith('v')) return
+        String name = to.substring(1)
+        if (!decoded.containsKey(name)) decoded[name] = new LinkedHashSet<String>()
+        decoded[name] << from.substring(1)
+    }
+    Closure parentOf = { String id ->
+        Object info = (appInfo ?: [:])[id]
+        return (info instanceof Map && (info as Map).parent) ? "${(info as Map).parent}".toString() : null
+    }
+    List added = []
+    List notInMap = []
+    List decodedOnly = []
+    int compared = 0
+    int agreeing = 0
+    ((usersByName ?: [:]) as Map).each { Object rawName, Object rawUsers ->
+        String name = "${rawName}"
+        if (!varNames.contains(name)) return
+        compared++
+        Map labelOf = [:]
+        Set<String> hub = new LinkedHashSet<String>()
+        hubVariableUsersExcept((rawUsers ?: []) as List, ignoredAppIds).each { Map u ->
+            hub << u.id.toString()
+            labelOf[u.id.toString()] = u.label
+        }
+        Set<String> dec = ((decoded[name] ?: []) as Set<String>).findAll { !ignoredAppIds.contains(it) } as Set<String>
+        boolean clean = true
+        hub.each { String h ->
+            if (dec.contains(h) || dec.any { parentOf(it) == h }) return
+            clean = false
+            if (appNodeIds.contains("a${h}".toString())) {
+                added << [from: "a${h}".toString(), to: "v${name}".toString(), kind: 'usesVar', direction: 'unknown',
+                          source: 'hub-variables']
+            } else {
+                notInMap << [variable: name, appId: h, label: labelOf[h]]
+            }
+        }
+        dec.each { String d ->
+            if (hub.contains(d) || hub.contains(parentOf(d))) return
+            clean = false
+            decodedOnly << [variable: name, app: "a${d}".toString()]
+        }
+        if (clean) agreeing++
+    }
+    return [edges: added,
+            summary: [status: 'complete', compared: compared, agreeing: agreeing, hubListedEdges: added.size(),
+                      hubOnlyNotInMap: notInMap, decodedOnly: decodedOnly]]
 }
 
 
@@ -10633,6 +11108,7 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'condition:Between two times' : 'condition.between-two-times-fixed-sunrise-sunset-offsets-v',
     'condition:Between two dates' : 'condition.between-two-dates',
     'condition:On a Day'          : 'condition.on-a-day',
+    'condition:Days of week'      : 'condition.days-of-week-as-condition',
     'condition:Days of Week'      : 'condition.days-of-week-as-condition',
     'condition:Private Boolean'   : 'condition.private-boolean',
     'condition:Custom Attribute'  : 'condition.custom-attribute',
@@ -10665,6 +11141,8 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'action:getSimpleConditional' : 'control.conditional-simple-conditional-action-one-action',
     'action:getRepeat'            : 'control.repeat-repeat-actions-every-n-n-times-stoppable',
     'action:getRepeatWhile'       : 'control.repeat-repeat-while-expression-repeat-until-expr',
+    'action:getWhile'             : 'control.repeat-repeat-while-expression-repeat-until-expr',
+    'action:getUntil'             : 'control.repeat-repeat-while-expression-repeat-until-expr',
     'action:getStopRepeat'        : 'control.repeat-stop-repeating-actions',
     'action:getDelay'             : 'control.delay-wait-exit-delay-actions-blocking-with-canc',
     'action:getCancelDelayed'     : 'control.delay-wait-exit-cancel-delayed-actions',
@@ -10672,6 +11150,30 @@ String canonicalHubVariableName(String rawName, Map inventoryVars) {
     'action:getWaitRule'          : 'control.delay-wait-exit-wait-for-expression-timeout-dura',
     'action:getExitRule'          : 'control.delay-wait-exit-exit-rule',
     'action:getComment'           : 'control.delay-wait-exit-comment',
+    
+    
+    
+    'action:getModeSwitch'         : 'action.switches-set-switches-per-mode-choose-switches-p',
+    'action:getChooseSwitch'       : 'action.switches-set-switches-per-mode-choose-switches-p',
+    'action:getPushButtonPerMode'  : 'action.switches-push-button-push-button-per-mode-choose',
+    'action:getChooseButton'       : 'action.switches-push-button-push-button-per-mode-choose',
+    'action:getRLShade'            : 'action.shades-and-fans-open-close-shades-set-position-s',
+    'action:getStopShade'          : 'action.shades-and-fans-open-close-shades-set-position-s',
+    'action:getAdjustFan'          : 'action.shades-and-fans-set-fan-speed-cycle-fans',
+    'action:getActivateScene'      : 'action.scenes-activate-scenes-activate-scenes-per-mode',
+    'action:getActivateScenePerMode': 'action.scenes-activate-scenes-activate-scenes-per-mode',
+    'action:getSetHSM'             : 'action.hsm-doors-locks-valves-arm-disarm-hsm-all-9-vari',
+    'action:getLULock'             : 'action.hsm-doors-locks-valves-lock-unlock-locks',
+    'action:getSetThermostat'      : 'action.thermostats-set-thermostats-thermostat-scheduler',
+    'action:getHTTPGet'            : 'action.messages-send-http-get-send-http-post',
+    'action:getSetMusicPlayer'     : 'action.music-and-sounds-control-music-player',
+    'action:getTone'               : 'action.music-and-sounds-sound-tone-sound-chime',
+    'action:getDisable'            : 'action.devices-disable-enable-devices',
+    'action:getStartStopZPoll'     : 'action.devices-start-stop-z-wave-polling',
+    'action:getEndRepeat'          : 'control.repeat-repeat-actions-every-n-n-times-stoppable',
+    'action:getDelayPerMode'      : 'control.delay-wait-exit-delay-actions-per-mode',
+    'action:getCondAct'           : 'control.conditional-simple-conditional-action-one-action',
+    'action:getCancelDelay'        : 'control.delay-wait-exit-cancel-delayed-actions',
     
     'trigger:Custom Attribute'    : 'trigger.custom-attribute',
     'trigger:Presence'            : 'trigger.presence-arrives-leaves',
@@ -10824,7 +11326,24 @@ List extractRuleConstructs(Map data) {
         else if (name.startsWith('reqExp') && v == 'true') out << 'structure:requiredExpression'.toString()
     }
     if (anyDelay) out << 'structure:actionDelay'.toString()
+    
+    
+    Map stActions = [:]
+    (data.appState ?: []).each { Object e ->
+        if (e instanceof Map && (e as Map).name == 'actions' && (e as Map).value instanceof Map) stActions = (e as Map).value as Map
+    }
+    if (stActions.values().any { it instanceof Map && rmCondSlot((it as Map).cond) != null }) out << 'action:getCondAct'.toString()
     return out.sort()
+}
+
+
+
+
+
+String rmCondSlot(Object raw) {
+    String t = raw == null ? '' : "${raw}".trim()
+    if (!(t ==~ /\d+/)) return null
+    return (t as BigInteger) > 0 ? t.replaceFirst(/^0+/, '') : null
 }
 
 
@@ -10925,13 +11444,13 @@ Map rmCoverageReport() {
             ? "${feed.engine ?: 'The rule engine'} published no capability list: ${feed.capabilitiesError}"
             : "${feed.engine ?: 'The rule engine'} published no capability list, so there is nothing to compare Rule Machine against."]
     }
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     
     
     
     
     
-    Map ruleVars = ((state.graph ?: [:]) as Map).ruleVariables as Map ?: [:]
+    Map ruleVars = ((graphData() ?: [:]) as Map).ruleVariables as Map ?: [:]
     List rules = []
     Map constructUse = [:]
     appInfo.each { String appId, Object info ->
@@ -11090,12 +11609,28 @@ Map hamDetailDateOperand(String side, String num, Map settingValues) {
     return out
 }
 
+
+
+@Field static final Set<String> RM_CONDITION_KEY_PREFIXES = ([
+    'rCapab_', 'rDev_', 'rDev', 'state_', 'not', 'RelrDev_', 'AllrDev_', 'AllrDev', 'isDev_', 'isVar_',
+    'xVar_', 'xVar', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
+    'starting', 'startingA', 'ending', 'endingA', 'startSunriseOffset', 'startSunsetOffset',
+    'endSunriseOffset', 'endSunsetOffset', 'monthStart', 'dayStart', 'monthEnd', 'dayEnd',
+    'timeStart', 'timeEnd', 'startDateType', 'endDateType'
+] as Set<String>)
+
 Map hamDetailCondition(Map settingDevices, String num, String capability, Map settingValues) {
     Map operands = [:]
+    
+    
+    
+    
     Map raw = [:]
     settingValues.each { Object k, Object v ->
         String name = "${k}"
-        if (name.endsWith(num) || name.endsWith("_${num}")) raw[name] = "${v ?: ''}"
+        def m = name =~ /^([A-Za-z]+_?)(\d+)$/
+        if (!m.matches() || m.group(2) != num) return
+        if (RM_CONDITION_KEY_PREFIXES.contains(m.group(1))) raw[name] = "${v ?: ''}"
     }
     String comparator = "${settingValues["RelrDev_${num}"] ?: ''}".trim()
 
@@ -11116,6 +11651,10 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
     } else if (capability == 'On a Day') {
         
         
+        
+        Map date = hamDetailDateOperand('Start', num, settingValues)
+        if (date) operands.date = date
+    } else if (capability == 'Days of week' || capability == 'Days of Week') {
         
         operands.days = hamDetailJsonList(settingValues["days${num}"])
     } else if (capability == 'Mode') {
@@ -11143,6 +11682,12 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
         if (comparator) operands.comparator = comparator
         String state = "${settingValues["state_${num}"] ?: ''}"
         if (state) operands.value = [literal: state]
+        
+        
+        if (capability == 'Custom Attribute') {
+            String attr = "${settingValues["rCustomAttr_${num}"] ?: settingValues["rCustomAttr${num}"] ?: ''}".trim()
+            if (attr) operands.attribute = attr
+        }
     }
 
     
@@ -11241,7 +11786,9 @@ Map hamDetailDuration(String num, Map v) {
     Integer sec = hamDetailInt(v["delaySecond.${num}"])
     Map out = [cancelable: hamDetailBool(v["cancelAct.${num}"]),
                random: hamDetailBool(v["randomAct.${num}"])]
-    if (var) {
+    
+    
+    if (var && (hamDetailBool(v["uVar.${num}"]) || (h == null && m == null && sec == null))) {
         out.seconds = null
         out.variable = var
         return out
@@ -11259,6 +11806,24 @@ Map hamDetailActionDelay(String num, Map v) {
     if (!mode || mode == 'none') return null
     Integer sec = hamDetailInt(v["delaySec.${num}"])
     return [seconds: sec, cancelable: hamDetailBool(v["cancelAct.${num}"]), mode: mode]
+}
+
+
+
+
+List hamDetailPerMode(Object rawIds, Closure read) {
+    List ids = hamDetailJsonList(rawIds)
+    List names = hamDetailModeNames(ids)
+    List out = []
+    ids.eachWithIndex { Object id, int i ->
+        String name = names[i]
+        Map got = (Map) read("${id}".toString(), name)
+        Map e = [modeId: "${id}".toString()]
+        if (name) e.mode = name
+        if (got == null) e.unreadable = true else e.putAll(got)
+        out << e
+    }
+    return out
 }
 
 List hamDetailDeviceRefs(Object raw) {
@@ -11523,6 +12088,108 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
                     branch: ['getIfThen': 'if', 'getElseIf': 'elseif',
                              'getElse': 'else', 'getEndIf': 'endif'][method]]
 
+        case 'getRepeat':
+            
+            
+            
+            Integer rh = hamDetailNumberOrNull(v["repeatHour.${num}"])
+            Integer rm = hamDetailNumberOrNull(v["repeatMinute.${num}"])
+            Integer rs = hamDetailNumberOrNull(v["repeatSecond.${num}"])
+            if (rh == null && rm == null && rs == null) return null
+            Map o = [type: 'repeat', everySeconds: ((rh ?: 0) * 3600) + ((rm ?: 0) * 60) + (rs ?: 0),
+                     stoppable: hamDetailBool(v["stopRepeat.${num}"])]
+            Integer times = hamDetailNumberOrNull(v["repeatN.${num}"])
+            if (times != null) o.times = times
+            return o
+
+        case 'getEndRepeat':
+            return [type: 'repeatEnd']
+
+        case 'getStopFade':
+        case 'getStopCTFade':
+            
+            return [type: 'stopFade', attribute: method == 'getStopFade' ? 'level' : 'colorTemperature']
+
+        case 'getDisable':
+            
+            Map o = [type: 'deviceEnabled', enabled: hamDetailBool(v["disEn.${num}"])]
+            List d = hamDetailDeviceRefs(dev["devDisable.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getActivateScene':
+            
+            List ids = hamDetailJsonList(v["sceneAct.${num}"])
+            Map o = [type: 'activateScenes']
+            if (ids) o.devices = ids.collect { [id: "${it}".toString()] }
+            return o
+
+        case 'getActivateScenePerMode':
+            
+            Map o = [type: 'activateScenesPerMode']
+            o.modes = hamDetailPerMode(v["sceneModes.${num}"]) { String id, String name ->
+                List ids = hamDetailJsonList(v["scene${id}.${num}"])
+                return ids ? [devices: ids.collect { [id: "${it}".toString()] }] : null
+            }
+            return o
+
+        case 'getCancelDelay':
+            
+            return [type: 'cancelDelays']
+
+        case 'getColorTempPerMode':
+            
+            
+            Map o = [type: 'colorTemperaturePerMode']
+            List d = hamDetailDeviceRefs(dev["ctM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["ctModes.${num}"]) { String id, String name ->
+                Integer k = hamDetailNumberOrNull(v["ctMode${id}.${num}"])
+                if (k == null) return null
+                Map e = [kelvin: k]
+                Integer l = hamDetailNumberOrNull(v["ctMode${id}.${num}Level"])
+                if (l != null) e.level = l
+                return e
+            }
+            return o
+
+        case 'getSetMusicPlayer':
+            
+            
+            Map o = [type: 'musicPlayer', action: "${v["playerCommand.${num}"] ?: ''}".trim()]
+            List d = hamDetailDeviceRefs(dev["player.${num}"])
+            if (d) o.devices = d
+            String track = "${v["playerTrack.${num}"] ?: ''}"
+            if (track) o.track = track
+            String text = "${v["playerText.${num}"] ?: ''}"
+            if (text) o.text = text
+            Integer pl = hamDetailNumberOrNull(v["playerLevel.${num}"])
+            if (pl != null) o.level = pl
+            if (hamDetailBool(v["uVar.${num}"]) && "${v["xVar.${num}"] ?: ''}".trim()) o.variable = "${v["xVar.${num}"]}".trim()
+            return o
+
+        case 'getSiren':
+            
+            Map o = [type: 'siren', action: "${v["sirenAct.${num}"] ?: ''}".trim()]
+            List d = hamDetailDeviceRefs(dev["siren.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getWhile':
+            
+            
+            Integer wh = hamDetailNumberOrNull(v["repeatHour.${num}"])
+            Integer wm = hamDetailNumberOrNull(v["repeatMinute.${num}"])
+            Integer ws = hamDetailNumberOrNull(v["repeatSecond.${num}"])
+            Map w = [type: 'repeatWhile']
+            if (wh != null || wm != null || ws != null) w.everySeconds = ((wh ?: 0) * 3600) + ((wm ?: 0) * 60) + (ws ?: 0)
+            return w
+
+        case 'getUntil':
+            
+            
+            return [type: 'repeatUntil']
+
         case 'getDefinedAction':
             
             
@@ -11583,19 +12250,40 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
                            left: "${v["xVar3.${num}"] ?: ''}",
                            operator: "${v["valMathOp.${num}"] ?: ''}",
                            right: rightOperand]
-            } else if (numOp) {
+            } else if (numOp == 'number' || numOp == 'add number') {
                 
                 
                 
                 o.value = [kind: (numOp == 'add number') ? 'addNumber' : 'number',
                            value: "${v["valNumber.${num}"] ?: ''}"]
+            } else if (numOp == 'variable') {
+                
+                
+                Map cv = [kind: 'variable', variable: "${v["xVar3.${num}"] ?: ''}".trim()]
+                String off = "${v["valOffset.${num}"] ?: ''}".trim()
+                if (off) cv.offset = off
+                o.value = cv
+            } else if (numOp == 'device attribute') {
+                
+                Map av = [kind: 'deviceAttribute', attribute: "${v["tCustomAttr.${num}"] ?: ''}"]
+                List d = hamDetailDeviceRefs(dev["customDev.${num}"])
+                if (d) av.devices = d
+                o.value = av
+            } else if (numOp) {
+                
+                return null
             } else if (strOp == 'Device attribute') {
                 Map av = [kind: 'deviceAttribute', attribute: "${v["tCustomAttr.${num}"] ?: ''}"]
                 List d = hamDetailDeviceRefs(dev["customDev.${num}"])
                 if (d) av.devices = d
                 o.value = av
-            } else if (strOp) {
+            } else if (strOp == 'Set string') {
                 o.value = [kind: 'string', value: "${v["valString.${num}"] ?: ''}"]
+            } else if (strOp) {
+                
+                
+                
+                return null
             } else if (boolRaw) {
                 o.value = [kind: 'boolean', value: (boolRaw == 'true')]
             }
@@ -11624,6 +12312,9 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             if (lvl != null) o.level = lvl
             Integer fade = hamDetailNumberOrNull(v["dimRA.${num}"])
             if (fade != null) o.fadeSeconds = fade
+            
+            String lvar = "${v["xVar.${num}"] ?: ''}".trim()
+            if (lvar && hamDetailBool(v["uVar.${num}"])) { o.remove('level'); o.variable = lvar }
             return o
 
         case 'getAdjustDimmer':
@@ -11700,6 +12391,294 @@ Map hamDetailActionOperands(String num, String method, Map v, Map dev) {
             else o.command = closing ? 'close' : 'open'
             return o
 
+        
+        
+        
+        case 'getToggleSwitch':
+            
+            Map o = [type: 'command', command: 'toggle']
+            List d = hamDetailDeviceRefs(dev["toggleSwitch.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getToggleDimmer':
+            
+            Map o = [type: 'toggleLevel']
+            List d = hamDetailDeviceRefs(dev["dimA.${num}"])
+            if (d) o.devices = d
+            Integer lvl = hamDetailNumberOrNull(v["dimLA.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getStopDimmer':
+            
+            Map o = [type: 'command', command: 'stopLevelChange']
+            List d = hamDetailDeviceRefs(dev["dimStop.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getShadePosition':
+            
+            Map o = [type: 'command', command: 'setPosition']
+            List d = hamDetailDeviceRefs(dev["shadePosition.${num}"])
+            if (d) o.devices = d
+            Integer pos = hamDetailNumberOrNull(v["shadeLevel.${num}"])
+            if (pos != null) o.position = pos
+            return o
+
+        case 'getAdjustFan':
+            
+            Map o = [type: 'command', command: 'cycleSpeed']
+            List d = hamDetailDeviceRefs(dev["fanAdjust.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getExitRule':
+            return [type: 'exit']
+
+        case 'getStopRepeat':
+            return [type: 'stopRepeat']
+
+        case 'getHTTPGet':
+            
+            Map o = [type: 'http', method: 'get']
+            String url = "${v["httper.${num}"] ?: ''}".trim()
+            if (url) o.url = url
+            return o
+
+        case 'getPingIP':
+            
+            Map o = [type: 'ping']
+            String host = "${v["pingIP.${num}"] ?: ''}".trim()
+            if (host) o.host = host
+            return o
+
+        case 'getWriteLocalFile':
+        case 'getAppendLocalFile':
+            
+            Map o = [type: 'file', op: method == 'getWriteLocalFile' ? 'write' : 'append']
+            String name = "${v["localFile.${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            o.text = "${v["fileContents.${num}"] ?: ''}"
+            return o
+
+        case 'getDeleteLocalFile':
+            Map o = [type: 'file', op: 'delete']
+            String name = "${v["deleteFile.${num}"] ?: ''}".trim()
+            if (name) o.name = name
+            return o
+
+        
+        
+        
+        
+        
+        case 'getRLDimmer':
+            Map o = [type: 'command', command: 'startLevelChange',
+                     direction: hamDetailBool(v["dimRL.${num}"]) ? 'down' : 'up']
+            List d = hamDetailDeviceRefs(dev["dimRaiseLower.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getRLShade':
+            Map o = [type: 'command', command: hamDetailBool(v["shadeRL.${num}"]) ? 'closeShade' : 'openShade']
+            List d = hamDetailDeviceRefs(dev["shadeOpenClose.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getOCValve':
+            
+            Map o = [type: 'command', command: hamDetailBool(v["valveRL.${num}"]) ? 'closeValve' : 'openValve']
+            List d = hamDetailDeviceRefs(dev["valveOpenClose.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getSetHSM':
+            
+            
+            Map o = [type: 'hsm']
+            String op = "${v["alarm.${num}"] ?: ''}".trim()
+            if (op) o.op = op
+            return o
+
+        case 'getStopShade':
+            Map o = [type: 'command', command: 'stopPositionChange']
+            List d = hamDetailDeviceRefs(dev["shadeStop.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getLULock':
+            Map o = [type: 'command', command: hamDetailBool(v["lockRL.${num}"]) ? 'unlock' : 'lock']
+            List d = hamDetailDeviceRefs(dev["lockLockUnlock.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getMuteUnmute':
+            Map o = [type: 'command', command: hamDetailBool(v["mU.${num}"]) ? 'unmute' : 'mute']
+            List d = hamDetailDeviceRefs(dev["muteUnmute.${num}"])
+            if (d) o.devices = d
+            return o
+
+        case 'getFanSpeed':
+            
+            Map o = [type: 'command', command: 'setSpeed']
+            List d = hamDetailDeviceRefs(dev["fanDevice.${num}"])
+            if (d) o.devices = d
+            String speed = "${v["fanSpeed.${num}"] ?: ''}".trim()
+            if (speed) o.speed = speed
+            return o
+
+        case 'getPushButton':
+            
+            
+            String evt = "${v["pushButOp.${num}"] ?: 'push'}".trim()
+            Map o = [type: 'command', command: evt in ['push', 'hold', 'doubleTap', 'release'] ? evt : 'push']
+            List d = hamDetailDeviceRefs(dev["pushButton.${num}"])
+            if (d) o.devices = d
+            Integer button = hamDetailNumberOrNull(v["pushButNo.${num}"])
+            if (button != null) o.button = button
+            if (evt) o.event = evt
+            return o
+
+        case 'getFadeDimmer':
+        case 'getFadeCT':
+            
+            boolean ct = method == 'getFadeCT'
+            String pre = ct ? 'ctFade' : 'dimFade'
+            Map o = [type: 'fade', attribute: ct ? 'colorTemperature' : 'level',
+                     up: hamDetailBool(v["${pre}Up.${num}"])]
+            List d = hamDetailDeviceRefs(dev["${pre}.${num}"])
+            if (d) o.devices = d
+            Integer target = hamDetailNumberOrNull(v["${pre}Target.${num}"])
+            if (target != null) o.target = target
+            String mins = "${v["${pre}Time.${num}"] ?: ''}".trim()
+            if (mins) {
+                try { o.seconds = ((mins as BigDecimal) * 60).intValue() } catch (Exception ignored) { }
+            }
+            return o
+
+        case 'getToggleColor':
+            
+            Map o = [type: 'toggleColor']
+            List d = hamDetailDeviceRefs(dev["bulbsTog.${num}"])
+            if (d) o.devices = d
+            String name = "${v["colorTog.${num}"] ?: ''}".trim()
+            Map hs = (Map) RM_NAMED_COLOURS[name]
+            if (name) o.color = name
+            if (hs) { o.hue = hs.hue; o.saturation = hs.saturation }
+            Integer lvl = hamDetailNumberOrNull(v["colorTogLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getToggleColorTemp':
+            Map o = [type: 'toggleColorTemperature']
+            List d = hamDetailDeviceRefs(dev["ctTog.${num}"])
+            if (d) o.devices = d
+            Integer k = hamDetailNumberOrNull(v["ctLTog.${num}"])
+            if (k != null) o.kelvin = k
+            Integer lvl = hamDetailNumberOrNull(v["ctTogLevel.${num}"])
+            if (lvl != null) o.level = lvl
+            return o
+
+        case 'getSetThermostat':
+            
+            Map o = [type: 'thermostat']
+            List d = hamDetailDeviceRefs(dev["thermo.${num}"])
+            if (d) o.devices = d
+            Map fields = [thermoMode: 'mode', thermoFan: 'fanMode', thermoSetHeat: 'heatingSetpoint',
+                          thermoSetCool: 'coolingSetpoint', thermoAdjHeat: 'adjustHeating', thermoAdjCool: 'adjustCooling']
+            fields.each { String key, String out ->
+                String raw = "${v["${key}.${num}"] ?: ''}".trim()
+                if (!raw) return
+                if (out in ['mode', 'fanMode']) o[out] = raw
+                else { try { o[out] = raw as BigDecimal } catch (Exception ignored) { } }
+            }
+            return o
+
+        
+        
+        case 'getModeSwitch':
+            Map o = [type: 'switchPerMode']
+            List d = hamDetailDeviceRefs(dev["switchM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["switchModes.${num}"]) { String id, String name ->
+                String cmd = "${v["switch${id}.${num}"] ?: ''}".trim()
+                return cmd in ['on', 'off'] ? [command: cmd] : null
+            }
+            return o
+
+        case 'getChooseSwitch':
+            Map o = [type: 'chooseSwitchPerMode']
+            o.modes = hamDetailPerMode(v["chooseModes.${num}"]) { String id, String name ->
+                return [on: hamDetailDeviceRefs(dev["chooseSwOn${id}.${num}"]),
+                        off: hamDetailDeviceRefs(dev["chooseSwOff${id}.${num}"])]
+            }
+            return o
+
+        case 'getPushButtonPerMode':
+            
+            
+            
+            Map o = [type: 'buttonPerMode']
+            List d = hamDetailDeviceRefs(dev["pushMBtn.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["pushModes.${num}"]) { String id, String name ->
+                Integer b = hamDetailNumberOrNull(v["butM${id}.${num}"])
+                String evt = "${v["butM${id}.${num}Op"] ?: 'push'}".trim()
+                return b == null || !(evt in ['push', 'hold', 'doubleTap', 'release']) ? null : [button: b, command: evt]
+            }
+            return o
+
+        case 'getChooseButton':
+            
+            
+            Map o = [type: 'chooseButtonPerMode']
+            o.modes = hamDetailPerMode(v["chooseModes.${num}"]) { String id, String name ->
+                List d = hamDetailDeviceRefs(dev["chooseButton${id}.${num}"])
+                Integer b = hamDetailNumberOrNull(v["chooseButNo${id}.${num}"])
+                String evt = "${v["chooseButAct${id}.${num}"] ?: ''}".trim()
+                return !d || b == null || !(evt in ['push', 'hold', 'doubleTap', 'release']) ? null :
+                       [devices: d, button: b, command: evt]
+            }
+            return o
+
+        case 'getDimmersPerMode':
+            Map o = [type: 'levelPerMode']
+            List d = hamDetailDeviceRefs(dev["dimM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["dimmerModes.${num}"]) { String id, String name ->
+                Integer lvl = hamDetailNumberOrNull(v["level${id}.${num}"])
+                return lvl == null ? null : [level: lvl]
+            }
+            return o
+
+        case 'getColorPerMode':
+            Map o = [type: 'colorPerMode']
+            List d = hamDetailDeviceRefs(dev["bulbsM.${num}"])
+            if (d) o.devices = d
+            o.modes = hamDetailPerMode(v["colorModes.${num}"]) { String id, String name ->
+                String colour = "${v["color${id}.${num}"] ?: ''}".trim()
+                Map hs = (Map) RM_NAMED_COLOURS[colour]
+                if (!hs) return null
+                Map e = [color: colour, hue: hs.hue, saturation: hs.saturation]
+                Integer lvl = hamDetailNumberOrNull(v["colorLevel${id}.${num}"])
+                if (lvl != null) e.level = lvl
+                return e
+            }
+            return o
+
+        case 'getDelayPerMode':
+            Map o = [type: 'delayPerMode', cancelable: hamDetailBool(v["cancelAct.${num}"])]
+            o.modes = hamDetailPerMode(v["delayModes.${num}"]) { String id, String name ->
+                if (!name) return null
+                Integer h = hamDetailNumberOrNull(v["delayHour${name}.${num}"])
+                Integer m = hamDetailNumberOrNull(v["delayMinute${name}.${num}"])
+                Integer sec = hamDetailNumberOrNull(v["delaySecond${name}.${num}"])
+                if (h == null && m == null && sec == null) return null
+                return [seconds: ((h ?: 0) * 3600) + ((m ?: 0) * 60) + (sec ?: 0)]
+            }
+            return o
+
         case 'getComment':
             return [type: 'comment', text: "${v["comment.${num}"] ?: ''}"]
 
@@ -11761,6 +12740,12 @@ List extractRuleActions(Map data) {
         
         Object evalGroup = ((storedActions[num] ?: [:]) as Map).rule
         if (evalGroup != null) step.expressionGroup = "${evalGroup}"
+        
+        
+        
+        
+        String condSlot = rmCondSlot(((storedActions[num] ?: [:]) as Map).cond)
+        if (condSlot != null && !WAIT_METHODS.contains(method)) step.condition = condSlot
 
         Map ops
         if (method == 'getWaitRule') {
@@ -11804,7 +12789,10 @@ List extractRuleActions(Map data) {
 
 @Field static final List<String> DEVICELESS_TRIGGERS = [
     'Certain Time (and optional date)', 'Certain Time', 'Periodic Schedule', 'Variable',
-    'Location Event', 'Mode', 'Hub Variable'
+    'Location Event', 'Mode', 'Hub Variable',
+    
+    
+    'Rule paused'
 ]
 
 
@@ -11859,8 +12847,17 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
         case 'Periodic Schedule':
             String period = "${v["whichPeriod${num}"] ?: ''}".trim()
             if (period) o.period = period
-            Integer every = hamDetailInt(v["everyNSecs${num}"])
+            
+            
+            String everyKey = ['Seconds': 'everyNSecs', 'Minutes': 'everyNC', 'Hourly': 'everyNHC', 'Daily': 'everyNDC'][period] ?: 'everyNSecs'
+            String everyRaw = "${v["${everyKey}${num}"] ?: ''}".trim()
+            Integer every = everyRaw.isInteger() ? (everyRaw as Integer) : null
             if (every != null) o.every = every
+            String startKey = ['Hourly': 'startingHC', 'Daily': 'startingDC'][period]
+            String start = startKey ? "${v["${startKey}${num}"] ?: ''}".trim() : ''
+            
+            
+            if (start && !start.startsWith('2016-03-23T')) o.startingTime = start
             
             
             
@@ -11874,6 +12871,11 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
             break
         case 'Location Event':
             
+            break
+        case 'Rule paused':
+            
+            
+            o.rules = hamDetailJsonList(v["tDev${num}"]).collect { "${it}" }
             break
         case 'Certain Time (and optional date)':
         case 'Certain Time':
@@ -11905,7 +12907,9 @@ Map hamDetailTriggerOperands(String num, String cap, Map v, Map dev) {
 
 
 
-List extractRuleTriggers(Map data) {
+
+
+List extractRuleTriggers(Map data, List periodicJobs = null, String hubTimeZone = null) {
     Map values = [:]
     Map devices = [:]
     (data.appSettings ?: []).each { Object raw ->
@@ -11945,7 +12949,28 @@ List extractRuleTriggers(Map data) {
         }
         out << [index: num, capability: cap, operands: ops]
     }
-    return out.sort { Map t -> (t.index as String) as Integer }
+    List sorted = out.sort { Map t -> (t.index as String) as Integer }
+    attachPeriodicCrons(sorted, periodicJobs ?: [], hubTimeZone)
+    return sorted
+}
+
+
+
+
+
+
+
+void attachPeriodicCrons(List triggers, List jobs, String hubTimeZone) {
+    List periodic = triggers.findAll { Object t -> (t as Map).capability == 'Periodic Schedule' }
+    if (!periodic || periodic.size() != jobs.size()) return
+    String zone = hubTimeZone ?: 'hub local'
+    periodic.eachWithIndex { Object t, int i ->
+        Map job = jobs[i] as Map
+        Map o = (t as Map).operands as Map
+        o.cron = job.schedule
+        if (job.nextRunTime) o.nextRunTime = job.nextRunTime
+        o.cronZone = zone
+    }
 }
 
 
@@ -11989,10 +13014,14 @@ Object hamDetailSafely(String part, Map failures, Closure work) {
 Map hamDecodeEnvelope(String contract) {
     return [contract: contract,
             contractSchemaVersion: HAM_DECODE_CONTRACT_VERSION,
-            rmConstructVocabularyVersion: 1,
+            
+            rmConstructVocabularyVersion: 2,
             supportedEngine: SUPPORTED_RULE_ENGINE,
             instance: [appId: app.id, appName: APP_NAME, appVersion: APP_VERSION,
-                       buildChannel: BUILD_CHANNEL]]
+                       buildChannel: BUILD_CHANNEL],
+            
+            
+            generatedAt: new Date(now()).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))]
 }
 
 Map hamDecodeFailure(String contract, String issue, String message) {
@@ -12035,7 +13064,7 @@ Map hamDecodeScan() {
 }
 
 List hamDecodeRuleNodes() {
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     Object rawNodes = graph.nodes
     List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList()
                                            : ((rawNodes ?: []) as List)
@@ -12058,9 +13087,9 @@ Map hamDecodeSummary() {
     
     
     
-    if (state.graph == null) return hamDecodeFailure(HAM_SUMMARY_CONTRACT, 'no-scan',
+    if (graphData() == null) return hamDecodeFailure(HAM_SUMMARY_CONTRACT, 'no-scan',
         'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
     List rules = hamDecodeRuleNodes().collect { Object raw ->
         Map n = raw as Map
@@ -12112,11 +13141,11 @@ String hamDecodeDetailFileName() {
 
 
 Map hamDecodeDetail() {
-    if (state.graph == null) return hamDecodeFailure(HAM_DETAIL_CONTRACT, 'no-scan',
+    if (graphData() == null) return hamDecodeFailure(HAM_DETAIL_CONTRACT, 'no-scan',
         'No completed scan is available on this instance yet, so there is nothing to describe. Run a scan and ask again.')
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     Map flows = (graph.flows ?: [:]) as Map
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     Set deleted = hamDecodeDeletedRuleIds()
     List rules = hamDecodeRuleNodes().collect { Object rawNode ->
         Map n = rawNode as Map
@@ -12214,7 +13243,7 @@ Map hamDecodeComplete(List rules) {
 
 
 Set hamDecodeDeletedRuleIds() {
-    Object rawNodes = ((state.graph ?: [:]) as Map).nodes
+    Object rawNodes = ((graphData() ?: [:]) as Map).nodes
     List nodes = (rawNodes instanceof Map) ? (rawNodes as Map).values().toList() : ((rawNodes ?: []) as List)
     return nodes.findAll { it instanceof Map && (it as Map).missing }.collect {
         String nid = "${(it as Map).id}"
@@ -12270,7 +13299,7 @@ void hamDecodeWriteDetailFile() {
 
 
 Map edgesMapping() {
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     List nodes = (graph.nodes ?: []) as List
     Map appsById = [:]
     Map devicesById = [:]
@@ -12313,8 +13342,11 @@ Map edgesMapping() {
         } else if (ruleKinds.contains(kind)) {
             ruleEdges << [from: from, to: to, kind: kind]
         } else if (varKinds.contains(kind) && to.startsWith('v')) {
-            variableEdges << [app: from, variable: to.substring(1), kind: kind,
-                              usageRole: e.usageRole ? "${e.usageRole}" : null]
+            Map ve = [app: from, variable: to.substring(1), kind: kind,
+                      usageRole: e.usageRole ? "${e.usageRole}" : null]
+            
+            if (e.source) ve.source = "${e.source}"
+            variableEdges << ve
         }
     }
     Long committedAt = (state.graphCommittedAtLocal ?: 0) as Long
@@ -12959,7 +13991,7 @@ List resolveWebcoreFlowDevices(List flow, String parentAppId, Map hashIndexes, M
 
 
 boolean haiParentInstalled() {
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoData()
     return appInfo.any { Object id, Object raw ->
         if (!(raw instanceof Map)) return false
         String type = "${(raw as Map).type ?: ''}".toLowerCase()
@@ -13005,8 +14037,16 @@ Map haiCapsById(Object parsed) {
 
 
 
+
+
+
+@Field static final ConcurrentHashMap<String, Map> HAI_CAPS_BY_HASH = new ConcurrentHashMap<>()
+
 Map haiCapabilitySource(String declaredHash) {
     if (haiParentInstalled()) {
+        String declared = "${declaredHash ?: ''}"
+        Map known = declared ? HAI_CAPS_BY_HASH.get(declared) : null
+        if (known) return [caps: known, hash: declared, verified: true]
         
         
         Map fetched = httpFetch("${LOOPBACK_BASE}/local/${HAI_CAPABILITIES_FILE}",
@@ -13016,11 +14056,18 @@ Map haiCapabilitySource(String declaredHash) {
             String actual = sha256Hex(body)
             
             
-            String declared = "${declaredHash ?: ''}"
             if (!declared || declared == actual) {
-                Map caps = [:]
-                try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
-                catch (Exception ignored) { caps = [:] }
+                
+                
+                Map caps = HAI_CAPS_BY_HASH.get(actual)
+                if (caps == null) {
+                    try { caps = haiCapsById(new groovy.json.JsonSlurper().parseText(body)) }
+                    catch (Exception ignored) { caps = [:] }
+                    if (caps) {
+                        HAI_CAPS_BY_HASH.clear()
+                        HAI_CAPS_BY_HASH.put(actual, caps)
+                    }
+                }
                 if (caps) return [caps: caps, hash: actual, verified: (declared as boolean)]
             }
         }
@@ -13102,6 +14149,30 @@ Map fetchHaiFeed() {
             capabilities: capList,
             capabilityCount: capList.size(),
             capabilitiesError: feed.capabilitiesError ? "${feed.capabilitiesError}" : null]
+}
+
+
+
+
+@Field static final ConcurrentHashMap<String, Map> HAI_FEED_RULES = new ConcurrentHashMap<>()
+
+Map haiFeedSummary(Map feed) {
+    Map summary = new LinkedHashMap(feed ?: [:])
+    summary.remove('nodes')
+    summary.remove('edges')
+    summary.remove('flows')
+    return summary
+}
+
+Map haiFeedForGraph() {
+    Map kept = HAI_FEED_RULES.get("${app.id}".toString()) as Map
+    if (kept) return kept
+    Map stored = (state.haiFeed ?: [:]) as Map
+    if (stored.nodes != null || "${stored.state ?: ''}" != 'OK') return stored
+    Map fresh = new LinkedHashMap(fetchHaiFeed())
+    fresh.remove('capabilities')
+    HAI_FEED_RULES.put("${app.id}".toString(), fresh)
+    return fresh
 }
 
 
@@ -13212,14 +14283,14 @@ void mergeHaiFeed(Map feed, Map<String, Map> nodes, List<Map> edges, Map flows, 
     }
 }
 
-Map buildGraph() {
+Map buildGraph(Map appInfoIn = null) {
     Map labels = (state.deviceLabels ?: [:]) as Map
     Map deviceCaps = (state.deviceCapabilities ?: [:]) as Map
     Map deviceTypes = (state.deviceTypes ?: [:]) as Map
     Set disabledDevices = (state.deviceDisabled ?: []) as Set
     Map iconOverrides = (state.deviceIconOverrides ?: [:]) as Map
     Map iconNotes = (state.deviceIconNotes ?: [:]) as Map
-    Map appInfo = (state.appInfo ?: [:]) as Map
+    Map appInfo = appInfoIn != null ? appInfoIn : appInfoData()
     
     
     
@@ -13232,7 +14303,8 @@ Map buildGraph() {
     Set<String> seen = new LinkedHashSet<>()
     Map flows = [:]
     Map nameCache = [:]
-    Map priorFlows = ((state.graph ?: [:]) as Map).flows as Map ?: [:]
+    
+    Map priorFlows = scanEffectivelyActive() ? [:] : (((graphData() ?: [:]) as Map).flows as Map ?: [:])
 
     Map hubVarInventory = (state.hubVariableInventory ?: [:]) as Map
     Map hubVarInventoryVars = (hubVarInventory.variables ?: [:]) as Map
@@ -13361,7 +14433,7 @@ Map buildGraph() {
     Map hubVarUsersState = (state.hubVariableUsers ?: [:]) as Map
     boolean hubVarUsersKnown = hubVarUsersState.status == 'complete'
     Map hubVarUsers = (hubVarUsersState.users ?: [:]) as Map
-    Set haiParentAppIds = ((state.appInfo ?: [:]) as Map).findAll { Object id, Object raw ->
+    Set haiParentAppIds = appInfo.findAll { Object id, Object raw ->
         raw instanceof Map && HAI_PARENT_TYPE_PREFIXES.any { "${(raw as Map).type ?: ''}".toLowerCase().startsWith(it.toLowerCase()) }
     }.keySet().collect { it.toString() } as Set
     hubVarInventoryVars.each { String varName, meta ->
@@ -14177,18 +15249,41 @@ Map buildGraph() {
 
     
     
-    mergeHaiFeed((state.haiFeed ?: [:]) as Map, nodes, edges, flows, seen, labels, disabledDevices)
+    mergeHaiFeed(haiFeedForGraph(), nodes, edges, flows, seen, labels, disabledDevices)
 
     
     
     
     correctFlowVariableLabels(flows, ruleVariables)
 
-    return [nodes: nodes.values().toList(), edges: edges, flows: flows,
+    
+    
+    
+    Map hubVarReconciliation = [status: 'unavailable']
+    if (hubVarUsersKnown) {
+        Set appNodeIds = nodes.keySet().findAll { "${it}".startsWith('a') }.collect { "${it}".toString() } as Set
+        Map rec = reconcileHubVariableUsers(hubVarUsers, haiParentAppIds, edges, appInfo, appNodeIds,
+                                            hubVarInventoryVars.keySet().collect { "${it}".toString() } as Set)
+        ((rec.edges ?: []) as List).each { Map e ->
+            String key = "${e.from}|${e.to}|usesVar"
+            if (seen.contains(key)) return
+            seen << key
+            edges << e
+        }
+        hubVarReconciliation = rec.summary as Map
+        if (diagOn()) {
+            log.info "${app.label}: hub variable list agrees with the decode on ${hubVarReconciliation.agreeing} of ${hubVarReconciliation.compared} variable(s); added ${hubVarReconciliation.hubListedEdges} use(s) from it, ${((hubVarReconciliation.hubOnlyNotInMap ?: []) as List).size()} by apps not on the map, ${((hubVarReconciliation.decodedOnly ?: []) as List).size()} decoded use(s) it does not list"
+        }
+    }
+
+    
+    
+    return [schema: GRAPH_SCHEMA, nodes: nodes.values().toList(), edges: edges, flows: flows,
             hubVariableUnresolvedReferences: unresolvedHubVarReferences,
             webcoreVariableDecodeIssues: webcoreVariableDecodeIssues,
             webcoreDeviceRelationshipIssues: webcoreDeviceRelationshipIssues,
             hubVariableConnectorCount: hubVarConnectorCount,
+            hubVariableReconciliation: hubVarReconciliation,
             
             
             
@@ -14204,13 +15299,20 @@ Map buildGraph() {
 
 
 void rebuildStoredGraph() {
-    state.graph = buildGraph()
+    
+    
+    if (scanEffectivelyActive()) return
+    rebuildStoredGraphFrom(appInfoData())
+}
+
+
+void rebuildStoredGraphFrom(Map appInfo) {
+    Map graph = buildGraph(appInfo)
+    
+    
+    commitPublishedScan(graph, appInfo, now())
     atomicState.graphVersion = GRAPH_SCHEMA
-    
-    
-    Long rebuiltAt = now()
-    state.graphCommittedAtLocal = rebuiltAt
-    atomicState.graphCommittedAt = rebuiltAt
+    state.graphVersion = GRAPH_SCHEMA
 }
 
 
@@ -14497,7 +15599,7 @@ String registryEntryState(Map entry, String appType) {
 
 List discoveredAppTypes() {
     List types = []
-    ((state.appInfo ?: [:]) as Map).each { String appId, info ->
+    appInfoData().each { String appId, info ->
         if (!(info instanceof Map)) return
         String t = "${(info as Map).type}"
         if (!t || t == 'null') return
@@ -14517,7 +15619,7 @@ List discoveredAppTypes() {
 
 
 Map appTypeIdentities() {
-    Map info = (state.appInfo ?: [:]) as Map
+    Map info = appInfoData()
     Map byIdentity = [:]
     info.each { String appId, v ->
         if (!(v instanceof Map)) return
@@ -14891,7 +15993,6 @@ Map roomPlanApplyMoves(Map moves) {
             rooms[key] = wantRoom ? (nameById[wantRoom.toString()] ?: '').toString() : ''
         }
         state.deviceRooms = rooms
-        state.roomIdCache = [:]
     }
 
     timings.compareMs = now() - tCompare
@@ -15082,7 +16183,6 @@ Map roomPlanPostRoom(Map payload) {
     if (!failure && (status == null || status < 200 || status >= 300)) {
         failure = "the hub answered ${status ?: 'nothing'}, so the request was not accepted"
     }
-    state.roomIdCache = [:]
     return [status: status, failure: failure]
 }
 
@@ -15137,7 +16237,6 @@ Map roomPlanRenameRoom(String roomId, String name) {
 Map roomPlanDeleteRoom(String roomId, List deviceIds = []) {
     if (!roomId) return [ok: false, reason: 'no room id']
     Map fetched = httpFetch("${LOOPBACK_BASE}/room/delete/${roomId}", 15)
-    state.roomIdCache = [:]
     boolean gone = !hubRoomList().any { "${(it as Map).id}" == roomId }
     if (!gone) {
         return [ok: false, reason: fetched.ok ? 'the hub still lists this room' : 'the delete request failed']
@@ -15187,7 +16286,6 @@ String roomPlanJson(String message) {
                                    room: "${roomName}"]
             }
         }
-        state.roomIdCache = snap.idByName
     } else {
         
         
@@ -15419,7 +16517,7 @@ Map refreshDeviceFacts(Set<String> deviceIds) {
 
 
 Map rescanSlice(List refreshed) {
-    Map graph = (state.graph ?: [:]) as Map
+    Map graph = (graphData() ?: [:]) as Map
     List appNodeIds = refreshed.collect { "a${it}".toString() }
     List sliceEdges = ((graph.edges ?: []) as List).findAll { edge ->
         edge instanceof Map && appNodeIds.contains("${(edge as Map).from}".toString())
@@ -15451,7 +16549,7 @@ Map rescanMapping() {
                 data: JsonOutput.toJson([ok: false, reason: 'badNode']))
         }
         String hubId = idPart
-        Map appInfo = new LinkedHashMap((state.appInfo ?: [:]) as Map)
+        Map appInfo = new LinkedHashMap(appInfoData())
         List<String> targets = []
         if (nodeId.startsWith('a')) {
             if (appInfo.containsKey(hubId)) targets << hubId
@@ -15482,6 +16580,7 @@ Map rescanMapping() {
         Map deviceFacts = refreshDeviceFacts(scope)
 
         Map labels = (state.deviceLabels ?: [:]) as Map
+        String hubTimeZone = hubTimeZoneId()
         List refreshed = []
         List failed = []
         targets.each { String appId ->
@@ -15489,7 +16588,7 @@ Map rescanMapping() {
                                     RESCAN_TIMEOUT_SEC, [contentType: 'application/json'])
             if (!fetched.ok || !(fetched.data instanceof Map)) { failed << appId; return }
             Map prior = (appInfo[appId] ?: [:]) as Map
-            Map info = processAppRelationships(appId, fetched.data as Map, labels)
+            Map info = processAppRelationships(appId, fetched.data as Map, labels, [:], hubTimeZone)
             
             
             if (!info.namespace && prior.namespace) info.namespace = prior.namespace
@@ -15511,8 +16610,7 @@ Map rescanMapping() {
 
         Map slice = [:]
         if (refreshed) {
-            state.appInfo = appInfo
-            rebuildStoredGraph()
+            rebuildStoredGraphFrom(appInfo)
             slice = rescanSlice(refreshed)
         }
         return render(status: 200, contentType: 'application/json',
@@ -15522,8 +16620,211 @@ Map rescanMapping() {
     } catch (Exception ex) {
         log.warn "${app.label}: rescanMapping failed: ${ex.message}"
         return render(status: 200, contentType: 'application/json',
-            data: JsonOutput.toJson([ok: false, reason: 'error', error: "${ex.class.simpleName}"]))
+            data: JsonOutput.toJson([ok: false, reason: 'error', error: ex.toString()]))
     }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@Field static final String HAI_ASSESS_REQUEST_EVENT = 'haiAssessRequest'
+@Field static final String HAI_ASSESS_DONE_EVENT = 'haiAssessDone'
+
+@Field static final int HAI_ASSESS_SUBSCRIPTION = 1
+
+@Field static final double HAI_ASSESS_FULL_SCAN_SHARE = 0.4
+
+@Field static final ConcurrentHashMap<String, String> HAI_ASSESS_RUNNING = new ConcurrentHashMap<>()
+
+@Field static final ConcurrentHashMap<String, Long> HAI_ASSESS_SEEN = new ConcurrentHashMap<>()
+
+
+
+
+void ensureHaiAssessSubscription(boolean force = false) {
+    try {
+        if (!force && atomicState.haiAssessSubscribed == HAI_ASSESS_SUBSCRIPTION) return
+        unsubscribe()
+        subscribe(location, HAI_ASSESS_REQUEST_EVENT, 'haiAssessRequestHandler')
+        atomicState.haiAssessSubscribed = HAI_ASSESS_SUBSCRIPTION
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not subscribe to HAI's assess requests (${ex.message})"
+    }
+}
+
+
+Map haiAssessParse(Object raw) {
+    Object parsed = null
+    try { parsed = new groovy.json.JsonSlurper().parseText("${raw ?: ''}") } catch (Exception ex) { return null }
+    if (!(parsed instanceof Map)) return null
+    Map p = parsed as Map
+    
+    if (p.appId != null && "${p.appId}".toString() != "${app.id}".toString()) return null
+    String rid = "${p.requestId ?: ''}".trim()
+    if (!rid || rid.length() > 64) return null
+    if (p.all == true) return [requestId: rid, all: true]
+    if (!(p.ids instanceof List)) return [requestId: rid, ids: []]
+    List ids = ((p.ids as List).collect { "${it}".trim() }.findAll { String s -> s.isLong() }).unique()
+    return [requestId: rid, ids: ids]
+}
+
+
+
+int haiAssessCap() {
+    int rules = hamDecodeRuleNodes().size()
+    return Math.max(RESCAN_MAX_APPS, (int) Math.ceil(rules * HAI_ASSESS_FULL_SCAN_SHARE))
+}
+
+void haiAssessReply(String requestId, Map body) {
+    Map out = [requestId: requestId, appVersion: APP_VERSION] + body
+    try {
+        sendLocationEvent(name: HAI_ASSESS_DONE_EVENT, value: JsonOutput.toJson(out), isStateChange: true,
+                          descriptionText: "${app.label} answered HAI's assess request ${requestId}")
+    } catch (Exception ex) {
+        log.warn "${app.label}: could not answer HAI's assess request ${requestId} (${ex.message})"
+    }
+    if (diagOn()) log.info "${app.label}: HAI assess ${requestId}: ${out}"
+}
+
+void haiAssessRequestHandler(evt) {
+    Map req = haiAssessParse(evt?.value)
+    if (req == null) return
+    String rid = req.requestId as String
+    String key = "${app.id}:${rid}".toString()
+    if (HAI_ASSESS_SEEN.putIfAbsent(key, now()) != null) return
+    if (HAI_ASSESS_SEEN.size() > 50) {
+        Long cutoff = now() - 3600000L
+        HAI_ASSESS_SEEN.each { String k, Long at -> if (at < cutoff) HAI_ASSESS_SEEN.remove(k) }
+    }
+    clearAbandonedScan()
+    if (scanEffectivelyActive()) {
+        haiAssessReply(rid, [ok: false, reason: 'scanRunning',
+                             message: 'Automation Map is already scanning. Assess again when the scan has finished.'])
+        return
+    }
+    if (req.all == true) {
+        haiAssessStartFullScan(rid, 'all', null)
+        return
+    }
+    List ids = (req.ids ?: []) as List
+    if (!ids) {
+        haiAssessReply(rid, [ok: false, reason: 'badRequest', message: 'The request named no rules.'])
+        return
+    }
+    int cap = haiAssessCap()
+    if (ids.size() > cap) {
+        haiAssessStartFullScan(rid, 'fullScanFallback', ids.size())
+        return
+    }
+    if (HAI_ASSESS_RUNNING.putIfAbsent("${app.id}".toString(), rid) != null) {
+        haiAssessReply(rid, [ok: false, reason: 'busy',
+                             message: 'Automation Map is assessing other rules. Try again in a few seconds.'])
+        return
+    }
+    try {
+        haiAssessRescan(rid, ids)
+    } catch (Exception ex) {
+        log.warn "${app.label}: HAI assess ${rid} failed: ${ex.message}"
+        haiAssessReply(rid, [ok: false, reason: 'error', message: ex.toString()])
+    } finally {
+        HAI_ASSESS_RUNNING.remove("${app.id}".toString())
+    }
+}
+
+
+void haiAssessStartFullScan(String rid, String mode, Integer requested) {
+    Map started = startScan('hai')
+    if (!started.acquired) {
+        haiAssessReply(rid, [ok: false, reason: 'scanRunning',
+                             message: 'Automation Map is already scanning. Assess again when the scan has finished.'])
+        return
+    }
+    atomicState.haiAssessPending = [requestId: rid, mode: mode, requested: requested, startedAt: now()]
+    
+    haiAssessReply(rid, [pending: true, mode: mode, requested: requested])
+    if (diagOn()) log.info "${app.label}: HAI assess ${rid}: full scan started (${mode})"
+}
+
+
+void haiAssessFinishPending(boolean ok, String reason, Integer apps) {
+    Map pending = atomicState.haiAssessPending as Map
+    if (!pending?.requestId) return
+    atomicState.haiAssessPending = null
+    Map body = [ok: ok, mode: pending.mode, requested: pending.requested, scanned: apps,
+                ms: now() - ((pending.startedAt ?: now()) as Long)]
+    if (ok) {
+        body.generatedAt = new Date(now()).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))
+    } else {
+        body.reason = reason
+        body.message = "The scan finished without publishing: ${state.scanError ?: reason}".toString()
+    }
+    haiAssessReply(pending.requestId as String, body)
+}
+
+
+void haiAssessRescan(String rid, List ids) {
+    Long started = now()
+    Map appInfo = new LinkedHashMap(appInfoData())
+    Map labels = (state.deviceLabels ?: [:]) as Map
+    Set<String> scope = new LinkedHashSet<String>()
+    String hubTimeZone = hubTimeZoneId()
+    List refreshed = []
+    List failed = []
+    ids.each { Object raw ->
+        String appId = "${raw}".toString()
+        Map prior = (appInfo[appId] ?: [:]) as Map
+        ((prior.roles ?: [:]) as Map).keySet().each { scope << "${it}".toString() }
+        Map fetched = httpFetch("${LOOPBACK_BASE}/installedapp/statusJson/${appId}",
+                                RESCAN_TIMEOUT_SEC, [contentType: 'application/json'])
+        if (!fetched.ok || !(fetched.data instanceof Map)) { failed << appId; return }
+        Map info = processAppRelationships(appId, fetched.data as Map, labels, [:], hubTimeZone)
+        
+        if (!info.namespace && prior.namespace) info.namespace = prior.namespace
+        appInfo[appId] = info
+        ((info.roles ?: [:]) as Map).keySet().each { scope << "${it}".toString() }
+        refreshed << appId
+    }
+    if (!refreshed) {
+        haiAssessReply(rid, [ok: false, reason: 'unreadable', requested: ids.size(), refreshed: 0, failed: failed,
+                             message: 'Automation Map could not read any of those rules.'])
+        return
+    }
+    
+    Map deviceFacts = refreshDeviceFacts(scope)
+    
+    if (scanEffectivelyActive()) {
+        haiAssessReply(rid, [ok: false, reason: 'scanRunning',
+                             message: 'A full scan started while these rules were read; it will publish them.'])
+        return
+    }
+    Map graph = buildGraph(appInfo)
+    
+    refreshed.each { String appId -> Object info = appInfo[appId]; if (info instanceof Map) (info as Map).remove('flow') }
+    commitPublishedScan(graph, appInfo, now())
+    atomicState.graphVersion = GRAPH_SCHEMA
+    state.graphVersion = GRAPH_SCHEMA
+    hamDecodeWriteFile()
+    hamDecodeWriteDetailFile()
+    haiAssessReply(rid, [ok: true, mode: 'ids', requested: ids.size(), refreshed: refreshed.size(), failed: failed,
+                         devicesChanged: ((deviceFacts.changed ?: []) as List).size(),
+                         ms: now() - started,
+                         generatedAt: new Date(now()).format("yyyy-MM-dd'T'HH:mm:ssXXX", TimeZone.getTimeZone('UTC'))])
 }
 
 Map scanMapping() {
@@ -15588,7 +16889,7 @@ Map scanMapping() {
         
         
         return render(status: 200, contentType: 'application/json',
-            data: JsonOutput.toJson([ok: false, error: "${ex.class.simpleName}: ${ex.message}"]))
+            data: JsonOutput.toJson([ok: false, error: ex.toString()]))
     }
 }
 
@@ -15613,7 +16914,7 @@ Map scanStatusMapping() {
 
 String scanStatusJson(boolean forceRunning = false) {
     migrateGraphVersionIfNeeded()
-    selfHealGraphIfNeeded()
+    
     
     
     
@@ -15629,7 +16930,7 @@ String scanStatusJson(boolean forceRunning = false) {
     ConcurrentHashMap liveScan = null
     if (progPhase == 'devices') liveScan = liveDeviceScan()
     else if (progPhase == 'apps') liveScan = liveAppScan()
-    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : (state.scanQueue ?: []).size()
+    int queued = liveScan ? (liveScan.pending as ConcurrentLinkedQueue).size() : 0
     
     
     
@@ -15642,14 +16943,24 @@ String scanStatusJson(boolean forceRunning = false) {
     
     def done = liveScan ? (liveScan.processed as AtomicInteger).get() : (progDone ?: progTotal)
     def heartbeat = liveScan ? (liveScan.lastProgressAt as Long) : state.scanHeartbeat
+    boolean scanLockHeld = SCAN_LOCKS.get("${app.id}") != null
+    String outcome = scanOutcomeNow(scanLockHeld)
     return JsonOutput.toJson([
         running: forceRunning || scanEffectivelyActive(),
+        
+        
+        
+        
+        lastScanOutcome: outcome,
+        
+        
+        outcome: outcome,
         alreadyStarting: forceRunning,
         phase: progPhase ?: null,
         done: done,
         total: progTotal,
         queued: queued,
-        apps: (state.appInfo ?: [:]).size(),
+        apps: appCountForDisplay(),
         devices: (state.deviceLabels ?: [:]).size(),
         error: state.scanError,
         compatOk: state.compatOk,
@@ -15661,8 +16972,23 @@ String scanStatusJson(boolean forceRunning = false) {
         rulesSkipped: state.rulesSkipped,
         otherEngines: state.otherEngines,
         heartbeat: heartbeat,
-        graphVersion: atomicState.graphVersion,
+        graphVersion: scanLockHeld ? null : graphVersionNow(),
     ])
+}
+
+
+
+
+
+String scanOutcomeNow(boolean scanLockHeld) {
+    if (scanLockHeld) return 'running'
+    String kept = SCAN_OUTCOMES.get("${app.id}".toString())
+    if (kept != null) return kept
+    def stored = atomicState.lastScanOutcome
+    if (stored != null) return stored as String
+    if (state.scanRunning == true) return 'running'
+    if (state.scanError) return 'failed'
+    return graphVersionNow() != null ? 'completed' : null
 }
 
 Map renderMapMapping() {
@@ -15707,6 +17033,18 @@ Relationship types have changed since then, so the graph would render without ro
 </body></html>"""
        )
     }
+    if (graphData() == null) {
+        
+        return render(
+            status: 200,
+            contentType: 'text/html',
+            data: """<!doctype html><html><head><meta charset="utf-8"><title>Automation Map</title></head>
+<body style="background:#062733; color:#eee; font-family:ui-sans-serif, system-ui, sans-serif; padding:2em; line-height:1.5">
+<h2>No saved map</h2>
+<p>Open the Automation Map app and run <b>Scan relationships now</b>, then reload this page.</p>
+</body></html>"""
+       )
+    }
     return render(status: 200, contentType: 'text/html', data: buildMapHtml())
 }
 
@@ -15725,10 +17063,11 @@ String jsonForScriptEmbed(Object obj) {
 }
 
 String buildMapHtml() {
-    Map graph = (state.graph ?: [nodes: [], edges: []]) as Map
+    Map published = publishedScan()
+    Map graph = (published?.graph ?: [nodes: [], edges: []]) as Map
     int deviceCount = (graph.nodes ?: []).count { it.group == 'device' }
     int appCount = (graph.nodes ?: []).count { it.group == 'app' }
-    String jsonStr = jsonForScriptEmbed(graph)
+    String jsonStr = cachedGraphJson(graph, (published?.committedAt ?: 0) as Long)
     
     
     
@@ -15790,7 +17129,10 @@ String buildMapHtml() {
         
         
         
-        rmConstructVocabularyVersion: 1,
+        
+        
+        
+        rmConstructVocabularyVersion: 2,
         graphSchemaVersion: GRAPH_SCHEMA,
         scanHeartbeatMs: state.scanHeartbeat,
         scanError: state.scanError,
@@ -17211,6 +18553,9 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
   else if (e.startup === true) dashes = [1, 6];
   else if (e.kind === 'setspb') dashes = [2, 3];
   else if (e.kind === 'pauseResume') dashes = [12, 4, 2, 4];
+  // HAI #60: a use the hub's own variable list names and the decode could not see. Dotted, so it reads
+  // apart from a decoded webCoRE use.
+  else if (e.kind === 'usesVar' && e.source === 'hub-variables') dashes = [2, 5];
   else if (e.kind === 'usesVar') dashes = [5, 4];
   // Always dashed, because a dependency on an external system is asserted by a
   // person, not read off the hub. Weight carries the part that matters
@@ -17245,6 +18590,8 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
     // GRAPH.edges directly).
     usageRole: e.usageRole || null,
     writeSource: e.writeSource || null,
+    // HAI #60: 'hub-variables' when the edge comes from the hub's own variable list, not the decode.
+    source: e.source || null,
     unused: e.unused === true,
     arrows: directionUnknown ? '' : (inbound ? 'from' : 'to'),
     dashes: dashes,
@@ -17271,6 +18618,27 @@ const ALL_EDGES = GRAPH.edges.map(function (e, i) {
 // its temporal dead zone at that moment, and the ReferenceError would kill the
 // whole page script rather than just the shelf.
 const INERT_POS = {};
+
+// Triggers with no device behind them never become an edge, so the rule node
+// itself says what starts it: a clock badge on the canvas, the list when the
+// rule is focused and in the tooltip. Read off the decoded flow's construct
+// tokens; both Certain Time spellings share the 'trigger:Certain Time' prefix.
+const NON_DEVICE_TRIGGER_TOKENS = ['trigger:Certain Time', 'trigger:Variable', 'trigger:Periodic Schedule',
+  'trigger:Mode', 'trigger:Location Event', 'trigger:Rule paused', 'trigger:Hub Variable'];
+function nonDeviceTriggers(n) {
+  if (n.group !== 'app' || !GRAPH.flows || !Array.isArray(GRAPH.flows[n.id])) return [];
+  return GRAPH.flows[n.id].filter(function (s) {
+    return s && s.kind === 'trigger' && (s.constructs || []).some(function (c) {
+      return NON_DEVICE_TRIGGER_TOKENS.some(function (p) { return String(c).indexOf(p) === 0; });
+    });
+  }).map(function (s) { return s.label; });
+}
+function withTriggerBadge(n, label, full) {
+  const list = nonDeviceTriggers(n);
+  if (!list.length) return label;
+  const clock = String.fromCharCode(0x23F1);
+  return full ? label + String.fromCharCode(10) + clock + ' ' + list.join('; ') : label + ' ' + clock;
+}
 
 function styledNode(n, useFullLabel, roleByDevice) {
   const role = roleByDevice ? roleByDevice[n.id] : null;
@@ -17333,7 +18701,8 @@ function styledNode(n, useFullLabel, roleByDevice) {
     // the status and is what the hover tooltip shows. The fallback matters: a
     // graph cached before draw existed has only title, and rendering undefined
     // would blank every label on the map rather than fail visibly.
-    id: n.id, label: useFullLabel ? (n.group === 'localVariable' ? localVarCanvasText(n) : (n.draw || n.title)) : n.label, title: n.title, color: color,
+    id: n.id, label: withTriggerBadge(n, useFullLabel ? (n.group === 'localVariable' ? localVarCanvasText(n) : (n.draw || n.title)) : n.label, useFullLabel),
+    title: nonDeviceTriggers(n).length ? n.title + ' - starts on: ' + nonDeviceTriggers(n).join('; ') : n.title, color: color,
     shape: shape,
     size: n.group === 'app' ? 17 : (n.group === 'external' ? 19 : 13),
     // 12, not 13, and a 4px stroke rather than 5. At FOCUS_MAX_ZOOM (1.05) this
@@ -18275,6 +19644,7 @@ function mermaidFor(steps) {
     if (shape === 'stadium') lines.push('  ' + id + '(["' + text + '"])');
     else if (shape === 'hex') lines.push('  ' + id + '{{"' + text + '"}}');
     else if (shape === 'diamond') lines.push('  ' + id + '{"' + text + '"}');
+    else if (shape === 'round') lines.push('  ' + id + '("' + text + '")');
     else lines.push('  ' + id + '["' + text + '"]');
     if (kind === 'trigger') styles.push('  style ' + id + ' fill:#4a2f5e,stroke:#9b59b6,color:#fff');
     else if (kind === 'required') styles.push('  style ' + id + ' fill:#0f4f45,stroke:#16a085,color:#fff');
@@ -18322,7 +19692,21 @@ function mermaidFor(steps) {
     return t;
   }
 
-  steps.forEach(function (s) {
+  // The leading triggers are OR'd, not a sequence, so they share one box: any
+  // one of them starts the rule. One trigger per line, the box growing taller
+  // rather than wider.
+  let lead = 0;
+  while (lead < steps.length && steps[lead] && steps[lead].kind === 'trigger' && !steps[lead].ctrl) lead++;
+  if (lead) {
+    const bullet = String.fromCharCode(8226) + ' ';
+    const items = steps.slice(0, lead).map(function (s) {
+      const devs = s.devices && s.devices.length ? ' - ' + deviceSummary(s.devices) : '';
+      return bullet + wrap(mermaidEscape(s.label + devs), 46);
+    });
+    tails = [{ id: emit('round', '<b>Starts when (any of these)</b><br/>' + items.join('<br/>'), 'trigger'), label: '' }];
+  }
+
+  steps.slice(lead).forEach(function (s) {
     if (s.ctrl === 'if' || s.ctrl === 'elseif') {
       if (s.ctrl === 'elseif' && stack.length) {
         const f = stack[stack.length - 1];
@@ -18377,6 +19761,7 @@ function mermaidFor(steps) {
   return lines.concat(styles).join('\\n');
 }
 
+${''}
 // flowPanel may be absent if the panel markup ever changes; the filter controls
 // below must keep working regardless, so nothing here is allowed to throw.
 const flowPanel = document.getElementById('flow') || { style: {} };
@@ -19831,6 +21216,14 @@ function rmcRender() {
     (showMissing ? '<td><b>' + extEsc(String(tot.missing)) + '</b></td>' : '') +
     (showPartial ? '<td><b>' + extEsc(String(tot.partial)) + '</b></td>' : '') +
     (showFormat ? '<td><b>' + extEsc(String(tot.format)) + '</b></td>' : '') + '</tr>';
+  // The engine's own capabilities, with no Rule Machine counterpart: one row under the total, outside it, with "-" in
+  // the RM column so no column claims to add them in (Gordon, 2026-10-15: "use this format and add a line for
+  // additional"). Counted, never named.
+  if (extraRuns) {
+    html += '<tr><td>Additional ' + extEsc(eng.name ? String(eng.name).split('-')[0] : 'engine') + ' capabilities (no RM equivalent)</td><td>-</td>' +
+      '<td>' + extEsc(String(extraRuns)) + '</td><td>' + extEsc(String(extraHub)) + '</td><td>' + extEsc(String(extraScoped)) + '</td>' +
+      (showMissing ? '<td>' + extEsc(String(extraMissing)) + '</td>' : '') + (showPartial ? '<td></td>' : '') + (showFormat ? '<td></td>' : '') + '</tr>';
+  }
   html += '</tbody></table>';
 
   const engName = eng.name || 'HAI-1';
@@ -19841,7 +21234,7 @@ function rmcRender() {
     ' passed in the simulator only. ' +
     (tot.scoped ? extEsc(String(tot.scoped)) + ' are scoped, meaning the route is known and nothing is built yet. ' : '') +
     (tot.missing ? extEsc(String(tot.missing)) + (tot.missing === 1 ? ' is not built at all.' : ' are not built at all.') : '') +
-    (extraRuns ? ' Separately, ' + extEsc(String(extraRuns)) + ' capabilities the engine publishes have no Rule Machine counterpart at all, so they are not in this table.' : '') +
+    (extraRuns ? ' The last row counts the ' + extEsc(String(extraRuns)) + ' capabilities the engine publishes that have no Rule Machine counterpart; ' + extEsc(String(extraHub)) + ' of them have been observed running on a hub. They are not in the total.' : '') +
     '</p>';
 
   // The engine publishes what each status means, so this report quotes it
@@ -20235,7 +21628,10 @@ function mrEngineHead(done, e, levelId) {
   const auto = done.filter(function (r) { return r.body[e[0]].automatic && r.body[e[0]].automatic.available; }).length;
   const unrated = done.filter(function (r) { return r.body[e[0]].level === null || r.body[e[0]].level === undefined; }).length;
   let bar = '';
-  counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
+  // Levels 1 and 2 are both a direct equivalent, so the bar shows them as one green block.
+  const direct = counts[0] + counts[1];
+  if (direct) bar += '<span class="maL1" style="flex:' + direct + '" title="Direct equivalent, levels 1 and 2 (' + direct + ')">' + direct + '</span>';
+  counts.forEach(function (n, i) { if (n && i > 1) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
   // An engine with no converter is not a zero; it is a question that does not
   // apply yet, and it says which engine it is reading to decide the rest.
   const first = done.length ? done[0].body[e[0]] : null;
@@ -20297,7 +21693,7 @@ function mrRenderPistons() {
       (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers) +
         JSON.stringify((r.body.hai || {}).blockers || [])).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column rates each webCoRE construct against what HAI-1 publishes it can do, held to the capability statuses it publishes now; where HAI-1 does something a different way, the reason says how. It is Automation Map reading the capabilities HAI-1 publishes, not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrRefresh">' +
@@ -21073,9 +22469,15 @@ function deriveInsightData() {
   const hubVarReaders = {};
   const hubVarWriters = {};
   const hubVarUsers = {};
+  // HAI #60: uses named only by the hub's own variable list. Kept apart, so every decoded finding below
+  // (no decoded usage, webCoRE direction unknown) still means what it says.
+  const hubVarListed = {};
   ALL_EDGES.forEach(function (e) {
     touched[e.to] = true;
-    if (e.kind === 'read') {
+    if (e.kind === 'usesVar' && e.source === 'hub-variables') {
+      if (!hubVarListed[e.to]) hubVarListed[e.to] = [];
+      if (hubVarListed[e.to].indexOf(e.from) < 0) hubVarListed[e.to].push(e.from);
+    } else if (e.kind === 'read') {
       if (!hubVarReaders[e.to]) hubVarReaders[e.to] = [];
       if (hubVarReaders[e.to].indexOf(e.from) < 0) hubVarReaders[e.to].push(e.from);
     } else if (e.kind === 'write') {
@@ -21190,6 +22592,8 @@ function deriveInsightData() {
       readers: hubVarReaders,
       writers: hubVarWriters,
       users: hubVarUsers,
+      listed: hubVarListed,
+      reconciliation: GRAPH.hubVariableReconciliation || null,
       noDecodedUsage: hubVarIds.filter(function (id) { return !hubVarReaders[id] && !hubVarWriters[id] && !hubVarUsers[id]; }),
       readersWithoutDecodedWriter: hubVarIds.filter(function (id) { return hubVarReaders[id] && !hubVarWriters[id]; }),
       writersWithoutDecodedReader: hubVarIds.filter(function (id) { return hubVarWriters[id] && !hubVarReaders[id]; }),
@@ -21622,6 +23026,18 @@ function buildInsights() {
       function (id) { return hv.users[id].length + ' webCoRE piston' + (hv.users[id].length === 1 ? '' : 's'); },
       function (id) { return advice('variableDirectionUnknown') + '<p class="sub"><b>Used by:</b> ' + appLinks(hv.users[id]) + '</p>'; });
   }
+  // HAI #60: how the hub's own variable list compares with the decode. Counts only, as context: neither side is
+  // complete, so a difference is not a fault in either.
+  const rec = hv.reconciliation;
+  if (rec && rec.status === 'complete' && rec.compared) {
+    const notInMap = (rec.hubOnlyNotInMap || []).length;
+    const decOnly = (rec.decodedOnly || []).length;
+    let line = 'The hub list of variable users agrees with the decode on ' + rec.agreeing + ' of ' + amPlural(rec.compared, 'variable', 'variables') + '.';
+    if (rec.hubListedEdges) line += ' It names ' + amPlural(rec.hubListedEdges, 'use', 'uses') + ' the decode could not see, drawn as dotted lines.';
+    if (notInMap) line += ' It names ' + amPlural(notInMap, 'use', 'uses') + ' by apps that are not on the map.';
+    if (decOnly) line += ' The decode found ' + amPlural(decOnly, 'use', 'uses') + ' it does not list.';
+    normalBody += '<p class="insLead">' + extEsc(line) + '</p>';
+  }
 
   // --- Assemble ------------------------------------------------------------
   const cards = [
@@ -21760,6 +23176,9 @@ function amPickURL(localPath, cloudUrl) {
 }
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
+// The settings page's Scan button and progress poll, for the full scan a device menu can offer (2.4.35).
+const SCAN_URL = amPickURL('${getLocalURL('scan')}', '${getCloudURL('scan')}');
+const SCAN_STATUS_URL = amPickURL('${getLocalURL('scan-status')}', '${getCloudURL('scan-status')}');
 const MIGRATION_RATINGS_URL = amPickURL('${getLocalURL('webcore-migration-ratings')}', '${getCloudURL('webcore-migration-ratings')}');
 const extPanel = document.getElementById('ext');
 const extBody = document.getElementById('extBody');
@@ -22688,16 +24107,23 @@ function roomPlanLayoutKey(name) { return name || '__unallocated__'; }
 
 // index is the position among the ordinary rooms only; Not Allocated is placed
 // separately and does not consume a grid slot.
-function roomPlanGeom(name, index, perRow, columnHeight) {
+function roomPlanGeom(name, index, perRow, columnHeight, taken) {
   const saved = (ROOMPLAN.layout || {})[roomPlanLayoutKey(name)];
   if (saved && saved.w) return { x: saved.x, y: saved.y, w: saved.w, h: saved.h };
   if (name === RP_UNASSIGNED) return { x: 0, y: 0, w: RP_UNALLOC_W, h: columnHeight };
   const left = RP_UNALLOC_W + RP_GAP;
-  return {
-    x: left + (index % perRow) * (RP_W + RP_GAP),
-    y: Math.floor(index / perRow) * (RP_H + RP_GAP),
-    w: RP_W, h: RP_H
-  };
+  // A room with no saved place takes the first grid slot nothing else covers. Taking slot `index` blindly put a
+  // room created outside Room Manager on top of rooms that had been dragged there (#91).
+  function slot(i) {
+    return { x: left + (i % perRow) * (RP_W + RP_GAP), y: Math.floor(i / perRow) * (RP_H + RP_GAP), w: RP_W, h: RP_H };
+  }
+  function overlaps(a, b) { return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+  const busy = taken || [];
+  for (let i = 0; i < 1000; i++) {
+    const g = slot(i);
+    if (!busy.some(function (r) { return overlaps(g, r); })) return g;
+  }
+  return slot(index);
 }
 
 // Selection is a class on a chip, not a change to what rooms hold, so it
@@ -22743,10 +24169,19 @@ function roomPlanRender() {
   let maxBottom = 0;
   let h = '';
   let roomIndex = -1;
+  // Every saved room's place is known before any unsaved room is placed, so a free slot means free of all of them.
+  // Not Allocated counts too: it can be dragged and resized like any room, and left out it could still sit on top
+  // of a new room's slot (#91). Its default column stops short of the grid, so an unmoved one changes nothing.
+  const taken = [roomPlanGeom(RP_UNASSIGNED, -1, perRow, columnHeight, [])].concat(
+    buckets.filter(function (n) { return n !== RP_UNASSIGNED; }).map(function (n) {
+      const sv = (ROOMPLAN.layout || {})[roomPlanLayoutKey(n)];
+      return sv && sv.w ? { x: sv.x, y: sv.y, w: sv.w, h: sv.h } : null;
+    }).filter(function (r) { return r; }));
   buckets.forEach(function (name, i) {
     const key = roomPlanLayoutKey(name);
     if (name !== RP_UNASSIGNED) roomIndex += 1;
-    const g = roomPlanGeom(name, roomIndex, perRow, columnHeight);
+    const g = roomPlanGeom(name, roomIndex, perRow, columnHeight, taken);
+    if (name !== RP_UNASSIGNED && !((ROOMPLAN.layout || {})[key] || {}).w) taken.push(g);
     maxBottom = Math.max(maxBottom, g.y + g.h);
     const all = byRoom[key] || [];
     // Rooms always stay on screen while searching: a hidden room is a room you
@@ -23515,6 +24950,18 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   const hubVarWriters = INS.hubVar.writers;
   const hubVarUsers = INS.hubVar.users;
   const noDecodedUsage = INS.hubVar.noDecodedUsage.map(function (id) { return ref(id, nameOf); });
+  const recRaw = INS.hubVar.reconciliation;
+  const hubListReconciliation = (recRaw && recRaw.status === 'complete') ? {
+    variablesCompared: recRaw.compared || 0,
+    variablesAgreeing: recRaw.agreeing || 0,
+    hubListedEdgeCount: recRaw.hubListedEdges || 0,
+    hubOnlyNotOnMap: (recRaw.hubOnlyNotInMap || []).map(function (x) {
+      return { variable: ref('v' + x.variable, nameOf), appId: x.appId, appName: x.label || null };
+    }),
+    decodedOnly: (recRaw.decodedOnly || []).map(function (x) {
+      return { variable: ref('v' + x.variable, nameOf), app: ref(x.app, nameOf) };
+    })
+  } : null;
   const readersWithoutDecodedWriter = INS.hubVar.readersWithoutDecodedWriter.map(function (id) { return ref(id, nameOf); });
   const writersWithoutDecodedReader = INS.hubVar.writersWithoutDecodedReader.map(function (id) { return ref(id, nameOf); });
   const multipleHubVarWriters = INS.hubVar.multipleWriters.map(function (id) {
@@ -23636,6 +25083,9 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       // both fields.
       usageRole: e.usageRole || null,
       writeSource: e.writeSource || null,
+      // HAI #60: 'hub-variables' on a usesVar the hub's own variable list names and the decode did not
+      // find; null on every decoded edge.
+      source: e.source || null,
       // v2.2.8: bounded evidence only - the saved attribute a piston device
       // read decoded, or the command names a webCoRE action decoded. Never task
       // parameter values, never raw hashes. null on every other edge kind. A
@@ -23761,7 +25211,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
   const webcoreAppIds = {};
   apps.forEach(function (a) { if (a.appType === 'webCoRE Piston') webcoreAppIds[a.id] = true; });
   const webcoreVariableEdges = edges.filter(function (e) {
-    return webcoreAppIds[e.fromId] &&
+    return webcoreAppIds[e.fromId] && e.source !== 'hub-variables' &&
       (e.relationship === 'read' || e.relationship === 'write' || e.relationship === 'usesVar');
   });
   const summary = {
@@ -23776,6 +25226,8 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
     webcoreHubVariableWriteCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'write'; }).length,
     webcoreHubVariableUnknownUseCount: webcoreVariableEdges.filter(function (e) { return e.relationship === 'usesVar'; }).length,
     webcoreVariableDecodeIssueCount: webcoreVariableDecodeIssues.length,
+    // HAI #60: usesVar edges taken from the hub's own variable list rather than decoded.
+    hubListedVariableUseCount: edges.filter(function (e) { return e.source === 'hub-variables'; }).length,
     edgeCount: edges.length,
     decodedRuleFlowCount: ruleFlows.length,
     contestedDeviceCount: contested.length,
@@ -23906,7 +25358,7 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
       externalSystems: 'Systems outside the hub an app depends on, drawn as nodes on the map - a mix of auto-matched community registry entries and declarations entered by the hub owner (see externalSystemDeclarations below for the raw declarations themselves, which is a different, smaller list - not every declared type becomes a node here, and not every node here came from a declaration).',
       hubVariables: 'Hub-wide shared state - every variable the hub itself reports (identitySource "hub-inventory") when authoritative inventory was available for this scan (see scan.hubVariableInventory.status), reconciled with variables one or more rules confirmed to read or write. v2.1.4 (schema 5, Gate C): the previous "reference-derived" identitySource - a decoded rule configuration reference not confirmed against authoritative inventory - is retired. Gate A found that a bare structured reference (an xVarV/xVar_/xVar picker value) alone does not prove Hub scope at all, since the same storage shape is used for a rule-local Local Variable, so this export no longer manufactures a Hub Variable node from an unconfirmed name; identitySource is expected to always be "hub-inventory" for every entry here - a null value would mean that expectation was violated, and should be treated as a defect report rather than a third valid category. A reference this app cannot confirm against authoritative inventory appears instead in ruleFlows[].nonResolvedVariableReferences with status "unresolved", never as a hubVariables[] entry - see the ruleFlows schema entry and the limitations on Local Variable identity below. variableType is Number/Decimal/String/Boolean/DateTime, or null if not yet resolved. connector is the linked Connector device ({deviceId, connectorType}) when Hubitat reports one, else null - see the synchronizedWith edge for the same relationship in the edges array. connectorType is the type the device itself reports when the regular device inventory for this hub independently lists it, otherwise the projected Connector attribute label Hubitat reports (observed live: "Variable", "Humidity") - not necessarily the underlying driver name. currentValue is always null in this export (see limitations). v2.1.6 (schema 6): this array is no longer the only possible target of a write/read edge in edges[] - a Local Variable can be one too; see the edges schema entry for how to tell them apart.',
       localVariables: 'Rule-owned variables, flat and complete across every engine, keyed by identity (schema 12, v2.2.8). Undocumented before schema 12 even though the array itself already existed, while the edges entry pointed consumers at ruleFlows[].localVariables[] instead - that nested copy only covers engines with a decoded flow, so it silently omits every webCoRE piston local. Join write/read edges against THIS array. ownerAppId is the single app that owns the variable, and a Local Variable only ever has that one app as an edge source. engine is resolved from that owning app, not from the variable, and is "Rule Machine" or "webCoRE". engineVariableType is the declared type the engine itself states where it states one (a webCoRE define block gives integer/string/boolean/dynamic); variableType is the Hubitat-style type and is null for webCoRE, which does not use it. unreferenced true means the variable is declared but no decoded read or write references it - an observation about the coverage of this decoder, not proof the rule never uses it. Values are never exported.',
-      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device. constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
+      edges: 'Every relationship between two of the above, referenced by id (fromId/toId) - names are included for readability only and are not guaranteed unique, do not use them to join. relationship meanings - trigger: app listens to this device (or, for a Rule Machine Rule paused trigger, to this rule). constraint: a condition/required expression gates the app on this device. monitor: app reads this device state only, cannot command it. action: app can command this device (see stateful). exposed: published to an external system. owns: app created this device. hasComponent (graph schema 9, export schema 7): fromId is the parent device, toId is a device-owned component of it (e.g. a Shelly/Bond/Matter-bridge child, or a Hub Variable Connector nested under its "Variable Connectors" parent) - device-to-device, no app involved, and independent of whether any app or rule references either device. write/read: a Rule Machine rule or source-backed webCoRE saved structure sets or reads a variable - the target is a Hub Variable (present in top-level hubVariables[]) if toId matches a hubVariables[] id, otherwise a Local Variable (present in top-level localVariables[], keyed by identity - use that, not ruleFlows[].localVariables[], which only covers engines that expose a decoded flow and therefore omits every webCoRE piston local). usesVar: a fail-safe relationship for an inventory-confirmed webCoRE reference whose direction cannot be proven; direction is "unknown", and no arrow or read/write role is inferred. A usesVar edge with source "hub-variables" (graph schema 26) was not decoded: the variable list the hub itself publishes (firmware 2.5.2.133 and later) names that app as a user of the variable and no decoded read, write or usesVar edge connects them. That list is settings membership with no direction, so it proves a reference, not a read or a write; source is null on every decoded edge. insights.hubVariables.hubListReconciliation compares the two sides. deviceRead (graph schema 14, export schema 12, v2.2.8): a webCoRE piston has a direct, statically decoded physical-device attribute read (see attribute below) that could NOT be attributed to a role - a read inside an expression or a task parameter. A read the piston performs in an event or a condition is emitted under trigger or constraint instead, decided by the comparison block webCoRE itself puts the operator in, so it matches the role the piston flowchart draws. action from a webCoRE piston (same relationship kind Rule Machine already uses) is a direct, statically decoded device command (see commands below); stateful is deliberately null on a webCoRE action edge, never inferred false, since the command name is proven but whether it leaves a lasting state is not. Both deviceRead and webCoRE action edges are resolved only against the permitted-device list belonging to the specific webCoRE parent app that piston belongs to - never a different parent app, never the whole-hub device inventory. direction is "unknown" only on deviceRead and usesVar edges. A Local Variable target only ever has exactly one write/read edge source, its own owning rule - see usageRole/writeSource below. synchronizedWith: a Hub Variable and its Connector device expose the same synchronized state - structural, not a read/write/trigger/action, and not evidence of device control. runs/cancelTimedActions/setspb/pauseResume: one rule acting on another rule. depends: an app needs an external system. unusedConstraint (schema 14, v2.3.2) is only meaningful on constraint edges: true means this device is selected in a condition that no action and no Required Expression evaluates, so the relationship exists in the configuration but gates nothing; false means the condition is live; null on every other relationship kind. It describes this app only - the same device can be a live trigger for another rule. stateful is only meaningful on action edges - true means the app can leave the device in a lasting on/off/level state, not just a momentary command, and more than one app doing this to the same device means the last one to run decides the outcome (see insights.contested) - common by design on a hub with many rules, not inherently a problem; null on every other relationship kind, where the concept does not apply. usageRole is populated on proven Hub or Local Variable read edges: a single trusted role when every decoded occurrence behind that edge agrees, otherwise "unknown-read" rather than an invented one; webCoRE reads use "unknown-read" because direction is proven without reconstructing a flow role. It is null on writes and usesVar. writeSource is populated only on a Rule Machine Hub Variable write edge whose source device attribute resolved to a real device ID ({kind: "deviceAttribute", deviceId, attribute}); it is null for webCoRE writes and every other relationship kind.',
       rmConstructVocabulary: 'Dictionary keyed by the opaque Rule Machine construct tokens that need translation. Each value has category, a plain-language meaning, and haiCapabilityId where the HAI capability catalogue has an explicit mapping. Self-describing condition and trigger tokens are intentionally absent, so absence from this dictionary does not mean a token is unknown or unsupported. rmConstructVocabularyVersion versions token spelling and meaning separately from the export JSON shape.',
       ruleFlows: 'One entry per app whose logic could be decoded, an array rather than an object keyed by name because app names on this hub are not guaranteed unique - join on appId. A recognized inert/no-action Rule Machine app may correctly have no entry here; inspect apps[].rmConstructs for the complete per-scanned-app construct publication. steps is the decoded trigger/condition/action sequence for that rule. A Rule Machine trigger or action step may carry constructs, a sorted array containing the exact normalized token proven for that saved row; other engines and unproven associations omit it. Conditions are not step-associated. cond/label on a step can legitimately be empty - "endif"/"else" control-flow steps exist only to close or branch a block and carry no condition of their own. references replaces what would otherwise be a bare device-name list: each entry is {type, id, name} (plus candidateIds when type is "ambiguous"). type is "device" or "app" (a Cancel Timed Actions/Run Rule Actions-style step names another RULE here, not a device - check type, do not assume), "self" for VRB’s "This Rule" (id is this same step’s own appId), "ambiguous" if the name matches more than one device or app on this hub (id is null, candidateIds lists every match - do not guess which one), or "unresolved" if the name matched nothing at all (id null - typically a stale/renamed reference). ruleTargets (cross-rule action steps only) is {id, name} the same way - always resolvable, never ambiguous. localVariables (schema 5, v2.1.4, Gate C) is this rule’s own Local Variable definitions, owner-scoped by this entry’s own appId - identity is "appId:name", never global; no value is ever included. As of schema 6 (v2.1.6), every entry here is also a first-class node on the graph and can appear as a write/read edge target in edges[] - see that schema entry. A definition with no matching edges[] entry has no proven decoded reference in this rule - not read in a trigger, condition or action, and not written. variableReferences (schema 5) is every read/write reference this app confirmed a scope for, "local" or "hub" only, joined to a localIdentity when local; a same-named Local and Hub Variable in the SAME rule cannot be told apart from stored Rule Machine configuration alone (a genuine platform ambiguity, not a decoding gap), so it never appears here - see nonResolvedVariableReferences. nonResolvedVariableReferences (schema 5) covers everything variableReferences excludes: status "ambiguous" (candidateScopes lists every scope that matched, most often ["local","hub"] for the same-name case above) or status "unresolved" (candidateScopes empty - no matching definition in either scope, most often a renamed or deleted variable). Neither array ever creates or implies a hubVariables[] entry on its own - see that schema entry. rmConstructs (v2.4.3) repeats the matching apps[] rule-level inventory for convenience when a decoded flow exists. It may omit a construct stored under an unrecognised setting family, so absence is not proof that a feature is absent. Trigger and action tokens can be joined to their matching steps[].constructs record; condition, option and structure tokens remain rule-level only. These fields describe observed saved settings, not proven reachability or runtime behavior, do not contain configured values, do not reconstruct the rule, and do not repair an unresolved or ambiguous steps[].references record. Token spelling and meaning are versioned by rmConstructVocabularyVersion. The root rmConstructVocabulary defines only opaque tokens; a token absent from that dictionary may already be plain language and must not be treated as unknown for that reason.',
       migrationRatings: 'webCoRE pistons only (schema 14, v2.3.2), one record per piston, rated for moving to Rule Machine and to Visual Rule Builder 2.0. level is 1 (direct equivalent) to 5 (rebuild is likely easier), or null when the piston contains parts this app does not recognise yet; label is the matching words. reasons are the short summary lines behind that rating, at most three - the full per-part breakdown stays in the Migration Assessment panel and is deliberately not exported. partsNeedingRework counts the parts needing manual work. automaticConversion says whether the proven converters could do it without hand work, which is a narrower question than the rating. status is complete for a piston that has been rated, or not-rated for one nobody has assessed yet on this hub - a not-rated piston carries null ratings, and opening the webCoRE Migration Assessment panel rates every piston and fills them in. ratedAt is when that rating was taken and stale is true when it predates the last graph rebuild, meaning the piston may have changed since - the rating is still shown rather than dropped, because it usually has not. A rating describes effort, never whether the piston should be migrated at all.',
@@ -23969,7 +25421,10 @@ function buildExportPayload(ext, icons, failedFetches, migrationRatings) {
         multipleWriters: multipleHubVarWriters,
         directionUnknownUsage: directionUnknownHubVarUsage,
         unresolvedReferences: unresolvedHubVarReferences,
-        webcoreDecodeIssues: webcoreVariableDecodeIssues
+        webcoreDecodeIssues: webcoreVariableDecodeIssues,
+        // HAI #60: the hub's own list of variable users against the decode. null when the hub has no such
+        // list (firmware before 2.5.2.133). Counts and names only; neither side is complete.
+        hubListReconciliation: hubListReconciliation
       }
     },
     migrationRatings: migrationRatings || null,
@@ -24793,8 +26248,8 @@ function rescanNode(nodeId, item) {
         return;
       }
       const why = (j && j.reason) || 'failed';
+      if (why === 'tooMany') { offerFullScan(item, j.apps); return; }
       item.textContent = why === 'scanRunning' ? 'A full scan is running'
-                       : why === 'tooMany' ? 'Used by too many apps'
                        : why === 'noOwner' ? 'Nothing to re-read'
                        : 'Rescan failed';
       setTimeout(function () { item.textContent = original; item.disabled = false; }, 2500);
@@ -24803,6 +26258,79 @@ function rescanNode(nodeId, item) {
       item.textContent = 'Rescan failed';
       setTimeout(function () { item.textContent = original; item.disabled = false; }, 2500);
     });
+}
+
+// A device used by more apps than a rescan re-reads (2.4.35). It used to end on a greyed "Used by too many
+// apps"; a full scan reads them all in one pass, so that is what the item now offers.
+function offerFullScan(item, apps) {
+  const offer = item.cloneNode(false);
+  offer.disabled = false;
+  offer.textContent = 'Run a full scan';
+  offer.title = 'Used by ' + (apps || 'many') + ' apps, so a full scan is quicker than rescanning each one';
+  offer.addEventListener('click', function () { startFullScan(offer); });
+  item.parentNode.replaceChild(offer, item);
+  offer.focus();
+}
+
+// The same /scan endpoint and guards as the settings page's Scan button: the hub refuses to start a second
+// scan while one is running and answers with that scan's status instead, which is then followed here.
+function startFullScan(item) {
+  item.disabled = true;
+  item.textContent = 'Starting scan...';
+  const statusEl = document.getElementById('status');
+  if (SCAN_URL.indexOf('http') === 0) {
+    // Remote access: as on the settings page, the cloud API cannot be read cross-origin, so the request goes
+    // as a hidden navigation and the page reloads into the map's scan-in-progress page.
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = SCAN_URL;
+    document.body.appendChild(f);
+    if (statusEl) statusEl.textContent = 'Full scan started - this page will reload.';
+    setTimeout(function () { window.location.reload(); }, 4000);
+    return;
+  }
+  fetch(SCAN_URL, { cache: 'no-store', credentials: 'omit' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      hideNodeMenu();
+      if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
+      if (statusEl) statusEl.textContent = 'The scan could not start' + (d && d.error ? ': ' + d.error : '.');
+    })
+    .catch(function () {
+      item.textContent = 'Scan failed to start';
+      setTimeout(function () { item.textContent = 'Run a full scan'; item.disabled = false; }, 2500);
+    });
+}
+
+// Same wording as the settings page's progress line.
+function showScanProgress(statusEl, d) {
+  if (!statusEl) return;
+  const isDevicePhase = d.phase !== 'apps';
+  if (!isDevicePhase && d.total > 0 && d.done >= d.total) {
+    statusEl.textContent = 'Full scan: building map - please wait...';
+    return;
+  }
+  const pct = d.total > 0 ? Math.floor((d.done * 100) / d.total) : 0;
+  statusEl.textContent = 'Full scan: ' + (isDevicePhase ? 'reading device types' : 'reading apps') + ', ' +
+                         d.done + ' of ' + d.total + ' (' + pct + '%). The map reloads when it is done.';
+}
+
+// One /scan-status read every 5 seconds while the scan runs, then one reload.
+function followFullScan(statusEl) {
+  setTimeout(function () {
+    fetch(SCAN_STATUS_URL, { cache: 'no-store', credentials: 'omit' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
+        if (d && d.lastScanOutcome === 'failed') {
+          if (statusEl) statusEl.textContent = 'The full scan failed' + (d.error ? ': ' + d.error : '.');
+          return;
+        }
+        if (statusEl) statusEl.textContent = 'Scan complete - reloading...';
+        window.location.reload();
+      })
+      .catch(function () { followFullScan(statusEl); });
+  }, 5000);
 }
 
 // Comes back to where the user was. sessionStorage rather than the URL: the
@@ -25063,6 +26591,29 @@ document.getElementById('exitMapBtn').addEventListener('click', function () {
 </html>
 """
 }
+
+
+
+
+@Field static final ConcurrentHashMap<String, Object> MAP_PAGE_CACHE = new ConcurrentHashMap<>()
+
+
+
+
+String cachedGraphJson(Map graph, Long committedAt) {
+    Map hit = MAP_PAGE_CACHE.get("graph|${app.id}".toString()) as Map
+    if (committedAt && hit && hit.key == "${committedAt}|${GRAPH_SCHEMA}".toString()) return hit.json as String
+    String json = jsonForScriptEmbed(graph)
+    if (committedAt) rememberGraphJson(committedAt, json)
+    return json
+}
+
+void rememberGraphJson(Long committedAt, String json) {
+    MAP_PAGE_CACHE.put("graph|${app.id}".toString(),
+                       [key: "${committedAt}|${GRAPH_SCHEMA}".toString(), committedAt: committedAt, json: json])
+}
+
+
 
 String comparatorFrameHtml() {
     

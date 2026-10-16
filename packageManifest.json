@@ -1,12 +1,12 @@
 {
     "packageName": "Automation Map",
     "author": "Gordon Thelander",
-    "version": "2.4.24",
+    "version": "2.4.46",
     "minimumHEVersion": "2.5.1",
-    "dateReleased": "2026-10-10",
+    "dateReleased": "2026-10-15",
     "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
     "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-    "releaseNotes": "v2.4.24: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.\n\nChanges since v2.4.2:\n\n* See how your rules drive each other: set Show to \u201cRule to rule only\u201d to see just the links where one rule runs another, pauses or resumes it, cancels its timed actions, or sets its Private Boolean, so chains of rules stand out at a glance. New in this release: rules that only reset others at hub start are drawn faintly, with two filters to separate them, \u201cRule to rule, except startup resets\u201d and \u201cStartup resets only\u201d.\n* Visual Rule Builder\u2019s repeated action (hub 2.5.2.135) is drawn as the builder describes it, and a device it checks only to decide when to stop is shown as a condition, not a trigger.\n* More reliable scans: a scan that loses the app list partway, as can happen if a scan starts immediately after a hub restart, is no longer saved as an empty map. It will now try again by itself three minutes later.\n* Room Manager: creating or deleting a room is quicker, and the change shows as soon as the hub confirms it, without reloading every device\u2019s room.\n* Insights: a hub variable that no rule is seen to use now shows that nothing uses it.\n* webCoRE Migration Assessment: ratings are cached after first run, with a Refresh button to re-run them.\n* For Hubitat Automation Intelligence [HAI] users: rules are read in much more detail for migration, and HAI rule apps are included in Insights.\n* Exports and backups are saved as .txt files, and Baseline Comparison and the Import buttons open them (older .json files still open). On a hub page opened by its local address Chrome may warn about the download, because the page is not HTTPS; choose Keep.\n\nAfter upgrading: the settings page asks you to run a scan; the map shows this version\u2019s results once it has.",
+    "releaseNotes": "v2.4.46: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.\n\nChanges since v2.4.24:\n\n* See what starts a rule, even when no device does: a clock badge on the rule shows its time, schedule, mode, variable, location event or rule-paused triggers, listed when you focus or hover over the rule. A rule flowchart now puts all its triggers in one \"Starts when\" box.\n* Rule Machine rules are read far more completely: nearly every action, including repeat blocks, per-mode actions, fades, shades, fans, locks, valves, thermostats, music players, sirens, HSM and HTTP GET. Periodic schedules keep their timing.\n* Variables: when Automation Map cannot tell which variables an app uses, the hub's own variable list fills the gap. Those links show as dotted, with a count in Insights.\n* Lighter on the hub: the saved map is kept in a file, so pages and status checks load much faster, and an unchanged map is not rebuilt each time you open it. Scan progress is checked less often, and not at all while the tab is in the background. The daily automatic scan stays on; you can switch it off in settings.\n* More reliable scans: the map no longer asks for a scan straight after one has finished, and the status line says when a scan is done.\n* Room Manager: a new room is placed in free space instead of on top of others or under the Not Allocated box.\n* Rule Machine coverage now recognises many more actions, so rules that use them are counted.\n* webCoRE Migration Assessment: the HAI column now rates each piston against what HAI can do, rather than against Rule Machine. Press Refresh Scan on that page to see the new ratings.\n* For Hubitat Automation Intelligence [HAI] users: HAI's Migration page can ask Automation Map to re-read just the rules you choose (Assess now) instead of a full scan, and the HAI coverage table shows HAI's own capabilities that have no Rule Machine equivalent, listed separately from the total.\n\nAfter upgrading: the settings page asks you to run a scan. If you use HAI's migration, keep the daily scan on, or scan again before migrating, so HAI reads your rules as they are now.",
     "apps": [
         {
             "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
             "required": true,
             "oauth": true,
             "primary": true,
-            "version": "2.4.24"
+            "version": "2.4.46"
         }
     ]
 }
