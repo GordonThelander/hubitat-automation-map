@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.46'
+@Field static final String APP_VERSION = '2.4.47'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -9100,15 +9100,19 @@ Map webcoreMigrationMatrixMapping() {
     Map commandsByRow = [:]
     WEBCORE_COMMAND_ROWS.each { k, v -> String row = webcoreMigrationStr(v); if (!commandsByRow.containsKey(row)) commandsByRow[row] = []; (commandsByRow[row] as List) << webcoreMigrationStr(k) }
     List rows = []
+    // HAI-1's verdict per construct, from the same source the piston ratings use (the published list, held for a while).
+    Map haiFeed = haiFeedForRating()
+    Map haiCaps = (haiFeed.caps ?: [:]) as Map
     WEBCORE_EQUIVALENCE.each { k, v ->
         String row = webcoreMigrationStr(k)
         if (row == 'unknown') return
         List entry = v as List
         List auto = (WEBCORE_AUTOMATIC_NOTES[row] ?: ['', '']) as List
+        List hai = webcoreHaiVerdict(row, entry[1] as String, entry[2] as String, haiCaps)
         rows << [row: row, category: categories[row.tokenize('.')[0]] ?: 'Other', label: entry[0], commands: (commandsByRow[row] ?: []).sort(),
-                 rm: entry[1], rmNote: entry[2], vrb: entry[3], vrbNote: entry[4], autoRm: auto[0], autoVrb: auto[1]]
+                 rm: entry[1], rmNote: entry[2], vrb: entry[3], vrbNote: entry[4], hai: hai[0], haiNote: hai[1], autoRm: auto[0], autoVrb: auto[1]]
     }
-    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([rows: rows, levels: WEBCORE_RATING_LEVELS]))
+    return render(status: 200, contentType: 'application/json', data: JsonOutput.toJson([rows: rows, levels: WEBCORE_RATING_LEVELS, haiEngine: "${haiFeed.engine ?: 'HAI-1'}".toString()]))
 }
 // --- webcore migration rating: end ---
 
@@ -21787,15 +21791,15 @@ function mrRenderMatrix() {
   if (!MR.matrix || MR.matrix === 'loading') { mrLoadMatrix(); return '<p class="sub">Loading...</p>'; }
   if (MR.matrix === 'error') return '<p>The construct matrix could not be loaded.</p>';
   const text = ((document.getElementById('mrMatrixText') || {}).value || '').trim().toLowerCase();
-  const rows = MR.matrix.rows.filter(function (m) { return !text || [m.category, m.label, m.commands.join(' '), m.rmNote, m.vrbNote].join(' ').toLowerCase().indexOf(text) !== -1; });
+  const rows = MR.matrix.rows.filter(function (m) { return !text || [m.category, m.label, m.commands.join(' '), m.rmNote, m.vrbNote, m.haiNote || ''].join(' ').toLowerCase().indexOf(text) !== -1; });
   const v = function (verdict, note) { return '<span class="mrV mr_' + extEsc(verdict) + '">' + extEsc(MR_VERDICT[verdict] || verdict) + '</span> ' + extEsc(note || ''); };
-  return '<p class="sub">How each webCoRE construct maps onto Rule Machine 5.1 and Visual Rule Builder 2.0. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>' +
+  return '<p class="sub">How each webCoRE construct maps onto Rule Machine 5.1, Visual Rule Builder 2.0 and ' + extEsc(MR.matrix.haiEngine || 'HAI-1') + '. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself.</p>' +
     '<div class="mrFilters"><label>Search <input id="mrMatrixText" type="search" placeholder="Construct or command"></label>' +
     '<button type="button" class="rowbtn" id="mrExportMatrix">Export matrix CSV</button><span class="sub">' + rows.length + ' constructs</span></div>' +
-    '<div class="mrTableWrap"><table class="mrTable"><thead><tr><th>Category</th><th>webCoRE construct</th><th>Commands</th><th>Rule Machine 5.1</th><th>Visual Rule Builder 2.0</th><th>Automatic conversion potential</th></tr></thead><tbody>' +
+    '<div class="mrTableWrap"><table class="mrTable"><thead><tr><th>Category</th><th>webCoRE construct</th><th>Commands</th><th>Rule Machine 5.1</th><th>Visual Rule Builder 2.0</th><th>' + extEsc(MR.matrix.haiEngine || 'HAI-1') + '</th><th>Automatic conversion potential</th></tr></thead><tbody>' +
     rows.map(function (m) {
       const proven = [m.autoRm ? 'Rule Machine: ' + extEsc(m.autoRm) : '', m.autoVrb ? 'Visual Rule Builder: ' + extEsc(m.autoVrb) : ''].filter(function (x) { return x; }).join('<br>');
-      return '<tr><td>' + extEsc(m.category) + '</td><td>' + extEsc(m.label) + '</td><td class="mrCmds">' + extEsc(m.commands.join(', ')) + '</td><td>' + v(m.rm, m.rmNote) + '</td><td>' + v(m.vrb, m.vrbNote) + '</td><td>' + (proven || '<span class="sub">none yet</span>') + '</td></tr>';
+      return '<tr><td>' + extEsc(m.category) + '</td><td>' + extEsc(m.label) + '</td><td class="mrCmds">' + extEsc(m.commands.join(', ')) + '</td><td>' + v(m.rm, m.rmNote) + '</td><td>' + v(m.vrb, m.vrbNote) + '</td><td>' + v(m.hai || m.rm, m.haiNote || m.rmNote) + '</td><td>' + (proven || '<span class="sub">none yet</span>') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 
@@ -21890,14 +21894,14 @@ function mrExportPistonsCsv() {
 function mrExportMatrixCsv() {
   if (!MR.matrix || !MR.matrix.rows) return;
   const word = { yes: 'Direct equivalent', partial: 'Partial (named change)', no: 'No equivalent', note: 'Direct equivalent (behaviour note)', unassessed: 'Not assessed' };
-  const rows = [['Category', 'webCoRE construct', 'webCoRE command', 'Rule Machine 5.1', 'Rule Machine note', 'Visual Rule Builder 2.0', 'Visual Rule Builder note',
+  const rows = [['Category', 'webCoRE construct', 'webCoRE command', 'Rule Machine 5.1', 'Rule Machine note', 'Visual Rule Builder 2.0', 'Visual Rule Builder note', 'HAI-1', 'HAI-1 note',
     'Automatic conversion potential: Rule Machine', 'Automatic conversion potential: Visual Rule Builder']];
   MR.matrix.rows.forEach(function (m) {
     (m.commands.length ? m.commands : ['']).forEach(function (cmd) {
-      rows.push([m.category, m.label, cmd, word[m.rm] || m.rm, m.rmNote, word[m.vrb] || m.vrb, m.vrbNote, m.autoRm || 'no', m.autoVrb || 'no']);
+      rows.push([m.category, m.label, cmd, word[m.rm] || m.rm, m.rmNote, word[m.vrb] || m.vrb, m.vrbNote, word[m.hai || m.rm] || m.hai, m.haiNote || m.rmNote, m.autoRm || 'no', m.autoVrb || 'no']);
     });
   });
-  mrDownload('webcore-rm5-vrb2-compatibility-matrix.csv', rows);
+  mrDownload('webcore-rm5-vrb2-hai-compatibility-matrix.csv', rows);
 }
 
 function renderCommunityCard(node) {
