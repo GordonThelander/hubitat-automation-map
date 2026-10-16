@@ -4,6 +4,7 @@ Draws every installed app and device on your hub as an interactive graph, colour
 
 It answers questions the hub itself makes tedious: what does this rule really touch, which app keeps turning that light on, and what is this device even used for.
 
+> **Development channel:** This `dev` branch documents the current parallel test build. It installs as **Automation Map (Dev)** with separate settings and scan data. The production release remains on `main`. See the [changelog](CHANGELOG.md) for the complete development history.
 
 **It never commands a device or changes an automation.** No switch is flipped, no rule is edited, no app is altered. What it can change is where things live: the Room Manager assigns devices to rooms and creates, renames and deletes rooms. The hub can already do that a room at a time, from its own Rooms page; this does it across every room at once, with everything unallocated sitting beside every destination. Nothing reaches the hub until you press Apply, and a room change only ever alters that device's room, never the rest of its settings. Everything else you can edit is the app's own notes about your setup - device icon corrections and external system declarations.
 
@@ -30,15 +31,17 @@ A device can hold different roles in different apps: a motion sensor may trigger
 | **Stops** | the rule stops another rule's actions |
 | **Private Boolean** | the rule sets another rule's Private Boolean |
 
-Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden.
+Pick **Rule to rule only** in the Show filter to see the automation chains on their own, with every device edge hidden. Rules that only reset others when the hub starts are drawn faintly, and two more filters separate them: **Rule to rule, except startup resets** and **Startup resets only**.
 
 A rule that is only ever a target, and touches no devices at all, still appears so the relationship is not lost. It is drawn as an outline rather than a filled node, because nothing else about it has been mapped. If a rule still names another rule that has since been deleted, that is shown too - labelled `deleted`, so the action silently doing nothing is something you can actually see rather than only discover the hard way.
 
-**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them.
+**Hub Variables.** If one rule sets a Hub Variable and another reads it, that dependency is invisible everywhere else on the hub. Hub Variables are drawn as their own triangular nodes, with arrows showing which rules write to them and which read from them. Where Automation Map cannot tell from an app's settings which variables it uses, the hub's own variable list fills the gap: those links are drawn dotted, with a count in Insights.
 
 **Drill-down.** Click an app to see just that app and what it uses. Click one of its devices to see everything else touching that device, and keep going. Both filters have search boxes.
 
-**Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step.
+**Rule flowcharts.** Focusing a rule draws its logic top to bottom: trigger, gating expression, then the ordered actions including waits, timeouts and `IF` / `ELSE-IF` / `ELSE` branches, with the devices named at each step. All of a rule's triggers sit in one **Starts when** box, since any one of them starts it.
+
+**What starts a rule.** A rule that no device starts - a time, a schedule, a mode, a variable, a location event or another rule being paused - carries a clock badge on the map. Focus or hover over the rule to see its triggers listed.
 
 **Device icons.** Every device is drawn with an icon representing what it actually is - a light looks like a light, a door like a door, a water sensor like a water sensor - guessed automatically from the device's own capabilities and, where that alone is not specific enough, its name. Wrong for a particular device? The Device icons panel lists every device with its guessed icon, lets you pick the right one by hand, and lets you leave yourself a short note on anything left unrecognised. Overrides and notes survive future rescans, and can be backed up to a file and restored later.
 
@@ -54,6 +57,12 @@ A rule that is only ever a target, and touches no devices at all, still appears 
 **Pivot tables.** Cross-reference anything already on the map - which devices a given app touches, which apps touch a given device, and more - with ready-made presets or a free-form builder for something specific. Results export to CSV.
 
 **AI friendly export.** Download the whole map as one structured file - every device, app, connection, external system, Hub Variable and decoded rule's logic, with an explanation of the file's own structure built into the file itself. Meant for handing to an AI assistant or another external tool, not for reading raw. Device names, rooms and rule names in it reflect your real home, so treat the file with the same care you would the device list itself before sharing it anywhere.
+
+The export is saved as a `.txt` file (the contents are JSON). Chrome blocks downloads from a hub page opened by its local address, because the page is not HTTPS: choose **Keep** in Chrome's download list. Exports and backups made with older versions as `.json` still open.
+
+**Baseline Comparison.** Pick two exports, an earlier one and a later one, and see which apps, devices, Connectors and Hub Variables were added, removed or changed. The comparison runs in your browser; nothing is uploaded. Differences export to CSV.
+
+**webCoRE Migration Assessment.** Rates every webCoRE piston for Rule Machine, Visual Rule Builder and Hubitat Automation Intelligence. Ratings are kept after the first run and shown at once; **Refresh Scan** rates them again. The rating runs from the open page, so leaving the page stops it; ratings already taken are kept.
 
 ### Room Manager
 
@@ -124,6 +133,8 @@ Child devices, event subscriptions and capability types are platform-level facts
 
 Flowcharts are different: they are reconstructed from each app's internal runtime state. Built-in apps are compiled and expose no source at all, so this is the only route. **Rule Machine 5.1**, **Notifier**, and **Visual Rule Builder 2.0** (Hubitat's newer visual/AI-prompt rule builder, still in beta on Hubitat's side - VRB itself currently allows only one decision node per rule, no nesting, which this decoder matches rather than works around) are decoded today. Rules on other engines still appear in the graph with their device relationships and are reported as undecoded, never silently blank.
 
+**For Hubitat Automation Intelligence (HAI) users.** HAI's migration reads the rules from Automation Map's scan. From HAI's Migration page, **Assess now** asks Automation Map to re-read just the rules you choose instead of a full scan. The HAI coverage table also lists HAI's own capabilities that have no Rule Machine equivalent, separately from the total. In the webCoRE Migration Assessment, the HAI column rates each piston against what HAI can do. Keep the daily scan on, or scan before migrating, so HAI reads your rules as they are now.
+
 ## Requirements and limitations
 
 - **OAuth must be enabled on the app**, since the map is served as a web page from your hub. See Install below.
@@ -137,7 +148,7 @@ Flowcharts are different: they are reconstructed from each app's internal runtim
 - **Device icons are a best guess, not a certainty.** Capability and name-based detection cover most devices well, but a handful of categories (appliances, robot vacuums, and a few others) have no reliable Hubitat signal to detect from at all - see the Device icons panel to correct any of these by hand.
 - **Event subscriptions are a snapshot.** Rule Machine drops its trigger subscriptions while a Required Expression is false. Rule Machine rules are unaffected because their trigger and condition settings are read directly, but a non-Rule-Machine app that subscribes conditionally can map differently depending on when you scanned.
 - **Roles reflect configuration, not runtime behaviour** - how a device is wired into an app, not what happened last night.
-- On the current Dev build, a scan of roughly 200 devices normally completes well under a minute. The production v2.0.4 serial scanner can take about two minutes on a similarly sized hub. Hub load and app count still affect both figures.
+- A scan of roughly 200 devices normally completes in under a minute. Hub load and app count affect it.
 
 ## Diagnostic logging
 
@@ -182,11 +193,11 @@ The map link contains an access token unique to your installation. Open the map 
 
 Every device on the hub is scanned. There is no device picker: Automation Map reads the hub's complete installed-app list, then scans every app and device to build their relationships.
 
-A daily scan runs automatically by default. Production uses 00:30 and Dev uses 01:00 so parallel installations do not scan at the same moment. The time is changeable in the app's settings page, and automatic scanning can be disabled entirely.
+A daily scan runs automatically by default, at 00:30. The time can be changed on the app's settings page, and the daily scan can be switched off there. The Dev package does not scan daily unless you switch it on (at 01:00 by default), so a parallel Dev install does not scan at the same moment.
 
 ## Re-scanning
 
-The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices.
+The map is a snapshot taken when you scan, not a live view. Re-scan after adding or reconfiguring apps or devices. The saved map is kept in a File Manager file, so the map and the settings page open quickly, and an unchanged map is not rebuilt each time it opens. The settings page says when a scan has finished.
 
 If a stored map cannot be drawn correctly by the installed release, the app refuses to show it and asks you to scan again rather than rendering something subtly wrong.
 
