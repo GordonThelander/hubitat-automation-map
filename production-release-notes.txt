@@ -9,6 +9,7 @@ Changes since v2.4.24:
 * More reliable scans: the map no longer asks for a scan straight after one has finished, and the status line says when a scan is done.
 * Room Manager: a new room is placed in free space instead of on top of others or under the Not Allocated box.
 * Rule Machine coverage now recognises many more actions, so rules that use them are counted.
+* webCoRE Migration Assessment: the HAI column now rates each piston against what HAI can do, rather than against Rule Machine. Press Refresh Scan on that page to see the new ratings.
 * For Hubitat Automation Intelligence [HAI] users: HAI's Migration page can ask Automation Map to re-read just the rules you choose (Assess now) instead of a full scan, and the HAI coverage table shows HAI's own capabilities that have no Rule Machine equivalent, listed separately from the total.
 
 After upgrading: the settings page asks you to run a scan. If you use HAI's migration, keep the daily scan on, or scan again before migrating, so HAI reads your rules as they are now.
