@@ -8832,8 +8832,9 @@ Map webcoreRateEngine(List components, String engine, List sourceProblems, Map h
             List er = extraRun(row, verdict, note)
             verdict = er[0] as String; note = er[1] as String
         } else {
-            if (row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) {
-                verdict = 'partial'; note = hai ? 'rebuild as a between-two-times condition' : 'rebuild as Between two times'
+            // HAI-1's time window takes any start and end, so before, after and between are all direct.
+            if (!hai && row == 'cond.time' && !(ctx.comparison in ['is between', 'is not between'])) {
+                verdict = 'partial'; note = 'rebuild as Between two times'
             }
             if (row in ['stmt.on']) { if (seenDecision) { effectiveRow = 'stmt.on.extra'; verdict = verdictOf(effectiveRow); note = noteOf(effectiveRow) }; seenDecision = true }
         }
@@ -9029,7 +9030,9 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     'cond.followedBy'          : ['partial', 'rebuild as a wait for the second event with a timeout'],
     'setting.async'            : ['yes', 'set the rule to run in parallel, with a limit'],
     'setting.taskPolicy'       : ['yes', 'set the rule to restart, ignore, queue or run in parallel'],
-    'setting.pistonOption'     : ['partial', 'check it against the rule settings; HAI-1 has more of them than Rule Machine'],
+    'setting.pistonOption'     : ['yes', 'HAI-1 has a rule setting for it'],
+    'cond.constant'            : ['yes', 'always true or always false; carried as it is, or simply left out'],
+    'trig.locationEvent'       : ['yes', 'HAI-1 has a hub and location event trigger'],
     'stmt.triggersAnd'         : ['partial', 'rebuild as one trigger with the rest as conditions, as in Rule Machine'],
     // The four places HAI-1 says it behaves as Rule Machine does but has not
     // shown it (its own list, 2026-09-20). The action is there; whether it acts
