@@ -4,6 +4,7 @@
 String source = new File('apps/automation_map.groovy').getText('UTF-8')
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 String stubs = '''
+import groovy.transform.Field
 @groovy.transform.Field Map settings = [:]
 @groovy.transform.Field Map state = [:]
 @groovy.transform.Field Map app = [label: 'Automation Map', id: 1]
@@ -16,7 +17,8 @@ Map startScan(String entry) { calls << "startScan:${entry}".toString(); return [
 // Script properties set from outside land in the binding, not in these fields, so the test goes through these.
 List runHandler(Map saved) { settings = saved; state = [:]; calls = []; scheduledScanHandler(); return calls }
 '''
-def script = new GroovyShell().parse(stubs + AppSource.functions(source, ['autoScanEffectivelyEnabled', 'scheduledScanHandler']))
+def script = new GroovyShell().parse(stubs + AppSource.field(source, 'BUILD_CHANNEL') + '\n' +
+    AppSource.functions(source, ['autoScanEffectivelyEnabled', 'isDevBuild', 'scheduledScanHandler']))
 
 void check(boolean ok, String what) { if (!ok) throw new AssertionError(what) ; println "ok   ${what}" }
 

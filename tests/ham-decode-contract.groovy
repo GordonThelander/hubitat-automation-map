@@ -22,7 +22,7 @@ String block = source.substring(start, end)
 def AppSource = new GroovyClassLoader(this.class.classLoader).parseClass(new File('tests/support/AppSource.groovy'))
 String fromApp = ['APP_NAME', 'APP_VERSION', 'BUILD_CHANNEL', 'SUPPORTED_RULE_ENGINE', 'HAM_DECODE_CONTRACT_VERSION',
                   'HAM_SUMMARY_CONTRACT', 'HAM_DETAIL_CONTRACT'].collect { AppSource.field(source, it) }.join('\n') + '\n' +
-    AppSource.functions(source, ['autoScanEffectivelyEnabled', 'diagOn', 'engineOfNode']) + '\n'
+    AppSource.functions(source, ['autoScanEffectivelyEnabled', 'isDevBuild', 'diagOn', 'engineOfNode']) + '\n'
 def script = new GroovyShell().parse('''
 import groovy.transform.Field
 @Field Map state = [:]

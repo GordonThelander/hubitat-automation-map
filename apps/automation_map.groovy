@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.42'
+@Field static final String APP_VERSION = '2.4.43'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -610,11 +610,13 @@ String defaultAutoScanCron() {
 // setting is read, not just the scheduler, so the page and the schedule
 // can never disagree about what "on" means.
 //
-// 2.4.37 (hub-cost review, 2026-10-13): OFF unless switched on. A full-hub scan every night whether or not anything
-// changed is the kind of load the project refuses unless it must, and the project's own rules already said daily
-// scanning is off by default. Only an explicit true is on.
+// 2.4.37 (hub-cost review, 2026-10-13): OFF unless switched on, on the Dev build.
+// 2.4.43 (Gordon, 2026-10-16: "The setting for a daily scan should be on for prod"): a production build is ON
+// unless switched off, because HAI's migration reads this scan and has no other way to know the rules are current.
+// Only an explicit false is off there; a setting never saved counts as on, as before 2.4.37.
 boolean autoScanEffectivelyEnabled() {
-    return settings.autoScanEnabled == true
+    if (isDevBuild()) return settings.autoScanEnabled == true
+    return settings.autoScanEnabled != false
 }
 
 // Off unless switched on (2.4.37); once on, a blank time means the default
@@ -963,7 +965,7 @@ a.hrefElem[href*="automation-map.html"], a.hrefElem[href*="automation-map.html"]
                 paragraph "Separately, once a day this app reads a small file from its own GitHub repository to see whether a newer version has been published, and shows the version number at the top of this page if so. Nothing is sent, and it never installs anything - updates are still made through Hubitat Package Manager."
                 input name: 'autoScanEnabled', type: 'bool',
                     title: 'Scan automatically every day',
-                    defaultValue: false, submitOnChange: true
+                    defaultValue: !isDevBuild(), submitOnChange: true
                 if (autoScanEffectivelyEnabled()) {
                     // review 392: "that display updates once you press
                     // Done" was inaccurate - the field already shows the
