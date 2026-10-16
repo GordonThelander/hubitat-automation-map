@@ -7690,7 +7690,7 @@ String haiFeedVersionForCache() {
 // it describes the engine as it is now, not as it was when a piston was rated,
 // so a stored copy of it goes stale silently while the rating around it is fine.
 String haiStatusesNote(boolean noCapabilities, String feedState) {
-    if (!noCapabilities) return 'Rule Machine parity as that engine states it, held to the statuses it publishes now'
+    if (!noCapabilities) return 'Rated against what HAI-1 publishes it can do, held to the statuses it publishes now'
     if (feedState == 'OFF') return 'That engine is not installed on this hub, so this column was rated from this app own equivalence table and has not been checked against what the engine can currently do'
     return 'Not determined yet'
 }
@@ -9045,15 +9045,33 @@ Map webcoreMigrationRating(Map originalPiston, Map hubVariableTypes, Map tokenTo
     'act.lock'                 : ['warning', 'supported, but a lock needs a one-time approval before HAI-1 will send it'],
     'act.alarm'                : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
     'act.alarmPart'            : ['warning', 'supported, but a siren needs a one-time approval before HAI-1 will send it'],
-    // Where neither engine has it, said in HAI-1's own terms.
-    'cond.expression'          : ['no', 'HAI-1 has no expression language; rebuild the test from conditions'],
-    'stmt.each'                : ['no', 'HAI-1 has no loop over a device list'],
-    'vact.parseJson'           : ['no', 'HAI-1 does not parse a JSON reply'],
+    // Where HAI-1 has its own equivalent, rated against what HAI-1 publishes rather than against Rule Machine
+    // (Gordon, 2026-10-16: the column must show webCoRE against HAI-1 as it is). 'partial' here means HAI-1 does
+    // it a different way and the note says how; 'no' is kept only where HAI-1 has nothing that does the job.
+    'stmt.while'               : ['yes', 'a repeat with a while condition'],
+    'stmt.repeat'              : ['yes', 'a repeat with an until condition'],
+    'stmt.for'                 : ['yes', 'a repeat a set number of times'],
+    'stmt.switch'              : ['partial', 'rebuild as IF / ELSE IF, or as steps by mode when it switches on the mode'],
+    'stmt.each'                : ['partial', 'send one command to all the devices at once; steps that differ per device need one block each'],
+    'trig.device.cross'        : ['yes', 'a trigger fires when the reading changes into the range, not while it stays there'],
+    'trig.device.crossInclusive': ['yes', 'a trigger fires when the reading changes into the range, not while it stays there'],
+    'trig.device.range'        : ['yes', 'a trigger can test between two values'],
+    'trig.device.unchanged'    : ['partial', 'use a time-since-last-report condition on a schedule'],
+    'trig.localVariable'       : ['yes', 'a rule variable can start the rule'],
+    'trig.device.parity'       : ['partial', 'work out the remainder with variable maths, then test the variable'],
+    'cond.device.parity'       : ['partial', 'work out the remainder with variable maths, then test the variable'],
+    'cond.device.history'      : ['partial', 'use a time-since-last-report condition, or a condition that requires a fresh reading'],
+    'cond.expression'          : ['partial', 'rebuild as a condition tree (AND, OR, NOT, XOR, at least N of) with variable maths and comparisons'],
+    'vact.runPiston'           : ['partial', 'rebuild the target piston as an HAI-1 rule; Run rule can wait for it and take back a result'],
+    'vact.http'                : ['yes', 'GET or POST with headers, a body and a content type, keeping the reply in a variable'],
+    'vact.fileRead'            : ['yes', 'a variable can read a File Manager file'],
+    'vact.parseJson'           : ['partial', 'the web request step keeps one field of a JSON reply; pull out more with a pattern'],
+    'mod.dynamicValue'         : ['yes', 'any command value can come from a variable'],
+    'mod.interaction'          : ['yes', 'a trigger can require a physical or a digital event'],
+    // Where HAI-1 has nothing that does the job.
     'vact.wol'                 : ['no', 'HAI-1 has no wake on LAN'],
     'vact.integration'         : ['no', 'HAI-1 has no equivalent for these webCoRE integrations'],
-    'vact.toggleRandom'        : ['no', 'HAI-1 has no random device choice'],
-    'trig.device.parity'       : ['no', 'HAI-1 cannot test even or odd'],
-    'cond.device.parity'       : ['no', 'HAI-1 cannot test even or odd']
+    'vact.toggleRandom'        : ['no', 'HAI-1 has no random device choice']
 ]
 
 // What automatic conversion has been proven on a hub, by equivalence row: [Rule Machine, Visual Rule Builder].
@@ -21712,7 +21730,7 @@ function mrRenderPistons() {
       (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers) +
         JSON.stringify((r.body.hai || {}).blockers || [])).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column is Rule Machine parity as that engine states it, held to the capability statuses it publishes now, plus this app own reading of the constructs where the two engines differ; it is not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column rates each webCoRE construct against what HAI-1 publishes it can do, held to the capability statuses it publishes now; where HAI-1 does something a different way, the reason says how. It is this app's reading of HAI-1's published capabilities, not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrRefresh">' +
