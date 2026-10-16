@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.44'
+@Field static final String APP_VERSION = '2.4.45'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -21733,7 +21733,7 @@ function mrRenderPistons() {
       (!text || (mrName(r.node) + JSON.stringify(r.body.ruleMachine.blockers) + JSON.stringify(r.body.visualRuleBuilder.blockers) +
         JSON.stringify((r.body.hai || {}).blockers || [])).toLowerCase().indexOf(text) !== -1);
   });
-  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column rates each webCoRE construct against what HAI-1 publishes it can do, held to the capability statuses it publishes now; where HAI-1 does something a different way, the reason says how. It is this app's reading of HAI-1's published capabilities, not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
+  let h = '<p class="sub">Every webCoRE piston on this hub, rated for three engines from one equivalence table. The HAI-1 column rates each webCoRE construct against what HAI-1 publishes it can do, held to the capability statuses it publishes now; where HAI-1 does something a different way, the reason says how. It is Automation Map reading the capabilities HAI-1 publishes, not something measured here. The level is an effort estimate of how directly a piston maps. A behaviour difference that only causes an extra run is a warning when the piston only uses fixed-value commands, and rework otherwise. Automatic conversion potential means every part of the piston is one that automated conversion tooling has been proven to handle. Automation Map does not convert pistons itself. Use the arrow beside a piston name to see why it is rated as it is.</p>';
   if (!pistons.length) return h + '<p>No webCoRE pistons were found in the last scan.</p>';
   h += MR.running ? '<p class="mrProgress">Assessing ' + extEsc(MR.results.length) + ' of ' + extEsc(pistons.length) + ' pistons...</p>' : '';
   h += '<div class="mrRefresh">' +
