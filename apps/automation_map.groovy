@@ -17754,8 +17754,7 @@ String buildMapHtml() {
   #migrationCard .maRow { display:flex; align-items:center; gap:8px; margin:3px 0; }
   #migrationCard .maName { min-width:130px; }
   #migrationCard .maBadge { display:inline-block; min-width:22px; text-align:center; border-radius:11px; padding:1px 6px; font-weight:700; color:#111; }
-  #migrationCard .maL1 { background:#6cc070; }
-  #migrationCard .maL2 { background:#b3d65c; }
+  #migrationCard .maL1, #migrationCard .maL2 { background:#6cc070; }
   #migrationCard .maL3 { background:#d9c441; }
   #migrationCard .maL4 { background:#e0913a; }
   #migrationCard .maL5 { background:#e0605a; }
@@ -17766,8 +17765,7 @@ String buildMapHtml() {
   #migrationCard .maBody ul { margin:0 0 4px 18px; padding:0; }
   /* Migration report panel (v2.3.1). */
   #migrationReportBtn { border-color:#c2185b; }
-  #migrationReportBody .maL1 { background:#6cc070; }
-  #migrationReportBody .maL2 { background:#b3d65c; }
+  #migrationReportBody .maL1, #migrationReportBody .maL2 { background:#6cc070; }
   #migrationReportBody .maL3 { background:#d9c441; }
   #migrationReportBody .maL4 { background:#e0913a; }
   #migrationReportBody .maL5 { background:#e0605a; }
@@ -21673,7 +21671,10 @@ function mrEngineHead(done, e, levelId) {
   const auto = done.filter(function (r) { return r.body[e[0]].automatic && r.body[e[0]].automatic.available; }).length;
   const unrated = done.filter(function (r) { return r.body[e[0]].level === null || r.body[e[0]].level === undefined; }).length;
   let bar = '';
-  counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
+  // Levels 1 and 2 are both a direct equivalent, so the bar shows them as one green block.
+  const direct = counts[0] + counts[1];
+  if (direct) bar += '<span class="maL1" style="flex:' + direct + '" title="Direct equivalent, levels 1 and 2 (' + direct + ')">' + direct + '</span>';
+  counts.forEach(function (n, i) { if (n && i > 1) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
   // An engine with no converter is not a zero; it is a question that does not
   // apply yet, and it says which engine it is reading to decide the rest.
   const first = done.length ? done[0].body[e[0]] : null;
