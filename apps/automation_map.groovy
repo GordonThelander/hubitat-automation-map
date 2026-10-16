@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.45'
+@Field static final String APP_VERSION = '2.4.46'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -21671,7 +21671,10 @@ function mrEngineHead(done, e, levelId) {
   const auto = done.filter(function (r) { return r.body[e[0]].automatic && r.body[e[0]].automatic.available; }).length;
   const unrated = done.filter(function (r) { return r.body[e[0]].level === null || r.body[e[0]].level === undefined; }).length;
   let bar = '';
-  counts.forEach(function (n, i) { if (n) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
+  // Levels 1 and 2 are both a direct equivalent, so the bar shows them as one green block.
+  const direct = counts[0] + counts[1];
+  if (direct) bar += '<span class="maL1" style="flex:' + direct + '" title="Direct equivalent, levels 1 and 2 (' + direct + ')">' + direct + '</span>';
+  counts.forEach(function (n, i) { if (n && i > 1) bar += '<span class="maL' + (i + 1) + '" style="flex:' + n + '" data-level-select="' + levelId + '" data-level="' + (i + 1) + '" title="Show level ' + (i + 1) + ' (' + n + ')">' + n + '</span>'; });
   // An engine with no converter is not a zero; it is a question that does not
   // apply yet, and it says which engine it is reading to decide the rest.
   const first = done.length ? done[0].body[e[0]] : null;
