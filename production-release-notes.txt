@@ -1,4 +1,4 @@
-v2.4.44: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+v2.4.45: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
 Changes since v2.4.24:
 
