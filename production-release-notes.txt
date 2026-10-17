@@ -1,0 +1,17 @@
+v2.4.48: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+
+Changes since v2.4.24:
+
+* Rule Machine delays stored with a decimal point (for example 5.0 seconds) are now read correctly; they were read as no delay, which stopped HAI from copying the rule.
+* Installs as soon as its page is first opened, with no need to press Done.
+* See what starts a rule, even when no device does: a clock badge on the rule shows its time, schedule, mode, variable, location event or rule-paused triggers, listed when you focus or hover over the rule. A rule flowchart now puts all its triggers in one "Starts when" box.
+* Rule Machine rules are read far more completely: nearly every action, including repeat blocks, per-mode actions, fades, shades, fans, locks, valves, thermostats, music players, sirens, HSM and HTTP GET. Periodic schedules keep their timing.
+* Variables: when Automation Map cannot tell which variables an app uses, the hub's own variable list fills the gap. Those links show as dotted, with a count in Insights.
+* Lighter on the hub: the saved map is kept in a file, so pages and status checks load much faster, and an unchanged map is not rebuilt each time you open it. Scan progress is checked less often, and not at all while the tab is in the background. The daily automatic scan stays on; you can switch it off in settings.
+* More reliable scans: the map no longer asks for a scan straight after one has finished, and the status line says when a scan is done.
+* Room Manager: a new room is placed in free space instead of on top of others or under the Not Allocated box.
+* Rule Machine coverage now recognises many more actions, so rules that use them are counted.
+* webCoRE Migration Assessment: the HAI column now rates each piston against what HAI can do, rather than against Rule Machine. The Construct matrix shows the HAI column too. Press Refresh Scan on that page to see the new ratings.
+* For Hubitat Automation Intelligence [HAI] users: HAI's Migration page can ask Automation Map to re-read just the rules you choose (Assess now) instead of a full scan, and the HAI coverage table shows HAI's own capabilities that have no Rule Machine equivalent, listed separately from the total.
+
+After upgrading: the settings page asks you to run a scan. If you use HAI's migration, keep the daily scan on, or scan again before migrating, so HAI reads your rules as they are now.
