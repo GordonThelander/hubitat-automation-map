@@ -1,8 +1,18 @@
+# [CmdletBinding()] makes PowerShell refuse a parameter this script does not define. Without it an unknown
+# one lands in $args and is ignored: on 2026-10-17 an `-AppCodeId` meant for the Preprod entry was dropped
+# that way and the script resolved the Dev entry instead; only the dry run's Target line caught it.
+[CmdletBinding()]
 param(
     # The hub's address is not kept in this public repository: set HUBITAT_HUB_URL (for example
     # 'http://192.168.1.50') or pass -HubUrl.
     [string]$HubUrl = $env:HUBITAT_HUB_URL,
     [string]$AppFile = 'apps/automation_map.groovy',
+    # Which Apps Code entry is written: 'Automation Map (Dev)' or 'Automation Map (Preprod)'. The source in
+    # -AppFile must declare the same APP_NAME, so a Preprod write needs the Preprod build, not apps/ on dev.
+    [ValidateSet('Dev', 'Preprod')][string]$Channel = 'Dev',
+    # Optional: the exact Apps Code entry to write. The hub must list it under the channel's name, or nothing
+    # is written. Without it, the entry is found by that name alone.
+    [ValidateRange(1, [int]::MaxValue)][int]$AppCodeId = 0,
     [int]$InstalledAppId = 0,
     [switch]$SkipValidation,
     [switch]$WhatIf,
@@ -19,7 +29,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$expectedAppName = 'Automation Map (Dev)'
+$expectedAppName = "Automation Map ($Channel)"
 $utf8NoBomStrict = New-Object System.Text.UTF8Encoding($false, $true)
 
 function Get-BytesSha256([byte[]]$Bytes) {
@@ -197,7 +207,18 @@ try {
     Test-HubMemory $hubBase
     $apps = Invoke-RestMethod -Uri "$hubBase/hub2/appsList" -Method Get -TimeoutSec 20
     $matches = @($apps.userAppTypes | Where-Object { $_.name -eq $expectedAppName })
-    if ($matches.Count -gt 1 -and $InstalledAppId -gt 0) {
+    if ($AppCodeId -gt 0) {
+        # A named entry is checked against the hub's own name for it, never taken on trust.
+        $named = @($apps.userAppTypes | Where-Object { [int]$_.id -eq $AppCodeId })
+        if ($named.Count -ne 1) {
+            throw "Apps Code entry $AppCodeId is not on the hub's app list. Nothing was written."
+        }
+        if ($named[0].name -ne $expectedAppName) {
+            throw "Refusing: Apps Code entry $AppCodeId is '$($named[0].name)', not '$expectedAppName' (-Channel $Channel). Nothing was written."
+        }
+        $matches = $named
+    }
+    if ($InstalledAppId -gt 0 -and ($matches.Count -gt 1 -or $AppCodeId -gt 0)) {
         $installedStatus = [string](Invoke-RestMethod -Uri "$hubBase/installedapp/statusJson/$InstalledAppId" -Method Get -TimeoutSec 20)
         $installedName = [regex]::Match($installedStatus, '"installedApp"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"').Groups[1].Value
         $appTypeIdText = [regex]::Match($installedStatus, '"appTypeId"\s*:\s*(\d+)').Groups[1].Value
@@ -205,23 +226,31 @@ try {
             throw "Installed app $InstalledAppId did not identify itself as '$expectedAppName' with an Apps Code ID. Production was not touched."
         }
         $installedAppTypeId = [int]$appTypeIdText
+        if ($AppCodeId -gt 0 -and $installedAppTypeId -ne $AppCodeId) {
+            throw "Installed app $InstalledAppId uses Apps Code entry $installedAppTypeId, not $AppCodeId. Nothing was written."
+        }
         $matches = @($matches | Where-Object { [int]$_.id -eq $installedAppTypeId })
-        Write-Host "Resolved duplicate Apps Code names through installed Dev app $InstalledAppId -> Apps Code ID $installedAppTypeId."
+        Write-Host "Resolved duplicate Apps Code names through installed $Channel app $InstalledAppId -> Apps Code ID $installedAppTypeId."
     }
     if ($matches.Count -ne 1) {
         $guidance = if ($InstalledAppId -gt 0) { " Installed app $InstalledAppId did not resolve exactly one match." } else { ' Supply -InstalledAppId to correlate an installed Dev instance.' }
         throw "Expected exactly one '$expectedAppName' Apps Code entry, found $($matches.Count).$guidance Production was not touched."
     }
 
+    # Read both now: $matches is PowerShell's automatic $Matches, so the next -match replaces it.
     $appId = [int]$matches[0].id
+    $appName = [string]$matches[0].name
     $current = Invoke-RestMethod -Uri "$hubBase/app/ajax/code?id=$appId" -Method Get -TimeoutSec 20
     if ([string]::IsNullOrWhiteSpace([string]$current.source)) {
         throw "Apps Code entry $appId returned empty source. Refusing deployment."
     }
+    if ([string]$current.source -notmatch "APP_NAME\s*=\s*'$([regex]::Escape($expectedAppName))'") {
+        throw "Refusing: Apps Code entry $appId does not currently hold '$expectedAppName'. Nothing was written."
+    }
 
     $localHash = $sourceHash
     $currentHash = Get-Sha256 ([string]$current.source)
-    Write-Host "Target: $expectedAppName, Apps Code ID $appId, revision $($current.version)"
+    Write-Host "Target: $appName, Apps Code ID $appId, revision $($current.version)"
     Write-Host "Local SHA-256:  $localHash"
     Write-Host "Hub SHA-256:    $currentHash"
 
@@ -237,7 +266,7 @@ try {
     $backupDir = Join-Path $repoRoot '.hubitat-backups'
     New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $backupPath = Join-Path $backupDir "automation-map-dev-app-$appId-rev-$($current.version)-$stamp.groovy"
+    $backupPath = Join-Path $backupDir "automation-map-$($Channel.ToLowerInvariant())-app-$appId-rev-$($current.version)-$stamp.groovy"
     [IO.File]::WriteAllText($backupPath, [string]$current.source, $utf8NoBomStrict)
 
     $body = 'id={0}&version={1}&source={2}' -f @(
