@@ -123,6 +123,19 @@ any other push to `dev`; on HAI, `.github/workflows/dev-push-guard.yml` undoes o
 3. The cloud session merges. If it must change code after a freeze, it says so on the PR first, and that
    means a new deploy and capture.
 
+**Fast deploys, for every agent and every app** (Gordon, 2026-10-17: "HAI is over testing again - taking ages to
+deploy" and "Ensure the other agents have the same level of deployment efficiency"; deploys took 17-36 minutes
+against 3 for the deploy itself). Applies to HAI, HAM and HMA, and to HAI, Automation Map and the Preview alike.
+- By default a deploy is: deploy the frozen SHA, read back the version, post one line. Nothing else.
+- Gordon tests the screens himself straight after. The freeze names an extra check only for what he cannot see
+  on a page (an endpoint or the hub's behaviour), and the deployer runs no check the freeze does not name: no
+  settle waits, no second browser, no extra diagnosis, no recounts, no scans unless named.
+- Report: at most 5 lines on the board. On the PR, only the deployed SHA and version line. No essays, no
+  reconciliation posts; write more only when something failed.
+- Pick-up: the cloud session posts FROZEN and a WAKE; whenever Gordon is waiting, any local session that reads
+  it also sends the deployer a direct "check the board". The deployer starts within minutes, not at its next
+  10-minute read.
+
 **The cloud session cannot see local commits.** What is on the hub must be on GitHub: the deploy's PR
 comment names the full SHA that is on the hub, and that SHA is the frozen one on the PR.
 
