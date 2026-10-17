@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.47'
+@Field static final String APP_VERSION = '2.4.48'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -173,7 +173,7 @@ boolean isDevBuild() {
 // apps the decode could not see, and the graph carries hubVariableReconciliation.
 // Bumped 26->27 (2.4.39, HAI #157): a Periodic Schedule trigger publishes the hub's own cron, nextRunTime and
 // cronZone, read from the statusJson scheduledJobs the apps phase already fetches.
-@Field static final String GRAPH_SCHEMA = '28'
+@Field static final String GRAPH_SCHEMA = '29'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -260,6 +260,9 @@ definition(
     category: 'Utility',
     iconUrl: '',
     iconX2Url: '',
+    // Installs the app when its page is first opened, so nothing depends on the person pressing Done first
+    // (Gordon, 17 October, from a community developer's tip).
+    installOnOpen: true,
     singleInstance: true,
     oauth: true,
 )
@@ -11601,10 +11604,14 @@ Map hamDetailTimeOperand(String which, String num, Map settingValues) {
     return [kind: 'clock', at: "${settingValues[which + 'A' + num] ?: ''}" ?: null]
 }
 
+// Rule Machine stores some whole numbers with a decimal point: one rule held the same five-second Delay as "5"
+// on one step and "5.0" on another (HAI #34, 17 October). Read as a whole number only, "5.0" became 0 and the
+// Delay read as none, so a decimal is read and rounded.
 Integer hamDetailInt(Object v) {
     String s = "${v ?: ''}".trim()
     if (!s) return 0
-    try { return s as Integer } catch (Exception ignored) { return 0 }
+    try { return s as Integer } catch (Exception ignored) { }
+    try { return (Integer) Math.round(s as Double) } catch (Exception ignored) { return 0 }
 }
 
 // Rule Machine stores false as an empty string on these, so a bare truthiness
