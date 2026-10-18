@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.48'
+@Field static final String APP_VERSION = '2.4.49'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -173,7 +173,7 @@ boolean isDevBuild() {
 // apps the decode could not see, and the graph carries hubVariableReconciliation.
 // Bumped 26->27 (2.4.39, HAI #157): a Periodic Schedule trigger publishes the hub's own cron, nextRunTime and
 // cronZone, read from the statusJson scheduledJobs the apps phase already fetches.
-@Field static final String GRAPH_SCHEMA = '29'
+@Field static final String GRAPH_SCHEMA = '30'
 
 // Gates the watermark's Dec 20-25 swap to the Christmas tree image
 // (see hubWatermark below) - the only thing showSanta() controls now.
@@ -11667,7 +11667,7 @@ Map hamDetailDateOperand(String side, String num, Map settingValues) {
 // as read by hamDetailCondition and its operand helpers and as seen in the captured decode files.
 @Field static final Set<String> RM_CONDITION_KEY_PREFIXES = ([
     'rCapab_', 'rDev_', 'rDev', 'state_', 'not', 'RelrDev_', 'AllrDev_', 'AllrDev', 'isDev_', 'isVar_',
-    'xVar_', 'xVar', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
+    'xVar_', 'xVar', 'xVarR_', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
     'starting', 'startingA', 'ending', 'endingA', 'startSunriseOffset', 'startSunsetOffset',
     'endSunriseOffset', 'endSunsetOffset', 'monthStart', 'dayStart', 'monthEnd', 'dayEnd',
     'timeStart', 'timeEnd', 'startDateType', 'endDateType'
@@ -11727,7 +11727,11 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
         // non-underscore form is accepted too rather than assuming one.
         operands.name = "${settingValues["xVar_${num}"] ?: settingValues["xVar${num}"] ?: ''}" ?: null
         if (comparator) operands.comparator = comparator
-        operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
+        // Compared with another variable: isVar_<n> is true and that variable's name is in xVarR_<n>, with no
+        // state_<n> (measured on a Dev hub, 2026-10-18). Otherwise state_<n> holds the literal.
+        String other = "${settingValues["xVarR_${num}"] ?: ''}".trim()
+        if (hamDetailBool(settingValues["isVar_${num}"]) && other) operands.value = [variable: other]
+        else operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
     } else {
         // Device-shaped conditions. The comparator travels exactly as stored:
         // an unread one flattened 'illuminance above 200' into 'exactly 200'
