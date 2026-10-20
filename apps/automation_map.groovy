@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.49'
+@Field static final String APP_VERSION = '2.4.50'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -1376,18 +1376,20 @@ String scanButtonHtml(boolean scanActive, boolean autoStarting) {
 <button type="button" id="amScanBtn" class="${cls}"${disabled} onclick="amStartScan()" aria-label="${label}" data-pc-name="button" data-pc-section="root" data-pd-ripple="true">${label}</button>
 <span id="amScanMsg" style="margin-left:10px"></span>
 <script type="text/javascript">
-// Picks the local relative path when the browser is on the hub's own origin
-// (the common case: fast, no internet dependency) and falls back to the
-// absolute cloud URL otherwise - Remote Admin, or anything else that isn't
-// the hub's own LAN address. Checked at click time against the real current
-// origin, not guessed once at page-render time on the server, because the
-// server has no reliable way to know which origin THIS page request came in
-// on for a native Hubitat-rendered page.
+// Picks the relative path (this page's own origin) unless the page itself is
+// being served by Hubitat's cloud relay. The hub's LAN address, hubitat.local,
+// any other name, a VPN, and Remote Access (remoteaccess.aws.hubitat.com, which
+// passes the hub's own paths through unchanged) all serve the hub's paths, so a
+// relative path reaches the hub on every one of them, with no relay round trip,
+// no cross-origin block and no relay size limit (2.4.50). Only a page on the
+// relay's own host cannot reach the hub's paths and takes the cloud URL.
+// Checked at click time against the real current origin, because the server
+// cannot tell which origin this page request came in on.
 function amIsLocalAccess() {
   try {
-    return new URL('${getLocalOrigin()}').hostname === window.location.hostname;
+    return new URL('${getCloudOrigin()}').hostname !== window.location.hostname;
   } catch (ignore) { }
-  return false;
+  return true;
 }
 function amPickURL(localPath, cloudUrl) {
   return amIsLocalAccess() ? localPath : cloudUrl;
@@ -15786,15 +15788,25 @@ String getLocalURL(String fileName) {
     return (fullURL =~ URL_PATTERN).findAll()[0][1]
 }
 
-// The Remote Admin fix. getLocalURL() above returns a path with no scheme or
-// host, which only resolves correctly when the browser is already on the hub's
-// own origin. A page loaded through remoteaccess.aws.hubitat.com has a
-// different origin, so that relative path 404s against the remote portal
-// instead of ever reaching the hub - this is JimB's scan-start failure.
-// These two give the browser both an absolute fallback and the origin to
-// decide with; see amPickURL() in the two templates that call them.
+// getLocalURL() above returns a path with no scheme or host, which resolves
+// against whatever origin serves the page. 1.8.9 sent every origin other than
+// the hub's own LAN address to the cloud relay, after a relative path 404'd
+// through Remote Admin (JimB, August 2026). Remote Access now passes the hub's
+// own paths through unchanged - the map itself opens there by its relative
+// link - while the relay adds a round trip per request, blocks cross-origin
+// reads and fails on large responses, which broke Room Manager and the webCoRE
+// assessment through Remote Access. So since 2.4.50 the browser uses the
+// relative path everywhere except on the relay's own host (getCloudOrigin());
+// see amPickURL() in the two templates that call these.
 String getLocalOrigin() {
     return (fullLocalApiServerUrl =~ ORIGIN_PATTERN).findAll()[0][1]
+}
+
+// The cloud relay's origin (cloud.hubitat.com), so the browser can tell when the
+// page itself is on the relay - the only place a relative path cannot reach the hub.
+String getCloudOrigin() {
+    def m = ("${fullApiServerUrl}" =~ ORIGIN_PATTERN).findAll()
+    return m ? m[0][1] : 'https://cloud.hubitat.com'
 }
 
 String getCloudURL(String fileName) {
@@ -23223,14 +23235,18 @@ flowChart.addEventListener('click', function (ev) {
 // is as much in correcting a wrong classification as in filling a gap - Kasa
 // and Tapo can each be local or cloud depending on how they were set up.
 // ---------------------------------------------------------------------------
-// Same reasoning as amPickURL() on the config page's Scan button: a relative
-// path only resolves correctly when this page itself is being served from
-// the hub's own origin, which is not true through Remote Admin.
-function amPickURL(localPath, cloudUrl) {
+// Same rule as amPickURL() on the config page's Scan button: this page's own
+// origin (relative path) wherever it is served from the hub or a proxy of it -
+// LAN address, any name, VPN or Remote Access - and the cloud URL only when the
+// page itself is on the cloud relay's host (2.4.50).
+function amOnCloudRelay() {
   try {
-    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+    return new URL('${getCloudOrigin()}').hostname === window.location.hostname;
   } catch (ignore) { }
-  return cloudUrl;
+  return false;
+}
+function amPickURL(localPath, cloudUrl) {
+  return amOnCloudRelay() ? cloudUrl : localPath;
 }
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
@@ -26073,9 +26089,9 @@ ${''}
 // image as" is still reachable where people actually use it.
 const HUB_ORIGIN = location.origin;
 // Through the cloud relay the hub's LAN paths are not reachable, so the links
-// are shown disabled rather than opening a dead tab.
-const HUB_HOST = String(location.hostname || '').toLowerCase();
-const HUB_LINKS_LOCAL = !(HUB_HOST === 'hubitat.com' || HUB_HOST.lastIndexOf('.hubitat.com') === HUB_HOST.length - 13);
+// are shown disabled rather than opening a dead tab. Remote Access passes the
+// hub's own paths through, so its links work and stay enabled (2.4.50).
+const HUB_LINKS_LOCAL = !amOnCloudRelay();
 const HUB_TAB = 'hubitatObject';
 const nodeMenuEl = document.getElementById('nodeMenu');
 
@@ -26639,10 +26655,9 @@ document.getElementById('communityUtilitiesBtn').addEventListener('click', funct
 // works for anyone with LAN access to it, which a cloud-opened link does not
 // rule out, rather than guaranteed-wrong navigation on the relay's own host.
 document.getElementById('exitMapBtn').addEventListener('click', function () {
-  var localOrigin = '${getLocalOrigin()}';
-  var onLocalOrigin = false;
-  try { onLocalOrigin = (new URL(localOrigin).hostname === window.location.hostname); } catch (ignore) { }
-  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${app.id}';
+  // Relative on the hub and any proxy of it (Remote Access included, 2.4.50);
+  // only the cloud relay's own host sends the browser to the hub's LAN origin.
+  window.location.href = (amOnCloudRelay() ? '${getLocalOrigin()}' : '') + '/installedapp/configure/${app.id}';
 });
 </script>
 </body>
