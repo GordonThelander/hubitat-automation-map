@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.50'
+@Field static final String APP_VERSION = '2.4.51'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -1394,6 +1394,44 @@ function amIsLocalAccess() {
 function amPickURL(localPath, cloudUrl) {
   return amIsLocalAccess() ? localPath : cloudUrl;
 }
+// Remote Access (remoteaccess.aws.hubitat.com) signs a browser in with a
+// session cookie and answers any request without it with its own sign-in page,
+// so a data fetch sent with credentials:'omit' got HTML back and failed as
+// "JSON.parse: unexpected character" (Room Manager, webCoRE assessment;
+// 2.4.51). A fetch to this page's own origin now sends the cookie, as HAI's
+// editor does. Anything on another origin - the cloud relay, GitHub, a CDN -
+// still sends none. schedules marks a request whose handler calls runIn():
+// on the hub itself the session cookie makes the hub treat the request as part
+// of the open UI transaction and drop the job (see amStartScan), so those send
+// the cookie only through a Hubitat-hosted proxy, where it is the sign-in.
+function amFetchCreds(url, schedules) {
+  try {
+    var page = window.location;
+    var target = new URL(url, page.href);
+    if (target.origin !== page.origin) return 'omit';
+    var relay = '';
+    try { relay = new URL('${getCloudOrigin()}').hostname; } catch (ignore) { }
+    if (relay && target.hostname === relay) return 'omit';
+    if (schedules && target.hostname.slice(-12) !== '.hubitat.com') return 'omit';
+    return 'same-origin';
+  } catch (ignore) { }
+  return 'omit';
+}
+// Reads a hub reply as JSON, and says what happened when the reply is a page
+// rather than data - which through Remote Access means the sign-in has lapsed.
+function amHubJson(r) {
+  return r.text().then(function (body) {
+    var text = String(body || '').trim();
+    var ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+    var page = 'The hub answered with a page instead of data - sign in again through Remote Access, or open the map on your home network.';
+    if (text.charAt(0) === '<') throw new Error(page);
+    try { return JSON.parse(text); }
+    catch (parseErr) {
+      if (ct && ct.indexOf('json') < 0) throw new Error(page);
+      throw new Error('the hub sent data this page could not read (HTTP ' + r.status + ').');
+    }
+  });
+}
 function amShowRemoteProgress() {
   var el = document.getElementById('amProgress');
   if (el) el.textContent = 'Remote scanning, this page will refresh once done.';
@@ -1405,7 +1443,9 @@ function amStartScan() {
   var m = document.getElementById('amScanMsg');
   b.disabled = true;
   m.textContent = 'Starting...';
-  // credentials:'omit' is load-bearing, not tidiness. Sending the Hubitat
+  // amFetchCreds(scanUrl, true) sends no cookie on the hub itself, and that is
+  // load-bearing, not tidiness (through Remote Access the cookie is the
+  // sign-in, so it is sent there - 2.4.51). Sending the Hubitat
   // session cookie makes the hub treat this as part of the open UI transaction,
   // and scheduled jobs created inside one are discarded - startScan() would
   // populate the queue and set scanRunning, then runIn() would silently
@@ -1451,7 +1491,7 @@ function amStartScan() {
     setTimeout(function () { location.reload(); }, 4000);
     return;
   }
-  fetch(scanUrl, { cache: 'no-store', credentials: 'omit' })
+  fetch(scanUrl, { cache: 'no-store', credentials: amFetchCreds(scanUrl, true) })
     .then(function (r) {
       return r.text().then(function (body) {
         var ct = r.headers.get('content-type') || 'none';
@@ -1539,8 +1579,8 @@ function amProgressPoll() {
     amPolling = false;
     return;
   }
-  fetch(statusUrl, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(statusUrl, { cache: 'no-store', credentials: amFetchCreds(statusUrl) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       amPolling = false;
       var el = document.getElementById('amProgress');
@@ -21122,7 +21162,7 @@ function requestDecodeCoverage() {
   const seq = ++coverageRequestSeq;
   coverageInFlight = true;
   const url = COVERAGE_URL + '&appId=' + encodeURIComponent(coverageHubAppId(coverageAppId));
-  fetch(url, { cache: 'no-store', credentials: 'omit' })
+  fetch(url, { cache: 'no-store', credentials: amFetchCreds(url) })
     .then(function (resp) {
       return resp.json().then(function (body) { return body; }, function () { return {}; });
     })
@@ -21159,7 +21199,7 @@ function rmcOpen() {
   if (RMC.body || RMC.loading) { rmcRender(); return; }
   RMC.loading = true;
   rmcRender();
-  fetch(RM_COVERAGE_URL, { cache: 'no-store', credentials: 'omit' })
+  fetch(RM_COVERAGE_URL, { cache: 'no-store', credentials: amFetchCreds(RM_COVERAGE_URL) })
     .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
     .then(function (body) { RMC.loading = false; RMC.body = body || {}; rmcRender(); })
     .catch(function () { RMC.loading = false; RMC.body = { ok: false, reason: 'the report could not be read from the hub' }; rmcRender(); });
@@ -21488,7 +21528,7 @@ function renderMigrationCard(node) {
     if (!open || loaded) return;
     loaded = true;
     payload.innerHTML = '<p class="sub">Assessing this piston...</p>';
-    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
+    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: amFetchCreds(MIGRATION_URL) })
       .then(function (resp) {
         return resp.json().then(function (body) { return body; }, function () { return {}; });
       })
@@ -21586,8 +21626,8 @@ function mrOpen() {
   MR.running = true;
   MR.results = [];
   mrRender();
-  fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: amFetchCreds(MIGRATION_RATINGS_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       MR.ratedAt = (d || {}).lastRatedAt || null;
       // An upgrade to this app can change the equivalence table under a rating
@@ -21670,7 +21710,7 @@ function mrRun(known) {
       return;
     }
     const node = pistons[i++];
-    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
+    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: amFetchCreds(MIGRATION_URL) })
       .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
       .then(function (body) { MR.results.push({ node: node, body: body || {} }); })
       .catch(function () { MR.results.push({ node: node, body: { status: 'error' } }); })
@@ -21682,8 +21722,8 @@ function mrRun(known) {
 function mrLoadMatrix() {
   if (MR.matrix) return;
   MR.matrix = 'loading';
-  fetch(MIGRATION_MATRIX_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(MIGRATION_MATRIX_URL, { cache: 'no-store', credentials: amFetchCreds(MIGRATION_MATRIX_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) { MR.matrix = d; mrRender(); })
     .catch(function () { MR.matrix = 'error'; mrRender(); });
 }
@@ -23248,6 +23288,44 @@ function amOnCloudRelay() {
 function amPickURL(localPath, cloudUrl) {
   return amOnCloudRelay() ? cloudUrl : localPath;
 }
+// Remote Access (remoteaccess.aws.hubitat.com) signs a browser in with a
+// session cookie and answers any request without it with its own sign-in page,
+// so a data fetch sent with credentials:'omit' got HTML back and failed as
+// "JSON.parse: unexpected character" (Room Manager, webCoRE assessment;
+// 2.4.51). A fetch to this page's own origin now sends the cookie, as HAI's
+// editor does. Anything on another origin - the cloud relay, GitHub, a CDN -
+// still sends none. schedules marks a request whose handler calls runIn():
+// on the hub itself the session cookie makes the hub treat the request as part
+// of the open UI transaction and drop the job (see amStartScan), so those send
+// the cookie only through a Hubitat-hosted proxy, where it is the sign-in.
+function amFetchCreds(url, schedules) {
+  try {
+    var page = window.location;
+    var target = new URL(url, page.href);
+    if (target.origin !== page.origin) return 'omit';
+    var relay = '';
+    try { relay = new URL('${getCloudOrigin()}').hostname; } catch (ignore) { }
+    if (relay && target.hostname === relay) return 'omit';
+    if (schedules && target.hostname.slice(-12) !== '.hubitat.com') return 'omit';
+    return 'same-origin';
+  } catch (ignore) { }
+  return 'omit';
+}
+// Reads a hub reply as JSON, and says what happened when the reply is a page
+// rather than data - which through Remote Access means the sign-in has lapsed.
+function amHubJson(r) {
+  return r.text().then(function (body) {
+    var text = String(body || '').trim();
+    var ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+    var page = 'The hub answered with a page instead of data - sign in again through Remote Access, or open the map on your home network.';
+    if (text.charAt(0) === '<') throw new Error(page);
+    try { return JSON.parse(text); }
+    catch (parseErr) {
+      if (ct && ct.indexOf('json') < 0) throw new Error(page);
+      throw new Error('the hub sent data this page could not read (HTTP ' + r.status + ').');
+    }
+  });
+}
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
 // The settings page's Scan button and progress poll, for the full scan a device menu can offer (2.4.35).
@@ -23383,8 +23461,8 @@ function extEsc(s) {
 
 function extLoad() {
   extBody.innerHTML = '<p class="sub">Loading...</p>';
-  fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(EXT_URL, { cache: 'no-store', credentials: amFetchCreds(EXT_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       EXT = d;
       extRender('');
@@ -23765,10 +23843,10 @@ function extSave() {
   const msg = document.getElementById('extMsg');
   msg.textContent = 'Saving...';
   fetch(EXT_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(EXT_URL, true),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ entries: rows })
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .then(function (d) {
       EXT = d;
       extRender('Saved. Reload the page to redraw the map.');
@@ -23984,8 +24062,8 @@ function roomPlanLoad() {
   const canvas = document.getElementById('roomCanvas');
   canvas.innerHTML = '<p class="sub">Loading...</p>';
   return Promise.all([
-    fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }),
-    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); })
+    fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL) }).then(function (r) { return amHubJson(r); }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: amFetchCreds(ICONS_URL) }).then(function (r) { return amHubJson(r); })
   ]).then(function (res) {
     ROOMPLAN = res[0] || ROOMPLAN;
     ICONS = res[1] || ICONS;
@@ -24009,8 +24087,8 @@ function roomPlanLoad() {
 // icons and renders twice. Keep failed moves staged while the successful moves
 // settle into their authoritative live rooms.
 function roomPlanRefreshLive(keep) {
-  return fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  return fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (next) {
       ROOMPLAN = next || ROOMPLAN;
       roomPending = {};
@@ -24119,10 +24197,10 @@ function roomPlanCrud(body, busy) {
   // The catch covers the request only. What happens after the hub has answered is handled apart from it, so a
   // problem drawing a successful change cannot be reported as the change failing.
   return fetch(ROOMPLAN_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .catch(function (e) { msg.textContent = 'Failed: ' + e; roomPlanUndoPending(body); return null; })
     .then(function (d) {
       if (d === null) return null;
@@ -24484,12 +24562,12 @@ function roomPlanQueueLayoutSave() {
   if (roomLayoutTimer) clearTimeout(roomLayoutTimer);
   roomLayoutTimer = setTimeout(function () {
     fetch(ROOMPLAN_URL, {
-      method: 'POST', cache: 'no-store', credentials: 'omit',
+      method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout: ROOMPLAN.layout || {} })
     }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
+      return amHubJson(r);
     }).then(function () {
       const msg = document.getElementById('roomPlanMsg');
       if (msg && msg.textContent.indexOf('Layout') === 0) msg.textContent = '';
@@ -24554,10 +24632,10 @@ function roomPlanApply() {
   const done = function () { settled = true; clearTimeout(pendingTimer); clearTimeout(giveUpTimer); };
 
   fetch(ROOMPLAN_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ moves: roomPending })
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .then(function (d) {
       if (settled) return;
       done();
@@ -24624,8 +24702,8 @@ let ICONS = null;
 
 function iconsLoad() {
   iconsBody.innerHTML = '<p class="sub">Loading...</p>';
-  fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(ICONS_URL, { cache: 'no-store', credentials: amFetchCreds(ICONS_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) { ICONS = d; iconsRender(''); })
     .catch(function (e) {
       iconsBody.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
@@ -24745,10 +24823,10 @@ function iconsSave() {
   const msg = document.getElementById('iconsMsg');
   msg.textContent = 'Saving...';
   fetch(ICONS_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ICONS_URL, true),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ overrides: overrides, notes: notes })
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .then(function (d) {
       ICONS = d;
       (ICONS.devices || []).forEach(function (dv) {
@@ -24853,8 +24931,8 @@ function exportJSON() {
   // rather than a consumer wrongly reading null as "nothing declared".
   const failedFetches = [];
   Promise.all([
-    fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('externalSystemDeclarations'); return null; }),
-    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
+    fetch(EXT_URL, { cache: 'no-store', credentials: amFetchCreds(EXT_URL) }).then(function (r) { return amHubJson(r); }).catch(function () { failedFetches.push('externalSystemDeclarations'); return null; }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: amFetchCreds(ICONS_URL) }).then(function (r) { return amHubJson(r); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
     fetchMigrationRatings(btn, failedFetches)
   ]).then(function (results) {
     const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'text/plain;charset=utf-8' });
@@ -24884,8 +24962,8 @@ function exportJSON() {
 function fetchMigrationRatings(btn, failedFetches) {
   const nameOfNode = {};
   ALL_NODES.forEach(function (n) { nameOfNode[n.id] = n.name || n.label || n.id; });
-  return fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  return fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: amFetchCreds(MIGRATION_RATINGS_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (j) {
       return (j.ratings || []).map(function (r) {
         const nodeId = 'a' + r.appId;
@@ -25590,7 +25668,7 @@ document.getElementById('roomPlanReset').addEventListener('click', function () {
   roomPlanRender();
   const msg = document.getElementById('roomPlanMsg');
   fetch(ROOMPLAN_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ layout: {} })
   }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
@@ -26307,8 +26385,8 @@ function rescanNode(nodeId, item) {
   const original = item.textContent;
   item.disabled = true;
   item.textContent = 'Rescanning...';
-  fetch(RESCAN_URL + '&node=' + encodeURIComponent(nodeId), { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(RESCAN_URL + '&node=' + encodeURIComponent(nodeId), { cache: 'no-store', credentials: amFetchCreds(RESCAN_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (j) {
       if (j && j.ok) {
         if (applyRescanSlice(j.slice)) {
@@ -26363,8 +26441,8 @@ function startFullScan(item) {
     setTimeout(function () { window.location.reload(); }, 4000);
     return;
   }
-  fetch(SCAN_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(SCAN_URL, { cache: 'no-store', credentials: amFetchCreds(SCAN_URL, true) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       hideNodeMenu();
       if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
@@ -26392,8 +26470,8 @@ function showScanProgress(statusEl, d) {
 // One /scan-status read every 5 seconds while the scan runs, then one reload.
 function followFullScan(statusEl) {
   setTimeout(function () {
-    fetch(SCAN_STATUS_URL, { cache: 'no-store', credentials: 'omit' })
-      .then(function (r) { return r.json(); })
+    fetch(SCAN_STATUS_URL, { cache: 'no-store', credentials: amFetchCreds(SCAN_STATUS_URL) })
+      .then(function (r) { return amHubJson(r); })
       .then(function (d) {
         if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
         if (d && d.lastScanOutcome === 'failed') {
