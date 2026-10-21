@@ -30,6 +30,7 @@ function run(ratings, pistons, lastRatedAt) {
     bringToFront: () => {}, migrationReportPanel: {},
     mrRender: () => {},
     extEsc: s => String(s),
+    amFetchCreds: () => 'same-origin', amHubJson: r => r.json(),
     Date: Date, JSON: JSON, isNaN: isNaN, Number: Number, setTimeout: setTimeout,
     fetch: (url) => {
       if (url === 'ratings') return Promise.resolve({json: () => Promise.resolve({ratings, lastRatedAt: lastRatedAt})});

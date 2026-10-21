@@ -43,7 +43,7 @@ function extractFunction(name) {
     return balancedFrom(start, '{', '}');
 }
 
-const functionNames = ['extEsc', 'coverageHubAppId', 'decodeCoverageResultHtml',
+const functionNames = ['amFetchCreds', 'extEsc', 'coverageHubAppId', 'decodeCoverageResultHtml',
     'decodeCoverageOutcomeHtml', 'renderDecodeCoverageCard', 'requestDecodeCoverage'];
 
 let pass = 0, fail = 0;
@@ -68,6 +68,8 @@ function makeSandbox() {
         },
         pending: pending,
         encodeURIComponent: encodeURIComponent,
+        window: { location: { href: 'http://hub/apps/api/1/automation-map.html', origin: 'http://hub' } },
+        URL: URL,
         Math: Math, Object: Object, String: String, Number: Number
     };
     const script =
@@ -119,7 +121,7 @@ async function main() {
         sb.renderDecodeCoverageCard(piston);
         assert(sb.fetchCalls.length === 1, 'fetch count ' + sb.fetchCalls.length);
         assert(sb.fetchCalls[0].url === 'http://hub/coverage?access_token=T&appId=3095', 'url ' + sb.fetchCalls[0].url);
-        assert(sb.fetchCalls[0].opts.credentials === 'omit', 'credentials not omitted');
+        assert(sb.fetchCalls[0].opts.credentials === 'same-origin', 'the hub sign-in cookie is not sent to the page\'s own hub');
         assert(sb.box.hidden === true && sb.box.innerHTML === '', 'card shown before any result');
     });
 
