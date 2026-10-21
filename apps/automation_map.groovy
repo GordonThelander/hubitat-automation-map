@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit 6330ded2c147d3c91f1c366eca299075855f3aec; developer
+ * builder from the annotated Dev source at commit f83e6a0fbfb0398ed1a1e7c7b2c827df7a03e3ca; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/6330ded2c147d3c91f1c366eca299075855f3aec/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/f83e6a0fbfb0398ed1a1e7c7b2c827df7a03e3ca/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -36,7 +36,7 @@ import java.security.MessageDigest
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.48'
+@Field static final String APP_VERSION = '2.4.51'
 
 
 
@@ -130,7 +130,7 @@ boolean isDevBuild() {
 
 
 
-@Field static final String GRAPH_SCHEMA = '29'
+@Field static final String GRAPH_SCHEMA = '30'
 
 
 
@@ -1333,21 +1333,61 @@ String scanButtonHtml(boolean scanActive, boolean autoStarting) {
 <button type="button" id="amScanBtn" class="${cls}"${disabled} onclick="amStartScan()" aria-label="${label}" data-pc-name="button" data-pc-section="root" data-pd-ripple="true">${label}</button>
 <span id="amScanMsg" style="margin-left:10px"></span>
 <script type="text/javascript">
-// Picks the local relative path when the browser is on the hub's own origin
-// (the common case: fast, no internet dependency) and falls back to the
-// absolute cloud URL otherwise - Remote Admin, or anything else that isn't
-// the hub's own LAN address. Checked at click time against the real current
-// origin, not guessed once at page-render time on the server, because the
-// server has no reliable way to know which origin THIS page request came in
-// on for a native Hubitat-rendered page.
+// Picks the relative path (this page's own origin) unless the page itself is
+// being served by Hubitat's cloud relay. The hub's LAN address, hubitat.local,
+// any other name, a VPN, and Remote Access (remoteaccess.aws.hubitat.com, which
+// passes the hub's own paths through unchanged) all serve the hub's paths, so a
+// relative path reaches the hub on every one of them, with no relay round trip,
+// no cross-origin block and no relay size limit (2.4.50). Only a page on the
+// relay's own host cannot reach the hub's paths and takes the cloud URL.
+// Checked at click time against the real current origin, because the server
+// cannot tell which origin this page request came in on.
 function amIsLocalAccess() {
   try {
-    return new URL('${getLocalOrigin()}').hostname === window.location.hostname;
+    return new URL('${getCloudOrigin()}').hostname !== window.location.hostname;
   } catch (ignore) { }
-  return false;
+  return true;
 }
 function amPickURL(localPath, cloudUrl) {
   return amIsLocalAccess() ? localPath : cloudUrl;
+}
+// Remote Access (remoteaccess.aws.hubitat.com) signs a browser in with a
+// session cookie and answers any request without it with its own sign-in page,
+// so a data fetch sent with credentials:'omit' got HTML back and failed as
+// "JSON.parse: unexpected character" (Room Manager, webCoRE assessment;
+// 2.4.51). A fetch to this page's own origin now sends the cookie, as HAI's
+// editor does. Anything on another origin - the cloud relay, GitHub, a CDN -
+// still sends none. schedules marks a request whose handler calls runIn():
+// on the hub itself the session cookie makes the hub treat the request as part
+// of the open UI transaction and drop the job (see amStartScan), so those send
+// the cookie only through a Hubitat-hosted proxy, where it is the sign-in.
+function amFetchCreds(url, schedules) {
+  try {
+    var page = window.location;
+    var target = new URL(url, page.href);
+    if (target.origin !== page.origin) return 'omit';
+    var relay = '';
+    try { relay = new URL('${getCloudOrigin()}').hostname; } catch (ignore) { }
+    if (relay && target.hostname === relay) return 'omit';
+    if (schedules && target.hostname.slice(-12) !== '.hubitat.com') return 'omit';
+    return 'same-origin';
+  } catch (ignore) { }
+  return 'omit';
+}
+// Reads a hub reply as JSON, and says what happened when the reply is a page
+// rather than data - which through Remote Access means the sign-in has lapsed.
+function amHubJson(r) {
+  return r.text().then(function (body) {
+    var text = String(body || '').trim();
+    var ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+    var page = 'The hub answered with a page instead of data - sign in again through Remote Access, or open the map on your home network.';
+    if (text.charAt(0) === '<') throw new Error(page);
+    try { return JSON.parse(text); }
+    catch (parseErr) {
+      if (ct && ct.indexOf('json') < 0) throw new Error(page);
+      throw new Error('the hub sent data this page could not read (HTTP ' + r.status + ').');
+    }
+  });
 }
 function amShowRemoteProgress() {
   var el = document.getElementById('amProgress');
@@ -1360,7 +1400,9 @@ function amStartScan() {
   var m = document.getElementById('amScanMsg');
   b.disabled = true;
   m.textContent = 'Starting...';
-  // credentials:'omit' is load-bearing, not tidiness. Sending the Hubitat
+  // amFetchCreds(scanUrl, true) sends no cookie on the hub itself, and that is
+  // load-bearing, not tidiness (through Remote Access the cookie is the
+  // sign-in, so it is sent there - 2.4.51). Sending the Hubitat
   // session cookie makes the hub treat this as part of the open UI transaction,
   // and scheduled jobs created inside one are discarded - startScan() would
   // populate the queue and set scanRunning, then runIn() would silently
@@ -1406,7 +1448,7 @@ function amStartScan() {
     setTimeout(function () { location.reload(); }, 4000);
     return;
   }
-  fetch(scanUrl, { cache: 'no-store', credentials: 'omit' })
+  fetch(scanUrl, { cache: 'no-store', credentials: amFetchCreds(scanUrl, true) })
     .then(function (r) {
       return r.text().then(function (body) {
         var ct = r.headers.get('content-type') || 'none';
@@ -1494,8 +1536,8 @@ function amProgressPoll() {
     amPolling = false;
     return;
   }
-  fetch(statusUrl, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(statusUrl, { cache: 'no-store', credentials: amFetchCreds(statusUrl) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       amPolling = false;
       var el = document.getElementById('amProgress');
@@ -11624,7 +11666,7 @@ Map hamDetailDateOperand(String side, String num, Map settingValues) {
 
 @Field static final Set<String> RM_CONDITION_KEY_PREFIXES = ([
     'rCapab_', 'rDev_', 'rDev', 'state_', 'not', 'RelrDev_', 'AllrDev_', 'AllrDev', 'isDev_', 'isVar_',
-    'xVar_', 'xVar', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
+    'xVar_', 'xVar', 'xVarR_', 'rCustomAttr_', 'rCustomAttr', 'modes', 'days', 'atOrBetween',
     'starting', 'startingA', 'ending', 'endingA', 'startSunriseOffset', 'startSunsetOffset',
     'endSunriseOffset', 'endSunsetOffset', 'monthStart', 'dayStart', 'monthEnd', 'dayEnd',
     'timeStart', 'timeEnd', 'startDateType', 'endDateType'
@@ -11684,7 +11726,11 @@ Map hamDetailCondition(Map settingDevices, String num, String capability, Map se
         
         operands.name = "${settingValues["xVar_${num}"] ?: settingValues["xVar${num}"] ?: ''}" ?: null
         if (comparator) operands.comparator = comparator
-        operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
+        
+        
+        String other = "${settingValues["xVarR_${num}"] ?: ''}".trim()
+        if (hamDetailBool(settingValues["isVar_${num}"]) && other) operands.value = [variable: other]
+        else operands.value = [literal: "${settingValues["state_${num}"] ?: ''}" ?: null]
     } else {
         
         
@@ -15746,8 +15792,18 @@ String getLocalURL(String fileName) {
 
 
 
+
+
+
 String getLocalOrigin() {
     return (fullLocalApiServerUrl =~ ORIGIN_PATTERN).findAll()[0][1]
+}
+
+
+
+String getCloudOrigin() {
+    def m = ("${fullApiServerUrl}" =~ ORIGIN_PATTERN).findAll()
+    return m ? m[0][1] : 'https://cloud.hubitat.com'
 }
 
 String getCloudURL(String fileName) {
@@ -21063,7 +21119,7 @@ function requestDecodeCoverage() {
   const seq = ++coverageRequestSeq;
   coverageInFlight = true;
   const url = COVERAGE_URL + '&appId=' + encodeURIComponent(coverageHubAppId(coverageAppId));
-  fetch(url, { cache: 'no-store', credentials: 'omit' })
+  fetch(url, { cache: 'no-store', credentials: amFetchCreds(url) })
     .then(function (resp) {
       return resp.json().then(function (body) { return body; }, function () { return {}; });
     })
@@ -21100,7 +21156,7 @@ function rmcOpen() {
   if (RMC.body || RMC.loading) { rmcRender(); return; }
   RMC.loading = true;
   rmcRender();
-  fetch(RM_COVERAGE_URL, { cache: 'no-store', credentials: 'omit' })
+  fetch(RM_COVERAGE_URL, { cache: 'no-store', credentials: amFetchCreds(RM_COVERAGE_URL) })
     .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
     .then(function (body) { RMC.loading = false; RMC.body = body || {}; rmcRender(); })
     .catch(function () { RMC.loading = false; RMC.body = { ok: false, reason: 'the report could not be read from the hub' }; rmcRender(); });
@@ -21429,7 +21485,7 @@ function renderMigrationCard(node) {
     if (!open || loaded) return;
     loaded = true;
     payload.innerHTML = '<p class="sub">Assessing this piston...</p>';
-    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
+    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: amFetchCreds(MIGRATION_URL) })
       .then(function (resp) {
         return resp.json().then(function (body) { return body; }, function () { return {}; });
       })
@@ -21527,8 +21583,8 @@ function mrOpen() {
   MR.running = true;
   MR.results = [];
   mrRender();
-  fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: amFetchCreds(MIGRATION_RATINGS_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       MR.ratedAt = (d || {}).lastRatedAt || null;
       // An upgrade to this app can change the equivalence table under a rating
@@ -21611,7 +21667,7 @@ function mrRun(known) {
       return;
     }
     const node = pistons[i++];
-    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: 'omit' })
+    fetch(MIGRATION_URL + '&appId=' + encodeURIComponent(coverageHubAppId(node.id)), { cache: 'no-store', credentials: amFetchCreds(MIGRATION_URL) })
       .then(function (resp) { return resp.json().then(function (b) { return b; }, function () { return {}; }); })
       .then(function (body) { MR.results.push({ node: node, body: body || {} }); })
       .catch(function () { MR.results.push({ node: node, body: { status: 'error' } }); })
@@ -21623,8 +21679,8 @@ function mrRun(known) {
 function mrLoadMatrix() {
   if (MR.matrix) return;
   MR.matrix = 'loading';
-  fetch(MIGRATION_MATRIX_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(MIGRATION_MATRIX_URL, { cache: 'no-store', credentials: amFetchCreds(MIGRATION_MATRIX_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) { MR.matrix = d; mrRender(); })
     .catch(function () { MR.matrix = 'error'; mrRender(); });
 }
@@ -23176,14 +23232,56 @@ flowChart.addEventListener('click', function (ev) {
 // is as much in correcting a wrong classification as in filling a gap - Kasa
 // and Tapo can each be local or cloud depending on how they were set up.
 // ---------------------------------------------------------------------------
-// Same reasoning as amPickURL() on the config page's Scan button: a relative
-// path only resolves correctly when this page itself is being served from
-// the hub's own origin, which is not true through Remote Admin.
-function amPickURL(localPath, cloudUrl) {
+// Same rule as amPickURL() on the config page's Scan button: this page's own
+// origin (relative path) wherever it is served from the hub or a proxy of it -
+// LAN address, any name, VPN or Remote Access - and the cloud URL only when the
+// page itself is on the cloud relay's host (2.4.50).
+function amOnCloudRelay() {
   try {
-    if (new URL('${getLocalOrigin()}').hostname === window.location.hostname) return localPath;
+    return new URL('${getCloudOrigin()}').hostname === window.location.hostname;
   } catch (ignore) { }
-  return cloudUrl;
+  return false;
+}
+function amPickURL(localPath, cloudUrl) {
+  return amOnCloudRelay() ? cloudUrl : localPath;
+}
+// Remote Access (remoteaccess.aws.hubitat.com) signs a browser in with a
+// session cookie and answers any request without it with its own sign-in page,
+// so a data fetch sent with credentials:'omit' got HTML back and failed as
+// "JSON.parse: unexpected character" (Room Manager, webCoRE assessment;
+// 2.4.51). A fetch to this page's own origin now sends the cookie, as HAI's
+// editor does. Anything on another origin - the cloud relay, GitHub, a CDN -
+// still sends none. schedules marks a request whose handler calls runIn():
+// on the hub itself the session cookie makes the hub treat the request as part
+// of the open UI transaction and drop the job (see amStartScan), so those send
+// the cookie only through a Hubitat-hosted proxy, where it is the sign-in.
+function amFetchCreds(url, schedules) {
+  try {
+    var page = window.location;
+    var target = new URL(url, page.href);
+    if (target.origin !== page.origin) return 'omit';
+    var relay = '';
+    try { relay = new URL('${getCloudOrigin()}').hostname; } catch (ignore) { }
+    if (relay && target.hostname === relay) return 'omit';
+    if (schedules && target.hostname.slice(-12) !== '.hubitat.com') return 'omit';
+    return 'same-origin';
+  } catch (ignore) { }
+  return 'omit';
+}
+// Reads a hub reply as JSON, and says what happened when the reply is a page
+// rather than data - which through Remote Access means the sign-in has lapsed.
+function amHubJson(r) {
+  return r.text().then(function (body) {
+    var text = String(body || '').trim();
+    var ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+    var page = 'The hub answered with a page instead of data - sign in again through Remote Access, or open the map on your home network.';
+    if (text.charAt(0) === '<') throw new Error(page);
+    try { return JSON.parse(text); }
+    catch (parseErr) {
+      if (ct && ct.indexOf('json') < 0) throw new Error(page);
+      throw new Error('the hub sent data this page could not read (HTTP ' + r.status + ').');
+    }
+  });
 }
 const EXT_URL = amPickURL('${getLocalURL('externals')}', '${getCloudURL('externals')}');
 const RESCAN_URL = amPickURL('${getLocalURL('rescan')}', '${getCloudURL('rescan')}');
@@ -23320,8 +23418,8 @@ function extEsc(s) {
 
 function extLoad() {
   extBody.innerHTML = '<p class="sub">Loading...</p>';
-  fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(EXT_URL, { cache: 'no-store', credentials: amFetchCreds(EXT_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       EXT = d;
       extRender('');
@@ -23702,10 +23800,10 @@ function extSave() {
   const msg = document.getElementById('extMsg');
   msg.textContent = 'Saving...';
   fetch(EXT_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(EXT_URL, true),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ entries: rows })
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .then(function (d) {
       EXT = d;
       extRender('Saved. Reload the page to redraw the map.');
@@ -23921,8 +24019,8 @@ function roomPlanLoad() {
   const canvas = document.getElementById('roomCanvas');
   canvas.innerHTML = '<p class="sub">Loading...</p>';
   return Promise.all([
-    fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }),
-    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); })
+    fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL) }).then(function (r) { return amHubJson(r); }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: amFetchCreds(ICONS_URL) }).then(function (r) { return amHubJson(r); })
   ]).then(function (res) {
     ROOMPLAN = res[0] || ROOMPLAN;
     ICONS = res[1] || ICONS;
@@ -23946,8 +24044,8 @@ function roomPlanLoad() {
 // icons and renders twice. Keep failed moves staged while the successful moves
 // settle into their authoritative live rooms.
 function roomPlanRefreshLive(keep) {
-  return fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  return fetch(ROOMPLAN_URL, { cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (next) {
       ROOMPLAN = next || ROOMPLAN;
       roomPending = {};
@@ -24056,10 +24154,10 @@ function roomPlanCrud(body, busy) {
   // The catch covers the request only. What happens after the hub has answered is handled apart from it, so a
   // problem drawing a successful change cannot be reported as the change failing.
   return fetch(ROOMPLAN_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .catch(function (e) { msg.textContent = 'Failed: ' + e; roomPlanUndoPending(body); return null; })
     .then(function (d) {
       if (d === null) return null;
@@ -24421,12 +24519,12 @@ function roomPlanQueueLayoutSave() {
   if (roomLayoutTimer) clearTimeout(roomLayoutTimer);
   roomLayoutTimer = setTimeout(function () {
     fetch(ROOMPLAN_URL, {
-      method: 'POST', cache: 'no-store', credentials: 'omit',
+      method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout: ROOMPLAN.layout || {} })
     }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
+      return amHubJson(r);
     }).then(function () {
       const msg = document.getElementById('roomPlanMsg');
       if (msg && msg.textContent.indexOf('Layout') === 0) msg.textContent = '';
@@ -24491,10 +24589,10 @@ function roomPlanApply() {
   const done = function () { settled = true; clearTimeout(pendingTimer); clearTimeout(giveUpTimer); };
 
   fetch(ROOMPLAN_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ moves: roomPending })
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .then(function (d) {
       if (settled) return;
       done();
@@ -24561,8 +24659,8 @@ let ICONS = null;
 
 function iconsLoad() {
   iconsBody.innerHTML = '<p class="sub">Loading...</p>';
-  fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(ICONS_URL, { cache: 'no-store', credentials: amFetchCreds(ICONS_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) { ICONS = d; iconsRender(''); })
     .catch(function (e) {
       iconsBody.innerHTML = '<p class="sub">Could not load: ' + extEsc(e) + '</p>';
@@ -24682,10 +24780,10 @@ function iconsSave() {
   const msg = document.getElementById('iconsMsg');
   msg.textContent = 'Saving...';
   fetch(ICONS_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ICONS_URL, true),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ overrides: overrides, notes: notes })
-  }).then(function (r) { return r.json(); })
+  }).then(function (r) { return amHubJson(r); })
     .then(function (d) {
       ICONS = d;
       (ICONS.devices || []).forEach(function (dv) {
@@ -24790,8 +24888,8 @@ function exportJSON() {
   // rather than a consumer wrongly reading null as "nothing declared".
   const failedFetches = [];
   Promise.all([
-    fetch(EXT_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('externalSystemDeclarations'); return null; }),
-    fetch(ICONS_URL, { cache: 'no-store', credentials: 'omit' }).then(function (r) { return r.json(); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
+    fetch(EXT_URL, { cache: 'no-store', credentials: amFetchCreds(EXT_URL) }).then(function (r) { return amHubJson(r); }).catch(function () { failedFetches.push('externalSystemDeclarations'); return null; }),
+    fetch(ICONS_URL, { cache: 'no-store', credentials: amFetchCreds(ICONS_URL) }).then(function (r) { return amHubJson(r); }).catch(function () { failedFetches.push('deviceIconOverrides'); return null; }),
     fetchMigrationRatings(btn, failedFetches)
   ]).then(function (results) {
     const blob = new Blob([JSON.stringify(buildExportPayload(results[0], results[1], failedFetches, results[2]), null, 2)], { type: 'text/plain;charset=utf-8' });
@@ -24821,8 +24919,8 @@ function exportJSON() {
 function fetchMigrationRatings(btn, failedFetches) {
   const nameOfNode = {};
   ALL_NODES.forEach(function (n) { nameOfNode[n.id] = n.name || n.label || n.id; });
-  return fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  return fetch(MIGRATION_RATINGS_URL, { cache: 'no-store', credentials: amFetchCreds(MIGRATION_RATINGS_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (j) {
       return (j.ratings || []).map(function (r) {
         const nodeId = 'a' + r.appId;
@@ -25527,7 +25625,7 @@ document.getElementById('roomPlanReset').addEventListener('click', function () {
   roomPlanRender();
   const msg = document.getElementById('roomPlanMsg');
   fetch(ROOMPLAN_URL, {
-    method: 'POST', cache: 'no-store', credentials: 'omit',
+    method: 'POST', cache: 'no-store', credentials: amFetchCreds(ROOMPLAN_URL),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ layout: {} })
   }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
@@ -26026,9 +26124,9 @@ ${''}
 // image as" is still reachable where people actually use it.
 const HUB_ORIGIN = location.origin;
 // Through the cloud relay the hub's LAN paths are not reachable, so the links
-// are shown disabled rather than opening a dead tab.
-const HUB_HOST = String(location.hostname || '').toLowerCase();
-const HUB_LINKS_LOCAL = !(HUB_HOST === 'hubitat.com' || HUB_HOST.lastIndexOf('.hubitat.com') === HUB_HOST.length - 13);
+// are shown disabled rather than opening a dead tab. Remote Access passes the
+// hub's own paths through, so its links work and stay enabled (2.4.50).
+const HUB_LINKS_LOCAL = !amOnCloudRelay();
 const HUB_TAB = 'hubitatObject';
 const nodeMenuEl = document.getElementById('nodeMenu');
 
@@ -26244,8 +26342,8 @@ function rescanNode(nodeId, item) {
   const original = item.textContent;
   item.disabled = true;
   item.textContent = 'Rescanning...';
-  fetch(RESCAN_URL + '&node=' + encodeURIComponent(nodeId), { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(RESCAN_URL + '&node=' + encodeURIComponent(nodeId), { cache: 'no-store', credentials: amFetchCreds(RESCAN_URL) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (j) {
       if (j && j.ok) {
         if (applyRescanSlice(j.slice)) {
@@ -26300,8 +26398,8 @@ function startFullScan(item) {
     setTimeout(function () { window.location.reload(); }, 4000);
     return;
   }
-  fetch(SCAN_URL, { cache: 'no-store', credentials: 'omit' })
-    .then(function (r) { return r.json(); })
+  fetch(SCAN_URL, { cache: 'no-store', credentials: amFetchCreds(SCAN_URL, true) })
+    .then(function (r) { return amHubJson(r); })
     .then(function (d) {
       hideNodeMenu();
       if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
@@ -26329,8 +26427,8 @@ function showScanProgress(statusEl, d) {
 // One /scan-status read every 5 seconds while the scan runs, then one reload.
 function followFullScan(statusEl) {
   setTimeout(function () {
-    fetch(SCAN_STATUS_URL, { cache: 'no-store', credentials: 'omit' })
-      .then(function (r) { return r.json(); })
+    fetch(SCAN_STATUS_URL, { cache: 'no-store', credentials: amFetchCreds(SCAN_STATUS_URL) })
+      .then(function (r) { return amHubJson(r); })
       .then(function (d) {
         if (d && d.running) { showScanProgress(statusEl, d); followFullScan(statusEl); return; }
         if (d && d.lastScanOutcome === 'failed') {
@@ -26592,10 +26690,9 @@ document.getElementById('communityUtilitiesBtn').addEventListener('click', funct
 // works for anyone with LAN access to it, which a cloud-opened link does not
 // rule out, rather than guaranteed-wrong navigation on the relay's own host.
 document.getElementById('exitMapBtn').addEventListener('click', function () {
-  var localOrigin = '${getLocalOrigin()}';
-  var onLocalOrigin = false;
-  try { onLocalOrigin = (new URL(localOrigin).hostname === window.location.hostname); } catch (ignore) { }
-  window.location.href = (onLocalOrigin ? '' : localOrigin) + '/installedapp/configure/${app.id}';
+  // Relative on the hub and any proxy of it (Remote Access included, 2.4.50);
+  // only the cloud relay's own host sends the browser to the hub's LAN origin.
+  window.location.href = (amOnCloudRelay() ? '${getLocalOrigin()}' : '') + '/installedapp/configure/${app.id}';
 });
 </script>
 </body>
