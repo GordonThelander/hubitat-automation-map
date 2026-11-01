@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.security.MessageDigest
 
-@Field static final String APP_NAME = 'Automation Map'
+@Field static final String APP_NAME = 'Automation Map (Preprod)'
 
 
 
