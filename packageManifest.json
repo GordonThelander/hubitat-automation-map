@@ -1,12 +1,12 @@
 {
     "packageName": "Automation Map",
     "author": "Gordon Thelander",
-    "version": "2.4.51",
+    "version": "2.4.52",
     "minimumHEVersion": "2.5.1",
-    "dateReleased": "2026-10-21",
+    "dateReleased": "2026-11-01",
     "documentationLink": "https://github.com/GordonThelander/hubitat-automation-map/blob/main/README.md",
     "communityLink": "https://community.hubitat.com/t/release-hubitat-automation-map/165524",
-    "releaseNotes": "v2.4.51: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.\n\nChanges since v2.4.48:\n\n* Works through Hubitat Remote Access: the map, Room Manager and the webCoRE Migration Assessment now reach the hub through the page's own address instead of Hubitat's cloud relay, which was slow and failed on large replies. Links to the hub's own pages work through Remote Access too. If the Remote Access sign-in has lapsed, the page says so instead of showing an error.\n* A Rule Machine Variable condition that compares with another variable is now read with that variable, so HAI can convert it; it was read as having no value.\n\nAfter upgrading: the settings page asks you to run a scan. If you use HAI's migration, keep the daily scan on, or scan again before migrating, so HAI reads your rules as they are now.",
+    "releaseNotes": "v2.4.52: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.\n\nChanges since v2.4.51:\n\n* The app picker names a rule by the engine that runs it: a Rule Machine rule that Automation Intelligence also knows about is listed as RM5, not HAI, so it can still be found when looking for Rule Machine rules.\n\nv2.4.51: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.\n\nChanges since v2.4.48:\n\n* Works through Hubitat Remote Access: the map, Room Manager and the webCoRE Migration Assessment now reach the hub through the page's own address instead of Hubitat's cloud relay, which was slow and failed on large replies. Links to the hub's own pages work through Remote Access too. If the Remote Access sign-in has lapsed, the page says so instead of showing an error.\n* A Rule Machine Variable condition that compares with another variable is now read with that variable, so HAI can convert it; it was read as having no value.\n\nAfter upgrading: the settings page asks you to run a scan. If you use HAI's migration, keep the daily scan on, or scan again before migrating, so HAI reads your rules as they are now.",
     "apps": [
         {
             "id": "184c8f7d-5b2a-4352-a883-45d36ef4860b",
@@ -16,7 +16,7 @@
             "required": true,
             "oauth": true,
             "primary": true,
-            "version": "2.4.51"
+            "version": "2.4.52"
         }
     ]
 }
