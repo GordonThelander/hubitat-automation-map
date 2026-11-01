@@ -1,3 +1,9 @@
+v2.4.52: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
+
+Changes since v2.4.51:
+
+* The app picker names a rule by the engine that runs it: a Rule Machine rule that Automation Intelligence also knows about is listed as RM5, not HAI, so it can still be found when looking for Rule Machine rules.
+
 v2.4.51: Automation Map shows how your installed Hubitat apps, rules and devices connect in an interactive graph you can explore, search and export.
 
 Changes since v2.4.48:
