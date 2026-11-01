@@ -16,11 +16,11 @@
  * the License.
  *
  * GENERATED FILE - do not edit directly. Produced by the production-profile
- * builder from the annotated Dev source at commit f83e6a0fbfb0398ed1a1e7c7b2c827df7a03e3ca; developer
+ * builder from the annotated Dev source at commit 8a2060008cd48708e5c3878f41dfa505b9cb8e21; developer
  * comments and Dev-only build markers are not present in this file.
  *
  * Canonical annotated source:
- * https://github.com/GordonThelander/hubitat-automation-map/blob/f83e6a0fbfb0398ed1a1e7c7b2c827df7a03e3ca/apps/automation_map.groovy
+ * https://github.com/GordonThelander/hubitat-automation-map/blob/8a2060008cd48708e5c3878f41dfa505b9cb8e21/apps/automation_map.groovy
  */
 import groovy.transform.Field
 import groovy.json.JsonOutput
@@ -30,13 +30,13 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.security.MessageDigest
 
-@Field static final String APP_NAME = 'Automation Map (Preprod)'
+@Field static final String APP_NAME = 'Automation Map'
 
 
 
 
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.51'
+@Field static final String APP_VERSION = '2.4.52'
 
 
 
@@ -22006,15 +22006,23 @@ function appOptionText(n) {
     if (head === n.appType) title = head;
   }
   // Automation Intelligence names its own type per channel (HAI Rule, HAI
-  // Rule (Dev)), so the tag is decided by the engine marker the feed sets and
-  // by the type prefix its engine and runtime apps share, not by a fixed
-  // list that a channel rename would silently drop back to CUS.
-  const isHai = n.engine === 'HAI' || (n.appType && n.appType.indexOf('HAI ') === 0);
+  // Rule (Dev)), so an app whose own type carries that prefix is HAI's
+  // whatever the channel is called, and a fixed list would drop it back to
+  // CUS on a rename.
+  const isHaiApp = n.appType && n.appType.indexOf('HAI ') === 0;
+  // n.engine === 'HAI' only means HAI's feed listed this node: that it knows
+  // the rule, not that it runs it. Treating those as the same relabelled live
+  // Rule Machine rules - a Rule-5.1 rule Rule Machine still runs read [HAI]
+  // because HAI held a copy of it, and so could not be found by anyone looking
+  // under RM. The app's own type is the authority on which engine runs it;
+  // the feed marker is only the fallback for a node the scan could not type.
+  const typeTag = APP_TYPE_TAGS[n.appType];
   // n.userApp is the hub's own answer; CUS is the fallback only when the scan
   // could not read it, where assuming user-installed is the safer guess - a
   // community app mislabelled as shipping with the hub is the worse error.
-  const tag = isHai ? 'HAI'
-            : (APP_TYPE_TAGS[n.appType] || (n.userApp === false ? 'INT' : 'CUS'));
+  const tag = isHaiApp ? 'HAI'
+            : (typeTag || (n.engine === 'HAI' ? 'HAI'
+                        : (n.userApp === false ? 'INT' : 'CUS')));
   // That engine labels its own rules "[HAI] name", so prefixing again reads
   // "[HAI] [HAI] name". One tag is enough whoever wrote it.
   if (title.indexOf('[' + tag + '] ') === 0) return title;
