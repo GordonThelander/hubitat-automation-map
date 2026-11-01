@@ -22049,15 +22049,23 @@ function appOptionText(n) {
     if (head === n.appType) title = head;
   }
   // Automation Intelligence names its own type per channel (HAI Rule, HAI
-  // Rule (Dev)), so the tag is decided by the engine marker the feed sets and
-  // by the type prefix its engine and runtime apps share, not by a fixed
-  // list that a channel rename would silently drop back to CUS.
-  const isHai = n.engine === 'HAI' || (n.appType && n.appType.indexOf('HAI ') === 0);
+  // Rule (Dev)), so an app whose own type carries that prefix is HAI's
+  // whatever the channel is called, and a fixed list would drop it back to
+  // CUS on a rename.
+  const isHaiApp = n.appType && n.appType.indexOf('HAI ') === 0;
+  // n.engine === 'HAI' only means HAI's feed listed this node: that it knows
+  // the rule, not that it runs it. Treating those as the same relabelled live
+  // Rule Machine rules - Panic OFF (2818) is Rule-5.1, active and Rule
+  // Machine's, yet it read [HAI] and so could not be found by anyone looking
+  // under RM. The app's own type is the authority on which engine runs it;
+  // the feed marker is only the fallback for a node the scan could not type.
+  const typeTag = APP_TYPE_TAGS[n.appType];
   // n.userApp is the hub's own answer; CUS is the fallback only when the scan
   // could not read it, where assuming user-installed is the safer guess - a
   // community app mislabelled as shipping with the hub is the worse error.
-  const tag = isHai ? 'HAI'
-            : (APP_TYPE_TAGS[n.appType] || (n.userApp === false ? 'INT' : 'CUS'));
+  const tag = isHaiApp ? 'HAI'
+            : (typeTag || (n.engine === 'HAI' ? 'HAI'
+                        : (n.userApp === false ? 'INT' : 'CUS')));
   // That engine labels its own rules "[HAI] name", so prefixing again reads
   // "[HAI] [HAI] name". One tag is enough whoever wrote it.
   if (title.indexOf('[' + tag + '] ') === 0) return title;

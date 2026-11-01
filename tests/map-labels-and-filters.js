@@ -108,6 +108,27 @@ check('a label that differs from the type keeps the type, even when it starts wi
     });
 });
 
+check('a rule the HAI feed knows is tagged by the engine that runs it, not by the feed', function () {
+    // The feed sets engine 'HAI' on every node it lists, which says HAI knows the rule,
+    // not that HAI runs it. Treating those as the same tagged live Rule Machine rules
+    // [HAI], so they could not be found by anyone searching under RM.
+    const adopted = { title: 'Hallway Off (Rule-5.1)', appType: 'Rule-5.1', engine: 'HAI' };
+    assert(sandbox.appOptionText(adopted) === '[RM5] Hallway Off (Rule-5.1)', sandbox.appOptionText(adopted));
+
+    // An app whose own type is HAI's is still HAI's, whatever the channel is named.
+    const own = { title: '[HAI] Hallway Off', appType: 'HAI Rule (Dev)', engine: 'HAI' };
+    assert(sandbox.appOptionText(own) === '[HAI] Hallway Off', sandbox.appOptionText(own));
+
+    // The feed marker stays the fallback for a node the scan could not type at all,
+    // the one case where it is the best evidence available.
+    const untyped = { title: 'Hallway Off', engine: 'HAI' };
+    assert(sandbox.appOptionText(untyped) === '[HAI] Hallway Off', sandbox.appOptionText(untyped));
+
+    // An untyped node with no feed marker is a user app, not HAI's.
+    const neither = { title: 'Hallway Off' };
+    assert(sandbox.appOptionText(neither) === '[CUS] Hallway Off', sandbox.appOptionText(neither));
+});
+
 // ---- D. Show filter --------------------------------------------------------------
 
 const EDGES = [
