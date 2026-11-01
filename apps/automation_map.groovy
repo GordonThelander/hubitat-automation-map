@@ -22055,8 +22055,8 @@ function appOptionText(n) {
   const isHaiApp = n.appType && n.appType.indexOf('HAI ') === 0;
   // n.engine === 'HAI' only means HAI's feed listed this node: that it knows
   // the rule, not that it runs it. Treating those as the same relabelled live
-  // Rule Machine rules - Panic OFF (2818) is Rule-5.1, active and Rule
-  // Machine's, yet it read [HAI] and so could not be found by anyone looking
+  // Rule Machine rules - a Rule-5.1 rule Rule Machine still runs read [HAI]
+  // because HAI held a copy of it, and so could not be found by anyone looking
   // under RM. The app's own type is the authority on which engine runs it;
   // the feed marker is only the fallback for a node the scan could not type.
   const typeTag = APP_TYPE_TAGS[n.appType];
