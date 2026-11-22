@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.54'
+@Field static final String APP_VERSION = '2.4.55'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -15385,6 +15385,8 @@ Map buildGraph(Map appInfoIn = null) {
     // Last, so every node and edge the hub scan found is already in place and
     // wins any collision with the feed's account of the same thing.
     mergeHaiFeed(haiFeedForGraph(), nodes, edges, flows, seen, labels, disabledDevices)
+    // Rules of the other HAI channel on this hub (2.4.55), from that channel's own feed. See haiOtherChannelFeeds().
+    haiOtherChannelFeeds(nodes).each { Map other -> mergeHaiFeed(other, nodes, edges, flows, seen, labels, disabledDevices) }
 
     // Both flows and ruleVariables are fully populated by every app at this
     // point - safe to run the label join now, once, rather than per-app
@@ -16791,7 +16793,8 @@ Map rescanMapping() {
 @Field static final String HAI_ASSESS_REQUEST_EVENT = 'haiAssessRequest'
 @Field static final String HAI_ASSESS_DONE_EVENT = 'haiAssessDone'
 // Raised when the subscription changes, so an upgraded instance subscribes again.
-@Field static final int HAI_ASSESS_SUBSCRIPTION = 1
+// 2 (2.4.55): also haiFeedChanged, HAI's notice that its rule feed was rewritten (see haiFeedChangedHandler).
+@Field static final int HAI_ASSESS_SUBSCRIPTION = 2
 // Above this share of the hub's Rule Machine rules a full scan is the cheaper honest answer.
 @Field static final double HAI_ASSESS_FULL_SCAN_SHARE = 0.4
 // One targeted rescan at a time per instance; a second request is answered 'busy' rather than queued.
@@ -16799,18 +16802,117 @@ Map rescanMapping() {
 // Requests already handled, so a duplicate delivery does no work twice.
 @Field static final ConcurrentHashMap<String, Long> HAI_ASSESS_SEEN = new ConcurrentHashMap<>()
 
-// The one subscription this app holds. Checked against atomicState, which a stale state write-back cannot
-// undo; force re-subscribes (installed/updated). The app holds no other subscriptions, so unsubscribe()
-// first leaves exactly one, whatever an earlier version or a lost marker left behind.
+// The two subscriptions this app holds, both HAI's location events. Checked against atomicState, which a stale
+// state write-back cannot undo; force re-subscribes (installed/updated). The app holds no other subscriptions,
+// so unsubscribe() first leaves exactly these, whatever an earlier version or a lost marker left behind.
+// When it subscribes it also redraws HAI's rules once from HAI's current feed, so a map saved before 2.4.55,
+// when the feed was merged only by a scan, catches up on its first page open after the upgrade.
 void ensureHaiAssessSubscription(boolean force = false) {
     try {
         if (!force && atomicState.haiAssessSubscribed == HAI_ASSESS_SUBSCRIPTION) return
         unsubscribe()
         subscribe(location, HAI_ASSESS_REQUEST_EVENT, 'haiAssessRequestHandler')
+        subscribe(location, HAI_FEED_CHANGED_EVENT, 'haiFeedChangedHandler')
         atomicState.haiAssessSubscribed = HAI_ASSESS_SUBSCRIPTION
+        runIn(HAI_FEED_REFRESH_DELAY_SEC, 'haiFeedRefresh', [overwrite: true])
     } catch (Exception ex) {
         log.warn "${app.label}: could not subscribe to HAI's assess requests (${ex.message})"
     }
+}
+
+// ===================================================================================================================
+// HAI rules redrawn when HAI's feed changes (2.4.55)
+//
+// Until 2.4.55 HAI's rules were merged into the map only during a full scan, and scans are manual or daily. A HAI
+// rule created or changed after the last scan therefore drew as a bare app whose devices were all dotted
+// "exposed" placeholders, with no triggers, conditions or actions, until the next scan - however long HAI's feed
+// had been correct. Found by Gordon on 22 Nov 2026, comparing a migrated rule with its Rule Machine original.
+//
+// HAI 0.5.171 sends haiFeedChanged, {file, contentHash}, each time it rewrites its feed file. This map redraws from
+// the app list it already holds and HAI's new feed: no app is read again. Either channel's notice counts, since
+// each map draws every HAI rule on the hub. A burst of notices is folded into one redraw.
+//
+// Hub cost: nothing runs without a notice, and HAI writes the file only when a rule is put on the hub, started,
+// stopped, paused or removed, never per device event. Per redraw: one local read of HAI's feed file (about 190 KB
+// for 260 HAI nodes, grows with the number of HAI rules), one buildGraph over the stored app list (the same rebuild
+// a changed setting already runs; grows with apps and devices), and one write of the published map file. It reads
+// no app and no device. Skipped while a scan runs, because the scan reads the feed itself.
+// ===================================================================================================================
+@Field static final String HAI_FEED_CHANGED_EVENT = 'haiFeedChanged'
+// Long enough to fold the notices of several rules put on in one go into one redraw.
+@Field static final int HAI_FEED_REFRESH_DELAY_SEC = 15
+
+// Every HAI rule on the hub, drawn from the feed of the HAI that owns it (2.4.55).
+//
+// Dev HAI writes hai-am-state-dev.json and production HAI hai-am-state.json (since 22 Nov 2026). Each map reads its
+// own channel's file for HAI's version and capabilities, but the hub scan finds every HAI rule app, whichever HAI
+// owns it. Before this, a Dev HAI rule on a production map (or the reverse) had no feed edges and drew with every
+// device as a dotted "exposed" placeholder - found by Gordon on 22 Nov 2026 on a production map beside Dev HAI.
+//
+// The other channel's file is read for rules ONLY: nodes are kept only for rule apps the hub scan found, so a file
+// left behind by a removed HAI draws nothing, and a rule already drawn from this channel's feed is not touched
+// (mergeHaiFeed keeps the first account of an edge). Rule ids are app ids, unique on the hub, so two feeds cannot
+// describe the same rule differently.
+//
+// Hub cost: one extra local file read per graph build (a scan, a settings change, or a HAI redraw), about 190 KB
+// for 260 HAI nodes and growing with the other channel's HAI rules; a missing file is one quick 404.
+List<Map> haiOtherChannelFeeds(Map<String, Map> nodes) {
+    List<String> own = haiFeedNames(HAI_STATE_FILE)
+    List<String> others = [HAI_STATE_FILE, HAI_STATE_FILE.replace('.json', '-dev.json')].findAll { !own.contains(it) }
+    List<Map> out = []
+    others.each { String name ->
+        Map fetched = httpFetch("${LOOPBACK_BASE}/local/${name}".toString(), HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+        if (!fetched.ok || !(fetched.data instanceof Map)) return
+        Map feed = fetched.data as Map
+        if ("${feed.contract ?: ''}".trim() != HAI_FEED_CONTRACT || feed.error) return
+        Set<String> rules = new LinkedHashSet<String>()
+        List keptNodes = ((feed.nodes ?: []) as List).findAll { Object raw ->
+            if (!(raw instanceof Map)) return false
+            Map n = raw as Map
+            String id = "${n.id ?: ''}".trim()
+            if ("${n.group ?: ''}" == 'app') {
+                if (!nodes[id]) return false
+                rules << id
+                return true
+            }
+            return nodes[id] != null
+        }
+        if (!rules) return
+        List keptEdges = ((feed.edges ?: []) as List).findAll { Object raw ->
+            raw instanceof Map && rules.contains("${(raw as Map).from ?: ''}".trim())
+        }
+        Map keptFlows = ((feed.flows ?: [:]) as Map).findAll { Object k, Object v -> rules.contains("${k}".trim()) }
+        out << [state: 'OK', nodes: keptNodes, edges: keptEdges, flows: keptFlows]
+    }
+    return out
+}
+
+void haiFeedChangedHandler(evt) {
+    Object parsed = null
+    try { parsed = new groovy.json.JsonSlurper().parseText("${evt?.value ?: ''}") } catch (Exception ex) { return }
+    if (!(parsed instanceof Map)) return
+    String file = "${(parsed as Map).file ?: ''}"
+    // Either channel's file: each map draws every HAI rule on the hub (haiOtherChannelFeeds).
+    if (!(file in [HAI_STATE_FILE, HAI_STATE_FILE.replace('.json', '-dev.json')])) return
+    runIn(HAI_FEED_REFRESH_DELAY_SEC, 'haiFeedRefresh', [overwrite: true])
+}
+
+void haiFeedRefresh() {
+    if (scanEffectivelyActive()) return
+    Map appInfo = appInfoData()
+    if (!appInfo || !graphData()) return
+    Map fresh = new LinkedHashMap(fetchHaiFeed())
+    state.haiFeed = haiFeedSummary(fresh)
+    // A failed read keeps the map as it is rather than redrawing it without HAI's rules; the settings page
+    // reports the failure from state.haiFeed.
+    if ("${fresh.state}" != 'OK') {
+        log.warn "${app.label}: HAI's rules changed but its feed could not be read, so the map was not redrawn: ${fresh.error}"
+        return
+    }
+    fresh.remove('capabilities')
+    HAI_FEED_RULES.put("${app.id}".toString(), fresh)
+    rebuildStoredGraphFrom(appInfo)
+    if (diagOn()) log.info "${app.label}: HAI's rules redrawn from its feed (${((fresh.nodes ?: []) as List).size()} node(s), ${((fresh.edges ?: []) as List).size()} edge(s))"
 }
 
 // {requestId, all} or {requestId, ids}, or null for anything else. Ids are kept only when they are whole numbers.
