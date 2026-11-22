@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.52'
+@Field static final String APP_VERSION = '2.4.54'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -219,6 +219,33 @@ boolean showSanta() {
 // The engine publishes this to the hub's own file store. A fixed name needs no
 // address, no token and nothing for a user to paste.
 @Field static final String HAI_STATE_FILE = 'hai-am-state.json'
+// HAI's Dev build names its files with -dev ('hai-am-state-dev.json'), like this
+// app's own ham-decode-dev.json, so Dev and production HAI can share a hub. A Dev
+// build of this app reads Dev HAI's file first and falls back to the plain one,
+// so a Dev-channel tester running production or preview HAI still sees it. A
+// production build reads only the plain name. Cost: when the -dev file is absent,
+// one extra small local request per read, Dev builds only.
+// 2.4.54: the fallback only when no Dev HAI is installed. On a hub with both Dev and
+// production HAI, Dev's file can be briefly absent (just after an upgrade), and the
+// fallback then read production's feed as if it were Dev's: a plausible wrong map,
+// not an error (found by HAI on the hub, 22 Nov 2026). With Dev HAI installed, a Dev
+// build reads only Dev's file and reports FAILED until it exists.
+List<String> haiFeedNames(String plain) {
+    if (!isDevBuild()) return [plain]
+    String dev = plain.replace('.json', '-dev.json')
+    return haiDevParentInstalled() ? [dev] : [dev, plain]
+}
+
+// Whether HAI's Dev build is installed: its app type is 'HAI Engine (DEV)'. Same
+// app list haiParentInstalled reads, on the same paths.
+boolean haiDevParentInstalled() {
+    Map appInfo = appInfoData()
+    return appInfo.any { Object id, Object raw ->
+        if (!(raw instanceof Map)) return false
+        String type = "${(raw as Map).type ?: ''}".toLowerCase()
+        return HAI_PARENT_TYPE_PREFIXES.any { type.startsWith(it.toLowerCase() + ' (dev') }
+    }
+}
 // Matched as a prefix, not a fixed name: the engine names its type per channel,
 // 'HAI Runtime' and 'HAI Runtime (Dev)', and a channel rename must not silently
 // turn detection off. Same rule the graph's own HAI tagging already follows.
@@ -14149,7 +14176,9 @@ Map haiCapabilitySource(String declaredHash) {
         if (known) return [caps: known, hash: declared, verified: true]
         // Text rather than parsed JSON: the declared hash covers the bytes as
         // served, so the body must be hashed before anything interprets it.
-        Map fetched = httpFetch("${LOOPBACK_BASE}/local/${HAI_CAPABILITIES_FILE}",
+        // Dev builds try Dev HAI's file first; the declared hash decides which one belongs to the state just read.
+        for (String capsName : haiFeedNames(HAI_CAPABILITIES_FILE)) {
+        Map fetched = httpFetch("${LOOPBACK_BASE}/local/${capsName}",
                                 HAI_FEED_TIMEOUT_SEC, [contentType: 'text/plain'])
         String body = fetched.ok ? "${fetched.data ?: ''}" : ''
         if (body) {
@@ -14171,6 +14200,7 @@ Map haiCapabilitySource(String declaredHash) {
                 if (caps) return [caps: caps, hash: actual, verified: (declared as boolean)]
             }
         }
+        }
     }
     return null
 }
@@ -14180,7 +14210,8 @@ Map haiCapabilitySource(String declaredHash) {
 // A feed on a contract this version does not know is refused rather than
 // merged half-understood: the shape is what the merge below relies on.
 Map fetchHaiFeed() {
-    String url = "${LOOPBACK_BASE}/local/${HAI_STATE_FILE}"
+    List<String> urls = haiFeedNames(HAI_STATE_FILE).collect { String n -> "${LOOPBACK_BASE}/local/${n}".toString() }
+    String url = urls[0]
     if (!haiParentInstalled()) {
         // OFF used to cover two different things: this hub does not run the
         // engine, and this app could not find it. They render identically, so a
@@ -14189,9 +14220,10 @@ Map fetchHaiFeed() {
         // writes it is a contradiction, so it is reported rather than read: the
         // producer is the gate (see backlog 43), and the file outliving the app
         // is exactly the rollback case that gate exists for.
-        Map probe = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
-        boolean orphanFile = probe.ok && (probe.data instanceof Map) &&
-            "${((probe.data as Map).contract ?: '')}" == HAI_FEED_CONTRACT
+        boolean orphanFile = urls.any { String u ->
+            Map probe = httpFetch(u, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+            probe.ok && (probe.data instanceof Map) && "${((probe.data as Map).contract ?: '')}" == HAI_FEED_CONTRACT
+        }
         if (orphanFile) {
             // Which app types were looked for is what diagnoses a rename, and it
             // is meaningless to anyone else, so it goes to the log rather than
@@ -14206,6 +14238,9 @@ Map fetchHaiFeed() {
         return [state: 'OFF', nodes: [], edges: []]
     }
     Map fetched = httpFetch(url, HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+    if ((!fetched.ok || !(fetched.data instanceof Map)) && urls.size() > 1) {
+        fetched = httpFetch(urls[1], HAI_FEED_TIMEOUT_SEC, [contentType: 'application/json'])
+    }
     if (!fetched.ok || !(fetched.data instanceof Map)) {
         return [state: 'FAILED', nodes: [], edges: [], fetched: now(),
                 error: "${fetched.timedOut ? 'the feed did not answer in time' : (fetched.error ?: 'the engine is installed but has not published its feed yet')}"]
