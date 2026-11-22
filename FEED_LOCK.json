@@ -52,6 +52,7 @@
     "Gordon, 2026-10-15 08:25 local: Yes (add the 'Additional HAI capabilities' row to production's table, 31 implemented, 20 hub-tested, with the HAI-only list corrected to the recorded hub evidence)",
     "Gordon, 2026-10-15: 'Run all the test you need to close out the table' and 'Yes' to the Additional HAI capabilities row; 10 more capabilities hub-tested 2026-10-15",
     "Gordon, 2026-10-15: 'Run all the test you need to close out the table' and 'Yes' to the Additional HAI capabilities row; restart-safe waits hub-tested 2026-10-15 (31 of 31)",
-    "Gordon, 22 Nov 2026, asked whether HAI Dev's files including its two Automation Map feed files may be renamed with a -dev ending: 'Yes, I think it's important to build it that way.' Automation Map Dev reads the -dev names first and falls back to the plain ones; a production build reads only the plain names, so production's feed is unchanged."
+    "Gordon, 22 Nov 2026, asked whether HAI Dev's files including its two Automation Map feed files may be renamed with a -dev ending: 'Yes, I think it's important to build it that way.' Automation Map Dev reads the -dev names first and falls back to the plain ones; a production build reads only the plain names, so production's feed is unchanged.",
+    "Gordon, 22 Nov 2026, approved renaming HAI Dev's files with -dev ('Yes, I think it's important to build it that way'). Follow-up within that change: with HAI Dev installed, a Dev build of Automation Map reads only the -dev feed files, so it never reads production HAI's feed as Dev's. Production build unchanged."
   ]
 }

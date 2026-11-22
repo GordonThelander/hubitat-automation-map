@@ -79,7 +79,7 @@ import java.security.MessageDigest
 // otherwise show up as an app referencing every device on the hub, and the
 // release would do the same from the dev copy's point of view.
 @Field static final String APP_FAMILY = 'Automation Map'
-@Field static final String APP_VERSION = '2.4.53'
+@Field static final String APP_VERSION = '2.4.54'
 // Production-build profile (backlog item 16 / production_build_methodology.md
 // phase 2). BUILD_CHANNEL is substituted to 'production' by the generated
 // production candidate; every intentional Dev/production behaviour
@@ -225,8 +225,26 @@ boolean showSanta() {
 // so a Dev-channel tester running production or preview HAI still sees it. A
 // production build reads only the plain name. Cost: when the -dev file is absent,
 // one extra small local request per read, Dev builds only.
+// 2.4.54: the fallback only when no Dev HAI is installed. On a hub with both Dev and
+// production HAI, Dev's file can be briefly absent (just after an upgrade), and the
+// fallback then read production's feed as if it were Dev's: a plausible wrong map,
+// not an error (found by HAI on the hub, 22 Nov 2026). With Dev HAI installed, a Dev
+// build reads only Dev's file and reports FAILED until it exists.
 List<String> haiFeedNames(String plain) {
-    return isDevBuild() ? [plain.replace('.json', '-dev.json'), plain] : [plain]
+    if (!isDevBuild()) return [plain]
+    String dev = plain.replace('.json', '-dev.json')
+    return haiDevParentInstalled() ? [dev] : [dev, plain]
+}
+
+// Whether HAI's Dev build is installed: its app type is 'HAI Engine (DEV)'. Same
+// app list haiParentInstalled reads, on the same paths.
+boolean haiDevParentInstalled() {
+    Map appInfo = appInfoData()
+    return appInfo.any { Object id, Object raw ->
+        if (!(raw instanceof Map)) return false
+        String type = "${(raw as Map).type ?: ''}".toLowerCase()
+        return HAI_PARENT_TYPE_PREFIXES.any { type.startsWith(it.toLowerCase() + ' (dev') }
+    }
 }
 // Matched as a prefix, not a fixed name: the engine names its type per channel,
 // 'HAI Runtime' and 'HAI Runtime (Dev)', and a channel rename must not silently
